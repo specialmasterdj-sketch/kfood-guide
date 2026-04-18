@@ -1390,29 +1390,30 @@ async function startCamera() {
       if (!zxingReader) zxingReader = new ZXing.BrowserMultiFormatReader();
       zxingLiveActive = true;
 
-      // Stability guard: ZXing can briefly misdecode during autofocus (partial
-      // barcode captured as something short). Only commit a scan when the SAME
-      // code is returned twice in a row, and require min length 8 to reject
-      // half-read barcodes like "123" that happen to parse.
-      let lastCode = '';
-      let sameHits = 0;
+      // Stability guard: count how many times each decoded value appears in
+      // a short rolling window. Commit the first value that hits 2 total
+      // (not necessarily consecutive), or any value after an 800ms scan
+      // window if only one decode ever arrived. Also require min 8 digits to
+      // reject obviously-truncated reads. EAN/UPC check digits are validated
+      // internally by ZXing, so short-but-valid 1D codes are still accepted.
+      const hits = new Map();
+      const scanStart = Date.now();
+      let committed = false;
 
       await zxingReader.decodeFromConstraints(
         { video: { facingMode: { ideal: 'environment' } } },
         video,
         (result /*, err, controls*/) => {
-          if (!zxingLiveActive || !result) return;
+          if (!zxingLiveActive || committed || !result) return;
           const text = result.getText();
           if (!text || text.replace(/\D/g,'').length < 8) return;
-          if (text === lastCode){
-            sameHits++;
-            if (sameHits >= 1){ // 2 identical reads total (first + this one)
-              handleScannedCode(text);
-            }
-          } else {
-            lastCode = text;
-            sameHits = 0;
-          }
+          const n = (hits.get(text) || 0) + 1;
+          hits.set(text, n);
+          // Confirmed: 2+ matching decodes → commit.
+          if (n >= 2){ committed = true; handleScannedCode(text); return; }
+          // Single-hit grace: if only one decode arrived and 800ms has passed,
+          // accept it (handles good-quality single-frame decodes).
+          if (Date.now() - scanStart >= 800){ committed = true; handleScannedCode(text); }
         }
       );
       return;
