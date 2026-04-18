@@ -1389,14 +1389,30 @@ async function startCamera() {
       overlay.classList.add('active');
       if (!zxingReader) zxingReader = new ZXing.BrowserMultiFormatReader();
       zxingLiveActive = true;
-      // decodeFromConstraints attaches the camera stream to the given <video>
-      // and invokes the callback on every successful decode.
+
+      // Stability guard: ZXing can briefly misdecode during autofocus (partial
+      // barcode captured as something short). Only commit a scan when the SAME
+      // code is returned twice in a row, and require min length 8 to reject
+      // half-read barcodes like "123" that happen to parse.
+      let lastCode = '';
+      let sameHits = 0;
+
       await zxingReader.decodeFromConstraints(
         { video: { facingMode: { ideal: 'environment' } } },
         video,
         (result /*, err, controls*/) => {
-          if (!zxingLiveActive) return;
-          if (result) handleScannedCode(result.getText());
+          if (!zxingLiveActive || !result) return;
+          const text = result.getText();
+          if (!text || text.replace(/\D/g,'').length < 8) return;
+          if (text === lastCode){
+            sameHits++;
+            if (sameHits >= 1){ // 2 identical reads total (first + this one)
+              handleScannedCode(text);
+            }
+          } else {
+            lastCode = text;
+            sameHits = 0;
+          }
         }
       );
       return;
