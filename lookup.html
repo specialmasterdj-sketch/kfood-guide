@@ -1361,16 +1361,18 @@ function showSingleResultById(pid) {
 let videoStream = null;
 let scanInterval = null;
 let zxingReader = null;
+let zxingLiveActive = false;
 
 async function startCamera() {
-  // 삼성/안드로이드(BarcodeDetector 있음): 실시간 스캔
+  const overlay = document.getElementById('camera-overlay');
+  const video = document.getElementById('camera-video');
+
+  // 삼성/안드로이드(BarcodeDetector 있음): 네이티브 실시간 스캔
   if ('BarcodeDetector' in window) {
-    const overlay = document.getElementById('camera-overlay');
     try {
       videoStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
       });
-      const video = document.getElementById('camera-video');
       video.srcObject = videoStream;
       overlay.classList.add('active');
       video.onloadedmetadata = () => startBarcodeDetectorScan(video);
@@ -1380,7 +1382,32 @@ async function startCamera() {
     }
   }
 
-  // 아이폰/기타: 사진 찍어서 ZXing으로 인식 (가장 안정적)
+  // 아이폰 Safari: ZXing을 비디오 스트림에 직접 연결해 실시간 스캔.
+  // getUserMedia는 HTTPS + 사용자 제스처(버튼 클릭) 필요 — 둘 다 충족.
+  if (typeof ZXing !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+    try {
+      overlay.classList.add('active');
+      if (!zxingReader) zxingReader = new ZXing.BrowserMultiFormatReader();
+      zxingLiveActive = true;
+      // decodeFromConstraints attaches the camera stream to the given <video>
+      // and invokes the callback on every successful decode.
+      await zxingReader.decodeFromConstraints(
+        { video: { facingMode: { ideal: 'environment' } } },
+        video,
+        (result /*, err, controls*/) => {
+          if (!zxingLiveActive) return;
+          if (result) handleScannedCode(result.getText());
+        }
+      );
+      return;
+    } catch(e) {
+      zxingLiveActive = false;
+      overlay.classList.remove('active');
+      console.warn('ZXing live scan unavailable:', e);
+    }
+  }
+
+  // 최후 폴백: 사진 찍어서 파일에서 인식
   document.getElementById('barcode-file-input').click();
 }
 
@@ -1448,8 +1475,15 @@ async function handleBarcodeFile(input) {
 
 function stopCamera() {
   if (scanInterval) { clearInterval(scanInterval); scanInterval = null; }
+  zxingLiveActive = false;
   if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); videoStream = null; }
   if (zxingReader) { try { zxingReader.reset(); } catch(e) {} }
+  // ZXing-attached stream lives on the <video> element; clear it too.
+  const v = document.getElementById('camera-video');
+  if (v && v.srcObject){
+    try { v.srcObject.getTracks().forEach(t => t.stop()); } catch(e) {}
+    v.srcObject = null;
+  }
   document.getElementById('camera-overlay').classList.remove('active');
 }
 </script>
