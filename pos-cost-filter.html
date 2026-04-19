@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>POS COST 필터</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f4f0;color:#1a1a1a;min-height:100vh}
+.hdr{background:linear-gradient(135deg,#2e8b57,#1f6a41);color:#fff;padding:20px;text-align:center}
+.hdr h1{font-size:22px;margin-bottom:4px}
+.hdr p{font-size:13px;opacity:.9}
+.pg{max-width:760px;margin:0 auto;padding:18px}
+.card{background:#fff;border-radius:12px;padding:18px;box-shadow:0 2px 10px rgba(0,0,0,.06);margin-bottom:14px}
+.ct{font-size:16px;font-weight:700;margin-bottom:10px;color:#2e8b57}
+.tip{background:#f0f8f4;border-left:4px solid #2e8b57;padding:10px 12px;border-radius:6px;font-size:13px;color:#2c5c3c;margin-bottom:10px;line-height:1.5}
+.drop{border:2.5px dashed #bcd;border-radius:10px;padding:30px 12px;text-align:center;cursor:pointer;position:relative;background:#fafcfb;transition:.15s}
+.drop:hover{border-color:#2e8b57;background:#f0f8f4}
+.drop.over{border-color:#2e8b57;background:#e8f5e9}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.drop .ico{font-size:42px;margin-bottom:6px}
+.drop .ut{font-size:15px;font-weight:600;color:#333;margin-bottom:4px}
+.drop .uh{font-size:12px;color:#888}
+.btn{padding:12px 18px;border:none;border-radius:9px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px}
+.btn-g{background:#2e8b57;color:#fff}
+.btn-g:disabled{background:#ccc;cursor:not-allowed}
+.btn-o{background:#fff;color:#2e8b57;border:1.5px solid #2e8b57}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.stat{background:#f5f8f6;border-radius:8px;padding:12px;text-align:center}
+.stat .n{font-size:22px;font-weight:800;color:#2e8b57}
+.stat .l{font-size:11px;color:#666;margin-top:2px}
+.mapr{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px}
+.mapr label{min-width:90px;font-weight:600}
+.mapr select{flex:1;padding:8px;border:1.5px solid #ccc;border-radius:6px;font-family:inherit;font-size:13px}
+.hidden{display:none!important}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 18px;border-radius:22px;opacity:0;transition:.2s;z-index:999}
+.toast.show{opacity:1}
+.twrap{max-height:360px;overflow:auto;border:1px solid #e0e0e0;border-radius:8px;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#2e8b57;color:#fff;padding:8px;text-align:left;position:sticky;top:0;z-index:1}
+td{padding:6px 8px;border-bottom:1px solid #f0f0f0}
+tr:nth-child(even) td{background:#fafcfb}
+.mono{font-family:monospace}
+.num{text-align:right}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <h1>🧹 POS COST 필터</h1>
+  <p>Vela POS 엑셀에서 COST가 있는 상품만 골라 새 엑셀로 저장</p>
+</div>
+
+<div class="pg">
+
+  <div class="card">
+    <div class="ct">📂 POS 엑셀 업로드</div>
+    <div class="tip">
+      Vela POS에서 내려받은 <b>오늘 최신</b> 엑셀(.xlsx)을 올려주세요.<br>
+      COST 컬럼에 값이 있는 상품만 따로 뽑아 새 파일로 저장합니다.
+    </div>
+    <label class="drop" id="drop">
+      <input type="file" id="pf" accept=".xlsx,.xls,.csv" onchange="onFile(this.files[0])">
+      <div class="ico">📊</div>
+      <div class="ut">엑셀 파일 선택 또는 드래그</div>
+      <div class="uh">.xlsx · .xls · .csv</div>
+    </label>
+  </div>
+
+  <div class="card hidden" id="map-card">
+    <div class="ct">🗂️ 컬럼 확인</div>
+    <div class="tip">자동 감지됨. 필요 시 수정 후 <b>적용</b>.</div>
+    <div class="mapr"><label>원가 (COST)</label><select id="m-cost"></select></div>
+    <button class="btn btn-g" onclick="apply()" style="margin-top:6px;width:100%">✅ 적용 — COST 있는 행만 추출</button>
+  </div>
+
+  <div class="card hidden" id="result-card">
+    <div class="ct">✨ 결과</div>
+    <div class="stats">
+      <div class="stat"><div class="n" id="s-total">0</div><div class="l">전체</div></div>
+      <div class="stat"><div class="n" id="s-cost" style="color:#2e8b57">0</div><div class="l">COST 있음</div></div>
+      <div class="stat"><div class="n" id="s-skip" style="color:#c62828">0</div><div class="l">COST 없음 (제외)</div></div>
+    </div>
+    <button class="btn btn-g" onclick="downloadFiltered()" style="width:100%;margin-bottom:8px">📥 필터된 엑셀 다운로드</button>
+    <div style="font-size:12px;color:#888;margin:6px 0 4px">미리보기 (처음 30행)</div>
+    <div class="twrap">
+      <table id="prev-tbl"><thead></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+function id(x){return document.getElementById(x);}
+function toast(m){const t=id('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
+
+let HEADERS = [];   // [string]
+let ROWS    = [];   // [[cell,cell,...]]
+let FILTERED = [];  // subset of ROWS where COST > 0
+let SRC_NAME = '';
+let COST_COL = -1;
+
+const drop = id('drop');
+drop.addEventListener('dragover', e=>{e.preventDefault();drop.classList.add('over');});
+drop.addEventListener('dragleave', ()=>drop.classList.remove('over'));
+drop.addEventListener('drop', e=>{
+  e.preventDefault();drop.classList.remove('over');
+  const f=e.dataTransfer.files[0]; if(f) onFile(f);
+});
+
+function onFile(f){
+  if (!f) return;
+  SRC_NAME = f.name;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const all = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
+      if (!all.length){ toast('❌ 빈 파일'); return; }
+      HEADERS = all[0].map(h => String(h||'').trim());
+      ROWS    = all.slice(1);
+
+      // Auto-detect COST column (prefer exact "COST"/"cost")
+      const norm = s => s.toLowerCase().replace(/[\s_.-]/g,'');
+      const lc = HEADERS.map(norm);
+      COST_COL = lc.indexOf('cost');
+      if (COST_COL < 0) COST_COL = lc.indexOf('원가');
+      if (COST_COL < 0){
+        // Substring fallback (avoid PRICE)
+        for (let i=0; i<lc.length; i++){
+          if (lc[i].includes('cost') && !lc[i].includes('price')){ COST_COL = i; break; }
+        }
+      }
+
+      // Build select
+      const sel = id('m-cost');
+      sel.innerHTML = HEADERS.map((h,i) => `<option value="${i}">${h||'컬럼'+(i+1)}</option>`).join('');
+      if (COST_COL >= 0) sel.value = COST_COL;
+
+      id('map-card').classList.remove('hidden');
+      toast(`✅ ${ROWS.length.toLocaleString()}개 행 로드됨`);
+    } catch(err){
+      console.error(err);
+      toast('❌ 파일 오류: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function apply(){
+  COST_COL = parseInt(id('m-cost').value);
+  if (isNaN(COST_COL) || COST_COL < 0){ toast('❌ COST 컬럼 선택 필요'); return; }
+
+  FILTERED = ROWS.filter(r => {
+    const v = r[COST_COL];
+    if (v === '' || v == null) return false;
+    const n = parseFloat(String(v).replace(/[$,\s]/g,''));
+    return isFinite(n) && n > 0;
+  });
+
+  id('s-total').textContent = ROWS.length.toLocaleString();
+  id('s-cost').textContent  = FILTERED.length.toLocaleString();
+  id('s-skip').textContent  = (ROWS.length - FILTERED.length).toLocaleString();
+
+  // Preview (first 30)
+  const tbl = id('prev-tbl');
+  tbl.querySelector('thead').innerHTML =
+    '<tr>' + HEADERS.map(h => `<th>${h||''}</th>`).join('') + '</tr>';
+  tbl.querySelector('tbody').innerHTML =
+    FILTERED.slice(0,30).map(r =>
+      '<tr>' + HEADERS.map((_,i) => {
+        const v = r[i] ?? '';
+        const isNum = i === COST_COL || /^-?\d+(\.\d+)?$/.test(String(v));
+        return `<td class="${isNum?'num mono':''}">${String(v)}</td>`;
+      }).join('') + '</tr>'
+    ).join('');
+
+  id('result-card').classList.remove('hidden');
+  id('result-card').scrollIntoView({behavior:'smooth', block:'start'});
+  toast(`✅ ${FILTERED.length.toLocaleString()}개 상품 (COST 있음)`);
+}
+
+function downloadFiltered(){
+  if (!FILTERED.length){ toast('❌ 필터된 행이 없습니다'); return; }
+  const aoa = [HEADERS, ...FILTERED];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'COST_Filtered');
+  const base = SRC_NAME.replace(/\.(xlsx|xls|csv)$/i, '') || 'pos';
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `${base}_cost필터_${today}.xlsx`);
+  toast('✅ 다운로드 완료');
+}
+</script>
+</body>
+</html>
