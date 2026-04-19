@@ -146,6 +146,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="auto" data-t="vendor_auto">🔍 자동 감지 (PDF 내용으로 판단)</option>
         <option value="seoul_trading">Seoul Trading</option>
         <option value="rhee_bros">RHEE BROS</option>
+        <option value="wismettac">Wismettac</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -443,6 +444,11 @@ const VENDORS_PARSER = {
     name: 'RHEE BROS',
     detect: text => /RHEE\s*BROS|RHEEBROS/i.test(text),
     parse: rows => parseRheeBros(rows)
+  },
+  wismettac: {
+    name: 'Wismettac',
+    detect: text => /WISMETTAC|Asian\s*Table\s*Foods|Asian\s*Foods,\s*Inc/i.test(text),
+    parse: rows => parseWismettac(rows)
   },
   generic: {
     name: 'Generic / fallback',
@@ -1425,6 +1431,137 @@ function parseRheeBros(rows){
   });
   if (cur) result.push(cur);
   return result.filter(r => r.eaPrice > 0 || r.casePrice > 0);
+}
+
+/* ===================== WISMETTAC PARSER =====================
+ * Columns (seen in Wismettac Asian Foods invoices):
+ *   No | ITEM# | UPC/CUST.ITEM# | QTY UOM | DESCRIPTION | PACK | TAX | UNIT PRICE | TOTAL
+ * The PDF renders DESCRIPTION cells left-aligned while the header word is
+ * centered/right, so column-boundary parsing misses the description entirely.
+ * Instead we identify each row's tokens by pattern: item code, UPC, qty+uom,
+ * pack-size, tax flag, and two trailing numbers (UNIT PRICE, TOTAL).
+ * Single-row layout — no secondary Korean row.
+ */
+function parseWismettac(rows){
+  const IC  = /^\d{4,7}[A-Z]?$/;        // 25210A, 04308, 162580
+  const UPC = /^\d{11,14}$/;            // 12-13 digit barcode
+  const QTY = /^\d+(?:\.\d+)?\s*(?:CS|Ea|EA|ea|BX|PC)?$/;  // "1.00" or "1.00 CS"
+  // Pack size token: "6/ 8 FZ", "24/ 15.16 OZ", "15 LB", "2/ 24/ 3.52 OZ"
+  const PACK = /^\d+(?:\s*\/\s*\d+(?:\.\d+)?)*\s*(OZ|LB|FZ|ML|CT|PC|G|KG|L)$/i;
+  const TAX = /^(No|Yes)$/i;
+  const NUM = /^\$?\s*\d{1,7}(?:[.,]\d{1,2})?$/;
+  // Junk/non-content tokens to skip in description.
+  const isJunkText = s => !s || /^[|\s$]+$/.test(s) || /^[-·•]+$/.test(s);
+
+  const result = [];
+  let debug = 0;
+
+  rows.forEach(row => {
+    const items = row.items.slice().sort((a,b) => a.x - b.x);
+    const texts = items.map(i => i.text.trim());
+    const joined = texts.join(' ');
+
+    // Must contain an item code AND a UPC to be considered a data row.
+    // (Skips headers, page-footers, sub-totals, address blocks.)
+    const icIdx  = items.findIndex(i => IC.test(i.text.trim()) && i.x < 150);
+    if (icIdx < 0) return;
+    const upcIdx = items.findIndex(i => UPC.test(i.text.trim()));
+    if (upcIdx < 0) return;
+
+    const ic = items[icIdx].text.trim();
+    const bc = items[upcIdx].text.trim();
+
+    // Qty/UOM: first token after UPC that matches QTY regex, or an adjacent
+    // "NUMBER + CS/Ea" pair.
+    let qty = '', uom = '';
+    for (let k = upcIdx + 1; k < items.length; k++){
+      const t = items[k].text.trim();
+      if (!t) continue;
+      const m = t.match(/^(\d+(?:\.\d+)?)\s*(CS|Ea|EA|ea|BX|PC)?$/);
+      if (m){
+        qty = m[1];
+        uom = (m[2] || '').toUpperCase();
+        // If UOM wasn't in the same token, check the next token.
+        if (!uom){
+          const n = items[k+1]?.text?.trim() || '';
+          if (/^(CS|Ea|EA|ea|BX|PC)$/.test(n)){ uom = n.toUpperCase(); }
+        }
+        break;
+      }
+    }
+
+    // PACK: rightmost token matching pack-size regex (before TAX/prices).
+    let packIdx = -1;
+    for (let k = items.length - 1; k >= 0; k--){
+      const t = items[k].text.trim();
+      if (PACK.test(t)){ packIdx = k; break; }
+      // Sometimes pack text is split: "6/" "8 FZ" — try joining with next.
+      if (k + 1 < items.length){
+        const joined2 = (t + ' ' + items[k+1].text.trim()).replace(/\s+/g,' ').trim();
+        if (PACK.test(joined2)){ packIdx = k; break; }
+      }
+    }
+    // Fallback: pack-size regex across whole joined line (last match).
+    let pack = '';
+    if (packIdx >= 0){
+      const t1 = items[packIdx].text.trim();
+      const t2 = (packIdx + 1 < items.length ? items[packIdx+1].text.trim() : '');
+      pack = PACK.test(t1) ? t1 : (t1 + ' ' + t2).replace(/\s+/g,' ').trim();
+    } else {
+      const m = joined.match(/(\d+(?:\s*\/\s*\d+(?:\.\d+)?)*\s*(?:OZ|LB|FZ|ML|CT|PC|G|KG|L))\s*(?:No|Yes)\b/i);
+      if (m) pack = m[1].trim();
+    }
+
+    // Trailing numbers: the last two plain numbers on the row are UNIT PRICE and TOTAL.
+    const numTokens = items.filter(i => NUM.test(i.text.trim()) && !UPC.test(i.text.trim()) && !IC.test(i.text.trim()));
+    const total = numTokens.length >= 1 ? parseFloat(numTokens[numTokens.length-1].text.replace(/[$,]/g,'')) : 0;
+    const price = numTokens.length >= 2 ? parseFloat(numTokens[numTokens.length-2].text.replace(/[$,]/g,'')) : 0;
+
+    // DESCRIPTION: tokens between (qty/uom) and pack, excluding No/Yes and numbers.
+    // Find a reasonable start index — after the qty token.
+    let descStart = upcIdx + 1;
+    for (let k = upcIdx + 1; k < items.length; k++){
+      const t = items[k].text.trim();
+      if (!t) { descStart = k + 1; continue; }  // whitespace token, skip
+      // Advance past: bare number, bare UOM letters, or merged "N CS/Ea"
+      if (/^(\d+(?:\.\d+)?)$/.test(t)) { descStart = k + 1; continue; }
+      if (/^(CS|Ea|EA|ea|BX|PC)$/.test(t)) { descStart = k + 1; continue; }
+      if (/^\d+(?:\.\d+)?\s*(CS|Ea|EA|ea|BX|PC)$/.test(t)) { descStart = k + 1; continue; }
+      break;
+    }
+    const descEnd = packIdx >= 0 ? packIdx : items.length;
+    const descTokens = items.slice(descStart, descEnd)
+      .map(i => i.text.trim())
+      .filter(t => {
+        if (isJunkText(t)) return false;
+        if (TAX.test(t)) return false;
+        if (NUM.test(t)) return false;
+        if (UPC.test(t)) return false;
+        return /[A-Za-z]/.test(t);
+      });
+    const desc = descTokens.join(' ').replace(/\s+/g,' ').trim();
+
+    if (debug < 3){
+      console.log('[wismettac] row', ic, { bc, qty, uom, desc, pack, price, total });
+      debug++;
+    }
+
+    const name = desc + (pack ? ' ' + pack : '');
+    if (!name.trim() || !price) return;
+
+    const isEa = /^EA$/i.test(uom);
+    result.push({
+      vendorCode: ic,
+      name: name.trim(),
+      barcode: bc,
+      eaPrice:   isEa ? price : 0,
+      casePrice: isEa ? 0     : price,
+      qty, unit: uom,
+      total
+    });
+  });
+
+  return result;
 }
 
 function parseInvoiceRows(rows){
