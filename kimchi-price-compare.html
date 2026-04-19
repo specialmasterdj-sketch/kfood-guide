@@ -213,7 +213,7 @@ table.rv tr:hover td{background:#fafffe}
     <div class="mr"><span class="ml">🏷️ 상품명</span><select id="pm-name"></select></div>
     <div class="mr"><span class="ml">🔢 바코드</span><select id="pm-bc"></select></div>
     <div class="mr"><span class="ml">🏢 벤더코드</span><select id="pm-vc"></select></div>
-    <div class="mr"><span class="ml">💰 가격</span><select id="pm-pr"></select></div>
+    <div class="mr"><span class="ml">💰 원가(COST)</span><select id="pm-pr"></select></div>
     <div class="mr"><span class="ml">📦 단위</span><select id="pm-un"></select></div>
     <button class="btn btn-g" onclick="applyPos()" style="margin-top:10px">✅ 적용</button>
   </div>
@@ -355,7 +355,7 @@ table.rv tr:hover td{background:#fafffe}
   <!-- Match quality indicator -->
   <div style="background:#e8f5e9;border-radius:9px;padding:9px 14px;margin-bottom:12px;font-size:12px;color:#2e7d32;font-weight:600">
     🔗 <span id="match-stats">-</span>
-    <span style="color:#888;font-weight:400;margin-left:8px">· 비교기준: POS 가격 vs 인보이스 EA Price</span>
+    <span style="color:#888;font-weight:400;margin-left:8px">· 비교기준: POS 원가(COST) vs 인보이스 EA Price · 매칭: 바코드 → 코드 폴백</span>
   </div>
 
   <div class="brow">
@@ -922,21 +922,29 @@ function runCmp(){
     const same=[];      // barcode matched but same price
     let bcMatchCount=0;
 
+    let vcMatchCount=0;
+
     S.posData.forEach(pos=>{
       const posBC=normBC(pos.barcode);
-      if(posBC.length<8) return; // skip POS items without valid barcode
+      const posVC=(pos.vendorCode||'').toUpperCase().trim();
 
-      // ── BARCODE ONLY matching ──────────────────────────────────
-      if(!byBC.has(posBC)) return; // no barcode match → skip entirely
-      const f=byBC.get(posBC);
-      if(used.has(f.i)) return;
+      // ── Try barcode match first, then vendor code fallback ───
+      let f = null, via = '';
+      if (posBC.length >= 8 && byBC.has(posBC)) {
+        f = byBC.get(posBC);
+        via = '바코드';
+      } else if (posVC && byVC.has(posVC)) {
+        f = byVC.get(posVC);
+        via = '코드';
+      }
+      if (!f) return;
+      if (used.has(f.i)) return;
       used.add(f.i);
-      bcMatchCount++;
+      if (via === '바코드') bcMatchCount++; else vcMatchCount++;
 
       const inv=f.d;
       const diff=inv.eaPrice - pos.price;
       const pct=pos.price>0 ? diff/pos.price*100 : 0;
-      const bestBC=posBC;
 
       const invBC = normBC(inv.barcode);
       const row={
@@ -944,11 +952,11 @@ function runCmp(){
         invName:     inv.name,
         posBarcode:  posBC,                                  // POS 바코드
         invBarcode:  invBC,                                  // 인보이스 바코드
-        barcode:     bestBC,
+        barcode:     posBC || invBC,
         invVendorCode:(inv.vendorCode||'').toUpperCase(),    // ItemCode from invoice
         vendorCode:  (pos.vendorCode||inv.vendorCode||'').toUpperCase(),
         posPrice:pos.price, invEA:inv.eaPrice, invCase:inv.casePrice||0,
-        diff, pct, via:'바코드',
+        diff, pct, via,
         status:Math.abs(diff)<0.005?'same':(diff>0?'up':'down')
       };
 
@@ -1030,7 +1038,7 @@ function renderResults(data){
     if(r.status==='unmatched'){
       priceHtml=`
         <div class="price-box" style="background:#fff8f0;border:1px solid #ffe0b2;border-radius:8px;padding:10px 12px;margin-top:6px">
-          <div class="pinfo">현재 POS 가격: <b>$${r.posPrice.toFixed(2)}</b></div>
+          <div class="pinfo">현재 POS 원가: <b>$${r.posPrice.toFixed(2)}</b></div>
           <div style="font-size:11px;color:#bbb;margin-top:3px">이번 인보이스에 없음</div>
         </div>`;
     } else if(r.status==='new-item'){
@@ -1188,17 +1196,27 @@ function fillSelects(pfx,headers,fields){
 }
 
 function autoMap(pfx,headers){
+  // Prefer COST for POS mapping since the compare target is invoice EA price
+  // (cost-side), not retail selling price. If the sheet has both a 'cost' and
+  // a 'price' column, pick the cost column.
   const P={name:['name','상품','item desc','description','desc','product','품명','제품','item name','item description'],
     bc:['barcode','upc','ean','바코드','plu','scan code'],
     vc:['itemcode','item code','item #','item no','sku','vendor code','품번','code'],
-    pr:['price','가격','단가','unit price','원가','selling','retail','cost'],
+    pr:['cost','원가','cost price','costprice','buy price','unit cost','avg cost','price','가격','단가','unit price','selling','retail'],
     un:['uom','unit','단위','pack','size']};
   headers.forEach((h,i)=>{
     const hl=(h||'').toLowerCase();
     Object.entries(P).forEach(([f,ps])=>{
-      const el=id(pfx+'-'+f); if(!el||el.value!=='')return;
-      if(ps.some(p=>hl===p)){el.value=i;}
-      else if(ps.some(p=>hl.includes(p))){el.value=i;}
+      const el=id(pfx+'-'+f); if(!el)return;
+      // Pick the FIRST header that matches exactly; if only a substring match
+      // exists keep that as a fallback but let a later exact match win.
+      const exact = ps.some(p=>hl===p);
+      const inc = !exact && ps.some(p=>hl.includes(p));
+      if(!exact && !inc) return;
+      if(el.value === '' || (exact && el.dataset.matchKind !== 'exact')){
+        el.value = i;
+        el.dataset.matchKind = exact ? 'exact' : 'inc';
+      }
     });
   });
 }
