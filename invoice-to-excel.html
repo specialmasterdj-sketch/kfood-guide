@@ -1433,30 +1433,42 @@ function parseRheeBros(rows){
   return result.filter(r => r.eaPrice > 0 || r.casePrice > 0);
 }
 
-/* ===================== WISMETTAC PARSER =====================
- * Columns (seen in Wismettac Asian Foods invoices):
- *   No | ITEM# | UPC/CUST.ITEM# | QTY UOM | DESCRIPTION | PACK | TAX | UNIT PRICE | TOTAL
- * The PDF renders DESCRIPTION cells left-aligned while the header word is
- * centered/right, so column-boundary parsing misses the description entirely.
- * Instead we identify each row's tokens by pattern: item code, UPC, qty+uom,
- * pack-size, tax flag, and two trailing numbers (UNIT PRICE, TOTAL).
- * Single-row layout — no secondary Korean row.
+/* ===================== WISMETTAC / NISHIMOTO PARSER =====================
+ * Two close variants of the Wismettac/Nishimoto Orlando invoice template:
+ *   - Wismettac:  ...UNIT PRICE | TOTAL              (2 trailing prices)
+ *   - Nishimoto:  ...Unit Price | TOTAL | Unit Pr(EA)  (3 trailing prices)
+ * Detected by header row — "pr(ea)" / "srp" / "unit pr" -> 3-price layout.
+ *
+ * Description may wrap onto the adjacent PDF text-row (above/below) when the
+ * product name is longer than the cell. When the main row's description is
+ * empty or just a pack-size token, merge English text from neighboring rows.
+ *
+ * Column boundary parsing won't work here because header X-positions are
+ * right-aligned while data is left-aligned, so we identify tokens by pattern.
  */
 function parseWismettac(rows){
-  const IC  = /^\d{4,7}[A-Z]?$/;        // 25210A, 04308, 162580
-  const UPC = /^\d{11,14}$/;            // 12-13 digit barcode
-  const QTY = /^\d+(?:\.\d+)?\s*(?:CS|Ea|EA|ea|BX|PC)?$/;  // "1.00" or "1.00 CS"
-  // Pack size token: "6/ 8 FZ", "24/ 15.16 OZ", "15 LB", "2/ 24/ 3.52 OZ"
+  const IC  = /^\d{4,7}[A-Z]?$/;
+  const UPC = /^\d{11,14}$/;
   const PACK = /^\d+(?:\s*\/\s*\d+(?:\.\d+)?)*\s*(OZ|LB|FZ|ML|CT|PC|G|KG|L)$/i;
   const TAX = /^(No|Yes)$/i;
   const NUM = /^\$?\s*\d{1,7}(?:[.,]\d{1,2})?$/;
-  // Junk/non-content tokens to skip in description.
   const isJunkText = s => !s || /^[|\s$]+$/.test(s) || /^[-·•]+$/.test(s);
+
+  // Detect 3-price (Nishimoto) vs 2-price (Wismettac) layout by header.
+  let threePriceLayout = false;
+  for (const r of rows){
+    const txt = r.items.map(i => i.text.toLowerCase()).join(' ');
+    if (/item\s*#/.test(txt) && /description/.test(txt)){
+      if (/pr\s*\(\s*ea\s*\)|\bsrp\b|unit\s*pr/.test(txt)) threePriceLayout = true;
+      break;
+    }
+  }
+  console.log('[wismettac] layout:', threePriceLayout ? '3-price (Nishimoto)' : '2-price (Wismettac)');
 
   const result = [];
   let debug = 0;
 
-  rows.forEach(row => {
+  rows.forEach((row, rowIdx) => {
     const items = row.items.slice().sort((a,b) => a.x - b.x);
     const texts = items.map(i => i.text.trim());
     const joined = texts.join(' ');
@@ -1472,7 +1484,7 @@ function parseWismettac(rows){
     const bc = items[upcIdx].text.trim();
 
     // Qty/UOM: first token after UPC that matches QTY regex, or an adjacent
-    // "NUMBER + CS/Ea" pair.
+    // "NUMBER + CS/Ea" pair. Skip whitespace tokens when looking ahead for UOM.
     let qty = '', uom = '';
     for (let k = upcIdx + 1; k < items.length; k++){
       const t = items[k].text.trim();
@@ -1481,10 +1493,14 @@ function parseWismettac(rows){
       if (m){
         qty = m[1];
         uom = (m[2] || '').toUpperCase();
-        // If UOM wasn't in the same token, check the next token.
+        // UOM may be in a separate token, past any whitespace spacers.
         if (!uom){
-          const n = items[k+1]?.text?.trim() || '';
-          if (/^(CS|Ea|EA|ea|BX|PC)$/.test(n)){ uom = n.toUpperCase(); }
+          for (let j = k + 1; j < Math.min(items.length, k + 5); j++){
+            const n = items[j]?.text?.trim() || '';
+            if (!n) continue;
+            if (/^(CS|Ea|EA|ea|BX|PC)$/.test(n)){ uom = n.toUpperCase(); }
+            break;
+          }
         }
         break;
       }
@@ -1514,8 +1530,15 @@ function parseWismettac(rows){
 
     // Trailing numbers: the last two plain numbers on the row are UNIT PRICE and TOTAL.
     const numTokens = items.filter(i => NUM.test(i.text.trim()) && !UPC.test(i.text.trim()) && !IC.test(i.text.trim()));
-    const total = numTokens.length >= 1 ? parseFloat(numTokens[numTokens.length-1].text.replace(/[$,]/g,'')) : 0;
-    const price = numTokens.length >= 2 ? parseFloat(numTokens[numTokens.length-2].text.replace(/[$,]/g,'')) : 0;
+    const pickNum = idx => {
+      const tok = numTokens[numTokens.length + idx];
+      return tok ? parseFloat(tok.text.replace(/[$,]/g,'')) || 0 : 0;
+    };
+    // 3-price layout:  ... [unitPrice] [TOTAL] [Pr(EA)]
+    // 2-price layout:  ... [unitPrice] [TOTAL]
+    const eaUnitFromCol = threePriceLayout ? pickNum(-1) : 0;
+    const total         = threePriceLayout ? pickNum(-2) : pickNum(-1);
+    const price         = threePriceLayout ? pickNum(-3) : pickNum(-2);
 
     // DESCRIPTION: tokens between (qty/uom) and pack, excluding No/Yes and numbers.
     // Find a reasonable start index — after the qty token.
@@ -1539,10 +1562,33 @@ function parseWismettac(rows){
         if (UPC.test(t)) return false;
         return /[A-Za-z]/.test(t);
       });
-    const desc = descTokens.join(' ').replace(/\s+/g,' ').trim();
+    let desc = descTokens.join(' ').replace(/\s+/g,' ').trim();
+
+    // Fallback: if description on main row is empty or just pack-like, pull
+    // English text from the row immediately above and below (the PDF wraps
+    // long product names onto neighboring text-rows in the Nishimoto layout).
+    const looksBlank = !desc || PACK.test(desc) || /^[\d\/\s.]+$/.test(desc);
+    if (looksBlank){
+      const collectAdj = (idx) => {
+        if (idx < 0 || idx >= rows.length) return '';
+        const adjItems = rows[idx].items;
+        // Skip if the neighboring row is ITSELF a data row (has IC).
+        if (adjItems.some(it => IC.test(it.text.trim()) && it.x < 150)) return '';
+        // Skip if it contains a UPC (that would be another invoice row).
+        if (adjItems.some(it => UPC.test(it.text.trim()))) return '';
+        return adjItems
+          .map(it => it.text.trim())
+          .filter(t => t && !TAX.test(t) && !NUM.test(t) && !UPC.test(t) && /[A-Za-z]/.test(t))
+          .join(' ').trim();
+      };
+      const above = collectAdj(rowIdx - 1);
+      const below = collectAdj(rowIdx + 1);
+      const merged = [above, desc, below].filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
+      if (merged) desc = merged;
+    }
 
     if (debug < 3){
-      console.log('[wismettac] row', ic, { bc, qty, uom, desc, pack, price, total });
+      console.log('[wismettac] row', ic, { bc, qty, uom, desc, pack, price, total, eaUnitFromCol });
       debug++;
     }
 
@@ -1550,12 +1596,19 @@ function parseWismettac(rows){
     if (!name.trim() || !price) return;
 
     const isEa = /^EA$/i.test(uom);
+    // In 3-price layout Pr(EA) is the per-unit-inside-case price (explicit
+    // column). In 2-price layout we derive it from UOM.
+    const eaPriceOut = threePriceLayout
+      ? (eaUnitFromCol || (isEa ? price : 0))
+      : (isEa ? price : 0);
+    const casePriceOut = isEa ? 0 : price;
+
     result.push({
       vendorCode: ic,
       name: name.trim(),
       barcode: bc,
-      eaPrice:   isEa ? price : 0,
-      casePrice: isEa ? 0     : price,
+      eaPrice:   eaPriceOut,
+      casePrice: casePriceOut,
       qty, unit: uom,
       total
     });
