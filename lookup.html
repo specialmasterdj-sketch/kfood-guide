@@ -824,6 +824,12 @@ function onUpdateFile(inp) {
       PRODUCTS_DATA = products;
       buildIndexes();
       updateBadge(today, products.length);
+
+      // Cross-device sync: push to Firebase so other phones on this branch
+      // get the new POS data without re-uploading.
+      if (typeof window.cloudPushProducts === 'function'){
+        try { window.cloudPushProducts(CURRENT_BRANCH, payload); } catch(e){ console.warn('cloud push failed', e); }
+      }
       const branchName = BRANCH_BY_ID[CURRENT_BRANCH]?.ko || CURRENT_BRANCH;
       document.getElementById('status-bar').innerHTML =
         `<b>${branchName}</b> · 상품 <strong>${products.length}</strong>개 등록됨 · 스캔 또는 입력으로 시작하세요`;
@@ -1503,6 +1509,80 @@ function stopCamera() {
   }
   document.getElementById('camera-overlay').classList.remove('active');
 }
+</script>
+
+<!-- ===== FIREBASE REAL-TIME POS DATA SYNC =====
+One manager uploads the daily POS Excel on their phone; every other phone
+on the same branch picks up the new prices automatically. Payload is the
+same shape as localStorage (timestamp + date + rows), so the same loader
+works for both caches.
+-->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getDatabase, ref, set, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+  projectId: "kimchi-mart-order",
+  storageBucket: "kimchi-mart-order.firebasestorage.app",
+  messagingSenderId: "640942647201",
+  appId: "1:640942647201:web:1e3421fb55c89155230de0"
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+function prodPath(branchId){ return 'products/' + branchId; }
+
+let currentSub = null;
+let unsub = null;
+let applyingRemote = false;
+
+window.cloudPushProducts = function(branchId, payload){
+  if (!branchId || !payload || applyingRemote) return;
+  set(ref(db, prodPath(branchId)), payload)
+    .then(() => console.info('[Firebase] products pushed for', branchId, payload.count))
+    .catch(e => console.warn('cloud push failed', e));
+};
+
+function subscribeProducts(branchId){
+  if (unsub){ try { unsub(); } catch(e){} unsub = null; }
+  currentSub = branchId;
+  if (!branchId) return;
+  unsub = onValue(ref(db, prodPath(branchId)), (snap) => {
+    const remote = snap.val();
+    if (!remote || !Array.isArray(remote.rows) || !remote.rows.length) return;
+    // Compare with local override; use newer one.
+    let localTs = 0;
+    try {
+      const raw = localStorage.getItem('kimchi-products-override-' + branchId);
+      if (raw){ const obj = JSON.parse(raw); localTs = obj?.timestamp || 0; }
+    } catch(e){}
+    if (remote.timestamp <= localTs) return; // our local is up-to-date or newer
+
+    // Write to localStorage and reload so the existing loadOverride IIFE
+    // picks up the new data cleanly (PRODUCTS_DATA is a `let` and can't be
+    // reassigned from this module).
+    try {
+      localStorage.setItem('kimchi-products-override-' + branchId, JSON.stringify(remote));
+      console.info('[Firebase] remote products newer, reloading:', remote.count, 'ts=', remote.timestamp);
+      location.reload();
+    } catch(e){ console.warn('remote cache save failed', e); }
+  }, (err) => console.warn('cloud read failed', err));
+}
+
+// Subscribe to the current branch; resubscribe when setBranch is called.
+if (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) subscribeProducts(CURRENT_BRANCH);
+const origSetBranch = window.setBranch;
+window.setBranch = function(id){
+  origSetBranch && origSetBranch(id);
+  // setBranch reloads the page for other state, so this resubscribe only
+  // matters if the caller skipped reload.
+  if (id && id !== currentSub) subscribeProducts(id);
+};
+
+console.info('[Firebase] POS data sync active');
 </script>
 
 </body></html>
