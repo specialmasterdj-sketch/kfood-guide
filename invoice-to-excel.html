@@ -174,6 +174,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="seoul_trading">Seoul Trading</option>
         <option value="rhee_bros">RHEE BROS</option>
         <option value="wismettac">Wismettac</option>
+        <option value="jfc">JFC International</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -476,6 +477,11 @@ const VENDORS_PARSER = {
     name: 'Wismettac',
     detect: text => /WISMETTAC|Asian\s*Table\s*Foods|Asian\s*Foods,\s*Inc/i.test(text),
     parse: rows => parseWismettac(rows)
+  },
+  jfc: {
+    name: 'JFC International',
+    detect: text => /JFC\s*INTERNATIONAL|JFC\s*APP|POMPANO\s*BEACH/i.test(text),
+    parse: rows => parseJFC(rows)
   },
   generic: {
     name: 'Generic / fallback',
@@ -1806,6 +1812,105 @@ function parseWismettac(rows){
   });
 
   return result;
+}
+
+/* ===================== JFC INTERNATIONAL PARSER =====================
+ * JFC invoices are scanned/image PDFs with no embedded text, so the rows
+ * array we receive comes from OCR. The text is noisy and misaligned, so
+ * column-boundary parsing won't work — we match patterns line-by-line.
+ *
+ * Line format (left→right):
+ *   UPC (12-13 digit barcode, may be space-split)  SLOT (FE11C...)  ITEM# (5 digits)
+ *   QTY_CS  QTY_EA  DESCRIPTION  PACK (N/M UNIT or N/M/K UNIT)  EACHES  EACH_PRICE  UNIT_PRICE  AMOUNT
+ *
+ * For price-compare we keep: vendorCode (ITEM#), barcode (UPC), name
+ * (DESCRIPTION + pack), eaPrice (EACH_PRICE per unit), casePrice
+ * (UNIT_PRICE per case) and total (AMOUNT).
+ */
+function parseJFC(rows){
+  // OCR's unit tokens often corrupt O → 0, so include "0z" variants.
+  const PACK_RE = /(\d+(?:\s*\/\s*\d+(?:\.\d+)?)+)\s*(OZ|LB|FZ|ML|KG|CT|Z|LZ|[Oo]z|[Ff]z|0z|0Z|#)/i;
+  const NUM_RE  = /\d+(?:\.\d{1,2})?/g;
+
+  const out = [];
+  rows.forEach(row => {
+    // Join the row's tokens into a text line we can regex over.
+    const line = row.items
+      .map(i => i.text || '')
+      .join(' ')
+      .replace(/[|\[\]`~"']/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!line) return;
+
+    const pm = line.match(PACK_RE);
+    if (!pm) return;
+    const pack = pm[0].trim();
+    const packStart = pm.index;
+    const packEnd = pm.index + pm[0].length;
+    const leadArea  = line.substring(0, packStart).trim();
+    const priceArea = line.substring(packEnd).trim();
+
+    // Price area: expect 3-4 numbers [eaches] eachPrice unitPrice amount.
+    const pnums = (priceArea.match(NUM_RE) || []).map(s => parseFloat(s));
+    if (pnums.length < 3) return;
+    let eaches, eachPrice, unitPrice, amount;
+    if (pnums.length >= 4){
+      [eaches, eachPrice, unitPrice, amount] = pnums;
+    } else {
+      [eachPrice, unitPrice, amount] = pnums;
+      // eaches not shown on this line — derive from pack's first number.
+      const pm2 = pack.match(/^(\d+)/);
+      eaches = pm2 ? parseFloat(pm2[1]) : 0;
+    }
+
+    // UPC: collect first run of 11-13 digits from lead area (tolerating spaces).
+    let upc = '';
+    const collect = [];
+    for (const ch of leadArea){
+      if (/\d/.test(ch)) collect.push(ch);
+      else if (collect.length >= 11) break;
+      else if (collect.length > 0 && /\s/.test(ch)) continue;
+      else if (collect.length > 0) collect.length = 0;
+    }
+    if (collect.length >= 11) upc = collect.slice(0, Math.min(13, collect.length)).join('');
+
+    // ITEM# is the last 5-digit number in lead area that isn't part of the UPC.
+    let item = '';
+    const fives = [...leadArea.matchAll(/\b\d{5}\b/g)].map(m => m[0]);
+    if (fives.length){
+      for (let i = fives.length - 1; i >= 0; i--){
+        if (!upc.includes(fives[i])){ item = fives[i]; break; }
+      }
+      if (!item) item = fives[fives.length - 1];
+    }
+    if (!item){
+      // Fallback for 4-6 digit codes.
+      const any = [...leadArea.matchAll(/\b\d{4,6}\b/g)].map(m => m[0]);
+      if (any.length) item = any[any.length - 1];
+    }
+
+    // Description: text after ITEM# in lead area, stripped of leading qty digits.
+    let desc = leadArea;
+    if (item){
+      const idx = leadArea.lastIndexOf(item);
+      if (idx >= 0) desc = leadArea.substring(idx + item.length);
+    }
+    desc = desc.replace(/^[\s\d]+/, '').trim();
+
+    if (!item || !amount) return;
+    out.push({
+      vendorCode: item,
+      barcode:    upc,
+      name:       (desc + ' ' + pack).trim(),
+      eaPrice:    eachPrice,
+      casePrice:  unitPrice,
+      total:      amount,
+      qty:        '',
+      unit:       ''
+    });
+  });
+  return out;
 }
 
 function parseInvoiceRows(rows){
