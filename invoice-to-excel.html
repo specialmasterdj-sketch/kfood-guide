@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>인보이스 PDF/사진 → 엑셀 변환</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f4f0;color:#1a1a1a;min-height:100vh}
+
+/* HEADER */
+.hdr{background:linear-gradient(135deg,#1a5c3a,#2e8b57);color:#fff;padding:14px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.hdr h1{font-size:19px;font-weight:900}
+.hdr p{font-size:11px;opacity:.8;margin-top:2px}
+
+.pg{padding:14px;max-width:900px;margin:0 auto}
+
+/* CARD */
+.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+.ct{font-size:15px;font-weight:800;color:#1a5c3a;margin-bottom:11px}
+
+/* UPLOAD */
+.drop{border:2.5px dashed #b0d0b8;border-radius:12px;padding:40px 20px;text-align:center;cursor:pointer;transition:all .2s;background:#fafcfa;position:relative}
+.drop:hover,.drop.over{border-color:#1a5c3a;background:#edf7f0}
+.drop .ico{font-size:48px;margin-bottom:10px}
+.drop .ut{font-size:16px;font-weight:700;color:#333}
+.drop .uh{font-size:12px;color:#aaa;margin-top:5px}
+.drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+
+/* FILE LIST */
+.flist{margin-top:12px}
+.fitem{display:flex;align-items:center;gap:10px;background:#edf7f0;border-radius:9px;padding:10px 13px;margin-bottom:7px}
+.fitem .fn{flex:1;font-weight:700;font-size:13px;word-break:break-all}
+.fitem .fs{font-size:11px;color:#888}
+.fitem .rm{background:none;border:none;color:#ccc;cursor:pointer;font-size:18px;padding:0 4px}
+.fitem .rm:hover{color:#e53935}
+.fitem .st{font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.st-wait{background:#fff3e0;color:#e65100}
+.st-ok{background:#e8f5e9;color:#2e7d32}
+.st-err{background:#ffebee;color:#c62828}
+
+/* PROGRESS */
+.pbar{height:6px;background:#e0e0e0;border-radius:4px;overflow:hidden;margin:8px 0}
+.pfill{height:100%;background:linear-gradient(90deg,#1a5c3a,#4caf50);transition:width .3s;border-radius:4px}
+.pst{font-size:12px;color:#666;margin-top:3px}
+
+/* BUTTONS */
+.btn{display:inline-block;padding:13px 20px;border-radius:9px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;text-align:center}
+.btn-g{background:#1a5c3a;color:#fff;width:100%}
+.btn-g:hover{background:#154d30}
+.btn-g:disabled{background:#a8c8b4;cursor:not-allowed}
+.btn-o{background:transparent;border:2px solid #1a5c3a;color:#1a5c3a}
+.btn-o:hover{background:#edf7f0}
+.btn-gray{background:#eee;color:#444}
+.brow{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.brow .btn{flex:1;min-width:120px;padding:11px}
+
+/* STATS BAR */
+.sbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.sc{background:#f5f5f5;border-radius:8px;padding:8px 14px;font-size:13px;text-align:center;flex:1;min-width:80px}
+.sc b{display:block;font-size:20px;font-weight:900;color:#1a5c3a}
+
+/* GRID */
+.grid-wrap{overflow-x:auto;border-radius:10px;border:1px solid #d0e8d8}
+.grid{border-collapse:collapse;font-size:12px;min-width:700px;width:100%}
+.grid th{background:#1a5c3a;color:#fff;padding:9px 10px;text-align:left;font-weight:700;white-space:nowrap;position:sticky;top:0;z-index:10}
+.grid th .th-inner{display:flex;align-items:center;gap:4px}
+.grid th input.hd{background:rgba(255,255,255,.15);border:none;border-bottom:1px solid rgba(255,255,255,.4);color:#fff;font-weight:700;font-size:12px;padding:2px 4px;width:100%;outline:none}
+.grid th input.hd::placeholder{color:rgba(255,255,255,.5)}
+.grid td{padding:0;border-bottom:1px solid #f0f0f0}
+.grid tr:last-child td{border-bottom:none}
+.grid tr:hover td{background:#f8fdf8}
+.grid td input{border:none;padding:7px 9px;width:100%;font-size:12px;background:transparent;outline:none;font-family:inherit}
+.grid td input:focus{background:#fffde7;border-bottom:2px solid #1a5c3a}
+.grid td input.mono{font-family:monospace}
+.grid td input.num{text-align:right}
+.del-col{width:32px;min-width:32px}
+.del-col button{background:none;border:none;color:#ccc;cursor:pointer;padding:4px 8px;font-size:14px}
+.del-col button:hover{color:#e53935}
+.act-col{width:58px;min-width:58px;white-space:nowrap;text-align:center}
+.act-col button{background:none;border:none;cursor:pointer;padding:4px 5px;font-size:14px;border-radius:4px}
+.act-col .ibtn{color:#4caf50;font-weight:800}
+.act-col .ibtn:hover{color:#1b5e20;background:#e8f5e9}
+.act-col .dbtn{color:#ccc}
+.act-col .dbtn:hover{color:#e53935;background:#ffebee}
+.add-btn{width:100%;padding:9px;border:none;background:#f0f7f0;color:#1a5c3a;font-weight:700;cursor:pointer;font-size:13px}
+.add-btn:hover{background:#e0f0e0}
+
+/* HIGHLIGHT — rows with missing data */
+.grid tr.warn td{background:#fffde7}
+.grid tr.warn td input{background:transparent}
+
+/* TOAST */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:10px 22px;border-radius:22px;font-size:13px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;max-width:94vw;text-align:center}
+.toast.show{opacity:1}
+
+/* LOADING */
+.loading{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;justify-content:center;align-items:center;flex-direction:column}
+.loading.show{display:flex}
+.spin{width:44px;height:44px;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:sp .75s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.lt{color:#fff;margin-top:12px;font-size:14px;font-weight:600}
+
+/* TIPS */
+.tip{background:#e8f5e9;border-left:3px solid #4caf50;padding:9px 12px;border-radius:6px;font-size:12px;color:#1b5e20;margin:8px 0;line-height:1.6}
+.tip b{color:#1a5c3a}
+.hidden{display:none!important}
+.fin{animation:fi .25s ease}
+@keyframes fi{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* COLUMN SETUP */
+.col-setup{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.col-tag{padding:5px 11px;border-radius:20px;font-size:12px;cursor:pointer;border:1px solid #ddd;background:#fff;transition:all .2s;font-weight:600;user-select:none}
+.col-tag.on{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+
+/* EMPTY STATE */
+.empty{text-align:center;color:#bbb;padding:50px 20px;font-size:14px}
+
+/* MULTI-PAGE NOTE */
+.page-note{font-size:11px;color:#aaa;text-align:right;margin-top:5px}
+</style>
+</head>
+<body>
+
+<div class="loading" id="ld"><div class="spin"></div><div class="lt" id="lt">PDF 읽는 중...</div></div>
+<div class="toast" id="toast"></div>
+
+<div class="hdr">
+  <h1>📄 인보이스 PDF/사진 → 엑셀 변환</h1>
+  <p>PDF · 사진(JPG/PNG) 인보이스를 자동으로 엑셀로 변환합니다</p>
+</div>
+
+<div class="pg">
+
+  <!-- UPLOAD -->
+  <div class="card fin">
+    <div class="ct">📂 PDF · 사진 업로드</div>
+    <div class="tip">
+      <b>자동 추출 항목:</b> 벤더코드 · 영어 상품명 · 바코드 · EA Price · 박스가격 · 수량 · 단위<br>
+      <b>지원 파일:</b> PDF · JPG · PNG · WEBP (여러 파일 동시 업로드 가능)
+    </div>
+    <div class="tip" style="background:#fff8e1;border-left-color:#ff9800;color:#5d4037">
+      <b>⚠️ 정확도 순서:</b> 벤더 원본 PDF &gt;&gt; 폰 <b>'문서 스캔'</b> PDF &gt; 사진 OCR<br>
+      <b>🥇 최고 정확도:</b> iPhone 메모 앱 → '문서 스캔' · Android 드라이브 → '스캔'으로
+      PDF 만들어 올리세요 (자동 기울기 보정 + 선명도 향상 → PDF 경로로 100% 추출).<br>
+      <b>📷 사진 직접 업로드 시:</b> 정면·밝게·흔들림 없이 · 글자가 또렷해야 합니다.
+    </div>
+    <div class="drop" id="drop">
+      <div class="ico">📑📷</div>
+      <div class="ut">PDF 또는 사진을 여기에 드래그하거나 클릭하세요</div>
+      <div class="uh">여러 파일 동시 선택 가능 · 최대 20MB/파일</div>
+      <input type="file" id="pf" accept=".pdf,image/*" multiple onchange="onFiles(this.files)">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <label class="btn btn-o" style="flex:1;cursor:pointer;position:relative;min-width:140px">
+        📷 카메라로 촬영
+        <input type="file" accept="image/*" capture="environment" multiple
+          style="position:absolute;inset:0;opacity:0;cursor:pointer"
+          onchange="onFiles(this.files)">
+      </label>
+      <label class="btn btn-o" style="flex:1;cursor:pointer;position:relative;min-width:140px">
+        🖼 갤러리에서 선택
+        <input type="file" accept="image/*" multiple
+          style="position:absolute;inset:0;opacity:0;cursor:pointer"
+          onchange="onFiles(this.files)">
+      </label>
+    </div>
+    <div id="flist" class="flist"></div>
+    <button class="btn btn-g" id="extract-btn" onclick="extractAll()" style="margin-top:12px" disabled>
+      🔍 데이터 추출 시작
+    </button>
+  </div>
+
+  <!-- OCR DEBUG (shown when 0 items from image) -->
+  <div class="card hidden fin" id="ocr-debug">
+    <div class="ct">🔎 OCR 원본 텍스트 (추출 실패 시 확인용)</div>
+    <div class="tip">
+      사진의 기울기 · 흐림 · 해상도 문제로 항목이 인식되지 않았을 수 있습니다.
+      아래 텍스트를 확인하고, 필요하면 <b>＋ 행 추가</b>로 직접 입력하거나
+      더 선명한 사진으로 다시 시도해 주세요.
+    </div>
+    <textarea id="ocr-raw" readonly
+      style="width:100%;min-height:180px;padding:10px;border:1px solid #ddd;border-radius:8px;font-family:monospace;font-size:12px;resize:vertical;background:#fafafa"></textarea>
+    <div class="brow" style="margin-top:10px">
+      <button class="btn btn-o" onclick="copyOCRText()">📋 전체 복사</button>
+      <button class="btn btn-gray" onclick="hide('ocr-debug')">닫기</button>
+    </div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="card hidden" id="prog-card">
+    <div class="ct">⏳ 추출 중...</div>
+    <div class="pbar"><div class="pfill" id="pfill" style="width:0%"></div></div>
+    <div class="pst" id="pst">준비 중...</div>
+  </div>
+
+  <!-- RESULT GRID -->
+  <div class="card hidden fin" id="result-card">
+    <div class="ct">✏️ 추출 결과 확인 · 수정</div>
+    <div class="tip">셀을 클릭하면 직접 수정할 수 있습니다. 컬럼 제목도 수정 가능합니다.</div>
+
+    <!-- Stats -->
+    <div class="sbar" id="stats-bar"></div>
+
+    <!-- Action buttons -->
+    <div class="brow">
+      <button class="btn btn-g" onclick="downloadExcel()" style="flex:1.5">📥 엑셀로 저장 (.xlsx)</button>
+      <button class="btn btn-g" onclick="sendToCompare()" style="flex:1.5;background:#2e8b57">🔗 가격 비교로 넘기기 →</button>
+      <button class="btn btn-o" onclick="addRow()">＋ 행 추가</button>
+      <button class="btn btn-gray" onclick="clearAll()">🗑 초기화</button>
+    </div>
+
+    <!-- Column visibility toggles -->
+    <div style="font-size:12px;color:#888;margin-bottom:6px;font-weight:600">표시할 컬럼:</div>
+    <div class="col-setup" id="col-toggles"></div>
+
+    <!-- Grid -->
+    <div class="grid-wrap">
+      <table class="grid" id="grid">
+        <thead id="grid-head"></thead>
+        <tbody id="grid-body"></tbody>
+      </table>
+      <button class="add-btn" onclick="addRow()">＋ 행 추가</button>
+    </div>
+    <div class="page-note" id="page-note"></div>
+  </div>
+
+</div>
+
+<script>
+/* ===================== GLOBALS ===================== */
+const FILES = [];   // uploaded File objects
+let ROWS = [];      // extracted data rows [{vendorCode,name,barcode,eaPrice,casePrice,qty,unit,_src}]
+
+// Column definitions — matches Seoul Trading invoice columns exactly.
+// UoM was dropped (always "CS" for this vendor, adds no information).
+const COLS = [
+  {k:'vendorCode', lbl:'ItemCode',   type:'mono', w:90},
+  {k:'name',       lbl:'Description',type:'text', w:310},
+  {k:'qty',        lbl:'QTY',        type:'mono', w:50},
+  {k:'casePrice',  lbl:'Price',      type:'num',  w:75},
+  {k:'total',      lbl:'Total',      type:'num',  w:75},
+  {k:'eaPrice',    lbl:'EA Price',   type:'num',  w:75},
+  {k:'barcode',    lbl:'Barcode',    type:'mono', w:135},
+];
+let visibleCols = COLS.map(c=>c.k); // all visible by default
+
+/* ===================== UPLOAD UI ===================== */
+const drop = id('drop');
+drop.addEventListener('dragover', e=>{e.preventDefault();drop.classList.add('over');});
+drop.addEventListener('dragleave', ()=>drop.classList.remove('over'));
+drop.addEventListener('drop', e=>{
+  e.preventDefault(); drop.classList.remove('over');
+  addFiles(e.dataTransfer.files);
+});
+
+function onFiles(fl){ addFiles(fl); }
+
+function isImageFile(f){
+  return /^image\//i.test(f.type) || /\.(jpe?g|png|webp|gif|bmp|tiff?|heic|heif)$/i.test(f.name);
+}
+function isPDFFile(f){
+  return f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+}
+function fileKind(f){
+  if(isPDFFile(f)) return 'pdf';
+  if(isImageFile(f)) return 'image';
+  return 'unknown';
+}
+
+function addFiles(fl){
+  [...fl].forEach(f=>{
+    const kind = fileKind(f);
+    if(kind === 'unknown'){toast('❌ PDF 또는 이미지 파일만 지원합니다');return;}
+    if(FILES.some(x=>x.name===f.name&&x.size===f.size)){toast('이미 추가된 파일입니다');return;}
+    FILES.push(f);
+    renderFileList();
+  });
+  id('extract-btn').disabled = FILES.length === 0;
+}
+
+function removeFile(i){
+  FILES.splice(i,1);
+  renderFileList();
+  id('extract-btn').disabled = FILES.length === 0;
+}
+
+function renderFileList(){
+  id('flist').innerHTML = FILES.map((f,i)=>{
+    const kind = fileKind(f);
+    const ico = kind==='pdf' ? '📑' : '🖼';
+    const tag = kind==='pdf' ? 'PDF' : 'IMG';
+    return `
+    <div class="fitem">
+      <span style="font-size:20px">${ico}</span>
+      <div style="flex:1">
+        <div class="fn">${esc(f.name)}</div>
+        <div class="fs">${tag} · ${fmtSz(f.size)}</div>
+      </div>
+      <span class="st st-wait">대기중</span>
+      <button class="rm" onclick="removeFile(${i})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+/* ===================== EXTRACTION ===================== */
+async function extractAll(){
+  if(!FILES.length) return;
+  show('prog-card');
+  id('extract-btn').disabled = true;
+  ROWS = [];
+
+  try{
+    const hasPDF   = FILES.some(isPDFFile);
+    const hasImage = FILES.some(isImageFile);
+
+    if(hasPDF && typeof pdfjsLib === 'undefined'){
+      id('pst').textContent = 'PDF 엔진 로딩 중...';
+      await loadSc('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    if(hasImage && typeof Tesseract === 'undefined'){
+      id('pst').textContent = 'OCR 엔진 로딩 중... (최초 1회 ~5초)';
+      await loadSc('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js');
+    }
+
+    for(let fi=0; fi<FILES.length; fi++){
+      const f = FILES[fi];
+      const kind = fileKind(f);
+      const pct0 = (fi/FILES.length)*100;
+      const pct1 = ((fi+1)/FILES.length)*100;
+
+      // update file status
+      const items = id('flist').querySelectorAll('.fitem');
+      if(items[fi]) items[fi].querySelector('.st').textContent='추출중...';
+
+      id('pst').textContent = `[${fi+1}/${FILES.length}] ${f.name} 읽는 중...`;
+      setP(pct0);
+
+      try{
+        const extractor = kind==='pdf' ? extractPDF : extractImage;
+        const rows = await extractor(f, (p)=>{
+          setP(pct0 + (pct1-pct0)*p);
+          const tag = kind==='pdf' ? 'PDF' : 'OCR';
+          id('pst').textContent = `[${fi+1}/${FILES.length}] ${tag} · ${f.name} — ${Math.round(p*100)}%`;
+        });
+        rows.forEach(r=>{ r._src=f.name; ROWS.push(r); });
+        if(items[fi]){
+          items[fi].querySelector('.st').className='st st-ok';
+          items[fi].querySelector('.st').textContent=`✅ ${rows.length}개 항목`;
+        }
+      }catch(e){
+        if(items[fi]){
+          items[fi].querySelector('.st').className='st st-err';
+          items[fi].querySelector('.st').textContent='❌ 실패';
+        }
+        toast('❌ '+f.name+': '+e.message);
+      }
+    }
+
+    setP(100);
+    const noBC = ROWS.filter(r=>!r.barcode).length;
+    id('pst').textContent =
+      `완료 — 총 ${ROWS.length}개 항목 추출` +
+      (noBC ? ` (바코드 없음 ${noBC}개 ⚠️)` : ' ✅');
+
+    if(ROWS.length){
+      renderGrid();
+      show('result-card');
+      hide('ocr-debug');
+      toast(`✅ ${ROWS.length}개 항목 추출! 바코드 없음: ${noBC}개`, 3500);
+    } else {
+      toast('⚠️ 추출된 데이터가 없습니다. OCR 원본 텍스트를 확인해 주세요.', 4000);
+      showOCRDebug();
+    }
+
+  }catch(e){
+    toast('❌ 오류: '+e.message);
+  }
+  id('extract-btn').disabled = false;
+}
+
+function setP(p){ id('pfill').style.width=Math.min(100,p)+'%'; }
+
+/* ===================== IMAGE PREPROCESSING ===================== */
+/* Phone photos of invoices are usually under-resolved and low-contrast for OCR.
+ * We:
+ *   1. Upscale the long side to ≥2200px so small print becomes readable.
+ *   2. Convert to grayscale (removes color noise).
+ *   3. Stretch contrast around mid-tones so thin text pops against paper.
+ * Returns a HTMLCanvasElement that Tesseract accepts as input.
+ */
+async function preprocessImage(file){
+  const img = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('이미지를 읽지 못했습니다'));
+    i.src = URL.createObjectURL(file);
+  });
+
+  const maxSide = Math.max(img.naturalWidth, img.naturalHeight) || 1;
+  const target  = Math.max(maxSide, 2200);
+  const scale   = target / maxSide;
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = Math.round(img.naturalWidth  * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // Grayscale + adaptive (Otsu) binarization — prints become crisp black-on-white,
+  // which dramatically improves small-text OCR on photos.
+  const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d  = px.data;
+
+  // Step 1: grayscale + histogram
+  const hist = new Array(256).fill(0);
+  const gray = new Uint8ClampedArray(d.length / 4);
+  for(let i = 0, j = 0; i < d.length; i += 4, j++){
+    const g = (0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]) | 0;
+    gray[j] = g;
+    hist[g]++;
+  }
+
+  // Step 2: Otsu threshold
+  const total = gray.length;
+  let sumAll = 0;
+  for(let i = 0; i < 256; i++) sumAll += i * hist[i];
+  let sumB = 0, wB = 0, varMax = 0, thr = 128;
+  for(let i = 0; i < 256; i++){
+    wB += hist[i];
+    if(wB === 0) continue;
+    const wF = total - wB;
+    if(wF === 0) break;
+    sumB += i * hist[i];
+    const mB = sumB / wB;
+    const mF = (sumAll - sumB) / wF;
+    const vBetween = wB * wF * (mB - mF) * (mB - mF);
+    if(vBetween > varMax){ varMax = vBetween; thr = i; }
+  }
+
+  // Step 3: soft binarize — pure B&W would kill anti-aliased strokes, so we
+  // clamp to near-black/near-white but keep a small gradient near the threshold.
+  for(let i = 0, j = 0; i < d.length; i += 4, j++){
+    const g = gray[j];
+    let v;
+    if(g < thr - 24) v = 0;
+    else if(g > thr + 24) v = 255;
+    else v = g < thr ? Math.max(0, g - 40) : Math.min(255, g + 40);
+    d[i] = d[i+1] = d[i+2] = v;
+  }
+  ctx.putImageData(px, 0, 0);
+
+  URL.revokeObjectURL(img.src);
+  return canvas;
+}
+
+/* ===================== IMAGE OCR EXTRACTOR ===================== */
+/* Uses Tesseract.js (kor+eng) to OCR an image. Photos are rarely perfectly
+ * straight, so we don't rely on word X-coordinates the way the PDF parser
+ * does. Instead:
+ *   1. Process text line-by-line (one line of the OCR result = one text row).
+ *   2. Primary lines contain an ItemCode → we capture prices + code.
+ *   3. Secondary lines carry the English name and/or the barcode.
+ * As a bonus pass, we ALSO run the coord-based parser (works for clean scans)
+ * and keep whichever yielded more items.
+ */
+async function extractImage(file, onProgress){
+  onProgress(0.02);
+  id('pst').textContent = '이미지 전처리 중...';
+
+  // Preprocess: upscale + grayscale + contrast — dramatically improves OCR on phone photos
+  const processed = await preprocessImage(file);
+  onProgress(0.08);
+
+  // Worker API gives us control over page-segmentation mode.
+  // PSM 6 = "assume a single uniform block of text" — best for tables/invoices.
+  const worker = await Tesseract.createWorker({
+    logger: m => {
+      if(m.status === 'recognizing text' && typeof m.progress === 'number'){
+        onProgress(0.1 + m.progress * 0.85);
+      } else if(m.status && /loading|initializ/i.test(m.status)){
+        id('pst').textContent = 'OCR 엔진 준비 중...';
+      }
+    }
+  });
+  await worker.loadLanguage('eng');
+  await worker.initialize('eng');
+
+  // Try multiple page-segmentation modes and keep whichever yields more items.
+  // PSM 6 = single uniform block (works for most scans)
+  // PSM 4 = single column of variable-size text (sometimes better for tables)
+  let data = null, bestItems = [];
+  for(const psm of ['6', '4']){
+    await worker.setParameters({
+      tessedit_pageseg_mode: psm,
+      preserve_interword_spaces: '1',
+    });
+    id('pst').textContent = `OCR 실행 중... (PSM ${psm})`;
+    const r = await worker.recognize(processed);
+    const items = parseImageText(r.data);
+    if(items.length > bestItems.length){
+      data = r.data;
+      bestItems = items;
+    }
+    if(bestItems.length >= 15) break;  // good enough, stop retrying
+  }
+  if(!data){ const r = await worker.recognize(processed); data = r.data; }
+  await worker.terminate();
+
+  // Keep raw text for debug view when extraction yields nothing
+  window.__lastOCR = {
+    file: file.name,
+    text: data.text || '',
+    lines: (data.lines || []).map(l => l.text || '')
+  };
+
+  let items = bestItems;
+
+  // --- BONUS: coord-based parser on best PSM output — keep whichever wins ---
+  try {
+    const allItems = [];
+    if(data.lines && data.lines.length){
+      data.lines.forEach(line => {
+        if(!line.bbox) return;
+        const lineY = (line.bbox.y0 + line.bbox.y1) / 2;
+        (line.words || []).forEach(w => {
+          const t = (w.text||'').trim();
+          if(!t || !w.bbox) return;
+          allItems.push({ text: t, x: w.bbox.x0, y: lineY, pg: 1 });
+        });
+      });
+    }
+    if(allItems.length){
+      const altRows = clusterRows(allItems);
+      const altItems = parseInvoiceRows(altRows);
+      if(altItems.length > items.length) items = altItems;
+    }
+  } catch(e) { /* ignore — fall back to primary */ }
+
+  onProgress(1.0);
+  return items;
+}
+
+/* Line-based parser for OCR'd invoice text.
+ * Works from Tesseract's per-line text, no X-coordinates required.
+ *
+ * Typical Seoul Trading line (primary):
+ *   COOL EC5265  1 CS 칠갑(완밭장인) 3판 ... 39.00 39.00 3.90
+ * Secondary:
+ *   CG)Tempura Udon Noodle 10/15.02oz       8801759020750
+ */
+function parseImageText(data){
+  // Item code: 1-4 letter-ish prefix + 3-6 digits + optional trailing letter.
+  // The trailing letter handles variants like "CS1102E", "KD1073A".
+  // OCR-confused 0/1/5/8 inside the letter prefix are normalised in normIC.
+  const IC      = /(?:^|[^A-Z0-9])([A-Z][A-Z0158]{0,3}\d{3,6}[A-Z]?)(?=[^A-Z0-9]|$)/;
+  const PRICE   = /\b\d{1,5}[.,]\d{2}\b/g;
+  const BARCODE = /\b\d{10,14}\b/;
+
+  const rawLines = (data.lines && data.lines.length
+      ? data.lines.map(l => (l.text || '').replace(/[ \t]+/g, ' ').trim())
+      : (data.text || '').split(/\r?\n/).map(s => s.trim()))
+    .filter(Boolean);
+
+  const result = [];
+  let cur = null;
+  let pendingIC = null;   // {ic, line} — IC-only line waiting for prices on next line
+
+  const pushCur = () => {
+    if(!cur) return;
+    if(cur.vendorCode && (cur.eaPrice > 0 || cur.casePrice > 0 || cur.total > 0)){
+      result.push(cur);
+    }
+    cur = null;
+  };
+
+  // Correct common OCR confusions inside an item code's letter prefix.
+  // Ex: "L83003" → "LB3003", "E05265" → "EO5265" (then OCR may have meant "EC").
+  const normIC = raw => {
+    const m = raw.match(/^([A-Z][A-Z0158]{0,3})(\d{3,6})([A-Z]?)$/);
+    if(!m) return raw;
+    const prefix = m[1]
+      .replace(/0/g, 'O').replace(/1/g, 'I')
+      .replace(/5/g, 'S').replace(/8/g, 'B');
+    return prefix + m[2] + m[3];
+  };
+
+  const buildPrimary = (icRaw, primaryText, priceNums) => {
+    const ic = normIC(icRaw);
+
+    const qum = primaryText.match(/\b(\d{1,3})\s*(C\s*S|EA|BX|PK|CASE)\b/i);
+    const qty  = qum ? qum[1] : '';
+    const unit = qum ? qum[2].replace(/\s+/g,'').toUpperCase() : '';
+
+    let casePrice = 0, total = 0, eaPrice = 0;
+    const n = priceNums.slice(-3);
+    if(n.length >= 3){ [casePrice, total, eaPrice] = n.slice(-3); }
+    else if(n.length === 2){
+      const [a, b] = n;
+      const big = Math.max(a, b), sml = Math.min(a, b);
+      const ratio = sml > 0 ? big / sml : Infinity;
+      if(ratio >= 3){ casePrice = big; eaPrice = sml; }
+      else { casePrice = a; total = b; }
+    }
+    else if(n.length === 1){ casePrice = n[0]; }
+    if(eaPrice > casePrice && casePrice > 0){
+      [casePrice, eaPrice] = [eaPrice, casePrice];
+    }
+
+    const icIdx = primaryText.indexOf(icRaw);
+    const from  = icIdx >= 0 ? icIdx + icRaw.length : 0;
+    const firstPriceIdx = primaryText.slice(from).search(/\b\d{1,5}[.,]\d{2}\b/);
+    let rough = firstPriceIdx > 0
+      ? primaryText.slice(from, from + firstPriceIdx)
+      : primaryText.slice(from);
+    rough = rough
+      .replace(/\b\d{1,3}\s*(C\s*S|EA|BX|PK|CASE)\b/gi, ' ')
+      .replace(/\b(COOL|DRY|FROZEN|AMB|ROOM)\b/gi, ' ');
+
+    return {
+      vendorCode: ic,
+      name: '',
+      _line1Rough: rough,
+      qty, unit,
+      casePrice, total, eaPrice,
+      barcode: (primaryText.match(BARCODE) || [])[0] || ''
+    };
+  };
+
+  for(const text of rawLines){
+    // Skip obvious header / footer lines
+    if(/(item\s*code|description|storage|^barcode|invoice|total\s*due|page\s*\d|tel[:\s]|fax[:\s]|^customer|ship\s*to|bill\s*to|sub\s*total|grand\s*total)/i.test(text)) continue;
+
+    const icm = text.match(IC);
+    const priceNums = [...text.matchAll(PRICE)].map(m => parseFloat(m[0].replace(',', '.')));
+
+    if(icm && priceNums.length >= 1){
+      pushCur();
+      pendingIC = null;
+      cur = buildPrimary(icm[1], text, priceNums);
+    } else if(icm && priceNums.length === 0){
+      // IC-only line: OCR split the primary row across two lines.
+      // Stash and wait for the next line's prices to complete it.
+      pushCur();
+      pendingIC = { ic: icm[1], line: text };
+    } else if(pendingIC && priceNums.length >= 1){
+      // Prices arrived on the continuation line — complete the pending primary.
+      cur = buildPrimary(pendingIC.ic, pendingIC.line + ' ' + text, priceNums);
+      pendingIC = null;
+    } else if(cur){
+      // Secondary line: barcode + English description
+      const bc = (text.match(BARCODE) || [])[0];
+      if(bc && !cur.barcode) cur.barcode = bc;
+
+      let eng = text;
+      if(bc) eng = eng.replace(bc, ' ');
+      eng = eng
+        .replace(PRICE, ' ')
+        .replace(/\b(CS|EA|BX|PK|CASE|COOL|DRY|FROZEN|AMB|ROOM)\b/gi, ' ');
+
+      if(hasKorean(eng)) eng = stripKorean(eng);
+      eng = cleanEnglish(eng);
+
+      if(!looksLikeNoise(eng)){
+        // Multiple secondary lines can appear when OCR wraps long descriptions —
+        // keep the longest clean candidate rather than letting later lines overwrite.
+        if(eng.length > (cur.name || '').length){
+          cur.name = eng;
+        }
+      }
+    }
+  }
+  pushCur();
+
+  // Per product requirement: description comes ONLY from the secondary (English)
+  // line. Never fall back to the primary (Korean) line. Leave blank when the
+  // English line wasn't captured — the user can fix with ＋행 추가 / inline edit.
+  result.forEach(r => { delete r._line1Rough; });
+
+  inferMissingPrices(result);
+  return result;
+}
+
+/* Fill obvious gaps in the price triple after parsing.
+ *
+ * Common OCR case: rows with 2 numbers around qty=N → we set Price and Total
+ * (e.g. 22.50 and 45.00 with qty=2) but EA Price was not read. When the
+ * description carries a pack size like "10/325ml" we can safely derive
+ * EA Price = Price ÷ pack. Also fill Total from Price × qty if missing.
+ */
+function inferMissingPrices(rows){
+  const PACK = /\b(\d{1,3})\s*\/\s*[\d.]+/;
+  rows.forEach(r => {
+    // ── 1. Infer QTY from Total ÷ Price when OCR missed the "1 CS" marker ──
+    //      Must happen BEFORE we synthesise Total, so we use the real OCR Total.
+    if(!r.qty && r.casePrice > 0 && r.total > 0){
+      const inferred = Math.round(r.total / r.casePrice);
+      if(inferred >= 1 && inferred <= 999){
+        r.qty = String(inferred);
+      }
+    }
+
+    // ── 2. Default QTY to 1 when still unknown (most rows are 1 CS) ──
+    if(!r.qty) r.qty = '1';
+    const qtyNum = parseInt(r.qty, 10) || 1;
+
+    // ── 3. Total = Price × QTY when Total missing ──
+    if(!(r.total > 0) && r.casePrice > 0){
+      r.total = Math.round(r.casePrice * qtyNum * 100) / 100;
+    }
+
+    // ── 4. EA Price = Price ÷ pack-size, from description hint (e.g. "10/325ml") ──
+    if(!(r.eaPrice > 0) && r.casePrice > 0 && r.name){
+      const m = r.name.match(PACK);
+      if(m){
+        const pack = parseInt(m[1], 10);
+        if(pack >= 2 && pack <= 100){
+          r.eaPrice = Math.round((r.casePrice / pack) * 100) / 100;
+        }
+      }
+    }
+  });
+}
+
+/* Reject obvious OCR garbage: too short, too many single-char tokens, or too
+ * few alphanumeric characters. Lets us leave descriptions blank rather than
+ * surfacing "P TT e" to the user. */
+function looksLikeNoise(s){
+  const str = String(s||'').trim();
+  if(str.length < 3) return true;
+  if(isJunk(str)) return true;
+  if(!/[a-zA-Z]/.test(str)) return true;
+
+  const tokens  = str.split(/\s+/).filter(Boolean);
+  const singles = tokens.filter(t => t.length === 1).length;
+  if(tokens.length >= 3 && singles / tokens.length > 0.5) return true;
+
+  const compact = str.replace(/\s/g, '');
+  const alnum   = (compact.match(/[A-Za-z0-9]/g) || []).length;
+  if(alnum / compact.length < 0.55) return true;
+
+  return false;
+}
+
+/* ===================== PDF PARSER ===================== */
+async function extractPDF(file, onProgress){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument(buf).promise;
+  const allItems = [];
+
+  // ── KEY FIX: add cumulative Y offset per page ──────────────────
+  // Each page's Y resets to 0 at the top.
+  // Without offset, page-2 items get the same Y as page-1 items,
+  // causing clusterRows() to mix them up.
+  let yOffset = 0;
+
+  for(let p=1; p<=pdf.numPages; p++){
+    const pg = await pdf.getPage(p);
+    const vp = pg.getViewport({scale:1.5});
+    const tc = await pg.getTextContent();
+
+    tc.items.forEach(item=>{
+      const t = item.str.trim();
+      if(!t) return;
+      // Y in page = distance from top of page (0 = top, pageHeight = bottom)
+      const yInPage = vp.height - item.transform[5] * 1.5;
+      allItems.push({
+        text: t,
+        x:   item.transform[4],          // raw PDF x (no scale needed for col comparison)
+        y:   yInPage + yOffset,           // global Y across ALL pages ← fix
+        pg:  p
+      });
+    });
+
+    yOffset += vp.height + 40;           // 40px virtual gap between pages
+    onProgress(p / pdf.numPages * 0.4);  // leave room for OCR fallback if needed
+  }
+
+  // Scanned/image-based PDFs (CamScanner, Adobe Scan w/o OCR) have NO extractable
+  // text — pdf.js returns zero items. Fall back to rasterising each page and OCR'ing.
+  if(allItems.length < 10){
+    id('pst').textContent = '스캔본 PDF 감지 — 페이지별 OCR 실행합니다...';
+    return await extractScannedPDF(pdf, onProgress);
+  }
+
+  const rows = clusterRows(allItems);
+  onProgress(0.85);
+  const items = parseInvoiceRows(rows);
+  onProgress(1.0);
+  return items;
+}
+
+/* Rasterise each PDF page to a canvas, then run the same image OCR pipeline
+ * as extractImage. Used when a PDF has no embedded text (typical for phone
+ * document-scanner apps). */
+async function extractScannedPDF(pdf, onProgress){
+  if(typeof Tesseract === 'undefined'){
+    id('pst').textContent = 'OCR 엔진 로딩 중...';
+    await loadSc('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js');
+  }
+
+  const all = [];
+  for(let p = 1; p <= pdf.numPages; p++){
+    id('pst').textContent = `스캔 PDF OCR [${p}/${pdf.numPages}] 페이지 렌더링 중...`;
+
+    // Render page to canvas at OCR-friendly resolution
+    const pg  = await pdf.getPage(p);
+    const vp  = pg.getViewport({ scale: 2.5 });
+    const c   = document.createElement('canvas');
+    c.width   = vp.width;
+    c.height  = vp.height;
+    await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+
+    // Convert canvas → Blob → File and feed into the existing image OCR path.
+    // This reuses preprocessing + multi-PSM + parseImageText.
+    const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+    const fakeFile = new File([blob], `page-${p}.png`, { type: 'image/png' });
+
+    try {
+      const items = await extractImage(fakeFile, (sp) => {
+        onProgress(((p - 1) + sp) / pdf.numPages);
+      });
+      items.forEach(r => all.push(r));
+    } catch(e) {
+      console.warn('Page OCR failed', p, e);
+    }
+  }
+  onProgress(1.0);
+  return all;
+}
+
+/* Cluster text items into visual rows by Y.
+ * Tolerance is adaptive: half the median Y-gap between adjacent items,
+ * clamped to a sensible [6, 14] pixel range. This handles both PDF-point
+ * scales (small gaps) and OCR pixel scales (larger gaps) without mixing rows.
+ */
+function clusterRows(items){
+  items.sort((a,b)=> a.y !== b.y ? a.y - b.y : a.x - b.x);
+  if(!items.length) return [];
+
+  // Estimate tolerance from Y-distribution
+  const ys = items.map(i => i.y);
+  const gaps = [];
+  for(let i=1;i<ys.length;i++){
+    const g = ys[i] - ys[i-1];
+    if(g > 0.5) gaps.push(g);
+  }
+  gaps.sort((a,b)=>a-b);
+  const medGap = gaps.length ? gaps[Math.floor(gaps.length/2)] : 10;
+  const tol = Math.max(6, Math.min(14, medGap * 0.5));
+
+  const rows = [];
+  items.forEach(item=>{
+    const last = rows[rows.length-1];
+    if(last && Math.abs(item.y - last.avgY) <= tol){
+      last.items.push(item);
+      last.avgY = (last.avgY * last.n + item.y) / (last.n + 1);
+      last.n++;
+    } else {
+      rows.push({avgY: item.y, n:1, items:[item], pg: item.pg});
+    }
+  });
+  return rows;
+}
+
+/* ── Invoice row parser ───────────────────────────────────────────────
+ * APPROACH: column-position based extraction.
+ * 1. Read column X-positions from the header row.
+ * 2. For every data row, assign each text token to a column by X.
+ * 3. Primary row   → ItemCode, Description(Korean), QTY, UoM, Price, Total, EA Price
+ *    Secondary row → Description(English) appended + Barcode from Total column area
+ * 4. Final Description = English line (exact, unmodified).
+ */
+function parseInvoiceRows(rows){
+  const HDR_KEYS = ['itemcode','item code','ea price','eaprice','description','storage','uom'];
+  const isHdr = r => r.items.some(i => HDR_KEYS.some(k => i.text.toLowerCase().includes(k)));
+
+  // Collect ALL header row indices (one per page)
+  const hdrIdxs = [];
+  rows.forEach((r,i) => { if(isHdr(r)) hdrIdxs.push(i); });
+  if(!hdrIdxs.length) return parseFallback(rows);
+
+  const firstHdrIdx = hdrIdxs[0];
+  const hdrSet      = new Set(hdrIdxs);
+
+  // Build column definitions from the first header row
+  const colDefs = buildColDefs(rows[firstHdrIdx].items);
+
+  // Data rows: everything after the first header, excluding all repeated headers
+  const dataRows = rows
+    .slice(firstHdrIdx + 1)
+    .filter((_,i) => !hdrSet.has(firstHdrIdx + 1 + i));
+
+  return parseStructured(dataRows, colDefs);
+}
+
+/* Build column boundaries from header row items.
+ * Returns [{key, x0, x1}] sorted left-to-right.
+ */
+function buildColDefs(hdrItems){
+  const sorted = [...hdrItems].sort((a,b) => a.x - b.x);
+  return sorted.map((it, i) => ({
+    raw:  it.text.trim(),
+    key:  it.text.trim().toLowerCase().replace(/\s+/g,''),
+    x0:   it.x,
+    x1:   i+1 < sorted.length ? sorted[i+1].x : 99999
+  }));
+}
+
+/* Find a column definition matching any of the given keyword fragments */
+function findCol(colDefs, ...keys){
+  return colDefs.find(c => keys.some(k => c.key.includes(k) || c.raw.toLowerCase().includes(k))) || null;
+}
+
+/* Extract all text in a column's X range from a row's items, joined by space */
+function cellText(rowItems, col){
+  if(!col) return '';
+  return rowItems
+    .filter(i => i.x >= col.x0 - 12 && i.x < col.x1)
+    .sort((a,b) => a.x - b.x)
+    .map(i => i.text.trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function cellNum(rowItems, col){
+  return parseFloat(cellText(rowItems, col).replace(/[$,]/g,'')) || 0;
+}
+
+function parseStructured(dataRows, colDefs){
+  // Identify columns
+  const cIC    = findCol(colDefs,'itemcode','item');
+  const cDesc  = findCol(colDefs,'description','desc');
+  const cQty   = findCol(colDefs,'qty','quantity');
+  const cUom   = findCol(colDefs,'uom','unit');
+  const cPrice = findCol(colDefs,'price');          // case/box price
+  const cTotal = findCol(colDefs,'total');
+  const cEA    = findCol(colDefs,'eaprice','ea price','ea');
+
+  const IC = /^[A-Z]{2,4}\d{4,6}$/;
+
+  const result = [];
+  let cur = null;
+
+  dataRows.forEach(row => {
+    const texts  = row.items.map(i => i.text);
+
+    // Detect primary row: has a token matching ItemCode pattern in ItemCode column area
+    const icToken = cIC
+      ? row.items.find(i => i.x >= cIC.x0-12 && i.x < cIC.x1 && IC.test(i.text.trim()))
+      : row.items.find(i => IC.test(i.text.trim()));
+
+    if(icToken){
+      if(cur) result.push(cur);
+
+      const ic       = icToken.text.trim();
+      const descLine1= cellText(row.items, cDesc);
+      const qty      = cellText(row.items, cQty);
+      const unit     = cellText(row.items, cUom);
+      const price    = cellNum(row.items, cPrice);
+      const total    = cellNum(row.items, cTotal);
+      const eaPrice  = cellNum(row.items, cEA);
+      const bc       = grabBarcode(texts, row.items);
+
+      cur = {
+        vendorCode: ic,
+        // Description ALWAYS comes from the secondary (English) row. Never
+        // use line 1 — even if it has English chars — per product requirement.
+        name: '',
+        qty, unit,
+        casePrice: price,
+        total,
+        eaPrice,
+        barcode: bc
+      };
+
+    } else if(cur){
+      // ── SECONDARY ROW: English description + Barcode ──
+      const descLine2 = cellText(row.items, cDesc);
+
+      // Only pure-English second lines qualify. Anything with Korean is ignored.
+      if(descLine2 && !isJunk(descLine2) && !hasKorean(descLine2)){
+        cur.name = cleanEnglish(descLine2);
+      }
+
+      // Barcode lives in the Total column area on the secondary row
+      const totalAreaItems = cTotal
+        ? row.items.filter(i => i.x >= cTotal.x0-12)
+        : row.items;
+      const bc = grabBarcode(
+        totalAreaItems.map(i=>i.text),
+        totalAreaItems
+      ) || grabBarcode(texts, row.items);
+      if(bc) cur.barcode = bc;
+    }
+  });
+  if(cur) result.push(cur);
+
+  const filtered = result.filter(r => (r.eaPrice > 0 || r.casePrice > 0) && r.vendorCode);
+  inferMissingPrices(filtered);
+  return filtered;
+}
+
+function parseFallback(rows){
+  // Used when no structured header is found.
+  // Still pairs Korean+English rows by ItemCode.
+  const IC = /\b([A-Z]{2,4}\d{4,6})\b/;
+  const PR = /\$?\s*(\d{1,6}[.,]\d{2})/g;
+  const result = [];
+  let cur = null;
+
+  rows.forEach(row=>{
+    const texts = row.items.map(i=>i.text);
+    const line  = texts.join(' ');
+    const icm   = line.match(IC);
+
+    if(icm){
+      if(cur) result.push(cur);
+      const prices = [...line.matchAll(PR)].map(m=>parseFloat(m[1].replace(',','.'))).filter(p=>p>0&&p<99999);
+      prices.sort((a,b)=>a-b);
+      const ea = prices[0]||0; if(!ea){cur=null;return;}
+      const bc = grabBarcode(texts, row.items);
+      let eng = texts.filter(t=>!hasKorean(t)&&/[a-zA-Z]/.test(t)&&t.length>2&&t!==bc).join(' ');
+      eng = eng.replace(IC,' ').replace(PR,' ').replace(/\b(COOL|DRY|FROZEN|AMB|CS|EA|BX|\d{1,3})\b/gi,' ').replace(/\s+/g,' ').trim();
+      cur = {vendorCode:icm[1], name:eng, barcode:bc, eaPrice:ea, casePrice:prices[prices.length-1]||0, qty:'', unit:''};
+    } else if(cur){
+      const bc2 = grabBarcode(texts, row.items);
+      if(bc2&&!cur.barcode) cur.barcode = bc2;
+      if(!hasKorean(line)&&/[a-zA-Z]/.test(line)){
+        let eng = line.replace(PR,' ');
+        if(bc2) eng = eng.replace(bc2,' ');
+        eng = eng.replace(/\b(COOL|DRY|FROZEN|AMB|CS|EA|BX|\d{1,3})\b/gi,' ').replace(/\s+/g,' ').trim();
+        if(eng) cur.name = eng;
+      }
+    }
+  });
+  if(cur) result.push(cur);
+  return result.filter(r=>r.eaPrice>0&&r.name.length>0);
+}
+
+/* ===================== BARCODE & KOREAN HELPERS ===================== */
+function hasKorean(s){ return /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(s); }
+
+/* Remove Korean characters from a string. Used as last-resort fallback
+ * when no pure-English description row was found. */
+function stripKorean(s){
+  return String(s||'')
+    .replace(/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* Tidy up an English description: collapse whitespace, trim stray
+ * punctuation left behind after Korean removal. Content is NOT otherwise
+ * altered — product codes, sizes, and parentheses stay intact. */
+function cleanEnglish(s){
+  return String(s||'')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.)])/g, '$1')
+    .replace(/([(])\s+/g, '$1')
+    .replace(/^[\s,.\-)]+|[\s,\-(]+$/g, '')
+    .trim();
+}
+
+/* Junk text that should never become a product name:
+ *  - timestamps  : 10:47:17AM  4:30PM  10:47
+ *  - dates       : 4/13/2026   04-13-2026
+ *  - page labels : Page 1  1/5
+ *  - known noise : COOL DRY FROZEN AMB CS EA BX PK CASE ROOM
+ *  - invoice meta: "Sales Invoice Number", "Document Date" etc.
+ */
+function isJunk(t){
+  const s = t.trim();
+  if(/^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$/i.test(s))   return true; // time: 10:47:17AM
+  if(/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(s))    return true; // date: 4/13/2026
+  if(/^page\s*\d+$/i.test(s))                            return true; // Page 1
+  if(/^\d+\/\d+$/.test(s))                               return true; // 1/5 (page n of m)
+  if(/^(COOL|DRY|FROZEN|AMB|ROOM|CS|EA|BX|PK|CASE|STORAGE|UOM|QTY)$/i.test(s)) return true;
+  if(/^(sales\s*invoice|document\s*date|customer|invoice\s*no|ship\s*to|bill\s*to)/i.test(s)) return true;
+  return false;
+}
+
+function grabBarcode(texts, items){
+  // 1. Exact token
+  const ex = texts.find(t=>/^\d{10,14}$/.test(t.trim()));
+  if(ex) return ex.trim();
+  // 2. Concatenate large digit tokens
+  const big = texts.filter(t=>/^\d{4,}$/.test(t.trim())).join('');
+  const m = big.match(/\d{10,14}/);
+  if(m) return m[0];
+  // 3. X-sorted adjacent digit run
+  if(items&&items.length){
+    const sorted=[...items].sort((a,b)=>a.x-b.x);
+    let run='';
+    for(const it of sorted){
+      const t=it.text.replace(/\s/g,'');
+      if(/^\d+$/.test(t)) run+=t;
+      else run='';
+      if(run.length>=10){const r=run.match(/\d{10,14}/);if(r)return r[0];}
+    }
+  }
+  return '';
+}
+
+/* ===================== GRID RENDER ===================== */
+function renderGrid(){
+  renderColToggles();
+  renderGridHead();
+  renderGridBody();
+  renderStats();
+}
+
+function renderColToggles(){
+  id('col-toggles').innerHTML = COLS.map(c=>`
+    <div class="col-tag ${visibleCols.includes(c.k)?'on':''}"
+         onclick="toggleCol('${c.k}',this)">${c.lbl}</div>
+  `).join('');
+}
+
+function toggleCol(k, el){
+  if(visibleCols.includes(k)){
+    if(visibleCols.length<=1){toast('최소 1개 컬럼 필요');return;}
+    visibleCols = visibleCols.filter(v=>v!==k);
+    el.classList.remove('on');
+  } else {
+    visibleCols = COLS.filter(c=>visibleCols.includes(c.k)||c.k===k).map(c=>c.k);
+    el.classList.add('on');
+  }
+  renderGridHead();
+  renderGridBody();
+}
+
+function renderGridHead(){
+  const vc = COLS.filter(c=>visibleCols.includes(c.k));
+  id('grid-head').innerHTML = `<tr>
+    ${vc.map(c=>`
+      <th style="min-width:${c.w}px">
+        <input class="hd" value="${esc(c.lbl)}"
+          onchange="renameCol('${c.k}',this.value)"
+          title="클릭해서 컬럼명 수정">
+      </th>`).join('')}
+    <th class="act-col" title="행 삽입 / 삭제"></th>
+  </tr>`;
+}
+
+function renderGridBody(){
+  const vc = COLS.filter(c=>visibleCols.includes(c.k));
+  const body = id('grid-body');
+  body.innerHTML = '';
+  if(!ROWS.length){
+    body.innerHTML=`<tr><td colspan="${vc.length+1}"><div class="empty">데이터가 없습니다</div></td></tr>`;
+    return;
+  }
+  ROWS.forEach((row,ri)=>{
+    const tr = document.createElement('tr');
+    // Warn if barcode missing
+    if(!row.barcode) tr.classList.add('warn');
+    tr.innerHTML = vc.map(c=>`
+      <td>
+        <input class="${c.type==='mono'?'mono':''} ${c.type==='num'?'num':''}"
+          value="${esc(c.type==='num'?(row[c.k]>0?row[c.k].toFixed(2):''):row[c.k]||'')}"
+          placeholder="${c.lbl}"
+          onchange="cellChange(${ri},'${c.k}',this,'${c.type}')">
+      </td>`).join('')+`
+    <td class="act-col">
+      <button class="ibtn" onclick="insertRowAt(${ri+1})" title="이 줄 아래에 빈 행 추가">＋</button>
+      <button class="dbtn" onclick="delRow(${ri})" title="행 삭제">✕</button>
+    </td>`;
+    body.appendChild(tr);
+  });
+}
+
+function renderStats(){
+  const total  = ROWS.length;
+  const withBC = ROWS.filter(r=>r.barcode&&r.barcode.length>=8).length;
+  const noBC   = total - withBC;
+  const withEA = ROWS.filter(r=>r.eaPrice>0).length;
+  const srcs   = new Set(ROWS.map(r=>r._src)).size;
+
+  id('stats-bar').innerHTML = `
+    <div class="sc"><b>${total}</b>전체 항목</div>
+    <div class="sc"><b style="color:#1a5c3a">${withBC}</b>바코드 있음</div>
+    <div class="sc"><b style="color:${noBC?'#e53935':'#1a5c3a'}">${noBC}</b>바코드 없음</div>
+    <div class="sc"><b>${withEA}</b>EA Price 있음</div>
+    ${srcs>1?`<div class="sc"><b>${srcs}</b>파일 수</div>`:''}
+  `;
+  id('page-note').textContent = ROWS[0]?`출처: ${ROWS[0]._src}`:'';
+}
+
+function cellChange(ri, key, inp, type){
+  if(!ROWS[ri]) return;
+  if(type==='num') ROWS[ri][key] = parseFloat(inp.value)||0;
+  else ROWS[ri][key] = inp.value;
+  // Update warn class
+  const tr = inp.closest('tr');
+  if(tr) tr.classList.toggle('warn', !ROWS[ri].barcode);
+}
+
+function renameCol(k, newLabel){
+  const col = COLS.find(c=>c.k===k);
+  if(col) col.lbl = newLabel;
+}
+
+function delRow(ri){
+  ROWS.splice(ri,1);
+  renderGrid();
+}
+
+function blankRow(){
+  return {vendorCode:'',name:'',barcode:'',eaPrice:0,casePrice:0,total:0,qty:'',_src:''};
+}
+
+function addRow(){
+  insertRowAt(ROWS.length);
+}
+
+/* Insert a fresh empty row at `idx` (0-based). idx=ROWS.length appends.
+ * Used by ＋행 추가 at the bottom AND by per-row ＋ buttons that let the
+ * user slot a missing line in between existing rows. */
+function insertRowAt(idx){
+  const i = Math.max(0, Math.min(idx, ROWS.length));
+  ROWS.splice(i, 0, blankRow());
+  renderGridBody();
+  renderStats();
+  // Focus the first input of the newly inserted row
+  const rows = id('grid-body').querySelectorAll('tr');
+  if(rows[i]) rows[i].querySelector('input')?.focus();
+}
+
+function clearAll(){
+  if(!confirm('모든 데이터를 초기화할까요?')) return;
+  ROWS = [];
+  FILES.length = 0;
+  id('flist').innerHTML = '';
+  id('extract-btn').disabled = true;
+  hide('result-card');
+  hide('prog-card');
+  setP(0);
+}
+
+/* ===================== BRIDGE → PRICE COMPARE APP ===================== */
+/* Stash the current grid rows into sessionStorage and open the compare app.
+ * kimchi-price-compare.html checks for this key on load and auto-fills its
+ * Step-2 invoice grid. */
+function sendToCompare(){
+  if(!ROWS.length){ toast('데이터가 없습니다'); return; }
+
+  // Sync any DOM-edited values into ROWS before exporting
+  const inputs = id('grid-body').querySelectorAll('tr');
+  inputs.forEach((tr, ri) => {
+    if(!ROWS[ri]) return;
+    const inps = tr.querySelectorAll('input');
+    const vc = COLS.filter(c => visibleCols.includes(c.k));
+    vc.forEach((col, ci) => {
+      if(!inps[ci]) return;
+      if(col.type === 'num') ROWS[ri][col.k] = parseFloat(inps[ci].value) || 0;
+      else ROWS[ri][col.k] = inps[ci].value;
+    });
+  });
+
+  const payload = {
+    source: FILES.length === 1 ? FILES[0].name : `${FILES.length}개 파일`,
+    timestamp: Date.now(),
+    rows: ROWS.map(r => ({
+      name:       r.name       || '',
+      vendorCode: r.vendorCode || '',
+      barcode:    r.barcode    || '',
+      eaPrice:    +r.eaPrice   || 0,
+      casePrice:  +r.casePrice || 0,
+      qty:        r.qty        || '',
+      unit:       'CS'
+    }))
+  };
+
+  try {
+    sessionStorage.setItem('kimchi-invoice-import', JSON.stringify(payload));
+  } catch(e) {
+    toast('데이터 저장 실패: ' + e.message);
+    return;
+  }
+
+  toast(`🔗 ${payload.rows.length}건을 가격 비교로 넘기는 중...`);
+  setTimeout(() => { window.location.href = 'kimchi-price-compare.html'; }, 400);
+}
+
+/* ===================== EXCEL DOWNLOAD ===================== */
+function downloadExcel(){
+  if(!ROWS.length){toast('데이터가 없습니다');return;}
+
+  // Sync from DOM inputs
+  const inputs = id('grid-body').querySelectorAll('tr');
+  inputs.forEach((tr,ri)=>{
+    if(!ROWS[ri]) return;
+    const inps = tr.querySelectorAll('input');
+    const vc = COLS.filter(c=>visibleCols.includes(c.k));
+    vc.forEach((col,ci)=>{
+      if(!inps[ci]) return;
+      if(col.type==='num') ROWS[ri][col.k] = parseFloat(inps[ci].value)||0;
+      else ROWS[ri][col.k] = inps[ci].value;
+    });
+  });
+
+  // Build sheet data using current column labels
+  const header = COLS.map(c=>c.lbl); // use possibly renamed labels
+  const data = ROWS.map(r=> COLS.map(c=>
+    c.type==='num' ? (r[c.k]>0?r[c.k]:null) : (r[c.k]||null)
+  ));
+
+  const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
+
+  // Column widths
+  ws['!cols'] = COLS.map(c=>({wch:
+    c.k==='name'?42 : c.k==='barcode'?16 : c.k==='vendorCode'?12 :
+    c.k==='qty'||c.k==='unit'?8 : 12
+  }));
+
+  // Style header row bold (basic)
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  for(let C=range.s.c; C<=range.e.c; C++){
+    const cell = ws[XLSX.utils.encode_cell({r:0,c:C})];
+    if(cell) cell.s = {font:{bold:true}};
+  }
+
+  // Optional: add source filename column if multiple files
+  const srcs = new Set(ROWS.map(r=>r._src));
+  if(srcs.size > 1){
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      [...header, '파일명'],
+      ...ROWS.map((r,i)=>[...data[i], r._src||''])
+    ]);
+    ws2['!cols'] = [...ws['!cols'], {wch:30}];
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '인보이스');
+
+  const today = new Date().toISOString().slice(0,10);
+  const stripExt = n => n.replace(/\.(pdf|jpe?g|png|webp|gif|bmp|tiff?|heic|heif)$/i,'');
+  const fname = FILES.length===1
+    ? stripExt(FILES[0].name)+'_변환.xlsx'
+    : `인보이스_변환_${today}.xlsx`;
+
+  XLSX.writeFile(wb, fname);
+  toast(`📥 ${fname} 저장 완료!`);
+}
+
+/* ===================== HELPERS ===================== */
+function id(i){ return document.getElementById(i); }
+function show(i){ id(i)?.classList.remove('hidden'); }
+function hide(i){ id(i)?.classList.add('hidden'); }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtSz(b){ return b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB'; }
+function toast(m,d=2500){
+  const t=id('toast'); t.textContent=m; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),d);
+}
+function showOCRDebug(){
+  const raw = window.__lastOCR;
+  if(!raw || !(raw.text || (raw.lines && raw.lines.length))) return;
+  const lines = (raw.lines && raw.lines.length ? raw.lines.join('\n') : raw.text || '');
+  id('ocr-raw').value = `[${raw.file}]\n\n${lines}`;
+  show('ocr-debug');
+}
+function copyOCRText(){
+  const ta = id('ocr-raw');
+  ta.select();
+  try { document.execCommand('copy'); toast('📋 복사 완료'); }
+  catch(e){ toast('복사 실패 — 수동 선택 후 Ctrl+C'); }
+}
+function loadSc(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
+</script>
+</body>
+</html>
