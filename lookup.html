@@ -443,17 +443,8 @@
       </button>
     </div>
     <div id="update-status" style="margin-top: 10px; font-size: 12px; color: var(--text); line-height: 1.5;">
-        <div style="background:#e8f5e9;border-left:3px solid var(--green);padding:10px 12px;border-radius:6px;color:#1b5e20;margin-bottom:10px">
-          ✅ <b>21392개 상품</b>을 <b>2026-04-17</b> 기준으로 업데이트했습니다. 매핑된 컬럼: 8개.
-        </div>
-        <div style="background:#fff3e0;border-left:3px solid #ef6c00;padding:10px 12px;border-radius:6px;color:#5d4037;font-size:12px;line-height:1.55;margin-bottom:10px">
-          ⚠️ <b>영구 저장하려면:</b> 아래 버튼으로 HTML 파일을 다운로드해서 <u>기존 파일을 덮어쓰세요</u>.<br>
-          (브라우저 localStorage는 파일 앱에서 세션 이후 지워질 수 있습니다)
-        </div>
-        <button onclick="downloadUpdatedHTML()" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px 14px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit">
-          💾 업데이트된 HTML 다운로드 (영구 저장)
-        </button>
-      </div>
+      <!-- populated by refreshUpdateStatus() from current localStorage / branch data -->
+    </div>
   </div>
 </div>
 
@@ -610,11 +601,50 @@ function fmtPrice(n){
   return n > 0 ? '$' + n.toFixed(2) : 'N/A';
 }
 
+// Rebuild the update panel's status message from the current data state
+// (localStorage override for the selected branch, or baked-in data).
+function refreshUpdateStatus(msg){
+  const st = document.getElementById('update-status');
+  if (!st) return;
+  let date = '', count = 0, mapped = null;
+  try {
+    if (CURRENT_BRANCH){
+      const raw = localStorage.getItem(overrideKey(CURRENT_BRANCH));
+      if (raw){ const o = JSON.parse(raw); date = o?.date || ''; count = o?.count || (o?.rows?.length||0); }
+    }
+  } catch(e){}
+  if (!count && typeof PRODUCTS_DATA !== 'undefined'){
+    count = PRODUCTS_DATA.length;
+    const m = (document.querySelector('.update-badge')?.textContent || '').match(/(\d{4}-\d{2}-\d{2})/);
+    if (m) date = m[1];
+  }
+  const branchName = (CURRENT_BRANCH && BRANCH_BY_ID[CURRENT_BRANCH]) ? BRANCH_BY_ID[CURRENT_BRANCH].ko : '';
+  const extra = (typeof msg === 'object' && msg && msg.mapped != null) ? ` · 매핑된 컬럼: ${msg.mapped}개` : '';
+  const green = count > 0
+    ? `<div style="background:#e8f5e9;border-left:3px solid var(--green);padding:10px 12px;border-radius:6px;color:#1b5e20;margin-bottom:10px">
+         ✅ ${branchName ? '<b>'+branchName+'</b> · ' : ''}<b>${count.toLocaleString()}개 상품</b> · <b>${date || '날짜 없음'}</b>${extra}
+       </div>`
+    : `<div style="background:#fff8e1;border-left:3px solid #ef6c00;padding:10px 12px;border-radius:6px;color:#5d4037;margin-bottom:10px">
+         ⚠️ 아직 업로드된 데이터가 없습니다. 위 <b>📂 Excel 파일 선택</b>으로 시작하세요.
+       </div>`;
+  st.innerHTML = green +
+    `<div style="background:#fff3e0;border-left:3px solid #ef6c00;padding:10px 12px;border-radius:6px;color:#5d4037;font-size:12px;line-height:1.55;margin-bottom:10px">
+       ⚠️ <b>영구 저장하려면:</b> 아래 버튼으로 HTML 파일을 다운로드해서 <u>기존 파일을 덮어쓰세요</u>.<br>
+       (브라우저 localStorage는 파일 앱에서 세션 이후 지워질 수 있습니다)
+     </div>
+     <button onclick="downloadUpdatedHTML()" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px 14px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit">
+       💾 업데이트된 HTML 다운로드 (영구 저장)
+     </button>`;
+}
+
 // Show/hide the update panel
 function toggleUpdatePanel() {
   const p = document.getElementById('update-panel');
-  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+  const willShow = p.style.display === 'none';
+  p.style.display = willShow ? 'block' : 'none';
+  if (willShow) refreshUpdateStatus();
 }
+window.addEventListener('DOMContentLoaded', () => { try { refreshUpdateStatus(); } catch(e){} });
 
 /* Generate a fresh HTML file with the currently-loaded products baked into
  * the inline PRODUCTS_DATA array, and trigger a download.
@@ -835,18 +865,7 @@ function onUpdateFile(inp) {
         `<b>${branchName}</b> · 상품 <strong>${products.length}</strong>개 등록됨 · 스캔 또는 입력으로 시작하세요`;
 
       st.style.color = 'var(--text)';
-      st.innerHTML = `
-        <div style="background:#e8f5e9;border-left:3px solid var(--green);padding:10px 12px;border-radius:6px;color:#1b5e20;margin-bottom:10px">
-          ✅ <b>${products.length}개 상품</b>을 <b>${today}</b> 기준으로 업데이트했습니다. 매핑된 컬럼: ${Object.keys(keyMap).length}개.
-        </div>
-        <div style="background:#fff3e0;border-left:3px solid #ef6c00;padding:10px 12px;border-radius:6px;color:#5d4037;font-size:12px;line-height:1.55;margin-bottom:10px">
-          ⚠️ <b>영구 저장하려면:</b> 아래 버튼으로 HTML 파일을 다운로드해서 <u>기존 파일을 덮어쓰세요</u>.<br>
-          (브라우저 localStorage는 파일 앱에서 세션 이후 지워질 수 있습니다)
-        </div>
-        <button onclick="downloadUpdatedHTML()" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px 14px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit">
-          💾 업데이트된 HTML 다운로드 (영구 저장)
-        </button>
-      `;
+      refreshUpdateStatus({ mapped: Object.keys(keyMap).length });
     } catch (err) {
       st.style.color = '#c62828';
       st.innerHTML = '❌ 파일 처리 오류: ' + err.message;
