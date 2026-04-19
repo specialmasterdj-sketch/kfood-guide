@@ -1875,15 +1875,25 @@ function parseJFC(rows){
     const leadArea  = line.substring(0, packStart).trim();
     const priceArea = line.substring(packEnd).trim();
 
-    // Price area: expect 3-4 numbers [eaches] eachPrice unitPrice amount.
-    const pnums = (priceArea.match(NUM_RE) || []).map(s => parseFloat(s));
+    // Price area: expect 3-4 numbers — [eaches] eachPrice unitPrice amount.
+    // Whole-integer tokens (e.g. "6", "12", "100") are the EA/PC count,
+    // never a price. If OCR drops one number so we have 3 and the first
+    // is an integer, treat it as EA/PC and synthesise the missing amount
+    // from unitPrice (1 case ordered = unitPrice). Without this guard the
+    // count leaks into the EA Price column (user-reported bug).
+    const rawTokens = priceArea.match(NUM_RE) || [];
+    const pnums = rawTokens.map(s => parseFloat(s));
     if (pnums.length < 3) return;
-    let eaches, eachPrice, unitPrice, amount;
+    const isIntTok = i => /^\d+$/.test(rawTokens[i] || '');
+    let eaches = 0, eachPrice = 0, unitPrice = 0, amount = 0;
     if (pnums.length >= 4){
       [eaches, eachPrice, unitPrice, amount] = pnums;
+    } else if (pnums.length === 3 && isIntTok(0) && !isIntTok(1)){
+      // [EA/PC, EACH_PRICE, UNIT_PRICE] — amount missing, assume qty=1 case
+      [eaches, eachPrice, unitPrice] = pnums;
+      amount = unitPrice;
     } else {
       [eachPrice, unitPrice, amount] = pnums;
-      // eaches not shown on this line — derive from pack's first number.
       const pm2 = pack.match(/^(\d+)/);
       eaches = pm2 ? parseFloat(pm2[1]) : 0;
     }
