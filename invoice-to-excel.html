@@ -133,9 +133,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <div class="pg">
 
-  <!-- MODE SELECTOR: does this vendor's invoice include barcodes? -->
+  <!-- VENDOR + MODE SELECTOR -->
   <div class="card fin" id="mode-card">
-    <div class="ct">🔀 인보이스 유형 선택</div>
+    <div class="ct">🏢 공급사 선택</div>
+    <div style="margin-bottom:12px">
+      <select id="vendor-sel" onchange="setVendor(this.value)" style="width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff">
+        <option value="auto">🔍 자동 감지 (PDF 내용으로 판단)</option>
+        <option value="seoul_trading">Seoul Trading</option>
+        <option value="rhee_bros">RHEE BROS</option>
+        <option value="generic">기타 / 일반 (지원 예정)</option>
+      </select>
+    </div>
+    <div class="ct" style="margin-top:6px">🔀 인보이스 유형</div>
     <div class="tip">벤더 인보이스에 바코드가 인쇄되어 있나요?</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px">
       <button type="button" class="mode-btn" id="mode-hasbc" onclick="setMode('hasbc')"
@@ -276,6 +285,49 @@ function showL(msg){
   const lt = id('lt'); if (lt && msg) lt.textContent = msg;
 }
 function hideL(){ const ld = id('ld'); if (ld) ld.classList.remove('show'); }
+
+/* ===================== VENDOR SELECTION ===================== */
+// Each vendor's invoice has a distinct column layout, so parsing is per-vendor.
+// Add a new entry here to support a new vendor — the extractor dispatches
+// automatically through parseByVendor().
+const VENDOR_KEY = 'kimchi-invoice-vendor';
+const VENDORS_PARSER = {
+  seoul_trading: {
+    name: 'Seoul Trading',
+    detect: text => /SEOUL\s*TRADING|seoultradingusa/i.test(text),
+    parse: rows => parseSeoulTrading(rows)
+  },
+  rhee_bros: {
+    name: 'RHEE BROS',
+    detect: text => /RHEE\s*BROS|RHEEBROS/i.test(text),
+    parse: rows => parseRheeBros(rows)
+  },
+  generic: {
+    name: 'Generic / fallback',
+    detect: () => false,
+    parse: rows => parseInvoiceRows(rows)   // existing flexible parser
+  }
+};
+let currentVendor = 'auto';
+try { currentVendor = localStorage.getItem(VENDOR_KEY) || 'auto'; } catch(e){}
+
+function setVendor(v){
+  currentVendor = v || 'auto';
+  try { localStorage.setItem(VENDOR_KEY, currentVendor); } catch(e){}
+  const sel = id('vendor-sel'); if (sel && sel.value !== currentVendor) sel.value = currentVendor;
+}
+
+// Choose the right parser given the raw extracted items' text content. If the
+// user forced a specific vendor, use that; otherwise sniff the text.
+function parseByVendor(rows){
+  let vid = currentVendor;
+  if (vid === 'auto' || !VENDORS_PARSER[vid]){
+    const sample = rows.slice(0, 30).map(r => r.items.map(i => i.text).join(' ')).join(' ');
+    vid = Object.keys(VENDORS_PARSER).find(k => VENDORS_PARSER[k].detect(sample)) || 'generic';
+  }
+  console.info('[parseByVendor] using parser:', vid);
+  return VENDORS_PARSER[vid].parse(rows);
+}
 
 /* ===================== MODE (has/no barcode) + REFERENCE SHEET ===================== */
 const REF_KEY    = 'kimchi-invoice-ref-v1'; // barcode lookup table in localStorage
@@ -419,7 +471,7 @@ function enrichAllRows(){
   return filled;
 }
 
-// Restore mode + reference on load.
+// Restore mode + reference + vendor on load.
 (function restoreModeAndRef(){
   try {
     const m = localStorage.getItem(MODE_KEY);
@@ -427,7 +479,12 @@ function enrichAllRows(){
     const raw = localStorage.getItem(REF_KEY);
     if (raw){ const obj = JSON.parse(raw); if (obj && obj.byVC) REF = obj; }
   } catch(e){}
-  window.addEventListener('DOMContentLoaded', () => { setMode(MODE); renderRefInfo(); });
+  window.addEventListener('DOMContentLoaded', () => {
+    setMode(MODE);
+    renderRefInfo();
+    const sel = id('vendor-sel');
+    if (sel) sel.value = currentVendor;
+  });
 })();
 
 // Column definitions — matches Seoul Trading invoice columns exactly.
@@ -738,7 +795,7 @@ async function extractImage(file, onProgress){
     }
     if(allItems.length){
       const altRows = clusterRows(allItems);
-      const altItems = parseInvoiceRows(altRows);
+      const altItems = parseByVendor(altRows);
       if(altItems.length > items.length) items = altItems;
     }
   } catch(e) { /* ignore — fall back to primary */ }
@@ -991,7 +1048,7 @@ async function extractPDF(file, onProgress){
 
   const rows = clusterRows(allItems);
   onProgress(0.85);
-  const items = parseInvoiceRows(rows);
+  const items = parseByVendor(rows);
   onProgress(1.0);
   return items;
 }
@@ -1077,8 +1134,98 @@ function clusterRows(items){
  *    Secondary row → Description(English) appended + Barcode from Total column area
  * 4. Final Description = English line (exact, unmodified).
  */
+// Seoul Trading is the original vendor this parser was written for; we keep
+// parseInvoiceRows as the generic/flexible path and alias it here so the
+// vendor-dispatch table stays readable.
+function parseSeoulTrading(rows){ return parseInvoiceRows(rows); }
+
+/* ===================== RHEE BROS PARSER =====================
+ * Columns (fixed layout, seen in Sales Invoice PSI-XXXXXXX.pdf):
+ *   No. | Brand | Description | Size | Qty. | UM | Type | Unit | Each | Total
+ * - No.   : 5-digit item code with trailing letter, e.g. "00004D"
+ * - Brand : supplier/brand (English) plus a Korean sub-row on the line below
+ * - Each  : per-unit price (this is the EA price we compare against POS cost)
+ * - Unit  : case/bag line price (casePrice)
+ */
+function parseRheeBros(rows){
+  // Identify header row
+  const HDR_KEYS = ['description','qty','each','total','brand'];
+  const isHdr = r => r.items.some(i => HDR_KEYS.some(k => i.text.toLowerCase().includes(k)));
+  const hdrIdxs = [];
+  rows.forEach((r,i)=>{ if (isHdr(r)) hdrIdxs.push(i); });
+  if (!hdrIdxs.length) return [];
+
+  const firstHdr = hdrIdxs[0];
+  const hdrSet = new Set(hdrIdxs);
+  const colDefs = buildColDefs(rows[firstHdr].items);
+  const dataRows = rows.slice(firstHdr + 1).filter((_,i) => !hdrSet.has(firstHdr + 1 + i));
+
+  const cNo   = findCol(colDefs,'no.','no','#');
+  const cBrd  = findCol(colDefs,'brand');
+  const cDesc = findCol(colDefs,'description','desc');
+  const cSize = findCol(colDefs,'size');
+  const cQty  = findCol(colDefs,'qty','quantity');
+  const cUm   = findCol(colDefs,'um','uom');
+  const cUnit = findCol(colDefs,'unit','linetotal');  // case/line price
+  const cEach = findCol(colDefs,'each','eaprice','ea price');
+  const cTot  = findCol(colDefs,'total','amount');
+
+  const IC = /^\d{4,7}[A-Z]$/;
+  const result = [];
+  let cur = null;
+
+  dataRows.forEach(row => {
+    const texts = row.items.map(i => i.text);
+
+    // A primary line is identified by an item code in the "No." column
+    const icTok = cNo
+      ? row.items.find(i => i.x >= cNo.x0-12 && i.x < cNo.x1 && IC.test(i.text.trim()))
+      : row.items.find(i => IC.test(i.text.trim()));
+
+    if (icTok){
+      if (cur) result.push(cur);
+      const ic    = icTok.text.trim();
+      const brand = cellText(row.items, cBrd).trim();
+      const desc  = cellText(row.items, cDesc).trim();
+      const size  = cellText(row.items, cSize).trim();
+      const qty   = cellText(row.items, cQty).trim();
+      const um    = cellText(row.items, cUm).trim();
+      const unit  = cellNum(row.items, cUnit);
+      const each  = cellNum(row.items, cEach);
+      const total = cellNum(row.items, cTot);
+
+      // Name = brand + description (keeps "HANKUKMI EXTRA FANCY RICE ..." readable).
+      // Some RHEE rows have brand only on a sub-line → we'll merge below.
+      let name = [brand, desc].filter(Boolean).join(' ').trim();
+      if (!name) return;
+
+      cur = {
+        vendorCode: ic,
+        name,
+        barcode: '',
+        eaPrice: each || 0,
+        casePrice: unit || total || 0,
+        qty: qty || '',
+        unit: um || ''
+      };
+    } else if (cur){
+      // Sub-row: typically Korean brand name or a wrap of the description.
+      // If line is English and non-numeric, append to description.
+      const line = texts.join(' ').trim();
+      if (!line) return;
+      // Skip price-only or number-only continuation lines.
+      if (/^[\d.\s,$]+$/.test(line)) return;
+      if (!hasKorean(line) && /[a-zA-Z]/.test(line) && line.length > 2){
+        cur.name = (cur.name + ' ' + line).replace(/\s+/g,' ').trim();
+      }
+    }
+  });
+  if (cur) result.push(cur);
+  return result.filter(r => r.eaPrice > 0 || r.casePrice > 0);
+}
+
 function parseInvoiceRows(rows){
-  const HDR_KEYS = ['itemcode','item code','ea price','eaprice','description','storage','uom'];
+  const HDR_KEYS = ['itemcode','item code','ea price','eaprice','description','storage','uom','each','brand'];
   const isHdr = r => r.items.some(i => HDR_KEYS.some(k => i.text.toLowerCase().includes(k)));
 
   // Collect ALL header row indices (one per page)
@@ -1134,16 +1281,25 @@ function cellNum(rowItems, col){
 }
 
 function parseStructured(dataRows, colDefs){
-  // Identify columns
-  const cIC    = findCol(colDefs,'itemcode','item');
+  // Identify columns — tolerate multiple vendor header styles:
+  //   Seoul Trading: ItemCode / Description / QTY / UOM / Price / EA Price / Total
+  //   RHEE BROS   : No. / Description / Qty. / UM / Unit / Each / Total
+  // Order of findCol alternates matters: first alternative wins.
+  const cIC    = findCol(colDefs,'itemcode','item','no.','no','#');
   const cDesc  = findCol(colDefs,'description','desc');
   const cQty   = findCol(colDefs,'qty','quantity');
-  const cUom   = findCol(colDefs,'uom','unit');
-  const cPrice = findCol(colDefs,'price');          // case/box price
-  const cTotal = findCol(colDefs,'total');
-  const cEA    = findCol(colDefs,'eaprice','ea price','ea');
+  const cUom   = findCol(colDefs,'uom','um','unit of','pack');
+  // "Unit" on RHEE is the case/line price. "Price" on Seoul Trading is same.
+  // Search for exact 'unit' last so it doesn't steal the UM column.
+  const cPrice = findCol(colDefs,'price','unit','linetotal');
+  const cTotal = findCol(colDefs,'total','amount');
+  const cEA    = findCol(colDefs,'eaprice','ea price','each','ea');
 
-  const IC = /^[A-Z]{2,4}\d{4,6}$/;
+  // Item code patterns across vendors:
+  //   EC1032 / AB1001 / VDYA105006 — letters then digits, optional trailing letter
+  //   00004D / 01021D             — digits then trailing letter (RHEE BROS)
+  //   01177K                       — digits + letter
+  const IC = /^(?:[A-Z]{1,5}\d{3,6}[A-Z]?|\d{4,7}[A-Z]?)$/;
 
   const result = [];
   let cur = null;
@@ -1210,7 +1366,7 @@ function parseStructured(dataRows, colDefs){
 function parseFallback(rows){
   // Used when no structured header is found.
   // Still pairs Korean+English rows by ItemCode.
-  const IC = /\b([A-Z]{2,4}\d{4,6})\b/;
+  const IC = /\b([A-Z]{1,5}\d{3,6}[A-Z]?|\d{4,7}[A-Z])\b/;
   const PR = /\$?\s*(\d{1,6}[.,]\d{2})/g;
   const result = [];
   let cur = null;
