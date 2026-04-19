@@ -387,28 +387,35 @@ function onRefFile(f){
       console.log('Header row', hdrIdx, ':', header);
 
       const norm = s => s.toLowerCase().replace(/[\s_.-]/g,'');
-      // Priority-ordered find: try each pattern in order, exact match first
-      // across all headers, then substring. This keeps "VENDOR CODE" from
-      // being overtaken by a plain "CODE" column when both are present.
-      const find = (names) => {
-        const want = names.map(n => norm(n));
-        for (const w of want){
-          for (let i=0; i<header.length; i++){
-            const h = norm(header[i]);
-            if (h && h === w) return i;
-          }
-        }
-        for (const w of want){
-          for (let i=0; i<header.length; i++){
-            const h = norm(header[i]);
-            if (h && h.includes(w) && h !== 'code') return i;
-          }
+      const normalized = header.map(h => norm(h));
+      console.log('Normalized headers:', normalized);
+      // Pick columns by explicit rule instead of fuzzy matching, so plain
+      // "code" or "barcode" headers never steal the vendor-code slot.
+      const idxEq  = (wants) => {
+        for (const w of wants){ const i = normalized.indexOf(w); if (i >= 0) return i; }
+        return -1;
+      };
+      const idxInc = (wants, excludeIdx) => {
+        for (let i=0; i<normalized.length; i++){
+          if (excludeIdx && excludeIdx.has(i)) continue;
+          const h = normalized[i];
+          if (wants.some(w => h.includes(w))) return i;
         }
         return -1;
       };
-      const bci = find(['fullbarcode','barcode','upc','ean','풀바코드','바코드']);
-      const ni  = find(['name','productname','item','description','상품명','품명']);
-      const vci = find(['vendorcode','vendor','itemcode','itemno','item#','벤더코드','품번','sku','code']);
+
+      // barcode = exact "fullbarcode" or "barcode" → else contains "barcode"
+      let bci = idxEq(['fullbarcode','barcode','풀바코드','바코드','upc','ean']);
+      // vendor code = header containing "vendor" (covers "VENDOR CODE", "VENDOR")
+      //   → else exact "itemcode","sku","품번","벤더코드"
+      //   → else any header with "code" that isn't the barcode column
+      let vci = -1;
+      for (let i=0; i<normalized.length; i++){ if (normalized[i].includes('vendor')){ vci = i; break; } }
+      if (vci < 0) vci = idxEq(['itemcode','itemno','sku','품번','벤더코드']);
+      if (vci < 0) vci = idxInc(['code'], new Set([bci]));
+      // name = exact or contains
+      let ni = idxEq(['name','productname','상품명','품명']);
+      if (ni < 0) ni = idxInc(['name','description','상품','품명'], new Set([bci, vci]));
       console.log('Column indexes — barcode:', bci, 'name:', ni, 'vendor:', vci);
       if (bci < 0 || vci < 0){
         hideL();
