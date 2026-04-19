@@ -458,6 +458,7 @@ function selFmt(fmt){
 /* ---- EXCEL INVOICE ---- */
 function onInvExcel(inp){
   const f=inp.files[0];if(!f)return;
+  if (typeof window.__clearInvoiceImport === 'function') window.__clearInvoiceImport();
   showFI('inv-xfi',f); showL('인보이스 엑셀 읽는 중...');
   readXlsx(f,(h,r)=>{
     fillSelects('im',h,['name','bc','vc','ea','cs','qty','un']);
@@ -490,6 +491,7 @@ function applyInvMap(){
 /* ---- PDF INVOICE ---- */
 async function onInvPDF(inp){
   const f=inp.files[0];if(!f)return;
+  if (typeof window.__clearInvoiceImport === 'function') window.__clearInvoiceImport();
   const st=id('pdf-status');
   st.textContent='PDF 로딩 중...'; show('pdf-pbar');
   id('pdf-pfill').style.width='10%';
@@ -546,6 +548,7 @@ async function onInvPDF(inp){
 /* ---- PHOTO / OCR ---- */
 async function onInvPhoto(inp){
   const f=inp.files[0];if(!f)return;
+  if (typeof window.__clearInvoiceImport === 'function') window.__clearInvoiceImport();
   id('ph-img').src=URL.createObjectURL(f);
   show('inv-ph-prev'); show('ocr-pbar');
   id('ocr-pfill').style.width='0%';
@@ -1291,16 +1294,28 @@ function fmtSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)
  * Detect a payload stashed by sendToCompare() and auto-fill the Step-2 grid
  * so users don't have to re-upload or re-run OCR on data they already parsed. */
 (function autoLoadImportedInvoice(){
+  // Read from both localStorage (persistent) and sessionStorage (legacy).
+  // Don't delete immediately — we want the data to survive refreshes until
+  // the user actually uploads a new invoice here or explicitly dismisses it.
   let raw = null;
-  try { raw = sessionStorage.getItem('kimchi-invoice-import'); } catch(e){ return; }
+  try { raw = localStorage.getItem('kimchi-invoice-import') || sessionStorage.getItem('kimchi-invoice-import'); }
+  catch(e){ return; }
   if(!raw) return;
 
   let payload;
   try { payload = JSON.parse(raw); }
-  catch(e){ sessionStorage.removeItem('kimchi-invoice-import'); return; }
-  sessionStorage.removeItem('kimchi-invoice-import');
-
+  catch(e){
+    try { localStorage.removeItem('kimchi-invoice-import'); sessionStorage.removeItem('kimchi-invoice-import'); } catch(_){}
+    return;
+  }
   if(!payload || !Array.isArray(payload.rows) || !payload.rows.length) return;
+
+  // Expire after 24 hours so stale imports don't linger forever.
+  const MAX_AGE = 24 * 60 * 60 * 1000;
+  if (payload.timestamp && Date.now() - payload.timestamp > MAX_AGE){
+    try { localStorage.removeItem('kimchi-invoice-import'); sessionStorage.removeItem('kimchi-invoice-import'); } catch(_){}
+    return;
+  }
 
   window.addEventListener('DOMContentLoaded', () => {
     S.invData = payload.rows.map(r => ({
@@ -1324,6 +1339,12 @@ function fmtSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)
     }
   });
 })();
+
+// Clear the cached import whenever the user picks a new invoice file here,
+// so the automatic reload doesn't keep re-injecting the old PDF payload.
+window.__clearInvoiceImport = function(){
+  try { localStorage.removeItem('kimchi-invoice-import'); sessionStorage.removeItem('kimchi-invoice-import'); } catch(_){}
+};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function int(v){return parseInt(v);}
