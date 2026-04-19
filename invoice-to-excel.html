@@ -129,10 +129,37 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="hdr" style="position:relative">
   <h1 data-t="title">📄 인보이스 PDF/사진 → 엑셀 변환</h1>
   <p data-t="subtitle">PDF · 사진(JPG/PNG) 인보이스를 자동으로 엑셀로 변환합니다</p>
-  <div style="position:absolute;top:14px;right:14px;display:flex;gap:4px">
+  <div style="position:absolute;top:14px;right:14px;display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+    <button id="branch-btn" onclick="openBranchModal()" style="background:rgba(255,255,255,.25);border:1.5px solid rgba(255,255,255,.6);color:#fff;border-radius:14px;padding:4px 12px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">
+      <span id="branch-btn-label">지점 선택</span>
+    </button>
+    <button id="history-btn" onclick="openHistoryModal()" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">📜 <span data-t="history">히스토리</span></button>
     <button id="lb-ko" onclick="setLang('ko')" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">KO</button>
     <button id="lb-en" onclick="setLang('en')" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">EN</button>
     <button id="lb-es" onclick="setLang('es')" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">ES</button>
+  </div>
+</div>
+
+<!-- BRANCH MODAL -->
+<div id="branch-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:14px;padding:20px;max-width:500px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="font-size:16px;font-weight:800;color:#2e8b57">🏪 지점 선택 / Branch</div>
+      <button onclick="closeBranchModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888">✕</button>
+    </div>
+    <div style="font-size:11px;color:#888;margin-bottom:10px">지점마다 인보이스 히스토리가 따로 저장됩니다</div>
+    <div id="branch-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"></div>
+  </div>
+</div>
+
+<!-- HISTORY MODAL -->
+<div id="history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:14px;padding:20px;max-width:800px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:16px;font-weight:800;color:#2e8b57">📜 <span id="history-title">인보이스 히스토리</span></div>
+      <button onclick="closeHistoryModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888">✕</button>
+    </div>
+    <div id="history-list" style="overflow-y:auto;flex:1;min-height:200px"></div>
   </div>
 </div>
 
@@ -665,6 +692,158 @@ function enrichAllRows(){
   });
 })();
 
+/* ===================== BRANCH + INVOICE HISTORY ===================== */
+// 6-branch Kimchi Mart. Invoice data is saved per-branch so prices don't
+// leak between stores (same rule as the lookup / order apps).
+const BRANCHES = [
+  { id: 'MIAMI',          ko: '마이애미',        en: 'Miami' },
+  { id: 'PEMBROKE_PINES', ko: '펨브로크 파인즈', en: 'Pembroke Pines' },
+  { id: 'HOLLYWOOD',      ko: '할리우드',        en: 'Hollywood' },
+  { id: 'CORAL_SPRINGS',  ko: '코럴 스프링스',   en: 'Coral Springs' },
+  { id: 'LASOLAS',        ko: '라스올라스',      en: 'LASOLAS' },
+  { id: 'WEST_PALM',      ko: '웨스트 팜 비치',  en: 'West Palm Beach' },
+];
+const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
+const BRANCH_KEY = 'km_branch';          // shared with sibling apps
+const HIST_PREFIX = 'kimchi-invoice-history-'; // + <BRANCH>
+const HIST_MAX = 50;
+
+let CURRENT_BRANCH = '';
+try { CURRENT_BRANCH = localStorage.getItem(BRANCH_KEY) || ''; } catch(e){}
+
+function histKey(b){ return HIST_PREFIX + (b || CURRENT_BRANCH); }
+
+function loadHistory(b){
+  try {
+    const raw = localStorage.getItem(histKey(b));
+    return raw ? (JSON.parse(raw) || []) : [];
+  } catch(e){ return []; }
+}
+
+function saveHistoryEntry(entry){
+  if (!CURRENT_BRANCH) return;
+  const arr = loadHistory();
+  arr.unshift(entry);
+  if (arr.length > HIST_MAX) arr.length = HIST_MAX;
+  try { localStorage.setItem(histKey(), JSON.stringify(arr)); } catch(e){ console.warn('history save failed:', e); }
+  // Push to Firebase too (non-blocking)
+  if (window.cloudPushInvoiceEntry){
+    try { window.cloudPushInvoiceEntry(CURRENT_BRANCH, entry); } catch(e){}
+  }
+}
+
+function deleteHistoryEntry(ts){
+  const arr = loadHistory().filter(e => e.timestamp !== ts);
+  try { localStorage.setItem(histKey(), JSON.stringify(arr)); } catch(e){}
+  if (window.cloudDeleteInvoiceEntry){
+    try { window.cloudDeleteInvoiceEntry(CURRENT_BRANCH, ts); } catch(e){}
+  }
+  renderHistoryList();
+}
+
+function setBranch(id){
+  if (!BRANCH_BY_ID[id]) return;
+  CURRENT_BRANCH = id;
+  try { localStorage.setItem(BRANCH_KEY, id); } catch(e){}
+  const lbl = document.getElementById('branch-btn-label');
+  if (lbl) lbl.textContent = BRANCH_BY_ID[id].ko;
+  const modal = document.getElementById('branch-modal');
+  if (modal) modal.style.display = 'none';
+  if (window.cloudSubscribeInvoiceHistory){
+    try { window.cloudSubscribeInvoiceHistory(id); } catch(e){}
+  }
+}
+window.setBranch = setBranch;
+
+function openBranchModal(){
+  const grid = document.getElementById('branch-grid');
+  if (grid){
+    grid.innerHTML = BRANCHES.map(b =>
+      `<button onclick="setBranch('${b.id}')" style="background:${b.id===CURRENT_BRANCH?'#E8F5E9':'#fff'};border:1.5px solid ${b.id===CURRENT_BRANCH?'#2e8b57':'#ddd'};border-radius:10px;padding:14px 10px;font-size:13px;font-weight:700;color:${b.id===CURRENT_BRANCH?'#2e8b57':'#333'};cursor:pointer;font-family:inherit;text-align:center">
+        <div>${b.ko}</div>
+        <div style="font-size:10px;color:#888;font-weight:500;margin-top:2px">${b.en}</div>
+      </button>`
+    ).join('');
+  }
+  const m = document.getElementById('branch-modal');
+  if (m) m.style.display = 'flex';
+}
+window.openBranchModal = openBranchModal;
+
+function closeBranchModal(){
+  if (!CURRENT_BRANCH) return;  // must pick one on first visit
+  const m = document.getElementById('branch-modal');
+  if (m) m.style.display = 'none';
+}
+window.closeBranchModal = closeBranchModal;
+
+function openHistoryModal(){
+  if (!CURRENT_BRANCH){ openBranchModal(); return; }
+  renderHistoryList();
+  const m = document.getElementById('history-modal');
+  if (m) m.style.display = 'flex';
+}
+window.openHistoryModal = openHistoryModal;
+
+function closeHistoryModal(){
+  const m = document.getElementById('history-modal');
+  if (m) m.style.display = 'none';
+}
+window.closeHistoryModal = closeHistoryModal;
+
+function renderHistoryList(){
+  const arr = loadHistory();
+  const titleEl = document.getElementById('history-title');
+  if (titleEl) titleEl.textContent = `${BRANCH_BY_ID[CURRENT_BRANCH]?.ko || CURRENT_BRANCH} · 인보이스 히스토리 (${arr.length})`;
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  if (!arr.length){
+    list.innerHTML = '<div style="padding:40px 20px;text-align:center;color:#999">저장된 인보이스가 없습니다.<br><span style="font-size:12px">PDF를 업로드하고 추출하면 자동으로 저장됩니다.</span></div>';
+    return;
+  }
+  list.innerHTML = arr.map(e => {
+    const d = new Date(e.timestamp);
+    const dateStr = d.toLocaleString('ko-KR', { year:'2-digit', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const files = (e.fileNames||[]).slice(0,2).join(', ') + ((e.fileNames||[]).length > 2 ? ` +${e.fileNames.length-2}` : '');
+    return `<div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px">${dateStr} · ${(e.vendor||'').toUpperCase()}</div>
+        <div style="font-size:11px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.fileNames||[]).join(', ')}">${files||'(파일명 없음)'}</div>
+        <div style="font-size:11px;color:#2e8b57;margin-top:2px"><b>${e.items?.length || 0}</b>개 항목</div>
+      </div>
+      <button onclick="loadHistoryEntry(${e.timestamp})" style="background:#2e8b57;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:700">불러오기</button>
+      <button onclick="if(confirm('삭제하시겠습니까?'))deleteHistoryEntry(${e.timestamp})" style="background:#fff;color:#d33;border:1px solid #d33;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit">삭제</button>
+    </div>`;
+  }).join('');
+}
+window.renderHistoryList = renderHistoryList;
+window.deleteHistoryEntry = deleteHistoryEntry;
+
+function loadHistoryEntry(ts){
+  const entry = loadHistory().find(e => e.timestamp === ts);
+  if (!entry){ toast('❌ 항목을 찾을 수 없음'); return; }
+  ROWS = entry.items.slice();
+  renderGrid();
+  show('result-card');
+  closeHistoryModal();
+  const d = new Date(ts).toLocaleString('ko-KR');
+  toast(`✅ ${d} 인보이스 불러옴 (${ROWS.length}개 항목)`);
+}
+window.loadHistoryEntry = loadHistoryEntry;
+
+// First-load: prompt branch selection if none set; otherwise update label.
+window.addEventListener('DOMContentLoaded', () => {
+  if (CURRENT_BRANCH && BRANCH_BY_ID[CURRENT_BRANCH]){
+    const lbl = document.getElementById('branch-btn-label');
+    if (lbl) lbl.textContent = BRANCH_BY_ID[CURRENT_BRANCH].ko;
+    if (window.cloudSubscribeInvoiceHistory){
+      try { window.cloudSubscribeInvoiceHistory(CURRENT_BRANCH); } catch(e){}
+    }
+  } else {
+    openBranchModal();
+  }
+});
+
 // Column definitions — matches Seoul Trading invoice columns exactly.
 // UoM was dropped (always "CS" for this vendor, adds no information).
 const COLS = [
@@ -807,6 +986,18 @@ async function extractAll(){
       hide('ocr-debug');
       const enrichMsg = filled > 0 ? ` · 참조로 ${filled}개 보충` : '';
       toast(`✅ ${ROWS.length}개 항목 추출! 바코드 없음: ${Math.max(0, noBC - filled)}개${enrichMsg}`, 3500);
+      // Persist per-branch history so closing the tab doesn't lose work and
+      // staff at other devices can see what's been processed.
+      if (CURRENT_BRANCH){
+        saveHistoryEntry({
+          timestamp: Date.now(),
+          branch: CURRENT_BRANCH,
+          vendor: currentVendor,
+          mode: MODE,
+          fileNames: FILES.map(f => f.name),
+          items: ROWS.slice()
+        });
+      }
     } else {
       toast('⚠️ 추출된 데이터가 없습니다. OCR 원본 텍스트를 확인해 주세요.', 4000);
       showOCRDebug();
@@ -2133,5 +2324,70 @@ function loadSc(src){
   });
 }
 </script>
+
+<!-- Firebase: per-branch invoice history sync. Each upload becomes an entry
+     under invoiceHistory/<BRANCH>/<timestamp>. Subscribing merges remote
+     entries into localStorage so other devices see each other's work. -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getDatabase, ref, set, remove, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+  projectId: "kimchi-mart-order",
+  storageBucket: "kimchi-mart-order.firebasestorage.app",
+  messagingSenderId: "640942647201",
+  appId: "1:640942647201:web:1e3421fb55c89155230de0"
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const HIST_PREFIX = 'kimchi-invoice-history-';
+const HIST_MAX = 50;
+let unsub = null;
+
+function path(branchId, ts){
+  return 'invoiceHistory/' + branchId + (ts ? '/' + ts : '');
+}
+
+window.cloudPushInvoiceEntry = function(branchId, entry){
+  if (!branchId || !entry || !entry.timestamp) return;
+  set(ref(db, path(branchId, entry.timestamp)), entry)
+    .catch(e => console.warn('[invoice] cloud push failed:', e));
+};
+
+window.cloudDeleteInvoiceEntry = function(branchId, ts){
+  if (!branchId || !ts) return;
+  remove(ref(db, path(branchId, ts)))
+    .catch(e => console.warn('[invoice] cloud delete failed:', e));
+};
+
+window.cloudSubscribeInvoiceHistory = function(branchId){
+  if (unsub){ try { unsub(); } catch(e){} unsub = null; }
+  if (!branchId) return;
+  unsub = onValue(ref(db, path(branchId)), (snap) => {
+    const remote = snap.val();
+    if (!remote) return;
+    // Merge remote entries into localStorage, newest first, capped at HIST_MAX.
+    let local = [];
+    try { local = JSON.parse(localStorage.getItem(HIST_PREFIX + branchId) || '[]') || []; } catch(e){}
+    const byTs = new Map();
+    local.forEach(e => { if (e && e.timestamp) byTs.set(e.timestamp, e); });
+    Object.values(remote).forEach(e => {
+      if (e && e.timestamp && !byTs.has(e.timestamp)) byTs.set(e.timestamp, e);
+    });
+    const merged = [...byTs.values()].sort((a,b) => b.timestamp - a.timestamp).slice(0, HIST_MAX);
+    try { localStorage.setItem(HIST_PREFIX + branchId, JSON.stringify(merged)); } catch(e){}
+    // If the history modal is open, refresh it.
+    const m = document.getElementById('history-modal');
+    if (m && m.style.display === 'flex' && typeof window.renderHistoryList === 'function'){
+      window.renderHistoryList();
+    }
+  });
+};
+</script>
+
 </body>
 </html>
