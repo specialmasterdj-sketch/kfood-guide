@@ -1832,13 +1832,37 @@ function parseJFC(rows){
   const PACK_RE = /(\d+(?:\s*\/\s*\d+(?:\.\d+)?)+)\s*(OZ|LB|FZ|ML|KG|CT|Z|LZ|[Oo]z|[Ff]z|0z|0Z|#)/i;
   const NUM_RE  = /\d+(?:\.\d{1,2})?/g;
 
+  // SLOT NO is not used downstream. Strip SLOT-looking tokens
+  // (FE11C, CA2604, AF10A, FD35A3, FD2382 etc.) so they don't leak into
+  // the description. Pattern requires at least 2 actual digits so that
+  // real product words like "GYOZA", "KAMABOKO", "SHORT" are preserved.
+  const SLOT_RE = /\b[A-Z]{2}\d{2,5}(?:[A-Z]\d?)?\b/g;
+  // Leading 1-2 char mixed-case fragments are OCR noise from the QTY
+  // columns ("Ha iL", "Ta", "Fn", "Be:"); drop those before hitting the
+  // all-caps product name that actually matters.
+  const stripLeadingNoise = s => {
+    const toks = s.split(/\s+/);
+    while (toks.length){
+      const t = toks[0];
+      // Keep all-caps words 2+ letters (JB, DY, SB, etc.) and pure digits.
+      if (/^[A-Z]{2,}$/.test(t)) break;
+      if (/^\d+$/.test(t)) { toks.shift(); continue; }
+      // Drop anything else that's not a clean capitalized product word.
+      if (t.length <= 3 && /[a-z]/.test(t)){ toks.shift(); continue; }
+      break;
+    }
+    return toks.join(' ');
+  };
+
   const out = [];
   rows.forEach(row => {
-    // Join the row's tokens into a text line we can regex over.
-    const line = row.items
+    // Join the row's tokens into a text line we can regex over, then scrub
+    // SLOT NOs so they can't show up in the description.
+    let line = row.items
       .map(i => i.text || '')
       .join(' ')
       .replace(/[|\[\]`~"']/g, ' ')
+      .replace(SLOT_RE, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     if (!line) return;
@@ -1864,39 +1888,47 @@ function parseJFC(rows){
       eaches = pm2 ? parseFloat(pm2[1]) : 0;
     }
 
-    // UPC: collect first run of 11-13 digits from lead area (tolerating spaces).
+    // UPC: collect first run of 11-13 digits from lead area (tolerating
+    // spaces). Track where the UPC ends so we can pick ITEM# from AFTER it.
     let upc = '';
-    const collect = [];
-    for (const ch of leadArea){
-      if (/\d/.test(ch)) collect.push(ch);
-      else if (collect.length >= 11) break;
-      else if (collect.length > 0 && /\s/.test(ch)) continue;
-      else if (collect.length > 0) collect.length = 0;
-    }
-    if (collect.length >= 11) upc = collect.slice(0, Math.min(13, collect.length)).join('');
-
-    // ITEM# is the last 5-digit number in lead area that isn't part of the UPC.
-    let item = '';
-    const fives = [...leadArea.matchAll(/\b\d{5}\b/g)].map(m => m[0]);
-    if (fives.length){
-      for (let i = fives.length - 1; i >= 0; i--){
-        if (!upc.includes(fives[i])){ item = fives[i]; break; }
+    let upcEndIdx = 0;
+    {
+      const collect = [];
+      for (let i = 0; i < leadArea.length; i++){
+        const ch = leadArea[i];
+        if (/\d/.test(ch)) collect.push(ch);
+        else if (collect.length >= 11){ upcEndIdx = i; break; }
+        else if (collect.length > 0 && /\s/.test(ch)) continue;
+        else if (collect.length > 0) collect.length = 0;
       }
-      if (!item) item = fives[fives.length - 1];
+      if (collect.length >= 11) upc = collect.slice(0, Math.min(13, collect.length)).join('');
     }
+
+    // ITEM# is the first 5-digit token AFTER the UPC (SLOT already stripped).
+    // Picking by position avoids both: (a) picking a UPC-embedded 5-digit
+    // substring, and (b) picking a sub-item code in the description tail
+    // like "KIBUN KAMABOKO AKA FZN 13614" where 13614 is NOT the ITEM#.
+    let item = '';
+    const afterUpc = upcEndIdx > 0 ? leadArea.substring(upcEndIdx) : leadArea;
+    const firstFive = afterUpc.match(/\b(\d{5})\b/);
+    if (firstFive) item = firstFive[1];
+    // Fallback: derive from UPC middle (positions 6-10 for 12-digit UPC).
+    if (!item && upc.length >= 11) item = upc.substring(upc.length - 6, upc.length - 1);
     if (!item){
       // Fallback for 4-6 digit codes.
       const any = [...leadArea.matchAll(/\b\d{4,6}\b/g)].map(m => m[0]);
       if (any.length) item = any[any.length - 1];
     }
 
-    // Description: text after ITEM# in lead area, stripped of leading qty digits.
+    // Description: text after ITEM# in lead area, stripped of leading qty
+    // digits and OCR noise fragments from the QTY columns.
     let desc = leadArea;
     if (item){
       const idx = leadArea.lastIndexOf(item);
       if (idx >= 0) desc = leadArea.substring(idx + item.length);
     }
     desc = desc.replace(/^[\s\d]+/, '').trim();
+    desc = stripLeadingNoise(desc);
 
     if (!item || !amount) return;
     out.push({
