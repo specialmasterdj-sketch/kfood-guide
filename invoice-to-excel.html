@@ -1202,6 +1202,13 @@ function parseRheeBros(rows){
   const result = [];
   let cur = null;
 
+  console.log('[rhee] columns:', {
+    cNo: cNo?.raw, cBrd: cBrd?.raw, cDesc: cDesc?.raw,
+    cSize: cSize?.raw, cQty: cQty?.raw, cUm: cUm?.raw,
+    cUnit: cUnit?.raw, cEach: cEach?.raw, cTot: cTot?.raw
+  });
+  let debugRows = 0;
+
   dataRows.forEach(row => {
     const texts = row.items.map(i => i.text);
 
@@ -1222,9 +1229,33 @@ function parseRheeBros(rows){
       const each  = cellNum(row.items, cEach);
       const total = cellNum(row.items, cTot);
 
-      // Name = brand + description (keeps "HANKUKMI EXTRA FANCY RICE ..." readable).
-      // Some RHEE rows have brand only on a sub-line → we'll merge below.
+      if (debugRows < 3){
+        console.log('[rhee] primary row', ic, {
+          allTexts: texts,
+          brand, desc, size, qty, um, unit, each, total
+        });
+        debugRows++;
+      }
+
+      // Name = brand + description. If desc is blank (PDF split the product
+      // name into a sub-row), fall back to ALL English text on this row that
+      // isn't the item code, size token, or a number.
       let name = [brand, desc].filter(Boolean).join(' ').trim();
+      if (!name){
+        const fallback = row.items
+          .filter(it => {
+            const t = it.text.trim();
+            if (!t || t === ic) return false;
+            if (!/[A-Za-z]/.test(t)) return false;
+            if (IC.test(t)) return false;
+            if (/^\d+(?:\.\d+)?$/.test(t)) return false;
+            return true;
+          })
+          .sort((a,b)=>a.x-b.x)
+          .map(it => it.text.trim())
+          .join(' ');
+        name = fallback.trim();
+      }
       if (!name) return;
 
       cur = {
