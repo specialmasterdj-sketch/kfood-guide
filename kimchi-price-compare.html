@@ -1210,32 +1210,45 @@ function fillSelects(pfx,headers,fields){
 }
 
 function autoMap(pfx,headers){
-  // Vela POS exports columns: PID / FULL_BARCODE / CODE / CATEGORY / NAME /
-  // PRICE / COST / STOCK / VENDOR. Our target mapping is always:
-  //   상품명 = NAME, 바코드 = FULL_BARCODE (fallback CODE),
-  //   벤더코드 = VENDOR CODE / VENDOR, 원가(COST) = COST.
-  // "CODE" matters for 바코드 not 벤더코드, so 'code' is NOT listed in vc.
+  // Vela POS columns: PID / FULL_BARCODE / CODE / CATEGORY / NAME / PRICE /
+  // COST / STOCK / VENDOR. Target mapping:
+  //   상품명 = NAME, 풀바코드 = FULL_BARCODE (fallback CODE),
+  //   벤더코드 = VENDOR CODE (fallback VENDOR), 원가 = COST (never PRICE).
+  // Each pattern list is ordered by priority (earliest pattern wins). A
+  // lower-priority exact match beats a higher-priority substring match, but
+  // a higher-priority exact match always beats a lower-priority one so the
+  // column order in the file doesn't flip COST↔PRICE or VENDOR CODE↔VENDOR.
   const P={
     name:['name','상품','item desc','description','desc','product','품명','제품','item name','item description'],
     bc:['full_barcode','full barcode','barcode','upc','ean','바코드','code','plu','scan code'],
     vc:['vendor code','vendor_code','vendorcode','itemcode','item code','item #','item no','sku','품번','vendor'],
-    pr:['cost','원가','cost price','costprice','buy price','unit cost','avg cost','price','가격','단가','unit price','selling','retail'],
+    pr:['cost','원가','cost price','costprice','buy price','unit cost','avg cost'], // COST only — do NOT fall back to PRICE
     un:['uom','unit','단위','pack','size']
   };
-  // Reset existing selections so a re-upload picks fresh defaults.
-  ['name','bc','vc','pr','un'].forEach(f=>{
-    const el=id(pfx+'-'+f); if(el){ el.value=''; delete el.dataset.matchKind; }
+  const fields = ['name','bc','vc','pr','un'];
+  // Reset selections so each upload picks fresh defaults.
+  fields.forEach(f=>{
+    const el=id(pfx+'-'+f);
+    if(el){ el.value=''; delete el.dataset.rank; delete el.dataset.matchKind; }
   });
+  // rank = pattern priority (0 = best). Exact matches get their base rank,
+  // substring matches get rank + 100 so any exact outranks any substring.
   headers.forEach((h,i)=>{
     const hl=(h||'').toLowerCase().trim();
-    Object.entries(P).forEach(([f,ps])=>{
-      const el=id(pfx+'-'+f); if(!el)return;
-      const exact = ps.some(p=>hl===p.toLowerCase());
-      const inc   = !exact && ps.some(p=>hl.includes(p.toLowerCase()));
-      if(!exact && !inc) return;
-      if(el.value === '' || (exact && el.dataset.matchKind !== 'exact')){
+    fields.forEach(f=>{
+      const el=id(pfx+'-'+f); if(!el) return;
+      const ps = P[f];
+      let rank = 999;
+      for (let j=0; j<ps.length; j++){
+        const p = ps[j].toLowerCase();
+        if (hl === p){ rank = j; break; }           // exact wins
+        if (rank === 999 && hl.includes(p)) rank = 100 + j; // substring fallback
+      }
+      if (rank === 999) return;
+      const cur = el.dataset.rank === undefined ? 9999 : +el.dataset.rank;
+      if (rank < cur){
         el.value = i;
-        el.dataset.matchKind = exact ? 'exact' : 'inc';
+        el.dataset.rank = String(rank);
       }
     });
   });
