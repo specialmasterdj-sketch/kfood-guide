@@ -55,10 +55,24 @@ tr:nth-child(even) td{background:#fafcfb}
 <div class="pg">
 
   <div class="card">
+    <div class="ct">📍 지점 선택</div>
+    <select id="branch-sel" onchange="setBranch(this.value)" style="width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff">
+      <option value="">-- 지점 선택 --</option>
+      <option value="MIAMI">마이애미 (Miami)</option>
+      <option value="PEMBROKE_PINES">펨브로크 파인즈 (Pembroke Pines)</option>
+      <option value="HOLLYWOOD">할리우드 (Hollywood)</option>
+      <option value="CORAL_SPRINGS">코럴 스프링스 (Coral Springs)</option>
+      <option value="LASOLAS">라스올라스 (LASOLAS)</option>
+      <option value="WEST_PALM">웨스트 팜 비치 (West Palm Beach)</option>
+    </select>
+    <div id="branch-status" style="font-size:12px;color:#666;margin-top:6px"></div>
+  </div>
+
+  <div class="card">
     <div class="ct">📂 POS 엑셀 업로드</div>
     <div class="tip">
       Vela POS에서 내려받은 <b>오늘 최신</b> 엑셀(.xlsx)을 올려주세요.<br>
-      COST 컬럼에 값이 있는 상품만 따로 뽑아 새 파일로 저장합니다.
+      COST 컬럼에 값이 있는 상품만 따로 뽑아 <b>지점별로 이름이 붙은 새 파일</b>로 저장합니다.
     </div>
     <label class="drop" id="drop">
       <input type="file" id="pf" accept=".xlsx,.xls,.csv" onchange="onFile(this.files[0])">
@@ -96,6 +110,26 @@ tr:nth-child(even) td{background:#fafcfb}
 <script>
 function id(x){return document.getElementById(x);}
 function toast(m){const t=id('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
+
+const BRANCH_LABELS = {
+  MIAMI:'마이애미', PEMBROKE_PINES:'펨브로크 파인즈', HOLLYWOOD:'할리우드',
+  CORAL_SPRINGS:'코럴 스프링스', LASOLAS:'라스올라스', WEST_PALM:'웨스트 팜 비치'
+};
+let BRANCH = '';
+try { BRANCH = localStorage.getItem('km_branch') || ''; } catch(e){}
+
+function setBranch(v){
+  BRANCH = v || '';
+  try { localStorage.setItem('km_branch', BRANCH); } catch(e){}
+  const s = id('branch-status');
+  if (s) s.textContent = BRANCH
+    ? `✅ ${BRANCH_LABELS[BRANCH]} 지점의 POS를 처리합니다. 파일명에 지점 이름이 붙습니다.`
+    : '⚠️ 지점을 먼저 선택해 주세요 — 파일명에 지점이 들어갑니다.';
+}
+window.addEventListener('DOMContentLoaded', () => {
+  const sel = id('branch-sel'); if (sel) sel.value = BRANCH;
+  setBranch(BRANCH);
+});
 
 let HEADERS = [];   // [string]
 let ROWS    = [];   // [[cell,cell,...]]
@@ -186,14 +220,16 @@ function apply(){
 
 function downloadFiltered(){
   if (!FILTERED.length){ toast('❌ 필터된 행이 없습니다'); return; }
+  if (!BRANCH){ toast('❌ 지점을 먼저 선택해 주세요'); return; }
   const aoa = [HEADERS, ...FILTERED];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'COST_Filtered');
   const base = SRC_NAME.replace(/\.(xlsx|xls|csv)$/i, '') || 'pos';
   const today = new Date().toISOString().slice(0,10);
-  XLSX.writeFile(wb, `${base}_cost필터_${today}.xlsx`);
-  toast('✅ 다운로드 완료');
+  const branchLbl = BRANCH_LABELS[BRANCH] || BRANCH;
+  XLSX.writeFile(wb, `${branchLbl}_${base}_cost필터_${today}.xlsx`);
+  toast(`✅ ${branchLbl} 지점 다운로드 완료`);
 }
 </script>
 </body>
