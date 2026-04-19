@@ -419,7 +419,18 @@ posDrop.addEventListener('drop',e=>{
 function onPosFile(inp){
   const f=inp.files[0];if(!f)return;
   showFI('pos-fi',f); showL('POS 엑셀 읽는 중...');
-  readXlsx(f,(h,r)=>{S.posH=h;S.posR=r;fillSelects('pm',h,['name','bc','vc','pr','un']);autoMap('pm',h);show('pos-map');hideL();});
+  readXlsx(f,(h,r)=>{
+    S.posH=h;S.posR=r;
+    fillSelects('pm',h,['name','bc','vc','pr','un']);
+    autoMap('pm',h);
+    show('pos-map');
+    hideL();
+    // Standard Vela POS headers are always the same (NAME / CODE /
+    // VENDOR CODE / COST), so auto-apply immediately. The mapping panel
+    // stays visible for the rare case the user needs to remap manually.
+    const ready = id('pm-name').value !== '' && id('pm-pr').value !== '';
+    if (ready) applyPos();
+  });
 }
 
 function applyPos(){
@@ -1199,22 +1210,28 @@ function fillSelects(pfx,headers,fields){
 }
 
 function autoMap(pfx,headers){
-  // Prefer COST for POS mapping since the compare target is invoice EA price
-  // (cost-side), not retail selling price. If the sheet has both a 'cost' and
-  // a 'price' column, pick the cost column.
-  const P={name:['name','상품','item desc','description','desc','product','품명','제품','item name','item description'],
-    bc:['barcode','upc','ean','바코드','plu','scan code'],
-    vc:['itemcode','item code','item #','item no','sku','vendor code','품번','code'],
+  // Vela POS exports columns: PID / FULL_BARCODE / CODE / CATEGORY / NAME /
+  // PRICE / COST / STOCK / VENDOR. Our target mapping is always:
+  //   상품명 = NAME, 바코드 = FULL_BARCODE (fallback CODE),
+  //   벤더코드 = VENDOR CODE / VENDOR, 원가(COST) = COST.
+  // "CODE" matters for 바코드 not 벤더코드, so 'code' is NOT listed in vc.
+  const P={
+    name:['name','상품','item desc','description','desc','product','품명','제품','item name','item description'],
+    bc:['full_barcode','full barcode','barcode','upc','ean','바코드','code','plu','scan code'],
+    vc:['vendor code','vendor_code','vendorcode','itemcode','item code','item #','item no','sku','품번','vendor'],
     pr:['cost','원가','cost price','costprice','buy price','unit cost','avg cost','price','가격','단가','unit price','selling','retail'],
-    un:['uom','unit','단위','pack','size']};
+    un:['uom','unit','단위','pack','size']
+  };
+  // Reset existing selections so a re-upload picks fresh defaults.
+  ['name','bc','vc','pr','un'].forEach(f=>{
+    const el=id(pfx+'-'+f); if(el){ el.value=''; delete el.dataset.matchKind; }
+  });
   headers.forEach((h,i)=>{
-    const hl=(h||'').toLowerCase();
+    const hl=(h||'').toLowerCase().trim();
     Object.entries(P).forEach(([f,ps])=>{
       const el=id(pfx+'-'+f); if(!el)return;
-      // Pick the FIRST header that matches exactly; if only a substring match
-      // exists keep that as a fallback but let a later exact match win.
-      const exact = ps.some(p=>hl===p);
-      const inc = !exact && ps.some(p=>hl.includes(p));
+      const exact = ps.some(p=>hl===p.toLowerCase());
+      const inc   = !exact && ps.some(p=>hl.includes(p.toLowerCase()));
       if(!exact && !inc) return;
       if(el.value === '' || (exact && el.dataset.matchKind !== 'exact')){
         el.value = i;
