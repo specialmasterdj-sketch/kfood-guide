@@ -133,6 +133,43 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <div class="pg">
 
+  <!-- MODE SELECTOR: does this vendor's invoice include barcodes? -->
+  <div class="card fin" id="mode-card">
+    <div class="ct">🔀 인보이스 유형 선택</div>
+    <div class="tip">벤더 인보이스에 바코드가 인쇄되어 있나요?</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px">
+      <button type="button" class="mode-btn" id="mode-hasbc" onclick="setMode('hasbc')"
+        style="padding:18px 10px;border:2px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;font-family:inherit;text-align:left">
+        <div style="font-size:28px">🔢</div>
+        <div style="font-weight:700;margin-top:6px">바코드 있는 경우</div>
+        <div style="font-size:12px;color:#888;margin-top:2px">인보이스에 바코드 인쇄됨 — 바로 변환</div>
+      </button>
+      <button type="button" class="mode-btn" id="mode-nobc" onclick="setMode('nobc')"
+        style="padding:18px 10px;border:2px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;font-family:inherit;text-align:left">
+        <div style="font-size:28px">📚</div>
+        <div style="font-weight:700;margin-top:6px">바코드 없는 경우</div>
+        <div style="font-size:12px;color:#888;margin-top:2px">참조 엑셀로 바코드 채움</div>
+      </button>
+    </div>
+  </div>
+
+  <!-- REFERENCE EXCEL (visible only when mode = 'nobc') -->
+  <div class="card fin hidden" id="ref-card">
+    <div class="ct">📚 바코드 참조 엑셀</div>
+    <div class="tip">
+      <b>필요 컬럼:</b> FULL BARCODE · NAME · VENDOR CODE<br>
+      <b>한 번만 업로드:</b> 브라우저에 저장되어 이후 인보이스에 자동 참조됩니다.
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="btn btn-o" style="cursor:pointer;position:relative;min-width:160px">
+        📥 참조 엑셀 업로드
+        <input type="file" id="ref-f" accept=".xlsx,.xls,.csv" style="position:absolute;inset:0;opacity:0;cursor:pointer" onchange="onRefFile(this.files[0])">
+      </label>
+      <div id="ref-info" style="font-size:13px;color:#666;flex:1"></div>
+      <button class="btn btn-gray" onclick="clearRef()" id="ref-clear-btn" style="display:none">🗑 삭제</button>
+    </div>
+  </div>
+
   <!-- UPLOAD -->
   <div class="card fin">
     <div class="ct">📂 PDF · 사진 업로드</div>
@@ -232,6 +269,128 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* ===================== GLOBALS ===================== */
 const FILES = [];   // uploaded File objects
 let ROWS = [];      // extracted data rows [{vendorCode,name,barcode,eaPrice,casePrice,qty,unit,_src}]
+
+/* ===================== MODE (has/no barcode) + REFERENCE SHEET ===================== */
+const REF_KEY    = 'kimchi-invoice-ref-v1'; // barcode lookup table in localStorage
+const MODE_KEY   = 'kimchi-invoice-mode';   // 'hasbc' | 'nobc'
+
+let MODE = 'hasbc';
+let REF  = null; // { byVC: {code→{barcode,name}}, byName: {upper→{barcode}}, count }
+
+function setMode(m){
+  MODE = (m === 'nobc') ? 'nobc' : 'hasbc';
+  try { localStorage.setItem(MODE_KEY, MODE); } catch(e){}
+  // Visually mark which mode is active
+  ['hasbc','nobc'].forEach(k=>{
+    const el = id('mode-' + k);
+    if (!el) return;
+    const on = (k === MODE);
+    el.style.borderColor = on ? '#2e8b57' : '#ddd';
+    el.style.background  = on ? '#e8f5e9' : '#fff';
+  });
+  // Reference sheet is only relevant when there's no barcode on the invoice
+  const rc = id('ref-card');
+  if (rc){ rc.classList.toggle('hidden', MODE !== 'nobc'); }
+}
+
+function onRefFile(f){
+  if (!f) return;
+  showL('참조 엑셀 읽는 중...');
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
+      if (!rows.length){ hideL(); toast('❌ 빈 파일'); return; }
+      // Find header row (first row whose cells look like column titles)
+      const header = rows[0].map(s => String(s||'').trim());
+      const find = (names) => {
+        for (let i=0; i<header.length; i++){
+          const h = header[i].toLowerCase().replace(/[\s_]/g,'');
+          if (names.some(n => h === n.toLowerCase().replace(/[\s_]/g,''))) return i;
+        }
+        return -1;
+      };
+      const bci = find(['fullbarcode','barcode','upc','ean','풀바코드','바코드']);
+      const ni  = find(['name','productname','item','description','상품명','품명']);
+      const vci = find(['vendorcode','vendor','itemcode','code','벤더코드','품번']);
+      if (bci < 0 || vci < 0){
+        hideL();
+        toast('❌ 필수 컬럼을 못 찾음 (FULL BARCODE + VENDOR CODE 필요)');
+        return;
+      }
+      const byVC = {}, byName = {};
+      let count = 0;
+      for (let r=1; r<rows.length; r++){
+        const row = rows[r]; if (!row) continue;
+        const bc = String(row[bci]||'').replace(/\s/g,'').trim();
+        const vc = String(row[vci]||'').trim().toUpperCase();
+        const nm = ni >= 0 ? String(row[ni]||'').trim() : '';
+        if (!bc) continue;
+        if (vc && !byVC[vc])  byVC[vc]  = { barcode: bc, name: nm };
+        if (nm && !byName[nm.toUpperCase()]) byName[nm.toUpperCase()] = { barcode: bc, vc };
+        count++;
+      }
+      REF = { byVC, byName, count, ts: Date.now() };
+      try { localStorage.setItem(REF_KEY, JSON.stringify(REF)); } catch(e){}
+      renderRefInfo();
+      hideL();
+      toast(`✅ 참조 ${count}건 로드`);
+    } catch(err){ hideL(); toast('❌ 참조 엑셀 오류: ' + err.message); }
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function renderRefInfo(){
+  const el = id('ref-info');
+  const btn = id('ref-clear-btn');
+  if (!REF || !REF.count){
+    if (el) el.textContent = '참조 엑셀이 없습니다.';
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  const dt = new Date(REF.ts||Date.now()).toLocaleDateString('ko-KR');
+  if (el) el.innerHTML = `<b>${REF.count}</b>건 참조 가능 · 업로드일 ${dt}`;
+  if (btn) btn.style.display = '';
+}
+
+function clearRef(){
+  if (!confirm('참조 엑셀을 삭제할까요?')) return;
+  REF = null;
+  try { localStorage.removeItem(REF_KEY); } catch(e){}
+  const inp = id('ref-f'); if (inp) inp.value = '';
+  renderRefInfo();
+  toast('참조 삭제됨');
+}
+
+// Given a row after PDF extraction, fill .barcode from REF if missing.
+function enrichBarcodeFromRef(row){
+  if (!REF || row.barcode) return false;
+  const vc = (row.vendorCode || '').toUpperCase().trim();
+  if (vc && REF.byVC[vc]){ row.barcode = REF.byVC[vc].barcode; return true; }
+  const nm = (row.name || '').toUpperCase().trim();
+  if (nm && REF.byName[nm]){ row.barcode = REF.byName[nm].barcode; return true; }
+  return false;
+}
+
+function enrichAllRows(){
+  if (MODE !== 'nobc' || !REF) return 0;
+  let filled = 0;
+  for (const r of ROWS){ if (enrichBarcodeFromRef(r)) filled++; }
+  return filled;
+}
+
+// Restore mode + reference on load.
+(function restoreModeAndRef(){
+  try {
+    const m = localStorage.getItem(MODE_KEY);
+    if (m === 'nobc' || m === 'hasbc') MODE = m;
+    const raw = localStorage.getItem(REF_KEY);
+    if (raw){ const obj = JSON.parse(raw); if (obj && obj.byVC) REF = obj; }
+  } catch(e){}
+  window.addEventListener('DOMContentLoaded', () => { setMode(MODE); renderRefInfo(); });
+})();
 
 // Column definitions — matches Seoul Trading invoice columns exactly.
 // UoM was dropped (always "CS" for this vendor, adds no information).
@@ -367,10 +526,14 @@ async function extractAll(){
       (noBC ? ` (바코드 없음 ${noBC}개 ⚠️)` : ' ✅');
 
     if(ROWS.length){
+      // In 'nobc' mode, back-fill barcodes from the reference sheet before
+      // rendering so the grid shows a complete picture.
+      const filled = enrichAllRows();
       renderGrid();
       show('result-card');
       hide('ocr-debug');
-      toast(`✅ ${ROWS.length}개 항목 추출! 바코드 없음: ${noBC}개`, 3500);
+      const enrichMsg = (MODE === 'nobc' && filled > 0) ? ` · 참조로 ${filled}개 보충` : '';
+      toast(`✅ ${ROWS.length}개 항목 추출! 바코드 없음: ${Math.max(0, noBC - filled)}개${enrichMsg}`, 3500);
     } else {
       toast('⚠️ 추출된 데이터가 없습니다. OCR 원본 텍스트를 확인해 주세요.', 4000);
       showOCRDebug();
