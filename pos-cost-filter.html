@@ -96,7 +96,8 @@ tr:nth-child(even) td{background:#fafcfb}
       <div class="stat"><div class="n" id="s-cost" style="color:#2e8b57">0</div><div class="l">COST 있음</div></div>
       <div class="stat"><div class="n" id="s-skip" style="color:#c62828">0</div><div class="l">COST 없음 (제외)</div></div>
     </div>
-    <button class="btn btn-g" onclick="downloadFiltered()" style="width:100%;margin-bottom:8px">📥 필터된 엑셀 다운로드</button>
+    <button class="btn btn-g" onclick="sendToLookup()" style="width:100%;margin-bottom:8px;background:#2e8b57">🔗 상품조회로 전송 (이 지점 자동 반영)</button>
+    <button class="btn btn-o" onclick="downloadFiltered()" style="width:100%;margin-bottom:8px">📥 필터된 엑셀 다운로드</button>
     <div style="font-size:12px;color:#888;margin:6px 0 4px">미리보기 (처음 30행)</div>
     <div class="twrap">
       <table id="prev-tbl"><thead></thead><tbody></tbody></table>
@@ -216,6 +217,78 @@ function apply(){
   id('result-card').classList.remove('hidden');
   id('result-card').scrollIntoView({behavior:'smooth', block:'start'});
   toast(`✅ ${FILTERED.length.toLocaleString()}개 상품 (COST 있음)`);
+}
+
+// Map raw row (array) → lookup-app product object using Vela POS headers.
+// Uses the same field names the lookup app expects so Firebase sync lands
+// the data directly in PRODUCTS_DATA on every Hollywood/Miami/etc device.
+function rowToProduct(r){
+  const norm = s => String(s||'').toLowerCase().replace(/[\s_.-]/g,'');
+  const hl = HEADERS.map(norm);
+  const idx = (want) => {
+    for (const w of want){ const i = hl.indexOf(w); if (i >= 0) return i; }
+    return -1;
+  };
+  // cache on first call
+  if (!rowToProduct._m){
+    rowToProduct._m = {
+      PID: idx(['pid','productid','id']),
+      FULL_BARCODE: idx(['fullbarcode','barcode','upc','ean']),
+      CODE: idx(['code','itemcode','plu']),
+      CATEGORY: idx(['category','dept','department','cat']),
+      NAME: idx(['name','productname','description','desc']),
+      PRICE: idx(['price','retailprice','sellprice','sellingprice']),
+      COST: COST_COL,
+      STOCK: idx(['stock','qty','onhand','inventory','inv']),
+      VENDOR: idx(['vendor','supplier','brand'])
+    };
+  }
+  const M = rowToProduct._m;
+  const toNum = v => { if (v==='' || v==null) return 0; const n=parseFloat(String(v).replace(/[,$\s]/g,'')); return isNaN(n)?0:n; };
+  const s = v => String(v==null?'':v).trim();
+  return {
+    PID:          M.PID>=0 ? s(r[M.PID]) : '',
+    FULL_BARCODE: M.FULL_BARCODE>=0 ? s(r[M.FULL_BARCODE]) : '',
+    CODE:         M.CODE>=0 ? s(r[M.CODE]) : '',
+    CATEGORY:     M.CATEGORY>=0 ? s(r[M.CATEGORY]) : '',
+    NAME:         M.NAME>=0 ? s(r[M.NAME]) : '',
+    PRICE:        M.PRICE>=0 ? toNum(r[M.PRICE]) : 0,
+    COST:         M.COST>=0 ? toNum(r[M.COST]) : 0,
+    STOCK:        M.STOCK>=0 ? toNum(r[M.STOCK]) : 0,
+    VENDOR:       M.VENDOR>=0 ? s(r[M.VENDOR]) : ''
+  };
+}
+
+async function sendToLookup(){
+  if (!FILTERED.length){ toast('❌ 필터된 행이 없습니다'); return; }
+  if (!BRANCH){ toast('❌ 지점을 먼저 선택해 주세요'); return; }
+  rowToProduct._m = null; // recompute column map for this upload
+  const products = FILTERED
+    .map(rowToProduct)
+    .filter(p => p.FULL_BARCODE || p.CODE);
+  if (!products.length){ toast('❌ 매핑된 상품 없음'); return; }
+  const today = new Date().toISOString().slice(0,10);
+  const payload = {
+    timestamp: Date.now(),
+    date: today,
+    count: products.length,
+    rows: products,
+    branchId: BRANCH
+  };
+  toast('☁️ 상품조회에 전송 중...', 4000);
+  try {
+    const url = `https://kimchi-mart-order-default-rtdb.firebaseio.com/products/${BRANCH}.json`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    toast(`✅ ${BRANCH_LABELS[BRANCH]} 상품조회에 ${products.length.toLocaleString()}개 전송 완료`);
+  } catch(e){
+    console.error(e);
+    toast('❌ 전송 실패: ' + e.message);
+  }
 }
 
 function downloadFiltered(){
