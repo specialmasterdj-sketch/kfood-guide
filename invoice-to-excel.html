@@ -294,35 +294,61 @@ function setMode(m){
 }
 
 function onRefFile(f){
-  if (!f) return;
+  if (!f) { console.warn('onRefFile: no file'); return; }
+  console.log('onRefFile called:', f.name, f.size, 'bytes', f.type);
+  if (typeof XLSX === 'undefined'){
+    toast('❌ XLSX 라이브러리 로딩 실패 — 인터넷 연결 확인');
+    return;
+  }
   showL('참조 엑셀 읽는 중...');
   const reader = new FileReader();
+  reader.onerror = (e) => {
+    hideL();
+    console.error('FileReader error:', e);
+    toast('❌ 파일 읽기 실패 — OneDrive 동기화 중이면 완료 후 재시도');
+  };
   reader.onload = (e) => {
     try {
+      console.log('File loaded, parsing...', e.target.result.byteLength, 'bytes');
       const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
-      const ws = wb.Sheets[wb.SheetNames[0]];
+      const sheetName = wb.SheetNames[0];
+      console.log('Sheets:', wb.SheetNames, 'using:', sheetName);
+      const ws = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
+      console.log('Parsed rows:', rows.length);
       if (!rows.length){ hideL(); toast('❌ 빈 파일'); return; }
-      // Find header row (first row whose cells look like column titles)
-      const header = rows[0].map(s => String(s||'').trim());
+
+      // Find header row — try first non-empty row; sometimes there's a title banner above.
+      let hdrIdx = 0;
+      for (let i=0; i<Math.min(5, rows.length); i++){
+        const cells = (rows[i]||[]).map(s=>String(s||'').trim().toLowerCase());
+        if (cells.some(c => /barcode|바코드|vendor|code|name|상품/.test(c))){ hdrIdx = i; break; }
+      }
+      const header = (rows[hdrIdx]||[]).map(s => String(s||'').trim());
+      console.log('Header row', hdrIdx, ':', header);
+
+      const norm = s => s.toLowerCase().replace(/[\s_.-]/g,'');
       const find = (names) => {
+        const want = names.map(n => norm(n));
         for (let i=0; i<header.length; i++){
-          const h = header[i].toLowerCase().replace(/[\s_]/g,'');
-          if (names.some(n => h === n.toLowerCase().replace(/[\s_]/g,''))) return i;
+          const h = norm(header[i]);
+          if (!h) continue;
+          if (want.some(w => h === w || h.includes(w))) return i;
         }
         return -1;
       };
       const bci = find(['fullbarcode','barcode','upc','ean','풀바코드','바코드']);
       const ni  = find(['name','productname','item','description','상품명','품명']);
       const vci = find(['vendorcode','vendor','itemcode','code','벤더코드','품번']);
+      console.log('Column indexes — barcode:', bci, 'name:', ni, 'vendor:', vci);
       if (bci < 0 || vci < 0){
         hideL();
-        toast('❌ 필수 컬럼을 못 찾음 (FULL BARCODE + VENDOR CODE 필요)');
+        toast('❌ 필수 컬럼을 못 찾음 (FULL BARCODE + VENDOR CODE 필요). 헤더: ' + header.join(' / '));
         return;
       }
       const byVC = {}, byName = {};
       let count = 0;
-      for (let r=1; r<rows.length; r++){
+      for (let r=hdrIdx+1; r<rows.length; r++){
         const row = rows[r]; if (!row) continue;
         const bc = String(row[bci]||'').replace(/\s/g,'').trim();
         const vc = String(row[vci]||'').trim().toUpperCase();
@@ -333,13 +359,18 @@ function onRefFile(f){
         count++;
       }
       REF = { byVC, byName, count, ts: Date.now() };
-      try { localStorage.setItem(REF_KEY, JSON.stringify(REF)); } catch(e){}
+      try { localStorage.setItem(REF_KEY, JSON.stringify(REF)); } catch(e){ console.warn('localStorage full:', e); }
       renderRefInfo();
       hideL();
       toast(`✅ 참조 ${count}건 로드`);
-    } catch(err){ hideL(); toast('❌ 참조 엑셀 오류: ' + err.message); }
+    } catch(err){
+      hideL();
+      console.error('parse error:', err);
+      toast('❌ 참조 엑셀 오류: ' + err.message);
+    }
   };
-  reader.readAsArrayBuffer(f);
+  try { reader.readAsArrayBuffer(f); }
+  catch(err){ hideL(); console.error(err); toast('❌ 읽기 시작 실패: ' + err.message); }
 }
 
 function renderRefInfo(){
