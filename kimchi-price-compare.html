@@ -1571,5 +1571,76 @@ function show(i){id(i)?.classList.remove('hidden');}
 function hide(i){id(i)?.classList.add('hidden');}
 function loadSc(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
 </script>
+
+<!-- Firebase POS sync. pos-cost-filter pushes the latest COST-filtered
+     snapshot to products/<BRANCH> for the lookup app; price-compare
+     subscribes to the same path so the POS step fills in automatically
+     even when localStorage is empty (incognito mode, new device). -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+  projectId: "kimchi-mart-order",
+  storageBucket: "kimchi-mart-order.firebasestorage.app",
+  messagingSenderId: "640942647201",
+  appId: "1:640942647201:web:1e3421fb55c89155230de0"
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+function getBranch(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } }
+
+function applyRemotePos(products){
+  if (!products || !products.length) return;
+  // Map products/<BRANCH> rows (shape: {PID, FULL_BARCODE, CODE, NAME, COST, ...})
+  // onto price-compare's posData shape. COST is the price field we compare
+  // invoice EA Price against.
+  const S = window.S; if (!S) return;
+  const rows = products.map(p => ({
+    name:       p.NAME || '',
+    barcode:    p.FULL_BARCODE || '',
+    vendorCode: p.CODE || '',
+    price:      +p.COST || 0,
+    unit:       ''
+  })).filter(d => d.name && d.price > 0);
+  if (!rows.length) return;
+  // Don't overwrite a freshly-uploaded POS file — only fill when empty.
+  if (S.posData && S.posData.length > 0) return;
+  S.posData = rows;
+  try {
+    if (typeof fillPosTable === 'function') fillPosTable();
+  } catch(e){}
+  const cntEl = document.getElementById('pos-cnt');
+  if (cntEl) cntEl.textContent = `(${rows.length.toLocaleString()}개)`;
+  document.getElementById('pos-prev')?.classList.remove('hidden');
+  document.getElementById('st2')?.classList.add('done');
+  if (typeof toast === 'function'){
+    toast(`✅ POS ${rows.length.toLocaleString()}개 자동 로드 (클라우드)`, 3500);
+  }
+}
+
+function subscribePosFromCloud(){
+  const branch = getBranch();
+  if (!branch) return;
+  const path = 'products/' + branch;
+  onValue(ref(db, path), (snap) => {
+    const payload = snap.val();
+    if (!payload || !Array.isArray(payload.rows)) return;
+    applyRemotePos(payload.rows);
+  }, (err) => console.warn('[price-compare] cloud read failed', err));
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  // Give the localStorage auto-load a moment to populate first; only
+  // fall back to cloud if still empty.
+  setTimeout(() => subscribePosFromCloud(), 300);
+});
+// Re-subscribe if the branch changes in another tab.
+window.addEventListener('storage', (e) => { if (e.key === 'km_branch') subscribePosFromCloud(); });
+</script>
 </body>
 </html>
