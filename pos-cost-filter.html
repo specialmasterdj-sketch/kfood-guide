@@ -402,22 +402,30 @@ function rowToProduct(r){
     const itemIdx = idx(['itemnumber','itemno','itemcode','item']);
     const pluIdx  = idx(['plu']);
 
-    // Vela POS often labels the UPC column simply "CODE" — sniff a few
-    // sample values to see if they're actually barcode-length numbers,
-    // and remap so FULL_BARCODE gets the UPC and CODE gets the vendor code.
-    let FULL_BARCODE = bcIdx;
-    let CODE = -1;
-    const sampleDigits = (i) => {
-      if (i < 0) return '';
-      for (const row of (FILTERED.length ? FILTERED : ROWS).slice(0, 20)){
+    // Vela POS often labels the UPC column simply "CODE" — scan multiple
+    // sample values to see if they're barcode-length numbers. If most
+    // values are 8+ digit pure-numeric (UPC-A=12, EAN-13=13, short PLU-
+    // extended=10, etc.), treat the column as barcode and pull vendor code
+    // from ITEM NUMBER / PLU instead.
+    const looksBarcode = (i) => {
+      if (i < 0) return false;
+      const pool = (FILTERED.length ? FILTERED : ROWS).slice(0, 50);
+      let yes = 0, total = 0;
+      for (const row of pool){
         const v = row[i];
         if (v === '' || v == null) continue;
-        const d = String(v).replace(/\D/g, '');
-        if (d) return d;
+        const s = String(v).trim();
+        if (!s) continue;
+        total++;
+        const d = s.replace(/\D/g, '');
+        if (d.length >= 8 && !/[A-Za-z]/.test(s)) yes++;
       }
-      return '';
+      return total >= 3 && (yes / total) > 0.7;
     };
-    if (FULL_BARCODE < 0 && codeIdx >= 0 && sampleDigits(codeIdx).length >= 11){
+
+    let FULL_BARCODE = bcIdx;
+    let CODE = -1;
+    if (FULL_BARCODE < 0 && codeIdx >= 0 && looksBarcode(codeIdx)){
       FULL_BARCODE = codeIdx;
       CODE = itemIdx >= 0 ? itemIdx : pluIdx;
     } else {
