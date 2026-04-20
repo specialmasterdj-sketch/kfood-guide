@@ -355,6 +355,38 @@ function apply(){
   id('result-card').classList.remove('hidden');
   id('result-card').scrollIntoView({behavior:'smooth', block:'start'});
   toast(t('toast_applied')(FILTERED.length));
+
+  // Auto-sync to downstream apps — the filtered result is the latest POS
+  // snapshot so there's no reason to make users click & re-upload.
+  //   • 상품조회 (lookup): push via Firebase under products/<BRANCH>
+  //   • 가격 비교 (price-compare): stash POS rows in localStorage for
+  //     auto-load at step 2 on that page.
+  if (BRANCH && FILTERED.length){
+    try { sendToLookup(); } catch(e){ console.warn('[pos-filter] auto lookup push failed:', e); }
+    try { savePosForCompare(); } catch(e){ console.warn('[pos-filter] auto compare stash failed:', e); }
+  }
+}
+
+// Convert FILTERED rows into the shape price-compare expects and stash in
+// localStorage under a branch-scoped key. Price-compare loads this on open.
+function savePosForCompare(){
+  if (!FILTERED.length || !BRANCH) return;
+  rowToProduct._m = null;
+  const rows = FILTERED.map(rowToProduct).filter(p => p.NAME && p.COST > 0).map(p => ({
+    name:       p.NAME,
+    barcode:    p.FULL_BARCODE || '',
+    vendorCode: p.CODE || '',
+    price:      p.COST,          // price-compare uses COST as the price field
+    unit:       ''
+  }));
+  if (!rows.length) return;
+  const payload = { timestamp: Date.now(), branchId: BRANCH, count: rows.length, rows };
+  try {
+    localStorage.setItem('kimchi-pos-import__' + BRANCH, JSON.stringify(payload));
+    // Also write an unscoped copy so price-compare can find it quickly on
+    // first load before it knows the branch.
+    localStorage.setItem('kimchi-pos-import', JSON.stringify(payload));
+  } catch(e){ console.warn('[pos-filter] localStorage full:', e); }
 }
 
 function rowToProduct(r){

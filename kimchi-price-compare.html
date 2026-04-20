@@ -528,6 +528,7 @@ posDrop.addEventListener('drop',e=>{
 
 function onPosFile(inp){
   const f=inp.files[0];if(!f)return;
+  if (typeof window.__clearPosImport === 'function') window.__clearPosImport();
   showFI('pos-fi',f); showL('POS 엑셀 읽는 중...');
   readXlsx(f,(h,r)=>{
     S.posH=h;S.posR=r;
@@ -1505,6 +1506,62 @@ function fmtSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)
 // so the automatic reload doesn't keep re-injecting the old PDF payload.
 window.__clearInvoiceImport = function(){
   try { localStorage.removeItem('kimchi-invoice-import'); sessionStorage.removeItem('kimchi-invoice-import'); } catch(_){}
+};
+
+/* Auto-load POS data stashed by pos-cost-filter. The filtered output is
+ * the latest COST snapshot for the branch, so every subsequent invoice
+ * comparison should reuse it without forcing the user to re-upload. */
+(function autoLoadImportedPos(){
+  const MAX_AGE = 7 * 24 * 60 * 60 * 1000;  // 7 days — POS updates aren't daily
+  const branch = (function(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } })();
+  let raw = null;
+  try {
+    raw = (branch && localStorage.getItem('kimchi-pos-import__' + branch))
+       || localStorage.getItem('kimchi-pos-import');
+  } catch(e){ return; }
+  if (!raw) return;
+
+  let payload;
+  try { payload = JSON.parse(raw); } catch(e){ return; }
+  if (!payload || !Array.isArray(payload.rows) || !payload.rows.length) return;
+  if (branch && payload.branchId && payload.branchId !== branch) return;  // wrong branch
+  if (payload.timestamp && Date.now() - payload.timestamp > MAX_AGE){
+    try { localStorage.removeItem('kimchi-pos-import__' + branch); localStorage.removeItem('kimchi-pos-import'); } catch(_){}
+    return;
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    S.posData = payload.rows.map(r => ({
+      name:       r.name       || '',
+      barcode:    r.barcode    || '',
+      vendorCode: r.vendorCode || '',
+      price:      +r.price     || 0,
+      unit:       r.unit       || ''
+    })).filter(d => d.name && d.price > 0);
+    if (!S.posData.length) return;
+    try { fillPosTable(); } catch(e){}
+    const cntEl = id('pos-cnt'); if (cntEl) cntEl.textContent = `(${S.posData.length.toLocaleString()}개)`;
+    show('pos-prev');
+    id('st2')?.classList.add('done');
+    // If invoice is also auto-loaded, jump to result.
+    setTimeout(() => {
+      if (S.invData && S.invData.length){
+        toast(`✅ POS ${S.posData.length.toLocaleString()}개 자동 로드 · 비교 준비 완료`, 4000);
+      } else {
+        toast(`✅ POS ${S.posData.length.toLocaleString()}개 자동 로드 (최근 필터 결과)`, 4000);
+      }
+    }, 600);
+  });
+})();
+
+// Allow manual POS re-upload to clear the cached auto-load so it doesn't
+// keep re-injecting the old snapshot on refresh.
+window.__clearPosImport = function(){
+  try {
+    const b = localStorage.getItem('km_branch') || '';
+    if (b) localStorage.removeItem('kimchi-pos-import__' + b);
+    localStorage.removeItem('kimchi-pos-import');
+  } catch(_){}
 };
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
