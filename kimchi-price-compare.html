@@ -180,13 +180,28 @@ table.rv tr:hover td{background:#fafffe}
 <div class="loading" id="ld"><div class="spin"></div><div class="ltext" id="lt">처리 중...</div></div>
 <div class="toast" id="toast"></div>
 
-<div class="hdr" style="position:relative">
-  <h1 data-t="title">🥬 김치마트 가격 비교</h1>
-  <p data-t="subtitle">POS 엑셀 vs 벤더 인보이스 자동 비교</p>
-  <div style="position:absolute;top:14px;right:14px;display:flex;gap:4px">
+<div class="hdr">
+  <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-bottom:6px">
+    <button id="branch-btn" onclick="openBranchModal()" style="background:rgba(255,255,255,.25);border:1.5px solid rgba(255,255,255,.6);color:#fff;border-radius:14px;padding:4px 12px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">
+      <span id="branch-btn-label">지점 선택</span>
+    </button>
     <button id="lb-ko" onclick="setLang('ko')" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">KO</button>
     <button id="lb-en" onclick="setLang('en')" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">EN</button>
     <button id="lb-es" onclick="setLang('es')" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">ES</button>
+  </div>
+  <h1 data-t="title">🥬 김치마트 가격 비교</h1>
+  <p data-t="subtitle">POS 엑셀 vs 벤더 인보이스 자동 비교</p>
+</div>
+
+<!-- BRANCH MODAL -->
+<div id="branch-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:14px;padding:20px;max-width:500px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="font-size:16px;font-weight:800;color:#2e8b57">🏪 지점 선택 / Branch</div>
+      <button onclick="closeBranchModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888">✕</button>
+    </div>
+    <div style="font-size:11px;color:#888;margin-bottom:10px">지점의 POS 데이터가 클라우드에서 자동으로 로드됩니다</div>
+    <div id="branch-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"></div>
   </div>
 </div>
 <div class="steps">
@@ -1639,8 +1654,61 @@ window.addEventListener('DOMContentLoaded', () => {
   // fall back to cloud if still empty.
   setTimeout(() => subscribePosFromCloud(), 300);
 });
-// Re-subscribe if the branch changes in another tab.
+// Re-subscribe if the branch changes in another tab OR in this one.
 window.addEventListener('storage', (e) => { if (e.key === 'km_branch') subscribePosFromCloud(); });
+window.__pcResubscribePos = subscribePosFromCloud;
+</script>
+
+<!-- Branch picker. Required for the Firebase POS auto-load — without
+     km_branch we can't read products/<BRANCH>. First-time visitors
+     (incognito, fresh device) get the picker prompted automatically. -->
+<script>
+const BRANCHES = [
+  { id:'MIAMI',          ko:'마이애미',        en:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines' },
+  { id:'HOLLYWOOD',      ko:'할리우드',        en:'Hollywood' },
+  { id:'CORAL_SPRINGS',  ko:'코럴 스프링스',   en:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스올라스',      en:'LASOLAS' },
+  { id:'WEST_PALM',      ko:'웨스트 팜 비치',  en:'West Palm Beach' }
+];
+const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
+function getBranchId(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } }
+function updateBranchLabel(){
+  const b = getBranchId();
+  const el = document.getElementById('branch-btn-label');
+  if (el) el.textContent = (BRANCH_BY_ID[b] && BRANCH_BY_ID[b].ko) || '지점 선택';
+}
+function setBranch(id){
+  if (!BRANCH_BY_ID[id]) return;
+  try { localStorage.setItem('km_branch', id); } catch(e){}
+  updateBranchLabel();
+  closeBranchModal();
+  // Immediately re-read POS data for the newly-picked branch.
+  if (typeof window.__pcResubscribePos === 'function') window.__pcResubscribePos();
+}
+function openBranchModal(){
+  const grid = document.getElementById('branch-grid');
+  const cur = getBranchId();
+  if (grid){
+    grid.innerHTML = BRANCHES.map(b =>
+      `<button onclick="setBranch('${b.id}')" style="background:${b.id===cur?'#E8F5E9':'#fff'};border:1.5px solid ${b.id===cur?'#2e8b57':'#ddd'};border-radius:10px;padding:14px 10px;font-size:13px;font-weight:700;color:${b.id===cur?'#2e8b57':'#333'};cursor:pointer;font-family:inherit;text-align:center">
+        <div>${b.ko}</div>
+        <div style="font-size:10px;color:#888;font-weight:500;margin-top:2px">${b.en}</div>
+      </button>`
+    ).join('');
+  }
+  const m = document.getElementById('branch-modal');
+  if (m) m.style.display = 'flex';
+}
+function closeBranchModal(){
+  if (!getBranchId()) return;  // force first-time pick
+  const m = document.getElementById('branch-modal');
+  if (m) m.style.display = 'none';
+}
+window.addEventListener('DOMContentLoaded', () => {
+  updateBranchLabel();
+  if (!getBranchId()) openBranchModal();
+});
 </script>
 </body>
 </html>
