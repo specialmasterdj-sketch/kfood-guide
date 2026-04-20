@@ -397,10 +397,37 @@ function rowToProduct(r){
     return -1;
   };
   if (!rowToProduct._m){
+    const bcIdx   = idx(['fullbarcode','barcode','upc','ean']);
+    const codeIdx = idx(['code']);
+    const itemIdx = idx(['itemnumber','itemno','itemcode','item']);
+    const pluIdx  = idx(['plu']);
+
+    // Vela POS often labels the UPC column simply "CODE" — sniff a few
+    // sample values to see if they're actually barcode-length numbers,
+    // and remap so FULL_BARCODE gets the UPC and CODE gets the vendor code.
+    let FULL_BARCODE = bcIdx;
+    let CODE = -1;
+    const sampleDigits = (i) => {
+      if (i < 0) return '';
+      for (const row of (FILTERED.length ? FILTERED : ROWS).slice(0, 20)){
+        const v = row[i];
+        if (v === '' || v == null) continue;
+        const d = String(v).replace(/\D/g, '');
+        if (d) return d;
+      }
+      return '';
+    };
+    if (FULL_BARCODE < 0 && codeIdx >= 0 && sampleDigits(codeIdx).length >= 11){
+      FULL_BARCODE = codeIdx;
+      CODE = itemIdx >= 0 ? itemIdx : pluIdx;
+    } else {
+      CODE = itemIdx >= 0 ? itemIdx : (pluIdx >= 0 ? pluIdx : codeIdx);
+    }
+
     rowToProduct._m = {
       PID: idx(['pid','productid','id']),
-      FULL_BARCODE: idx(['fullbarcode','barcode','upc','ean']),
-      CODE: idx(['code','itemcode','plu']),
+      FULL_BARCODE,
+      CODE,
       CATEGORY: idx(['category','dept','department','cat']),
       NAME: idx(['name','productname','description','desc']),
       PRICE: idx(['price','retailprice','sellprice','sellingprice']),
