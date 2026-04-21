@@ -239,7 +239,7 @@ table.rv tr:hover td{background:#fafffe}
   </div>
 
   <div class="card hidden" id="pos-prev">
-    <div class="ct"><span data-t="pos_preview_title">👀 POS 데이터 확인</span> <span id="pos-cnt" style="font-size:12px;color:#888;font-weight:400"></span></div>
+    <div class="ct"><span data-t="pos_preview_title">👀 POS 데이터 확인</span> <span id="pos-cnt" style="font-size:12px;color:#888;font-weight:400"></span> <span id="pos-date" style="font-size:12px;color:#2e8b57;font-weight:600;margin-left:6px"></span></div>
     <div class="twrap">
       <table class="rv" id="pos-tbl">
         <thead><tr><th data-t="col_name">상품명</th><th data-t="col_barcode">풀바코드</th><th data-t="col_vendorcode">벤더코드</th><th data-t="col_cost">원가(COST)</th></tr></thead>
@@ -575,6 +575,10 @@ function applyPos(){
   if(!S.posData.length){toast('❌ 유효한 상품 없음 - 컬럼 확인 필요');return;}
   fillPosTable();
   id('pos-cnt').textContent=`(${S.posData.length.toLocaleString()}개)`;
+  // Manual upload: stamp today's date so the user can see this pane's data
+  // is what they just uploaded, not an older cloud/localStorage snapshot.
+  const today = new Date().toISOString().slice(0,10);
+  const dateEl = id('pos-date'); if (dateEl) dateEl.textContent = `📅 ${today} 업로드`;
   show('pos-prev');id('st2').classList.add('done');
   toast(`✅ ${S.posData.length.toLocaleString()}개 상품 로드`);
 }
@@ -1560,6 +1564,11 @@ window.__clearInvoiceImport = function(){
     if (!S.posData.length) return;
     try { fillPosTable(); } catch(e){}
     const cntEl = id('pos-cnt'); if (cntEl) cntEl.textContent = `(${S.posData.length.toLocaleString()}개)`;
+    const dateEl = id('pos-date');
+    if (dateEl){
+      const dateText = payload.date || (payload.timestamp ? new Date(payload.timestamp).toISOString().slice(0,10) : '');
+      dateEl.textContent = dateText ? `📅 ${dateText} 업데이트` : '';
+    }
     show('pos-prev');
     id('st2')?.classList.add('done');
     // If invoice is also auto-loaded, jump to result.
@@ -1618,7 +1627,7 @@ function getBranch(){ try { return localStorage.getItem('km_branch') || ''; } ca
 // branches, re-subscribe delivers new data).
 let lastLoadedBranch = null;
 
-function applyRemotePos(products, branchId){
+function applyRemotePos(products, branchId, dateStr, timestamp){
   if (!products || !products.length) return;
   const S = window.S; if (!S) return;
   const rows = products.map(p => ({
@@ -1639,10 +1648,16 @@ function applyRemotePos(products, branchId){
   try { if (typeof fillPosTable === 'function') fillPosTable(); } catch(e){}
   const cntEl = document.getElementById('pos-cnt');
   if (cntEl) cntEl.textContent = `(${rows.length.toLocaleString()}개)`;
+  const dateEl = document.getElementById('pos-date');
+  if (dateEl){
+    const dateText = dateStr || (timestamp ? new Date(timestamp).toISOString().slice(0,10) : '');
+    dateEl.textContent = dateText ? `📅 ${dateText} 업데이트` : '';
+  }
   document.getElementById('pos-prev')?.classList.remove('hidden');
   document.getElementById('st2')?.classList.add('done');
   if (typeof toast === 'function'){
-    toast(`✅ POS ${rows.length.toLocaleString()}개 자동 로드 (클라우드)`, 3500);
+    const dateLabel = dateStr ? ` · ${dateStr}` : '';
+    toast(`✅ POS ${rows.length.toLocaleString()}개 자동 로드 (클라우드)${dateLabel}`, 3500);
   }
 }
 
@@ -1666,7 +1681,7 @@ function subscribePosFromCloud(){
   unsubPos = onValue(ref(db, path), (snap) => {
     const payload = snap.val();
     if (!payload || !Array.isArray(payload.rows)) return;
-    applyRemotePos(payload.rows, branch);
+    applyRemotePos(payload.rows, branch, payload.date, payload.timestamp);
   }, (err) => console.warn('[price-compare] cloud read failed', err));
 }
 
