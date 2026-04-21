@@ -1609,11 +1609,13 @@ const db = getDatabase(app);
 
 function getBranch(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } }
 
-function applyRemotePos(products){
+// Track which branch's payload we've already loaded so a later listener
+// firing for a different branch can still overwrite it (e.g. user switches
+// branches, re-subscribe delivers new data).
+let lastLoadedBranch = null;
+
+function applyRemotePos(products, branchId){
   if (!products || !products.length) return;
-  // Map products/<BRANCH> rows (shape: {PID, FULL_BARCODE, CODE, NAME, COST, ...})
-  // onto price-compare's posData shape. COST is the price field we compare
-  // invoice EA Price against.
   const S = window.S; if (!S) return;
   const rows = products.map(p => ({
     name:       p.NAME || '',
@@ -1623,12 +1625,14 @@ function applyRemotePos(products){
     unit:       ''
   })).filter(d => d.name && d.price > 0);
   if (!rows.length) return;
-  // Don't overwrite a freshly-uploaded POS file — only fill when empty.
-  if (S.posData && S.posData.length > 0) return;
+  // Preserve a manually uploaded POS file when it's for the current branch:
+  // if posData already has rows AND the last load was for THIS branch (or
+  // no branch was ever auto-loaded), treat that as a manual upload and
+  // don't clobber it. Branch switches bypass this guard.
+  if (S.posData && S.posData.length > 0 && lastLoadedBranch === branchId) return;
   S.posData = rows;
-  try {
-    if (typeof fillPosTable === 'function') fillPosTable();
-  } catch(e){}
+  lastLoadedBranch = branchId;
+  try { if (typeof fillPosTable === 'function') fillPosTable(); } catch(e){}
   const cntEl = document.getElementById('pos-cnt');
   if (cntEl) cntEl.textContent = `(${rows.length.toLocaleString()}개)`;
   document.getElementById('pos-prev')?.classList.remove('hidden');
@@ -1638,14 +1642,27 @@ function applyRemotePos(products){
   }
 }
 
+// Tear down the previous onValue listener before opening a new one so a
+// stale branch subscription can't keep overwriting posData with the wrong
+// cloud payload after a branch switch.
+let unsubPos = null;
+
 function subscribePosFromCloud(){
+  if (unsubPos){ try { unsubPos(); } catch(e){} unsubPos = null; }
   const branch = getBranch();
   if (!branch) return;
+  // Clearing posData here means a fresh subscribe for a new branch starts
+  // from a clean state — the applyRemotePos guard above lets manual uploads
+  // win, but never lets a previous branch's data linger after a switch.
+  if (lastLoadedBranch && lastLoadedBranch !== branch && window.S){
+    window.S.posData = [];
+    lastLoadedBranch = null;
+  }
   const path = 'products/' + branch;
-  onValue(ref(db, path), (snap) => {
+  unsubPos = onValue(ref(db, path), (snap) => {
     const payload = snap.val();
     if (!payload || !Array.isArray(payload.rows)) return;
-    applyRemotePos(payload.rows);
+    applyRemotePos(payload.rows, branch);
   }, (err) => console.warn('[price-compare] cloud read failed', err));
 }
 
