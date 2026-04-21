@@ -174,6 +174,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="rhee_bros">RHEE BROS</option>
         <option value="wismettac">Wismettac</option>
         <option value="jfc">JFC International</option>
+        <option value="wang_global">Wang Global (한미·CJ)</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -466,6 +467,12 @@ const VENDORS_PARSER = {
     detect: text => /JFC\s*INTERNATIONAL|JFC\s*APP|POMPANO\s*BEACH/i.test(text),
     parse: rows => parseJFC(rows)
   },
+  wang_global: {
+    name: 'Wang Global',
+    // "WANG GLOBAL NET" / "WANG FOODS" / HANMI / CJ product codes all land here.
+    detect: text => /WANG\s*(GLOBAL|FOODS?|NET|USA|INTERNATIONAL)|WangGlobal|\bHANMI\b/i.test(text),
+    parse: rows => parseWang(rows)
+  },
   generic: {
     name: 'Generic / fallback',
     detect: () => false,
@@ -483,8 +490,9 @@ try {
 } catch(e){}
 
 // Vendors without printed barcodes need the reference-Excel barcode fill.
-// Currently only RHEE BROS lacks barcodes; every other vendor prints them.
-const VENDORS_WITHOUT_BARCODE = new Set(['rhee_bros']);
+// RHEE BROS never prints barcodes; Wang prints them inconsistently (many Hanmi
+// and most CJ lines come through blank), so it also needs the reference sheet.
+const VENDORS_WITHOUT_BARCODE = new Set(['rhee_bros', 'wang_global']);
 
 function setVendor(v){
   currentVendor = (v && VENDORS_PARSER[v]) ? v : DEFAULT_VENDOR;
@@ -587,13 +595,18 @@ function onRefFile(f){
 
       // barcode = exact "fullbarcode" or "barcode" → else contains "barcode"
       let bci = idxEq(['fullbarcode','barcode','풀바코드','바코드','upc','ean']);
-      // vendor code = header containing "vendor" (covers "VENDOR CODE", "VENDOR")
-      //   → else exact "itemcode","sku","품번","벤더코드"
-      //   → else any header with "code" that isn't the barcode column
-      let vci = -1;
-      for (let i=0; i<normalized.length; i++){ if (normalized[i].includes('vendor')){ vci = i; break; } }
-      if (vci < 0) vci = idxEq(['itemcode','itemno','sku','품번','벤더코드']);
+      // vendor code = prefer exact "itemcode","sku","code","itemno","품번","벤더코드",
+      //   "vendorcode" so a plain "CODE" column wins over a "VENDOR" column that
+      //   only stores supplier names (Hanmi/CJ on the Wang sheet). Fall back to
+      //   any header containing "code", then finally to a "vendor" substring for
+      //   sheets that only expose a single vendor-code column.
+      let vci = idxEq(['itemcode','itemno','sku','벤더코드','품번','vendorcode','code']);
       if (vci < 0) vci = idxInc(['code'], new Set([bci]));
+      if (vci < 0){
+        for (let i=0; i<normalized.length; i++){
+          if (normalized[i].includes('vendor')){ vci = i; break; }
+        }
+      }
       // name = exact or contains
       let ni = idxEq(['name','productname','상품명','품명']);
       if (ni < 0) ni = idxInc(['name','description','상품','품명'], new Set([bci, vci]));
@@ -657,6 +670,12 @@ function enrichBarcodeFromRef(row){
   if (!REF || row.barcode) return false;
   const vc = (row.vendorCode || '').toUpperCase().trim();
   if (vc && REF.byVC[vc]){ row.barcode = REF.byVC[vc].barcode; return true; }
+  // Some references (e.g. the hanmi_cj_barcodes sheet) store CJ product codes
+  // without the "CJ" prefix that the invoice prints. Try the stripped form too.
+  const stripped = vc.replace(/^(CJ|HANMI|WANG|HM)\s*/, '');
+  if (stripped && stripped !== vc && REF.byVC[stripped]){
+    row.barcode = REF.byVC[stripped].barcode; return true;
+  }
   const nm = (row.name || '').toUpperCase().trim();
   if (nm && REF.byName[nm]){ row.barcode = REF.byName[nm].barcode; return true; }
   return false;
@@ -1512,6 +1531,154 @@ function clusterRows(items){
 // parseInvoiceRows as the generic/flexible path and alias it here so the
 // vendor-dispatch table stays readable.
 function parseSeoulTrading(rows){ return parseInvoiceRows(rows); }
+
+/* ===================== WANG GLOBAL PARSER =====================
+ * Invoices cover both Hanmi and CJ products under one "Wang Global" roof.
+ * Header (single line):
+ *   LN | ITEM NO. | DESCRIPTION | QTY | UNIT | UNIT PRICE | E. PRICE | EXT. AMOUNT
+ *
+ * "UNIT" is the unit-of-measure (CART/BX/EA) — NOT a price. That's the trap
+ * the generic parser falls into, which is why Wang needs its own parser.
+ *
+ * Per-line layout is vertically split across 2–3 y rows:
+ *   y0 (primary) : LN, ITEM NO., Korean name, QTY, UNIT, UNIT PRICE, EXT
+ *   y1 (maybe)   : barcode in the ITEM NO. column, or overflow price values
+ *   y2           : English description
+ *
+ * Not every line carries a printed barcode, so pair this parser with the
+ * barcode reference sheet (VENDORS_WITHOUT_BARCODE) to fill the gaps.
+ */
+function parseWang(rows){
+  const HDR_KEYS = ['ln','item no','itemno','description','qty','unit','unit price',
+                    'e. price','eprice','ext. amount','ext amount','amount'];
+  const HDR_RE = HDR_KEYS.map(k =>
+    new RegExp('\\b' + k.replace(/\./g,'\\.').replace(/\s+/g,'\\s*') + '\\b', 'i'));
+  // ≥3 distinct keyword hits keeps random body rows (e.g. "Continued") out.
+  const isHdr = r => {
+    const hit = new Set();
+    for (const it of r.items){
+      for (let i = 0; i < HDR_RE.length; i++){
+        if (HDR_RE[i].test(it.text)) hit.add(i);
+      }
+    }
+    return hit.size >= 3;
+  };
+
+  const hdrIdxs = [];
+  rows.forEach((r,i) => { if (isHdr(r)) hdrIdxs.push(i); });
+  if (!hdrIdxs.length) return [];
+
+  const firstHdr = hdrIdxs[0];
+  const hdrSet   = new Set(hdrIdxs);
+  const colDefs  = buildColDefs(rows[firstHdr].items);
+  const dataRows = rows.slice(firstHdr + 1).filter((_,i) => !hdrSet.has(firstHdr + 1 + i));
+
+  const cIC    = findCol(colDefs, 'itemno','item no.','item no','item');
+  const cDesc  = findCol(colDefs, 'description','desc');
+  const cQty   = findCol(colDefs, 'qty');
+  const cUoM   = findCol(colDefs, 'unit');
+  const cPrice = findCol(colDefs, 'unitprice','unit price');
+  const cEA    = findCol(colDefs, 'e.price','eprice','e. price');
+  const cTot   = findCol(colDefs, 'ext.amount','extamount','ext amount','amount');
+
+  console.log('[parseWang] headers:', colDefs.map(c => `${c.raw}@${Math.round(c.x0)}`));
+  console.log('[parseWang] matched:', {
+    IC: cIC?.raw, Desc: cDesc?.raw, Qty: cQty?.raw, UoM: cUoM?.raw,
+    Price: cPrice?.raw, EA: cEA?.raw, Tot: cTot?.raw
+  });
+
+  // Item codes: Hanmi 5-digit ("80089"), optional letter prefix ("CJ1023430").
+  const IC = /^(?:[A-Z]{1,3}\d{3,9}|\d{3,7})[A-Z]?$/;
+  const BARCODE_RE = /^\d{10,14}$/;
+
+  const result = [];
+  let cur = null;
+  let dbg  = 0;
+
+  const pushCur = () => {
+    if (!cur) return;
+    // EA is per-unit — should be ≤ case price. Swap if flipped.
+    if (cur.eaPrice > cur.casePrice && cur.casePrice > 0){
+      [cur.casePrice, cur.eaPrice] = [cur.eaPrice, cur.casePrice];
+    }
+    if (cur.vendorCode && (cur.casePrice > 0 || cur.eaPrice > 0 || cur.total > 0)){
+      result.push(cur);
+    }
+    cur = null;
+  };
+
+  dataRows.forEach(row => {
+    const texts = row.items.map(i => i.text);
+
+    const icTok = cIC
+      ? row.items.find(i => i.x >= cIC.x0 - 12 && i.x < cIC.x1 && IC.test(i.text.trim()))
+      : null;
+
+    if (icTok){
+      pushCur();
+      // QTY column bleeds into the UoM column because the UoM values ("CART")
+      // sit a few px left of the UoM header. Strip by pulling just the leading
+      // digit group so qty="5" instead of "5 CART".
+      const qtyRaw = cellText(row.items, cQty);
+      const qty = (qtyRaw.match(/\d+/) || [''])[0];
+
+      cur = {
+        vendorCode: icTok.text.trim(),
+        name: '',
+        qty,
+        unit: cellText(row.items, cUoM),
+        casePrice: cellNum(row.items, cPrice),
+        total:     cellNum(row.items, cTot),
+        eaPrice:   cellNum(row.items, cEA),
+        barcode: ''
+      };
+      if (dbg < 3){
+        console.log('[parseWang] row', cur.vendorCode, {
+          texts, qty: cur.qty, unit: cur.unit,
+          price: cur.casePrice, ea: cur.eaPrice, total: cur.total
+        });
+        dbg++;
+      }
+    } else if (cur){
+      // Continuation rows: barcode, English name, or overflow price.
+      const bcTok = cIC
+        ? row.items.find(i => i.x >= cIC.x0 - 12 && i.x < cIC.x1 && BARCODE_RE.test(i.text.trim()))
+        : null;
+      if (bcTok && !cur.barcode) cur.barcode = bcTok.text.trim();
+
+      const descEN = cellText(row.items, cDesc).trim();
+      if (descEN && !isJunk(descEN) && !hasKorean(descEN)){
+        const clean = cleanEnglish(descEN);
+        if (clean && clean.length > (cur.name || '').length){
+          cur.name = clean;
+        }
+      }
+
+      if (!(cur.casePrice > 0)){
+        const p = cellNum(row.items, cPrice);
+        if (p > 0) cur.casePrice = p;
+      }
+      if (!(cur.eaPrice > 0)){
+        const e = cellNum(row.items, cEA);
+        if (e > 0) cur.eaPrice = e;
+      }
+      if (!(cur.total > 0)){
+        const t = cellNum(row.items, cTot);
+        if (t > 0) cur.total = t;
+      }
+      if (!cur.qty){
+        const q = cellText(row.items, cQty).match(/\d+/);
+        if (q) cur.qty = q[0];
+      }
+      if (!cur.unit){
+        const u = cellText(row.items, cUoM).trim();
+        if (/^(CART|BX|EA|CASE|CS|PK|BAG)\b/i.test(u)) cur.unit = u;
+      }
+    }
+  });
+  pushCur();
+  return result;
+}
 
 /* ===================== RHEE BROS PARSER =====================
  * Columns (fixed layout, seen in Sales Invoice PSI-XXXXXXX.pdf):
