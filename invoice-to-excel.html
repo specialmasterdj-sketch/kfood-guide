@@ -1990,8 +1990,19 @@ function buildColDefs(hdrItems){
   }));
 }
 
-/* Find a column definition matching any of the given keyword fragments */
+/* Find a column definition matching any of the given keyword fragments.
+ *
+ * Exact matches are preferred over substring matches, so 'price' locks onto the
+ * "Price" header instead of silently swallowing "EA Price" (which also contains
+ * the substring 'price'). Same for 'ea' vs 'each' — without exact-match priority
+ * a short key like 'ea' would greedily match "EACH", "READ", etc.
+ */
 function findCol(colDefs, ...keys){
+  for (const k of keys){
+    const norm = k.replace(/\s+/g,'').toLowerCase();
+    const exact = colDefs.find(c => c.key === norm || c.raw.toLowerCase() === k);
+    if (exact) return exact;
+  }
   return colDefs.find(c => keys.some(k => c.key.includes(k) || c.raw.toLowerCase().includes(k))) || null;
 }
 
@@ -2025,6 +2036,12 @@ function parseStructured(dataRows, colDefs){
   const cTotal = findCol(colDefs,'total','amount');
   const cEA    = findCol(colDefs,'eaprice','ea price','each','ea');
 
+  console.log('[parseStructured] headers:', colDefs.map(c => `${c.raw}@${Math.round(c.x0)}`));
+  console.log('[parseStructured] matched:', {
+    IC: cIC?.raw, Desc: cDesc?.raw, Qty: cQty?.raw, UOM: cUom?.raw,
+    Price: cPrice?.raw, Total: cTotal?.raw, EA: cEA?.raw
+  });
+
   // Item code patterns across vendors:
   //   EC1032 / AB1001 / VDYA105006 — letters then digits, optional trailing letter
   //   00004D / 01021D             — digits then trailing letter (RHEE BROS)
@@ -2033,6 +2050,7 @@ function parseStructured(dataRows, colDefs){
 
   const result = [];
   let cur = null;
+  let dbgRows = 0;
 
   dataRows.forEach(row => {
     const texts  = row.items.map(i => i.text);
@@ -2054,17 +2072,35 @@ function parseStructured(dataRows, colDefs){
       const eaPrice  = cellNum(row.items, cEA);
       const bc       = grabBarcode(texts, row.items);
 
+      let casePrice = price;
+      let eaFinal   = eaPrice;
+      // EA is per-unit price — always ≤ case Price. If we read them the other
+      // way round (column drift or mis-detection), swap rather than ship obvious
+      // garbage.
+      if (eaFinal > casePrice && casePrice > 0){
+        [casePrice, eaFinal] = [eaFinal, casePrice];
+      }
+
       cur = {
         vendorCode: ic,
         // Description ALWAYS comes from the secondary (English) row. Never
         // use line 1 — even if it has English chars — per product requirement.
         name: '',
         qty, unit,
-        casePrice: price,
+        casePrice,
         total,
-        eaPrice,
+        eaPrice: eaFinal,
         barcode: bc
       };
+
+      if (dbgRows < 3){
+        console.log('[parseStructured] row', ic, {
+          allTexts: texts,
+          qty, unit, price, total, eaPrice,
+          finalCase: casePrice, finalEA: eaFinal
+        });
+        dbgRows++;
+      }
 
     } else if(cur){
       // ── SECONDARY ROW: English description + Barcode ──
