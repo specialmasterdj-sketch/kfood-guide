@@ -502,6 +502,9 @@ function setVendor(v){
   if (typeof setMode === 'function'){
     setMode(VENDORS_WITHOUT_BARCODE.has(currentVendor) ? 'nobc' : 'hasbc');
   }
+  // Each vendor carries its own reference sheet; swap REF on every change so
+  // a Wang reference never gets consulted for a RHEE BROS invoice.
+  if (typeof loadRefForVendor === 'function') loadRefForVendor(currentVendor);
 }
 
 // Choose the right parser given the raw extracted items' text content. If the
@@ -519,11 +522,39 @@ function parseByVendor(rows){
 }
 
 /* ===================== MODE (has/no barcode) + REFERENCE SHEET ===================== */
-const REF_KEY    = 'kimchi-invoice-ref-v1'; // barcode lookup table in localStorage
-const MODE_KEY   = 'kimchi-invoice-mode';   // 'hasbc' | 'nobc'
+// Reference sheets are per-vendor: Wang uses hanmi_cj_barcodes, RHEE BROS uses
+// its own barcode master, and the two should never be mixed (their item-code
+// namespaces overlap accidentally, which produces silent wrong barcodes).
+const REF_KEY_BASE = 'kimchi-invoice-ref-v1';
+const refKeyFor    = (vendor) => `${REF_KEY_BASE}__${vendor || 'default'}`;
+const MODE_KEY     = 'kimchi-invoice-mode';   // 'hasbc' | 'nobc'
 
 let MODE = 'hasbc';
 let REF  = null; // { byVC: {code→{barcode,name}}, byName: {upper→{barcode}}, count }
+
+function loadRefForVendor(vendor){
+  REF = null;
+  try {
+    const raw = localStorage.getItem(refKeyFor(vendor));
+    if (raw){ const obj = JSON.parse(raw); if (obj && obj.byVC) REF = obj; }
+  } catch(e){}
+  // Legacy: single-vendor refs were stored under REF_KEY_BASE. Migrate the
+  // first time we see one so the user doesn't have to re-upload.
+  if (!REF){
+    try {
+      const legacy = localStorage.getItem(REF_KEY_BASE);
+      if (legacy){
+        const obj = JSON.parse(legacy);
+        if (obj && obj.byVC){
+          REF = obj;
+          localStorage.setItem(refKeyFor(vendor), legacy);
+          localStorage.removeItem(REF_KEY_BASE);
+        }
+      }
+    } catch(e){}
+  }
+  if (typeof renderRefInfo === 'function') renderRefInfo();
+}
 
 function setMode(m){
   MODE = (m === 'nobc') ? 'nobc' : 'hasbc';
@@ -628,11 +659,13 @@ function onRefFile(f){
         if (nm && !byName[nm.toUpperCase()]) byName[nm.toUpperCase()] = { barcode: bc, vc };
         count++;
       }
-      REF = { byVC, byName, count, ts: Date.now() };
-      try { localStorage.setItem(REF_KEY, JSON.stringify(REF)); } catch(e){ console.warn('localStorage full:', e); }
+      REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
+      try { localStorage.setItem(refKeyFor(currentVendor), JSON.stringify(REF)); }
+      catch(e){ console.warn('localStorage full:', e); }
       renderRefInfo();
       hideL();
-      toast(`✅ 참조 ${count}건 로드`);
+      const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
+      toast(`✅ ${vLabel} 참조 ${count}건 로드`);
     } catch(err){
       hideL();
       console.error('parse error:', err);
@@ -646,20 +679,21 @@ function onRefFile(f){
 function renderRefInfo(){
   const el = id('ref-info');
   const btn = id('ref-clear-btn');
+  const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
   if (!REF || !REF.count){
-    if (el) el.textContent = '참조 엑셀이 없습니다.';
+    if (el) el.textContent = `${vLabel} 참조 엑셀이 없습니다.`;
     if (btn) btn.style.display = 'none';
     return;
   }
   const dt = new Date(REF.ts||Date.now()).toLocaleDateString('ko-KR');
-  if (el) el.innerHTML = `<b>${REF.count}</b>건 참조 가능 · 업로드일 ${dt}`;
+  if (el) el.innerHTML = `<b>${vLabel}</b> · <b>${REF.count}</b>건 참조 가능 · 업로드일 ${dt}`;
   if (btn) btn.style.display = '';
 }
 
 function clearRef(){
-  if (!confirm('참조 엑셀을 삭제할까요?')) return;
+  if (!confirm('이 공급사의 참조 엑셀을 삭제할까요?')) return;
   REF = null;
-  try { localStorage.removeItem(REF_KEY); } catch(e){}
+  try { localStorage.removeItem(refKeyFor(currentVendor)); } catch(e){}
   const inp = id('ref-f'); if (inp) inp.value = '';
   renderRefInfo();
   toast('참조 삭제됨');
@@ -701,10 +735,7 @@ function enrichAllRows(){
 
 // Restore mode + reference + vendor on load.
 (function restoreModeAndRef(){
-  try {
-    const raw = localStorage.getItem(REF_KEY);
-    if (raw){ const obj = JSON.parse(raw); if (obj && obj.byVC) REF = obj; }
-  } catch(e){}
+  loadRefForVendor(currentVendor);
   window.addEventListener('DOMContentLoaded', () => {
     // Mode is derived from vendor now (RHEE BROS → nobc, others → hasbc).
     // The saved MODE_KEY value is ignored; setVendor() drives setMode().
