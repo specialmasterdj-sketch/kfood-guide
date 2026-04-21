@@ -221,10 +221,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <table id="ref-ed-tbl" style="width:100%;border-collapse:collapse;font-size:13px">
           <thead style="position:sticky;top:0;background:#f6faf7">
             <tr>
-              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left;width:150px">벤더코드</th>
-              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left">상품명</th>
-              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left;width:170px">바코드</th>
-              <th style="padding:8px;border-bottom:1px solid #ddd;width:50px"></th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left;width:110px">벤더코드</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left">🇰🇷 상품명</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left">🇺🇸 Product Name</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left;width:150px">바코드</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;width:40px"></th>
             </tr>
           </thead>
           <tbody id="ref-ed-body"></tbody>
@@ -674,10 +675,18 @@ function onRefFile(f){
           if (normalized[i].includes('vendor')){ vci = i; break; }
         }
       }
-      // name = exact or contains
-      let ni = idxEq(['name','productname','상품명','품명']);
-      if (ni < 0) ni = idxInc(['name','description','상품','품명'], new Set([bci, vci]));
-      console.log('Column indexes — barcode:', bci, 'name:', ni, 'vendor:', vci);
+      // Names: support separate KR/EN columns (hanmi_cj_barcodes style) AND
+      // fall back to a single 'name'/'description' column for older sheets.
+      let nkIdx = idxEq(['namekr','koreanname','상품명','품명','이름']);
+      let neIdx = idxEq(['nameen','englishname','englishdesc','engname','englishdescription']);
+      // If neither KR/EN explicit, try a generic name column and treat it as KR.
+      let nSingle = -1;
+      if (nkIdx < 0 && neIdx < 0){
+        nSingle = idxEq(['name','productname']);
+        if (nSingle < 0) nSingle = idxInc(['name','description','상품','품명'], new Set([bci, vci]));
+        if (nSingle >= 0) nkIdx = nSingle;
+      }
+      console.log('Column indexes — barcode:', bci, 'nameKR:', nkIdx, 'nameEN:', neIdx, 'vendor:', vci);
       if (bci < 0 || vci < 0){
         hideL();
         toast('❌ 필수 컬럼을 못 찾음 (FULL BARCODE + VENDOR CODE 필요). 헤더: ' + header.join(' / '));
@@ -687,12 +696,17 @@ function onRefFile(f){
       let count = 0;
       for (let r=hdrIdx+1; r<rows.length; r++){
         const row = rows[r]; if (!row) continue;
-        const bc = String(row[bci]||'').replace(/\s/g,'').trim();
-        const vc = String(row[vci]||'').trim().toUpperCase();
-        const nm = ni >= 0 ? String(row[ni]||'').trim() : '';
+        const bc   = String(row[bci]||'').replace(/\s/g,'').trim();
+        const vc   = String(row[vci]||'').trim().toUpperCase();
+        const nmKR = nkIdx >= 0 ? String(row[nkIdx]||'').trim() : '';
+        const nmEN = neIdx >= 0 ? String(row[neIdx]||'').trim() : '';
         if (!bc) continue;
-        if (vc && !byVC[vc])  byVC[vc]  = { barcode: bc, name: nm };
-        if (nm && !byName[nm.toUpperCase()]) byName[nm.toUpperCase()] = { barcode: bc, vc };
+        if (vc && !byVC[vc])  byVC[vc]  = { barcode: bc, nameKR: nmKR, nameEN: nmEN, name: nmKR || nmEN };
+        // Index every distinct name variant so enrichment by name works whether
+        // the invoice carries the KR or EN string.
+        const addName = (s) => { if (s && !byName[s.toUpperCase()]) byName[s.toUpperCase()] = { barcode: bc, vc }; };
+        addName(nmKR);
+        addName(nmEN);
         count++;
       }
       REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
@@ -741,7 +755,10 @@ function renderRefInfo(){
 function openRefEditor(){
   if (!REF || !REF.byVC) return;
   const rows = Object.entries(REF.byVC).map(([vc, v]) => ({
-    vc, name: v.name || '', barcode: v.barcode || ''
+    vc,
+    nameKR: v.nameKR ?? v.name ?? '',  // legacy entries only had .name
+    nameEN: v.nameEN ?? '',
+    barcode: v.barcode || ''
   }));
   // Stable sort by vendor code
   rows.sort((a,b) => a.vc.localeCompare(b.vc));
@@ -758,7 +775,8 @@ function rowHtml(r, i){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   return `<tr data-i="${i}">
     <td style="padding:4px 6px"><input class="re-vc" value="${esc(r.vc)}" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px;font-family:monospace;font-size:12px"></td>
-    <td style="padding:4px 6px"><input class="re-nm" value="${esc(r.name)}" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px"></td>
+    <td style="padding:4px 6px"><input class="re-nk" value="${esc(r.nameKR)}" placeholder="한글 상품명" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px"></td>
+    <td style="padding:4px 6px"><input class="re-ne" value="${esc(r.nameEN)}" placeholder="English name" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px"></td>
     <td style="padding:4px 6px"><input class="re-bc" value="${esc(r.barcode)}" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px;font-family:monospace;font-size:12px"></td>
     <td style="padding:4px 6px;text-align:center">
       <button onclick="this.closest('tr').remove();updateRefEdCnt()" title="삭제" style="background:none;border:0;color:#c33;cursor:pointer;font-size:16px">✕</button>
@@ -769,7 +787,7 @@ function rowHtml(r, i){
 function addRefRow(){
   const tb = id('ref-ed-body');
   const div = document.createElement('tbody');
-  div.innerHTML = rowHtml({vc:'', name:'', barcode:''}, tb.children.length);
+  div.innerHTML = rowHtml({vc:'', nameKR:'', nameEN:'', barcode:''}, tb.children.length);
   const tr = div.firstElementChild;
   tb.insertBefore(tr, tb.firstChild);
   tr.querySelector('.re-vc')?.focus();
@@ -783,9 +801,10 @@ function filterRefEditor(){
   trs.forEach(tr => {
     if (!q) { tr.style.display = ''; shown++; return; }
     const vc = tr.querySelector('.re-vc')?.value.toLowerCase() || '';
-    const nm = tr.querySelector('.re-nm')?.value.toLowerCase() || '';
+    const nk = tr.querySelector('.re-nk')?.value.toLowerCase() || '';
+    const ne = tr.querySelector('.re-ne')?.value.toLowerCase() || '';
     const bc = tr.querySelector('.re-bc')?.value.toLowerCase() || '';
-    const hit = vc.includes(q) || nm.includes(q) || bc.includes(q);
+    const hit = vc.includes(q) || nk.includes(q) || ne.includes(q) || bc.includes(q);
     tr.style.display = hit ? '' : 'none';
     if (hit) shown++;
   });
@@ -804,14 +823,21 @@ function saveRefEditor(){
   const trs = id('ref-ed-body').querySelectorAll('tr');
   const byVC = {};
   const byName = {};
+  const addName = (s, bc, vc) => {
+    if (s && !byName[s.toUpperCase()]) byName[s.toUpperCase()] = { barcode: bc, vc };
+  };
   let count = 0, skipped = 0;
   trs.forEach(tr => {
-    const vc = (tr.querySelector('.re-vc')?.value || '').trim().toUpperCase();
-    const nm = (tr.querySelector('.re-nm')?.value || '').trim();
-    const bc = (tr.querySelector('.re-bc')?.value || '').replace(/\s/g,'').trim();
+    const vc   = (tr.querySelector('.re-vc')?.value || '').trim().toUpperCase();
+    const nmKR = (tr.querySelector('.re-nk')?.value || '').trim();
+    const nmEN = (tr.querySelector('.re-ne')?.value || '').trim();
+    const bc   = (tr.querySelector('.re-bc')?.value || '').replace(/\s/g,'').trim();
     if (!bc) { skipped++; return; }
-    if (vc && !byVC[vc])    byVC[vc] = { barcode: bc, name: nm };
-    if (nm && !byName[nm.toUpperCase()]) byName[nm.toUpperCase()] = { barcode: bc, vc };
+    if (vc && !byVC[vc]){
+      byVC[vc] = { barcode: bc, nameKR: nmKR, nameEN: nmEN, name: nmKR || nmEN };
+    }
+    addName(nmKR, bc, vc);
+    addName(nmEN, bc, vc);
     count++;
   });
   REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
