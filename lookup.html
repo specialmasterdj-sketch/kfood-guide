@@ -1117,6 +1117,31 @@ function buildIndexes() {
   buildIndexes();
 })();
 
+// Receive live Firebase updates pushed from the sync module below. Replaces
+// PRODUCTS_DATA in place, rebuilds the search indexes, and refreshes the
+// update badge so the header reflects the new date / count right away —
+// no reload required, which matters when the payload is too big for
+// localStorage to persist.
+window.addEventListener('products-override', (ev) => {
+  const d = ev.detail || {};
+  const remote = d.remote;
+  const branchId = d.branchId;
+  if (!remote || !Array.isArray(remote.rows) || !remote.rows.length) return;
+  if (branchId && typeof CURRENT_BRANCH !== 'undefined' && branchId !== CURRENT_BRANCH) return;
+  PRODUCTS_DATA = remote.rows;
+  buildIndexes();
+  const badge = document.querySelector('.update-badge');
+  if (badge){
+    const date = remote.date || '';
+    const count = remote.count || remote.rows.length;
+    badge.innerHTML = '📅 ' + (date || (new Date().toISOString().slice(0,10))) + ' 업데이트 · ' + count.toLocaleString() + '개 상품';
+  }
+  // Clear the "no data" message if it's showing
+  const empty = document.querySelector('.empty-branch-msg');
+  if (empty) empty.remove();
+  console.info('[override] live update applied:', remote.rows.length, 'products for', branchId);
+});
+
 // Also clear any stale IndexedDB override that points at older data,
 // by the same rule (IDB date <= baked-in → drop it).
 (function purgeStaleIDB(){
@@ -1669,16 +1694,25 @@ function subscribeProducts(branchId){
       const raw = localStorage.getItem('kimchi-products-override-' + branchId);
       if (raw){ const obj = JSON.parse(raw); localTs = obj?.timestamp || 0; }
     } catch(e){}
-    if (remote.timestamp <= localTs) return; // our local is up-to-date or newer
+    const isNewer = remote.timestamp > localTs;
 
-    // Write to localStorage and reload so the existing loadOverride IIFE
-    // picks up the new data cleanly (PRODUCTS_DATA is a `let` and can't be
-    // reassigned from this module).
+    // Always push remote into memory — the live page needs it regardless of
+    // whether persistence succeeds. The non-module script listens for this
+    // event, replaces PRODUCTS_DATA, and rebuilds the search indexes.
+    window.dispatchEvent(new CustomEvent('products-override', { detail: { branchId, remote } }));
+
+    if (!isNewer) return;  // local cache already matches, don't rewrite
+
+    // Best-effort persistence so the next page load shows data without
+    // waiting for Firebase. 3+ MB payloads blow past the 5 MB localStorage
+    // quota on some browsers — when that happens, skip the cache instead of
+    // failing the whole sync (which is what used to leave MIAMI at 0).
     try {
       localStorage.setItem('kimchi-products-override-' + branchId, JSON.stringify(remote));
-      console.info('[Firebase] remote products newer, reloading:', remote.count, 'ts=', remote.timestamp);
-      location.reload();
-    } catch(e){ console.warn('remote cache save failed', e); }
+      console.info('[Firebase] remote products saved to localStorage:', remote.count, 'ts=', remote.timestamp);
+    } catch(e){
+      console.warn('[Firebase] localStorage save failed (quota?). Data is in memory only:', e.message);
+    }
   }, (err) => console.warn('cloud read failed', err));
 }
 
