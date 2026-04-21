@@ -1956,7 +1956,21 @@ function parseJFC(rows){
 
 function parseInvoiceRows(rows){
   const HDR_KEYS = ['itemcode','item code','ea price','eaprice','description','storage','uom','each','brand'];
-  const isHdr = r => r.items.some(i => HDR_KEYS.some(k => i.text.toLowerCase().includes(k)));
+  // Match whole words only — substring was too loose (e.g. 'each' kept firing
+  // on "PALM BEACH" in the customer-address block and promoting that row to
+  // the header, which shoved column x-ranges off by one cell). Also require
+  // ≥2 distinct keyword hits so stray rows don't qualify.
+  const HDR_RE = HDR_KEYS.map(k =>
+    new RegExp('\\b' + k.replace(/\s+/g, '\\s*') + '\\b', 'i'));
+  const isHdr = r => {
+    const hit = new Set();
+    for (const it of r.items){
+      for (let i = 0; i < HDR_RE.length; i++){
+        if (HDR_RE[i].test(it.text)) hit.add(i);
+      }
+    }
+    return hit.size >= 2;
+  };
 
   // Collect ALL header row indices (one per page)
   const hdrIdxs = [];
