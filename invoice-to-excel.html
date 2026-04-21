@@ -185,15 +185,42 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ct" data-t="ref_title">📚 바코드 참조 엑셀</div>
     <div class="tip" data-t="ref_tip">
       <b>필요 컬럼:</b> FULL BARCODE · NAME · VENDOR CODE<br>
-      <b>한 번만 업로드:</b> 브라우저에 저장되어 이후 인보이스에 자동 참조됩니다.
+      <b>한 번만 업로드:</b> 브라우저에 저장되어 이후 인보이스에 자동 참조됩니다. 업로드 후 <b>편집</b>으로 바코드 추가/수정 가능.
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <label class="btn btn-o" style="cursor:pointer;position:relative;min-width:160px" data-t="ref_upload_btn">
+      <label class="btn btn-o" style="cursor:pointer;position:relative;min-width:140px" data-t="ref_upload_btn">
         📥 참조 엑셀 업로드
         <input type="file" id="ref-f" accept=".xlsx,.xls,.csv" style="position:absolute;inset:0;opacity:0;cursor:pointer" onchange="onRefFile(this.files[0])">
       </label>
-      <div id="ref-info" style="font-size:13px;color:#666;flex:1"></div>
+      <button class="btn btn-g" id="ref-edit-btn" onclick="openRefEditor()" style="display:none">✏️ 참조 편집</button>
+      <div id="ref-info" style="font-size:13px;color:#666;flex:1;min-width:200px"></div>
       <button class="btn btn-gray" onclick="clearRef()" id="ref-clear-btn" style="display:none" data-t="ref_clear_btn">🗑 삭제</button>
+    </div>
+
+    <!-- Inline editor (hidden until 편집 is clicked) -->
+    <div id="ref-editor" class="hidden" style="margin-top:14px;border-top:1px solid #e5e5e5;padding-top:14px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <input id="ref-ed-q" type="text" placeholder="벤더코드 · 상품명 · 바코드 검색"
+               oninput="filterRefEditor()"
+               style="flex:1;min-width:200px;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px">
+        <span id="ref-ed-cnt" style="font-size:12px;color:#888"></span>
+        <button class="btn btn-o" onclick="addRefRow()">＋ 행 추가</button>
+        <button class="btn btn-g"  onclick="saveRefEditor()">💾 저장</button>
+        <button class="btn btn-gray" onclick="closeRefEditor()">취소</button>
+      </div>
+      <div style="max-height:420px;overflow:auto;border:1px solid #eee;border-radius:8px">
+        <table id="ref-ed-tbl" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="position:sticky;top:0;background:#f6faf7">
+            <tr>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left;width:150px">벤더코드</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left">상품명</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;text-align:left;width:170px">바코드</th>
+              <th style="padding:8px;border-bottom:1px solid #ddd;width:50px"></th>
+            </tr>
+          </thead>
+          <tbody id="ref-ed-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -677,17 +704,119 @@ function onRefFile(f){
 }
 
 function renderRefInfo(){
-  const el = id('ref-info');
+  const el  = id('ref-info');
   const btn = id('ref-clear-btn');
+  const eb  = id('ref-edit-btn');
   const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
   if (!REF || !REF.count){
     if (el) el.textContent = `${vLabel} 참조 엑셀이 없습니다.`;
     if (btn) btn.style.display = 'none';
+    if (eb)  eb.style.display  = 'none';
+    // If the editor was open for a previous vendor, close it.
+    closeRefEditor();
     return;
   }
   const dt = new Date(REF.ts||Date.now()).toLocaleDateString('ko-KR');
   if (el) el.innerHTML = `<b>${vLabel}</b> · <b>${REF.count}</b>건 참조 가능 · 업로드일 ${dt}`;
   if (btn) btn.style.display = '';
+  if (eb)  eb.style.display  = '';
+}
+
+/* ── REFERENCE EDITOR ────────────────────────────────────────────────
+ * The uploaded sheet lives inside REF as { byVC, byName, count }. Rather
+ * than keep the raw rows around, the editor reconstructs a flat row
+ * list on open (one row per byVC entry) and rebuilds byVC/byName from
+ * the edits on save. byName is keyed by upper-case name, so it is kept
+ * in sync only when a row has both a name and a barcode.
+ */
+function openRefEditor(){
+  if (!REF || !REF.byVC) return;
+  const rows = Object.entries(REF.byVC).map(([vc, v]) => ({
+    vc, name: v.name || '', barcode: v.barcode || ''
+  }));
+  // Stable sort by vendor code
+  rows.sort((a,b) => a.vc.localeCompare(b.vc));
+  const tb = id('ref-ed-body');
+  tb.innerHTML = rows.map((r, i) => rowHtml(r, i)).join('');
+  id('ref-editor').classList.remove('hidden');
+  updateRefEdCnt();
+  id('ref-ed-q').value = '';
+  id('ref-ed-q').focus();
+}
+
+function rowHtml(r, i){
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return `<tr data-i="${i}">
+    <td style="padding:4px 6px"><input class="re-vc" value="${esc(r.vc)}" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px;font-family:monospace;font-size:12px"></td>
+    <td style="padding:4px 6px"><input class="re-nm" value="${esc(r.name)}" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px"></td>
+    <td style="padding:4px 6px"><input class="re-bc" value="${esc(r.barcode)}" style="width:100%;border:1px solid #eee;border-radius:4px;padding:5px;font-family:monospace;font-size:12px"></td>
+    <td style="padding:4px 6px;text-align:center">
+      <button onclick="this.closest('tr').remove();updateRefEdCnt()" title="삭제" style="background:none;border:0;color:#c33;cursor:pointer;font-size:16px">✕</button>
+    </td>
+  </tr>`;
+}
+
+function addRefRow(){
+  const tb = id('ref-ed-body');
+  const div = document.createElement('tbody');
+  div.innerHTML = rowHtml({vc:'', name:'', barcode:''}, tb.children.length);
+  const tr = div.firstElementChild;
+  tb.insertBefore(tr, tb.firstChild);
+  tr.querySelector('.re-vc')?.focus();
+  updateRefEdCnt();
+}
+
+function filterRefEditor(){
+  const q = (id('ref-ed-q').value || '').toLowerCase().trim();
+  const trs = id('ref-ed-body').querySelectorAll('tr');
+  let shown = 0;
+  trs.forEach(tr => {
+    if (!q) { tr.style.display = ''; shown++; return; }
+    const vc = tr.querySelector('.re-vc')?.value.toLowerCase() || '';
+    const nm = tr.querySelector('.re-nm')?.value.toLowerCase() || '';
+    const bc = tr.querySelector('.re-bc')?.value.toLowerCase() || '';
+    const hit = vc.includes(q) || nm.includes(q) || bc.includes(q);
+    tr.style.display = hit ? '' : 'none';
+    if (hit) shown++;
+  });
+  updateRefEdCnt(shown);
+}
+
+function updateRefEdCnt(shown){
+  const tb = id('ref-ed-body');
+  const total = tb.children.length;
+  if (shown === undefined) shown = total;
+  const el = id('ref-ed-cnt');
+  if (el) el.textContent = shown === total ? `${total}건` : `${shown} / ${total}건`;
+}
+
+function saveRefEditor(){
+  const trs = id('ref-ed-body').querySelectorAll('tr');
+  const byVC = {};
+  const byName = {};
+  let count = 0, skipped = 0;
+  trs.forEach(tr => {
+    const vc = (tr.querySelector('.re-vc')?.value || '').trim().toUpperCase();
+    const nm = (tr.querySelector('.re-nm')?.value || '').trim();
+    const bc = (tr.querySelector('.re-bc')?.value || '').replace(/\s/g,'').trim();
+    if (!bc) { skipped++; return; }
+    if (vc && !byVC[vc])    byVC[vc] = { barcode: bc, name: nm };
+    if (nm && !byName[nm.toUpperCase()]) byName[nm.toUpperCase()] = { barcode: bc, vc };
+    count++;
+  });
+  REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
+  try { localStorage.setItem(refKeyFor(currentVendor), JSON.stringify(REF)); }
+  catch(e){ console.warn('localStorage full:', e); toast('❌ 저장 실패 — localStorage 용량 초과'); return; }
+  renderRefInfo();
+  closeRefEditor();
+  const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
+  toast(`✅ ${vLabel} 참조 ${count}건 저장${skipped ? ` · ${skipped}건은 바코드 비어서 제외` : ''}`, 3500);
+}
+
+function closeRefEditor(){
+  const ed = id('ref-editor');
+  if (ed) ed.classList.add('hidden');
 }
 
 function clearRef(){
