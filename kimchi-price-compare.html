@@ -573,6 +573,20 @@ function applyPos(){
     price:parseP(r[+pc]),unit:uc!==''?s(r[+uc]):''
   })).filter(d=>d.name&&d.price>0);
   if(!S.posData.length){toast('❌ 유효한 상품 없음 - 컬럼 확인 필요');return;}
+
+  // Vela POS quirk: the 풀바코드 column is often empty while the 벤더코드
+  // column stores the retail barcode (all-digit, 10–14 chars). When that's
+  // clearly the case, promote 벤더코드 → barcode so downstream matching and
+  // the preview table read intuitively.
+  const nonEmptyBC = S.posData.filter(d => d.barcode && d.barcode.length >= 8).length;
+  const vcAsBCCount = S.posData.filter(d => /^\d{10,14}$/.test(d.vendorCode)).length;
+  if (nonEmptyBC < S.posData.length * 0.05 && vcAsBCCount > S.posData.length * 0.5){
+    console.info('[applyPos] promoting vendorCode → barcode for', vcAsBCCount,
+      'rows (벤더코드 holds the real barcode on this POS export)');
+    S.posData = S.posData.map(d => /^\d{10,14}$/.test(d.vendorCode)
+      ? { ...d, barcode: d.vendorCode, vendorCode: '' }
+      : d);
+  }
   fillPosTable();
   id('pos-cnt').textContent=`(${S.posData.length.toLocaleString()}개)`;
   // Manual upload: stamp today's date so the user can see this pane's data
@@ -1062,15 +1076,24 @@ function runCmp(){
     const byBC=new Map();  // normalizedBarcode → {d, i}
     const byVC=new Map();  // vendorCode        → {d, i}
 
+    const addBCKey = (key, d, i) => {
+      if (key && key.length >= 8 && !byBC.has(key)) byBC.set(key, {d, i});
+    };
     inv.forEach((d,i)=>{
       const bc=normBC(d.barcode);
-      if(bc.length>=8 && !byBC.has(bc)) byBC.set(bc,{d,i});
-      // POS systems commonly store barcodes WITHOUT the EAN-13 check digit
-      // (e.g. POS "880175902075" vs invoice "8801759020750"). Register the
-      // invoice barcode minus its last digit so the POS side matches as-is.
-      if(bc.length>=9){
-        const trimmed=bc.slice(0,-1);
-        if(!byBC.has(trimmed)) byBC.set(trimmed,{d,i});
+      if(bc.length>=8){
+        addBCKey(bc, d, i);
+        // POS systems commonly store barcodes WITHOUT the EAN-13 check digit
+        // (e.g. POS "880175902075" vs invoice "8801759020750"). Register the
+        // invoice barcode minus its last digit so the POS side matches as-is.
+        if(bc.length>=9) addBCKey(bc.slice(0,-1), d, i);
+        // POS also commonly strips leading zeros (Vela POS stores 77035102961
+        // while the invoice prints 077035102961). Index both forms.
+        const noZero = bc.replace(/^0+/, '');
+        if (noZero && noZero !== bc){
+          addBCKey(noZero, d, i);
+          if (noZero.length >= 9) addBCKey(noZero.slice(0,-1), d, i);
+        }
       }
       const vc=(d.vendorCode||'').toUpperCase().trim();
       if(vc && !byVC.has(vc)) byVC.set(vc,{d,i});
@@ -1088,13 +1111,17 @@ function runCmp(){
       const posVC=(pos.vendorCode||'').toUpperCase().trim();
 
       // ── Try barcode match first, then vendor code fallback ───
+      // Vela POS leaves 풀바코드 empty and stores the retail barcode in the
+      // 벤더코드 column instead. If VC is a 10–14 digit numeric, try it as a
+      // barcode before falling through to a vendor-code match.
+      const vcAsBC = /^\d{10,14}$/.test(posVC) ? posVC : '';
       let f = null, via = '';
       if (posBC.length >= 8 && byBC.has(posBC)) {
-        f = byBC.get(posBC);
-        via = '바코드';
+        f = byBC.get(posBC); via = '바코드';
+      } else if (vcAsBC && byBC.has(vcAsBC)) {
+        f = byBC.get(vcAsBC); via = '바코드';
       } else if (posVC && byVC.has(posVC)) {
-        f = byVC.get(posVC);
-        via = '코드';
+        f = byVC.get(posVC); via = '코드';
       }
       if (!f) return;
       if (used.has(f.i)) return;
@@ -1641,7 +1668,7 @@ let lastLoadedBranch = null;
 function applyRemotePos(products, branchId, dateStr, timestamp){
   if (!products || !products.length) return;
   const S = window.S; if (!S) return;
-  const rows = products.map(p => ({
+  let rows = products.map(p => ({
     name:       p.NAME || '',
     barcode:    p.FULL_BARCODE || '',
     vendorCode: p.CODE || '',
@@ -1649,6 +1676,16 @@ function applyRemotePos(products, branchId, dateStr, timestamp){
     unit:       ''
   })).filter(d => d.name && d.price > 0);
   if (!rows.length) return;
+
+  // Vela POS stores the retail barcode under CODE when FULL_BARCODE is blank.
+  // Promote CODE → barcode so matching + preview behave intuitively.
+  const nonEmptyBC = rows.filter(d => d.barcode && d.barcode.length >= 8).length;
+  const codeAsBC   = rows.filter(d => /^\d{10,14}$/.test(d.vendorCode)).length;
+  if (nonEmptyBC < rows.length * 0.05 && codeAsBC > rows.length * 0.5){
+    rows = rows.map(d => /^\d{10,14}$/.test(d.vendorCode)
+      ? { ...d, barcode: d.vendorCode, vendorCode: '' }
+      : d);
+  }
   // Preserve a manually uploaded POS file when it's for the current branch:
   // if posData already has rows AND the last load was for THIS branch (or
   // no branch was ever auto-loaded), treat that as a manual upload and
