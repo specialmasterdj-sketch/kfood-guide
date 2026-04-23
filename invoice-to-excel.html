@@ -1746,8 +1746,137 @@ async function extractPDF(file, onProgress){
   const rows = clusterRows(allItems);
   onProgress(0.85);
   const items = parseByVendor(rows);
+
+  // Eastland's UPC column renders through a barcode font that pdfjs decodes as
+  // garbage, but the PDF still draws the human-readable 13-digit EAN under
+  // each barcode image. OCR that narrow column strip per page and fill in the
+  // empty `barcode` field on each item.
+  if (currentVendor === 'eastland' && items.some(it => !it.barcode)){
+    id('pst').textContent = 'Eastland UPC OCR 중...';
+    try {
+      await enrichEastlandBarcodes(pdf, rows, items, onProgress);
+    } catch(e){ console.warn('eastland OCR failed:', e); }
+  }
+
   onProgress(1.0);
   return items;
+}
+
+/* Scan the UPC column for each Eastland page, OCR the printed digit band, and
+ * attach the 13-digit EAN to each item by Y-matching. Pure enrichment — if
+ * OCR fails the existing items (name/price/qty) still flow through. */
+async function enrichEastlandBarcodes(pdf, rows, items, onProgress){
+  if (typeof Tesseract === 'undefined'){
+    await loadSc('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js');
+  }
+  // UPC column x-range in raw PDF points (from the sample Eastland layout).
+  const UPC_X0_PT = 390, UPC_X1_PT = 470;
+  const SCALE = 4;
+
+  // Build a pg → canvas map (render each page once at 4x).
+  const pageCanvases = {};
+  for (const pn of new Set(rows.map(r => r.pg))){
+    const pg = await pdf.getPage(pn);
+    const vp1 = pg.getViewport({ scale: 1 });
+    const vp = pg.getViewport({ scale: SCALE });
+    const c = document.createElement('canvas');
+    c.width = vp.width; c.height = vp.height;
+    await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    pageCanvases[pn] = { canvas: c, vpHeight: vp.height, pdfHeight: vp1.height };
+  }
+
+  const worker = await Tesseract.createWorker();
+  await worker.loadLanguage('eng');
+  await worker.initialize('eng');
+  await worker.setParameters({
+    tessedit_pageseg_mode: '7',             // single line of text
+    tessedit_char_whitelist: '0123456789',  // reject non-digit noise
+  });
+
+  // Match each item to its source row so we know its page + raw PDF y.
+  // We use the first IC-matching item in each row as the y-anchor.
+  const rowByVC = {};
+  const IC_RE = /^\d{7,9}$/;
+  for (const row of rows){
+    for (const it of row.items){
+      if (IC_RE.test(it.text.trim())){
+        rowByVC[it.text.trim()] = row;
+        break;
+      }
+    }
+  }
+
+  for (let i = 0; i < items.length; i++){
+    const item = items[i];
+    if (item.barcode) continue;
+    const row = rowByVC[item.vendorCode];
+    if (!row || !pageCanvases[row.pg]) continue;
+
+    // row.avgY is the cluster's Y in scaled (1.5x) top-down pixels, GLOBAL
+    // across all pages. Convert back to the page-local Y the renderer knows.
+    // Each page's yOffset is cumulative, so we compute it from pageCanvases.
+    // Simpler: use items[0].y from the matching pdfjs output via transform,
+    // which we don't have here. Instead, derive local y by subtracting the
+    // sum of prior page heights (scaled 1.5x) + 40px gap per page boundary.
+    const pc = pageCanvases[row.pg];
+    // pageCanvas stores vpHeight (scale-4) and pdfHeight (scale-1). The
+    // original yInPage (scale 1.5) lives inside row.avgY but rows have been
+    // shifted by yOffset. Reconstruct yInPage by modding against the page's
+    // scale-1.5 height.
+    // Easier: re-walk the row to find the min pdf y via items[i].y mod page.
+    // But we don't have raw transform y on items. Fall back: assume row.avgY
+    // maps linearly — page (pg-1) starts at priorHeight15. We compute
+    // priorHeight15 by summing (earlier pages' scale-1.5 height + 40).
+    let yPriorPagesScale15 = 0;
+    for (let p = 1; p < row.pg; p++){
+      const pp = pageCanvases[p];
+      if (!pp) continue;
+      yPriorPagesScale15 += pp.pdfHeight * 1.5 + 40;
+    }
+    const yLocalScale15 = row.avgY - yPriorPagesScale15;
+    // Convert local y to scale-4 canvas pixels.
+    const yLocalScale4 = yLocalScale15 * (SCALE / 1.5);
+
+    // Crop the narrow digit-line strip right below the barcode bars, then
+    // upscale 2x so tesseract has enough pixels to read 7-pt digits cleanly.
+    const xL = Math.round(UPC_X0_PT * SCALE);
+    const xR = Math.round(UPC_X1_PT * SCALE);
+    const yT = Math.max(0, Math.round(yLocalScale4 + 6));
+    const yB = Math.min(pc.canvas.height, Math.round(yLocalScale4 + 32));
+    const srcW = xR - xL, srcH = yB - yT;
+    const UP = 2;
+    const strip = document.createElement('canvas');
+    strip.width = srcW * UP;
+    strip.height = srcH * UP;
+    strip.getContext('2d').drawImage(pc.canvas, xL, yT, srcW, srcH, 0, 0, srcW * UP, srcH * UP);
+
+    let raw = '';
+    try {
+      const r = await worker.recognize(strip);
+      raw = (r.data.text || '').replace(/[^0-9]/g, '');
+    } catch(e){ /* skip */ }
+
+    // Tesseract reads the barcode's start/stop guard bars as stray "1" digits
+    // so an OCR of "8 850869 010250" often comes back as "818508690102501" or
+    // "8850869010250 1". Normalise by stripping leading/trailing 1s until we
+    // land on a 12- or 13-digit EAN/UPC.
+    let digits = raw;
+    while (digits.length > 13 && digits.startsWith('1')) digits = digits.slice(1);
+    while (digits.length > 13 && digits.endsWith('1'))   digits = digits.slice(0, -1);
+    // 14-digit residue from a single stray guard bar — drop one end.
+    if (digits.length === 14){
+      if (digits.endsWith('1'))      digits = digits.slice(0, -1);
+      else if (digits.startsWith('1')) digits = digits.slice(1);
+    }
+    // 11-digit result is often a UPC-A missing its leading zero.
+    if (digits.length === 11) digits = '0' + digits;
+    if (digits.length >= 12 && digits.length <= 13){
+      item.barcode = digits;
+    }
+    onProgress(0.85 + 0.15 * (i+1) / items.length);
+  }
+
+  await worker.terminate();
 }
 
 /* Rasterise each PDF page to a canvas, then run the same image OCR pipeline
