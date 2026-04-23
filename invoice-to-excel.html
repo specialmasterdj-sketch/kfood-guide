@@ -187,6 +187,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="wismettac">Wismettac</option>
         <option value="jfc">JFC International</option>
         <option value="wang_global">Wang Global (한미·CJ)</option>
+        <option value="eastland">Eastland</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -513,6 +514,11 @@ const VENDORS_PARSER = {
     // "WANG GLOBAL NET" / "WANG FOODS" / HANMI / CJ product codes all land here.
     detect: text => /WANG\s*(GLOBAL|FOODS?|NET|USA|INTERNATIONAL)|WangGlobal|\bHANMI\b/i.test(text),
     parse: rows => parseWang(rows)
+  },
+  eastland: {
+    name: 'Eastland',
+    detect: text => /EASTLAND\s+FOOD|Eastland\s*Food\s*Corporation/i.test(text),
+    parse: rows => parseEastland(rows)
   },
   generic: {
     name: 'Generic / fallback',
@@ -1829,6 +1835,117 @@ function clusterRows(items){
 // parseInvoiceRows as the generic/flexible path and alias it here so the
 // vendor-dispatch table stays readable.
 function parseSeoulTrading(rows){ return parseInvoiceRows(rows); }
+
+/* ===================== EASTLAND PARSER =====================
+ * Eastland Food Corporation sales invoices.
+ * Header (single line):
+ *   ITEM | QTY | BRAND | DESCRIPTION & PACKAGING | UPC | PRICE BEFORE | PRICE AFTER | TOTAL
+ *
+ * Per-line layout:
+ *   y0 : ITEM(8-digit), QTY, BRAND, DESCRIPTION, PACK, CLASS, UPC(encoded font), prices, total
+ *   y1 : overflow — alternate pack or stray total from the *next* line shifted up
+ *
+ * UPC is rendered with a barcode-font that pdfjs decodes as garbage (e.g.
+ *   "y{ |IVDRUC{|{000108|"), so we don't extract barcodes from the invoice
+ *   itself — users fill those via the vendor reference sheet (like Wang).
+ */
+function parseEastland(rows){
+  // Eastland invoices have a HEADER row with column names "ITEM QTY BRAND
+  // DESCRIPTION & PACKAGING UPC BEFORE AFTER TOTAL" — but the x positions of
+  // those headers DON'T align with the data (e.g. header "DESCRIPTION" sits at
+  // x=209 while descriptions below start at x=138). The layout is otherwise
+  // perfectly consistent across pages, so we hardcode x-ranges calibrated from
+  // the sample invoice rather than trusting header coordinates.
+  const COLS = {
+    IC:     { x0:   0, x1:  50 },
+    qty:    { x0:  50, x1:  80 },
+    brand:  { x0:  80, x1: 135 },
+    desc:   { x0: 135, x1: 280 },
+    pack:   { x0: 280, x1: 348 },
+    class_: { x0: 348, x1: 390 },
+    upc:    { x0: 390, x1: 470 },
+    before: { x0: 470, x1: 513 },
+    after:  { x0: 513, x1: 570 },
+    total:  { x0: 570, x1: 9999 },
+  };
+  const cellAt = (items, c) =>
+    items.filter(i => i.x >= c.x0 && i.x < c.x1)
+         .sort((a,b) => a.x - b.x)
+         .map(i => i.text.trim())
+         .filter(Boolean)
+         .join(' ');
+  const numAt  = (items, c) => parseFloat(cellAt(items, c).replace(/[$,]/g,'')) || 0;
+
+  const IC_RE     = /^\d{7,9}$/;
+  const PACK_RE   = /^\d+\s*[xX*]\s*\d+(?:\.\d+)?\s*(?:G|GR|KG|LB|LBS|OZ|ML|L|PC|CT|CS)\b/i;
+  const HDR_RE    = /(?:ITEM|QTY|BRAND|DESCRIPTION|PACKAGING|UPC|BEFORE|AFTER|TOTAL)/i;
+  const HDR_ROW   = r => r.items.filter(i => HDR_RE.test(i.text)).length >= 4;
+
+  // Find the first header row so we can skip everything above it (address block,
+  // invoice meta). We DON'T use it for column boundaries.
+  const firstHdr = rows.findIndex(HDR_ROW);
+  const startIdx = firstHdr >= 0 ? firstHdr + 1 : 0;
+
+  console.log('[parseEastland] first header row at', firstHdr);
+
+  const result = [];
+  let cur = null;
+  let dbg = 0;
+  const pushCur = () => {
+    if (!cur) return;
+    if (cur.vendorCode && (cur.casePrice > 0 || cur.total > 0)) result.push(cur);
+    cur = null;
+  };
+
+  for (let i = startIdx; i < rows.length; i++){
+    const row = rows[i];
+    if (HDR_ROW(row)) continue; // skip per-page repeated headers
+    const items = row.items.slice().sort((a,b) => a.x - b.x);
+
+    const icTok = items.find(i => i.x >= COLS.IC.x0 && i.x < COLS.IC.x1 && IC_RE.test(i.text.trim()));
+    if (icTok){
+      pushCur();
+      const before = numAt(items, COLS.before);
+      const after  = numAt(items, COLS.after);
+      const total  = numAt(items, COLS.total);
+      const casePrice = after > 0 ? after : before;
+
+      cur = {
+        vendorCode: icTok.text.trim(),
+        name: cellAt(items, COLS.desc),
+        pack: cellAt(items, COLS.pack),
+        qty:  (cellAt(items, COLS.qty).match(/\d+/) || [''])[0],
+        unit: 'CS',
+        brand: cellAt(items, COLS.brand),
+        casePrice,
+        eaPrice: 0,
+        total,
+        barcode: '',
+      };
+      if (dbg < 3){
+        console.log('[parseEastland] row', cur.vendorCode, {
+          brand: cur.brand, name: cur.name, pack: cur.pack, qty: cur.qty,
+          before, after, total
+        });
+        dbg++;
+      }
+    } else if (cur){
+      // Continuation row: may carry an alternate pack-size text or a stray
+      // total that belongs to the previous item.
+      if (!cur.pack){
+        const packTok = items.find(i => i.x >= COLS.pack.x0 - 8 && i.x < COLS.pack.x1 + 8 && PACK_RE.test(i.text.trim()));
+        if (packTok) cur.pack = packTok.text.trim();
+      }
+      if (!(cur.total > 0)){
+        const t = numAt(items, COLS.total);
+        if (t > 0) cur.total = t;
+      }
+    }
+  }
+  pushCur();
+  console.log('[parseEastland] extracted', result.length, 'items');
+  return result;
+}
 
 /* ===================== WANG GLOBAL PARSER =====================
  * Invoices cover both Hanmi and CJ products under one "Wang Global" roof.
