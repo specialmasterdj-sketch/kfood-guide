@@ -2511,15 +2511,41 @@ function parseWismettac(rows){
     }
 
     const name = desc + (pack ? ' ' + pack : '');
-    if (!name.trim() || !price) return;
+    if (!name.trim() || !(price || total)) return;
 
     const isEa = /^EA$/i.test(uom);
-    // In 3-price layout Pr(EA) is the per-unit-inside-case price (explicit
-    // column). In 2-price layout we derive it from UOM.
-    const eaPriceOut = threePriceLayout
-      ? (eaUnitFromCol || (isEa ? price : 0))
-      : (isEa ? price : 0);
-    const casePriceOut = isEa ? 0 : price;
+    const qtyNum = parseFloat(qty) || 0;
+
+    // Picking numbers by position is fragile — the Wismettac layout sometimes
+    // sprays extra numeric tokens (size suffixes, partial SKU codes, "+2"
+    // packaging notes) so pickNum(-2) occasionally grabs one of those instead
+    // of the real per-case price, producing a Price column that doesn't match
+    // Total × QTY.
+    //
+    // Ground truth: TOTAL and QTY. Derive per-case price from them and only
+    // fall back to the picked `price` when total/qty aren't usable.
+    let casePriceDerived = (total > 0 && qtyNum > 0) ? (total / qtyNum) : 0;
+    if (!casePriceDerived) casePriceDerived = price || 0;
+
+    // Pack count for EA calc: first integer before the first "/" in the
+    // pack spec, since the trailing piece is almost always size not count
+    // ("12/300 ML" → 12 bottles of 300ml, "6/1 GAL" → 6 gallons, "24/8 OZ"
+    // → 24 bottles). Multi-tier specs like "6/2/5 CT" also use the outer
+    // count, which is what matters for per-piece EA.
+    let packCount = 0;
+    const packMatch = (pack || '').match(/^\s*(\d+)\s*\//);
+    if (packMatch) packCount = parseInt(packMatch[1], 10) || 0;
+
+    let eaPriceOut, casePriceOut;
+    if (isEa){
+      eaPriceOut   = casePriceDerived;
+      casePriceOut = packCount > 0 ? Math.round(casePriceDerived * packCount * 100) / 100 : 0;
+    } else {
+      casePriceOut = casePriceDerived;
+      eaPriceOut   = (threePriceLayout && eaUnitFromCol > 0)
+        ? eaUnitFromCol
+        : (packCount > 0 ? Math.round((casePriceDerived / packCount) * 10000) / 10000 : 0);
+    }
 
     result.push({
       vendorCode: ic,
