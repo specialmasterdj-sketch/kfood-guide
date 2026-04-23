@@ -205,6 +205,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <input type="file" id="ref-f" accept=".xlsx,.xls,.csv" style="position:absolute;inset:0;opacity:0;cursor:pointer" onchange="onRefFile(this.files[0])">
       </label>
       <button class="btn btn-g" id="ref-edit-btn" onclick="openRefEditor()" style="display:none">✏️ 참조 편집</button>
+      <button class="btn btn-o" id="ref-export-btn" onclick="exportRefXlsx()" style="display:none" title="다른 지점 컴퓨터와 공유하려면 내려받아 github 레포의 reference/ 폴더에 올리세요">⬇️ 공용 엑셀 내보내기</button>
       <div id="ref-info" style="font-size:13px;color:#666;flex:1;min-width:200px"></div>
       <button class="btn btn-gray" onclick="clearRef()" id="ref-clear-btn" style="display:none" data-t="ref_clear_btn">🗑 삭제</button>
     </div>
@@ -594,6 +595,83 @@ function loadRefForVendor(vendor){
     } catch(e){}
   }
   if (typeof renderRefInfo === 'function') renderRefInfo();
+
+  // If still no local reference, try fetching the shared copy from the repo
+  // (reference/<vendor>.xlsx). This keeps 1,672-row bar-code lookups in sync
+  // across every matching computer — staff upload once anywhere, commit to
+  // GitHub, and other branches pull it automatically on the next page load.
+  if (!REF) { tryFetchSharedRef(vendor); }
+}
+
+async function tryFetchSharedRef(vendor){
+  if (typeof XLSX === 'undefined') return;
+  try {
+    const resp = await fetch(`reference/${vendor}.xlsx`, { cache: 'no-cache' });
+    if (!resp.ok) return; // 404 is fine — shared ref just not uploaded yet
+    const buf = await resp.arrayBuffer();
+    const parsed = parseRefArrayBuffer(buf);
+    if (!parsed) return;
+    REF = { ...parsed, ts: Date.now(), vendor, shared: true };
+    try { localStorage.setItem(refKeyFor(vendor), JSON.stringify(REF)); } catch(e){}
+    if (typeof renderRefInfo === 'function') renderRefInfo();
+    const vLabel = VENDORS_PARSER[vendor]?.name || vendor;
+    if (typeof toast === 'function') toast(`✅ ${vLabel} 공용 참조 ${parsed.count}건 자동 로드`);
+  } catch(e){ /* offline or blocked: silently skip */ }
+}
+
+// Parse a reference Excel ArrayBuffer into {byVC, byName, count}.
+// Shared by the file-upload handler and the shared-repo fetcher so both
+// paths pick the same columns and normalization rules.
+function parseRefArrayBuffer(arrayBuf){
+  const wb = XLSX.read(new Uint8Array(arrayBuf), {type:'array'});
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
+  if (!rows.length) return null;
+  let hdrIdx = 0;
+  for (let i=0; i<Math.min(5, rows.length); i++){
+    const cells = (rows[i]||[]).map(s=>String(s||'').trim().toLowerCase());
+    if (cells.some(c => /barcode|바코드|vendor|code|name|상품/.test(c))){ hdrIdx = i; break; }
+  }
+  const header = (rows[hdrIdx]||[]).map(s => String(s||'').trim());
+  const norm = s => s.toLowerCase().replace(/[\s_.-]/g,'');
+  const normalized = header.map(h => norm(h));
+  const idxEq = (wants) => { for (const w of wants){ const i = normalized.indexOf(w); if (i >= 0) return i; } return -1; };
+  const idxInc = (wants, excludeIdx) => {
+    for (let i=0; i<normalized.length; i++){
+      if (excludeIdx && excludeIdx.has(i)) continue;
+      const h = normalized[i];
+      if (wants.some(w => h.includes(w))) return i;
+    }
+    return -1;
+  };
+  let bci = idxEq(['fullbarcode','barcode','풀바코드','바코드','upc','ean']);
+  let vci = idxEq(['itemcode','itemno','sku','벤더코드','품번','vendorcode','code']);
+  if (vci < 0) vci = idxInc(['code'], new Set([bci]));
+  if (vci < 0){ for (let i=0; i<normalized.length; i++){ if (normalized[i].includes('vendor')){ vci = i; break; } } }
+  let nkIdx = idxEq(['namekr','koreanname','상품명','품명','이름']);
+  let neIdx = idxEq(['nameen','englishname','englishdesc','engname','englishdescription']);
+  if (nkIdx < 0 && neIdx < 0){
+    let nSingle = idxEq(['name','productname']);
+    if (nSingle < 0) nSingle = idxInc(['name','description','상품','품명'], new Set([bci, vci]));
+    if (nSingle >= 0) nkIdx = nSingle;
+  }
+  if (bci < 0 || vci < 0) return null;
+  const byVC = {}, byName = {};
+  let count = 0;
+  for (let r=hdrIdx+1; r<rows.length; r++){
+    const row = rows[r]; if (!row) continue;
+    const bc   = String(row[bci]||'').replace(/\s/g,'').trim();
+    const vc   = String(row[vci]||'').trim().toUpperCase();
+    const nmKR = nkIdx >= 0 ? String(row[nkIdx]||'').trim() : '';
+    const nmEN = neIdx >= 0 ? String(row[neIdx]||'').trim() : '';
+    if (!bc) continue;
+    if (vc && !byVC[vc]) byVC[vc] = { barcode: bc, nameKR: nmKR, nameEN: nmEN, name: nmKR || nmEN };
+    const addName = (s) => { if (s && !byName[s.toUpperCase()]) byName[s.toUpperCase()] = { barcode: bc, vc }; };
+    addName(nmKR); addName(nmEN);
+    count++;
+  }
+  return { byVC, byName, count };
 }
 
 function setMode(m){
@@ -733,19 +811,41 @@ function renderRefInfo(){
   const el  = id('ref-info');
   const btn = id('ref-clear-btn');
   const eb  = id('ref-edit-btn');
+  const xb  = id('ref-export-btn');
   const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
   if (!REF || !REF.count){
     if (el) el.textContent = `${vLabel} 참조 엑셀이 없습니다.`;
     if (btn) btn.style.display = 'none';
     if (eb)  eb.style.display  = 'none';
+    if (xb)  xb.style.display  = 'none';
     // If the editor was open for a previous vendor, close it.
     closeRefEditor();
     return;
   }
   const dt = new Date(REF.ts||Date.now()).toLocaleDateString('ko-KR');
-  if (el) el.innerHTML = `<b>${vLabel}</b> · <b>${REF.count}</b>건 참조 가능 · 업로드일 ${dt}`;
+  const src = REF.shared ? ' · 🔗 공용 저장소에서 자동 로드' : '';
+  if (el) el.innerHTML = `<b>${vLabel}</b> · <b>${REF.count}</b>건 참조 가능 · 업로드일 ${dt}${src}`;
   if (btn) btn.style.display = '';
   if (eb)  eb.style.display  = '';
+  if (xb)  xb.style.display  = '';
+}
+
+// Download the current reference as an xlsx with the exact column names the
+// fetcher expects (FULL BARCODE · VENDOR CODE · NAME KR · NAME EN). Drop that
+// file into `kfood-guide-repo/reference/<vendor>.xlsx` and push — every other
+// computer picks it up on the next page load.
+function exportRefXlsx(){
+  if (!REF || !REF.byVC) { toast('참조 데이터가 없습니다'); return; }
+  if (typeof XLSX === 'undefined') { toast('❌ XLSX 라이브러리 실패'); return; }
+  const rows = [['FULL BARCODE','VENDOR CODE','NAME KR','NAME EN']];
+  for (const [vc, v] of Object.entries(REF.byVC)){
+    rows.push([v.barcode || '', vc, v.nameKR || v.name || '', v.nameEN || '']);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'reference');
+  XLSX.writeFile(wb, `${currentVendor}.xlsx`);
+  toast(`✅ ${currentVendor}.xlsx 내려받기 — kfood-guide-repo/reference/ 에 업로드 후 git push 하세요`);
 }
 
 /* ── REFERENCE EDITOR ────────────────────────────────────────────────
