@@ -107,6 +107,7 @@ table.rv tr:hover td{background:#fafffe}
 .ri.down{border-left-color:#1e88e5}
 .ri.same{border-left-color:#43a047}
 .ri.unmatched{border-left-color:#ff9800}
+.ri.review{border-left-color:#f57c00}
 .ri.new-item{border-left-color:#8e24aa}
 
 .iname{font-weight:700;font-size:14px;margin-bottom:4px;line-height:1.35;white-space:normal}
@@ -403,6 +404,7 @@ table.rv tr:hover td{background:#fafffe}
     <div class="ftab" data-f="up" onclick="setF('up',this)">⬆️ 인상 <span id="fc-up"></span></div>
     <div class="ftab" data-f="down" onclick="setF('down',this)">⬇️ 인하 <span id="fc-dn"></span></div>
     <div class="ftab" data-f="same" onclick="setF('same',this)">✅ 동일 <span id="fc-sm"></span></div>
+    <div class="ftab hidden" data-f="review" onclick="setF('review',this)">🟠 확인필요 <span id="fc-rv"></span></div>
     <div class="ftab hidden" data-f="unmatched" onclick="setF('unmatched',this)">❓ 미매칭 <span id="fc-um"></span></div>
     <div class="ftab hidden" data-f="new-item" onclick="setF('new-item',this)">🆕 신규 <span id="fc-nw"></span></div>
   </div>
@@ -1114,6 +1116,7 @@ function runCmp(){
     const used=new Set();
     const changed=[];   // price-changed items only (up or down)
     const same=[];      // barcode matched but same price
+    const review=[];    // matched but comparison not meaningful (see 'review' status)
     let bcMatchCount=0;
 
     let vcMatchCount=0;
@@ -1144,6 +1147,26 @@ function runCmp(){
       const diff=inv.eaPrice - pos.price;
       const pct=pos.price>0 ? diff/pos.price*100 : 0;
 
+      // "확인필요" — matched but the comparison is meaningless:
+      //   * invoice has no EA price (pack size couldn't be parsed → 0)
+      //   * POS has no cost but invoice does (new product with no recorded cost)
+      // These previously got shoved into up/down/same with wrong signs, hiding
+      // the fact that the user actually needs to REVIEW them. Bucket them out
+      // so up/인상·down/인하·same/동일 only shows rows where the comparison
+      // is real.
+      let status;
+      if (inv.eaPrice <= 0 && inv.casePrice <= 0){
+        status = 'review';   // no invoice price at all
+      } else if (inv.eaPrice <= 0){
+        status = 'review';   // only Box price, EA missing (pack unknown)
+      } else if (pos.price <= 0){
+        status = 'review';   // POS cost missing — new product
+      } else if (Math.abs(diff) < 0.005){
+        status = 'same';
+      } else {
+        status = diff > 0 ? 'up' : 'down';
+      }
+
       const invBC = normBC(inv.barcode);
       const row={
         name:        pos.name,
@@ -1154,17 +1177,18 @@ function runCmp(){
         invVendorCode:(inv.vendorCode||'').toUpperCase(),    // ItemCode from invoice
         vendorCode:  (pos.vendorCode||inv.vendorCode||'').toUpperCase(),
         posPrice:pos.price, invEA:inv.eaPrice, invCase:inv.casePrice||0,
-        diff, pct, via,
-        status:Math.abs(diff)<0.005?'same':(diff>0?'up':'down')
+        diff, pct, via, status
       };
 
       if(row.status==='same') same.push(row);
+      else if(row.status==='review') review.push(row);
       else changed.push(row);
     });
 
     // Sort changed items: largest % change first
     changed.sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct));
     same.sort((a,b)=>a.name.localeCompare(b.name));
+    review.sort((a,b)=>a.name.localeCompare(b.name));
 
     // Invoice items that didn't match any POS row — so users can see exactly
     // which SKUs are missing from POS and decide to add them / investigate.
@@ -1188,7 +1212,7 @@ function runCmp(){
     });
     unmatched.sort((a,b) => a.name.localeCompare(b.name));
 
-    const results=[...changed, ...same, ...unmatched];
+    const results=[...changed, ...same, ...review, ...unmatched];
     S.results=results;
 
     const cnt={up:0,down:0,same:same.length};
@@ -1203,12 +1227,16 @@ function runCmp(){
     id('fc-sm').textContent=`(${same.length})`;
     id('fc-um').textContent=`(${unmatched.length})`;
     id('fc-nw').textContent=`(0)`;
+    const fcRv = id('fc-rv'); if (fcRv) fcRv.textContent = `(${review.length})`;
     // Show the 미매칭 tab whenever we found any unmatched invoice items.
     const umTab = document.querySelector('.ftab[data-f="unmatched"]');
     if (umTab) umTab.classList.toggle('hidden', unmatched.length === 0);
+    // Show the 확인필요 tab whenever we have matched-but-unclear rows.
+    const rvTab = document.querySelector('.ftab[data-f="review"]');
+    if (rvTab) rvTab.classList.toggle('hidden', review.length === 0);
 
     id('match-stats').textContent=
-      `바코드 매칭 ${bcMatchCount}개 · 가격변동 ${changed.length}개 · 동일 ${same.length}개 · 미매칭 ${unmatched.length}개`;
+      `바코드 매칭 ${bcMatchCount}개 · 가격변동 ${changed.length}개 · 동일 ${same.length}개 · 확인필요 ${review.length}개 · 미매칭 ${unmatched.length}개`;
 
     // Default filter: show only price-changed items
     S.curF='changed';
@@ -1252,6 +1280,7 @@ function renderResults(data){
 
   const badges={up:'<span class="badge b-up">⬆️ 인상</span>',down:'<span class="badge b-down">⬇️ 인하</span>',
     same:'<span class="badge b-same">✅ 동일</span>',unmatched:'<span class="badge b-um">❓ 미매칭</span>',
+    review:'<span class="badge b-rv" style="background:#fff3e0;color:#e65100">🟠 확인필요</span>',
     'new-item':'<span class="badge b-new">🆕 신규</span>'};
 
   id('rlist').innerHTML=filt.map(r=>{
@@ -1276,6 +1305,23 @@ function renderResults(data){
             ${r.invCase&&r.invCase!==r.invEA?`<span style="color:#888;font-size:11px;margin-left:6px">박스: $${r.invCase.toFixed(2)}</span>`:''}
           </div>
           <div style="font-size:11px;color:#9c27b0;margin-top:3px">POS에 없는 신규 상품</div>
+        </div>`;
+    } else if(r.status==='review'){
+      // Matched but comparison is not meaningful — surface the raw numbers and
+      // tell the user exactly what's missing so they can fix it.
+      const reason = r.invEA <= 0 && r.invCase <= 0
+        ? '인보이스에서 가격을 추출하지 못했습니다'
+        : r.invEA <= 0
+          ? '박스 가격은 있지만 EA Price 계산 실패 — 팩 사이즈 확인 필요'
+          : 'POS에 원가(COST)가 비어 있습니다 — 신규 등록이거나 POS 누락';
+      priceHtml=`
+        <div class="price-box" style="background:#fff3e0;border:1px solid #ffcc80;border-radius:8px;padding:10px 12px;margin-top:6px">
+          <div class="pinfo" style="display:flex;gap:14px;flex-wrap:wrap">
+            <span>POS 원가: <b>${r.posPrice>0?'$'+r.posPrice.toFixed(2):'—'}</b></span>
+            <span>인보이스 EA: <b>${r.invEA>0?'$'+r.invEA.toFixed(2):'—'}</b></span>
+            <span>박스: <b>${r.invCase>0?'$'+r.invCase.toFixed(2):'—'}</b></span>
+          </div>
+          <div style="font-size:11px;color:#e65100;margin-top:4px">🟠 ${reason}</div>
         </div>`;
     } else {
       const sign=r.diff>0?'+':'';
