@@ -1166,8 +1166,29 @@ function runCmp(){
     changed.sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct));
     same.sort((a,b)=>a.name.localeCompare(b.name));
 
-    // Results = changed first, then same (same hidden by default)
-    const results=[...changed, ...same];
+    // Invoice items that didn't match any POS row — so users can see exactly
+    // which SKUs are missing from POS and decide to add them / investigate.
+    const unmatched = [];
+    inv.forEach((d, i) => {
+      if (used.has(i)) return;
+      unmatched.push({
+        name: d.name || d.nameKr || '(이름 없음)',
+        invName: d.name || '',
+        posBarcode: '',
+        invBarcode: normBC(d.barcode),
+        barcode: normBC(d.barcode),
+        invVendorCode: (d.vendorCode || '').toUpperCase(),
+        vendorCode: (d.vendorCode || '').toUpperCase(),
+        posPrice: 0,
+        invEA: d.eaPrice || 0,
+        invCase: d.casePrice || 0,
+        diff: 0, pct: 0, via: '',
+        status: 'unmatched',
+      });
+    });
+    unmatched.sort((a,b) => a.name.localeCompare(b.name));
+
+    const results=[...changed, ...same, ...unmatched];
     S.results=results;
 
     const cnt={up:0,down:0,same:same.length};
@@ -1180,11 +1201,14 @@ function runCmp(){
     id('fc-up').textContent=`(${cnt.up})`;
     id('fc-dn').textContent=`(${cnt.down})`;
     id('fc-sm').textContent=`(${same.length})`;
-    id('fc-um').textContent=`(0)`;
+    id('fc-um').textContent=`(${unmatched.length})`;
     id('fc-nw').textContent=`(0)`;
+    // Show the 미매칭 tab whenever we found any unmatched invoice items.
+    const umTab = document.querySelector('.ftab[data-f="unmatched"]');
+    if (umTab) umTab.classList.toggle('hidden', unmatched.length === 0);
 
     id('match-stats').textContent=
-      `바코드 매칭 ${bcMatchCount}개 · 가격변동 ${changed.length}개 · 동일 ${same.length}개`;
+      `바코드 매칭 ${bcMatchCount}개 · 가격변동 ${changed.length}개 · 동일 ${same.length}개 · 미매칭 ${unmatched.length}개`;
 
     // Default filter: show only price-changed items
     S.curF='changed';
@@ -1234,10 +1258,16 @@ function renderResults(data){
     let priceHtml='';
 
     if(r.status==='unmatched'){
+      // Two flavors of unmatched: a POS SKU not present in this invoice
+      // (r.posPrice>0), or an invoice line not present in POS (r.invEA>0).
+      const invSide = r.invEA > 0 && !(r.posPrice > 0);
       priceHtml=`
         <div class="price-box" style="background:#fff8f0;border:1px solid #ffe0b2;border-radius:8px;padding:10px 12px;margin-top:6px">
-          <div class="pinfo">현재 POS 원가: <b>$${r.posPrice.toFixed(2)}</b></div>
-          <div style="font-size:11px;color:#bbb;margin-top:3px">이번 인보이스에 없음</div>
+          ${invSide
+            ? `<div class="pinfo">인보이스 EA Price: <b>$${r.invEA.toFixed(2)}</b>${r.invCase && r.invCase !== r.invEA ? `<span style="color:#888;font-size:11px;margin-left:6px">박스: $${r.invCase.toFixed(2)}</span>` : ''}</div>
+               <div style="font-size:11px;color:#bbb;margin-top:3px">POS에 없음 — 신규 등록 또는 바코드 확인 필요</div>`
+            : `<div class="pinfo">현재 POS 원가: <b>$${r.posPrice.toFixed(2)}</b></div>
+               <div style="font-size:11px;color:#bbb;margin-top:3px">이번 인보이스에 없음</div>`}
         </div>`;
     } else if(r.status==='new-item'){
       priceHtml=`
