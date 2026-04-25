@@ -188,6 +188,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="jfc">JFC International</option>
         <option value="wang_global">Wang Global (한미·CJ)</option>
         <option value="eastland">Eastland</option>
+        <option value="welluck">Well Luck</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -521,6 +522,11 @@ const VENDORS_PARSER = {
     detect: text => /EASTLAND\s+FOOD|Eastland\s*Food\s*Corporation/i.test(text),
     parse: rows => parseEastland(rows)
   },
+  welluck: {
+    name: 'Well Luck',
+    detect: text => /WELL\s*LUCK|welluck\.com|和樂公司/i.test(text),
+    parse: rows => parseWellLuck(rows)
+  },
   generic: {
     name: 'Generic / fallback',
     detect: () => false,
@@ -540,7 +546,7 @@ try {
 // Vendors without printed barcodes need the reference-Excel barcode fill.
 // RHEE BROS never prints barcodes; Wang prints them inconsistently (many Hanmi
 // and most CJ lines come through blank), so it also needs the reference sheet.
-const VENDORS_WITHOUT_BARCODE = new Set(['rhee_bros', 'wang_global']);
+const VENDORS_WITHOUT_BARCODE = new Set(['rhee_bros', 'wang_global', 'welluck']);
 
 function setVendor(v){
   currentVendor = (v && VENDORS_PARSER[v]) ? v : DEFAULT_VENDOR;
@@ -2705,6 +2711,138 @@ function parseJFC(rows){
       unit:       ''
     });
   });
+  return out;
+}
+
+/* ===================== WELL LUCK PARSER =====================
+ * Well Luck invoices are scanned image PDFs (no embedded text), so rows
+ * come from OCR. Each product spans 2 visual rows:
+ *   Top row:    LN# ITEM# QTY UM "ENGLISH NAME" "BRAND/PACKING (no number)"
+ *   Bottom row: <chinese name>     WEIGHT  U.PRICE  AMOUNT
+ *
+ * The parser flattens rows back to words, finds LN# anchors (numeric word
+ * at the leftmost column with y past the table header), and bins all
+ * words within a Y window into named columns. Mirrors the standalone
+ * extract_welluck_v3.js logic that worked on welluck.04.23.2026.di430975.pdf.
+ *
+ * Welluck never prints a barcode on the invoice — `barcode` stays empty
+ * and the reference-Excel lookup (welluck_master_barcodes_v2.xlsx) fills
+ * it in downstream.
+ */
+function parseWellLuck(rows){
+  // Flatten: word list with global-Y already in place from extractPDF/extractScannedPDF.
+  const words = [];
+  for (const r of rows){
+    for (const it of (r.items || [])) words.push({text: (it.text || '').trim(), x: it.x, y: it.y, pg: r.pg || it.pg});
+  }
+  if (!words.length) return [];
+
+  // Page width: pdfjs uses raw PDF points (~612 wide for letter).
+  // Detect: look at max x and pick a scale so the LN column starts near x=0.
+  const maxX = Math.max(...words.map(w => w.x));
+  // Welluck invoice pages are landscape-ish 612-wide. Use 612 as reference,
+  // but compute relative bins so we tolerate scanner crops.
+  const W = Math.max(maxX + 50, 600);
+
+  // Column ranges as fractions of page width (mirrors 1275-wide extract: 100/1275 etc)
+  const COL_FRAC = {
+    ln:     [0.05, 0.17],
+    item:   [0.17, 0.33],
+    qty:    [0.33, 0.42],
+    um:     [0.42, 0.50],
+    desc:   [0.50, 0.81],
+    brand:  [0.81, 1.00],
+    weight: [0.81, 1.00],   // (bottom row only)
+    uprice: [1.00, 1.12],   // off the right edge — handled below
+    amount: [1.12, 1.25],
+  };
+  // Welluck's prices stretch into the right margin; clamp via real numeric-rich detection
+  // instead of fraction bounds. We'll reassign bottom-row numeric tokens by ordering.
+
+  const inFrac = (x, [a,b]) => x >= a*W && x < b*W;
+  function topCol(x){
+    if (inFrac(x, COL_FRAC.ln))     return 'ln';
+    if (inFrac(x, COL_FRAC.item))   return 'item';
+    if (inFrac(x, COL_FRAC.qty))    return 'qty';
+    if (inFrac(x, COL_FRAC.um))     return 'um';
+    if (inFrac(x, COL_FRAC.desc))   return 'desc';
+    if (inFrac(x, COL_FRAC.brand))  return 'brand';
+    return null;
+  }
+
+  // Anchor = numeric LN# (1-3 digits) in the LN column. Skip very-top rows
+  // (page headers also have stray numbers like dates "04/16/26").
+  const anchors = words
+    .filter(w => /^\d{1,3}$/.test(w.text) && inFrac(w.x, COL_FRAC.ln))
+    .filter(w => {
+      // ITEM# (5 digits) must be present in the same row to confirm
+      const sameRow = words.find(o => Math.abs(o.y - w.y) < 8 && /^\d{5}$/.test(o.text) && inFrac(o.x, COL_FRAC.item));
+      return !!sameRow;
+    })
+    .sort((a,b) => a.y - b.y);
+
+  const numRe = /^[\d,]+(?:\.\d{1,2})?$/;
+  const out = [];
+
+  for (const anchor of anchors){
+    const yMin = anchor.y - 8;
+    const yMax = anchor.y + 50;       // include bottom row with prices
+    const win = words.filter(w => w.y >= yMin && w.y <= yMax)
+                     .sort((a,b) => a.y - b.y || a.x - b.x);
+
+    const cols = { ln:'', item:'', qty:'', um:'', desc:'', brand:'' };
+    const bottomNumeric = [];   // rightward bottom-row numbers → weight/uprice/amount
+
+    for (const w of win){
+      const isBottom = w.y > anchor.y + 12;
+      if (isBottom){
+        // Numbers on the bottom row are weight/uprice/amount.
+        if (numRe.test(w.text)){
+          bottomNumeric.push(w);
+        }
+        continue;
+      }
+      const col = topCol(w.x);
+      if (!col) continue;
+      // Skip junk single chars unless meaningful
+      if (w.text === '—' || w.text === '|' || !w.text) continue;
+      cols[col] = (cols[col] ? cols[col] + ' ' : '') + w.text;
+    }
+
+    // Sort bottom numerics by X (left to right). The rightmost is AMOUNT,
+    // second-from-right is U.PRICE (case price), third is WEIGHT (ignore).
+    bottomNumeric.sort((a,b) => a.x - b.x);
+    const nums = bottomNumeric.map(w => parseFloat(w.text.replace(/,/g,'')));
+    let uPrice = 0, amount = 0;
+    if (nums.length >= 2){
+      amount = nums[nums.length - 1];
+      uPrice = nums[nums.length - 2];
+    } else if (nums.length === 1){
+      amount = uPrice = nums[0];
+    } else continue;
+
+    const item = (cols.item || '').replace(/\s/g,'');
+    if (!/^\d{5}$/.test(item)) continue;
+    const qtyN = parseInt((cols.qty || '').replace(/\D/g,''), 10) || 0;
+    const um = (cols.um || '').toUpperCase().replace(/[^A-Z]/g,'');
+    const name = ((cols.desc || '') + ' ' + (cols.brand || '')).trim();
+
+    // EA price = U.PRICE / pack count. Pack count = first N/N in brand text.
+    let eaPack = 1;
+    const packMatch = name.replace(/#\d+/g, '').match(/(?:^|[^\d])(\d{1,3})\s*\/\s*\d/);
+    if (packMatch) eaPack = parseInt(packMatch[1], 10) || 1;
+
+    out.push({
+      vendorCode: item,
+      barcode:    '',
+      name:       name,
+      eaPrice:    eaPack > 0 ? +(uPrice / eaPack).toFixed(4) : uPrice,
+      casePrice:  uPrice,
+      qty:        qtyN || '',
+      unit:       um,
+      total:      amount,
+    });
+  }
   return out;
 }
 
