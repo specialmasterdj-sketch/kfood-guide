@@ -523,7 +523,12 @@ const T_LOOKUP = {
     pick_excel_btn:'📂 Excel 파일 선택', reset_btn:'↩️ 원본으로 복원',
     hint_box:'📷 카메라 버튼으로 바코드 스캔하거나 바코드 번호를 직접 입력하세요',
     scan_btn:'📷 바코드 스캔 (카메라)',
-    search_btn:'검색', search_placeholder:'바코드 번호 직접 입력...'
+    search_btn:'검색', search_placeholder:'바코드 번호 직접 입력...',
+    no_data:'자료 없음', tag_min:'최저', tag_max:'최고',
+    label_branch_price:'판매가', label_stock:'재고',
+    label_vendor:'공급업체', label_vendor_code:'벤더 코드',
+    label_cost:'원가', label_full_barcode:'FULL BARCODE',
+    stock_unit:'개', compare_btn:'🔍 전체 지점 비교'
   },
   en: {
     title:'Kim Chi Mart Product Lookup', subtitle:'Branch-aware price and stock lookup',
@@ -534,7 +539,12 @@ const T_LOOKUP = {
     pick_excel_btn:'📂 Pick Excel file', reset_btn:'↩️ Restore original',
     hint_box:'📷 Tap the camera button to scan a barcode, or type a barcode number',
     scan_btn:'📷 Scan Barcode (Camera)',
-    search_btn:'Search', search_placeholder:'Type barcode number...'
+    search_btn:'Search', search_placeholder:'Type barcode number...',
+    no_data:'No data', tag_min:'low', tag_max:'high',
+    label_branch_price:'price', label_stock:'Stock',
+    label_vendor:'Vendor', label_vendor_code:'Vendor code',
+    label_cost:'Cost', label_full_barcode:'FULL BARCODE',
+    stock_unit:'pcs', compare_btn:'🔍 Compare all branches'
   },
   es: {
     title:'Búsqueda de Productos Kim Chi Mart', subtitle:'Precios y stock por sucursal',
@@ -545,7 +555,12 @@ const T_LOOKUP = {
     pick_excel_btn:'📂 Elegir Excel', reset_btn:'↩️ Restaurar original',
     hint_box:'📷 Toque el botón de cámara para escanear un código, o ingrese el número',
     scan_btn:'📷 Escanear código (cámara)',
-    search_btn:'Buscar', search_placeholder:'Ingrese número de código...'
+    search_btn:'Buscar', search_placeholder:'Ingrese número de código...',
+    no_data:'Sin datos', tag_min:'min', tag_max:'max',
+    label_branch_price:'precio', label_stock:'Stock',
+    label_vendor:'Proveedor', label_vendor_code:'Código de proveedor',
+    label_cost:'Costo', label_full_barcode:'CÓDIGO COMPLETO',
+    stock_unit:'unid', compare_btn:'🔍 Comparar todas las sucursales'
   }
 };
 let LANG = 'ko';
@@ -555,6 +570,10 @@ function setLang(l){
   LANG = T_LOOKUP[l] ? l : 'ko';
   try { localStorage.setItem('kimchi_lang', LANG); } catch(e){}
   applyLang();
+  // Re-render the active result card so labels/branch names switch language too.
+  if (typeof LAST_RESULT !== 'undefined' && LAST_RESULT && typeof showSingleResult === 'function') {
+    try { showSingleResult(LAST_RESULT); } catch(e){}
+  }
 }
 function applyLang(){
   document.documentElement.lang = LANG;
@@ -590,12 +609,12 @@ window.addEventListener('DOMContentLoaded', applyLang);
 // Prices are stored per-product under `PRICES: { branchId: number }`.
 // Fallback chain: PRICES[currentBranch] → PRICE (legacy single-price field).
 const BRANCHES = [
-  { id: 'MIAMI',         ko: '마이애미',       en: 'Miami' },
-  { id: 'PEMBROKE_PINES',ko: '펨브로크 파인즈', en: 'Pembroke Pines' },
-  { id: 'HOLLYWOOD',     ko: '할리우드',       en: 'Hollywood' },
-  { id: 'CORAL_SPRINGS', ko: '코럴 스프링스',  en: 'Coral Springs' },
-  { id: 'LASOLAS',       ko: '라스올라스',     en: 'LASOLAS' },
-  { id: 'WEST_PALM',     ko: '웨스트 팜 비치', en: 'West Palm Beach' },
+  { id: 'MIAMI',         ko: '마이애미',       en: 'Miami',           es: 'Miami' },
+  { id: 'PEMBROKE_PINES',ko: '펨브로크 파인즈', en: 'Pembroke Pines',  es: 'Pembroke Pines' },
+  { id: 'HOLLYWOOD',     ko: '할리우드',       en: 'Hollywood',       es: 'Hollywood' },
+  { id: 'CORAL_SPRINGS', ko: '코럴 스프링스',  en: 'Coral Springs',   es: 'Coral Springs' },
+  { id: 'LASOLAS',       ko: '라스올라스',     en: 'LASOLAS',         es: 'LASOLAS' },
+  { id: 'WEST_PALM',     ko: '웨스트 팜 비치', en: 'West Palm Beach', es: 'West Palm Beach' },
 ];
 const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
 
@@ -733,7 +752,10 @@ function getPrice(p, branch){
   return 0;
 }
 function fmtPrice(n){
-  return n > 0 ? '$' + n.toFixed(2) : '자료 없음';
+  return n > 0 ? '$' + n.toFixed(2) : lt('no_data');
+}
+function branchLabel(b){
+  return (b && (b[LANG] || b.ko)) || '';
 }
 
 // Rebuild the update panel's status message from the current data state
@@ -1447,17 +1469,21 @@ function getStockClass(stock) {
 // directly so a Vela export change is visible the moment it lands.
 function getStockText(stock) {
   const n = Number(stock) || 0;
-  if (n > 0)  return `✅ ${n}개`;
-  if (n === 0) return '0개';
-  return `❌ ${n}개`;
+  const u = lt('stock_unit');
+  if (n > 0)  return `✅ ${n}${u}`;
+  if (n === 0) return `0${u}`;
+  return `❌ ${n}${u}`;
 }
 
+let LAST_RESULT = null;
 function showSingleResult(p) {
+  LAST_RESULT = p;
   const area = document.getElementById('result-area');
   const stockClass = getStockClass(p.STOCK);
   const curPrice  = getPrice(p);
   const priceDisplay = fmtPrice(curPrice);
-  const curBranchLabel = CURRENT_BRANCH ? (BRANCH_BY_ID[CURRENT_BRANCH]||{}).ko || '' : '전체';
+  const curBranch = CURRENT_BRANCH ? BRANCH_BY_ID[CURRENT_BRANCH] : null;
+  const curBranchLabel = curBranch ? branchLabel(curBranch) : '';
   const category = (p.CATEGORY || '').replace('(F)', '').trim();
 
   // Per-branch comparison rows (hidden by default, toggled via button).
@@ -1470,11 +1496,11 @@ function showSingleResult(p) {
     const isMin  = validPrices.length > 1 && price === minP && price > 0;
     const isMax  = validPrices.length > 1 && price === maxP && price > 0 && minP !== maxP;
     const tag    = isCur ? ' <span style="color:var(--red);font-weight:800">●</span>' :
-                   isMin ? ' <span style="color:var(--green);font-size:10px;font-weight:700">최저</span>' :
-                   isMax ? ' <span style="color:#E65100;font-size:10px;font-weight:700">최고</span>' : '';
+                   isMin ? ` <span style="color:var(--green);font-size:10px;font-weight:700">${lt('tag_min')}</span>` :
+                   isMax ? ` <span style="color:#E65100;font-size:10px;font-weight:700">${lt('tag_max')}</span>` : '';
     const bg = isCur ? 'background:#FFEBEE' : '';
     return `<tr style="${bg}">
-      <td style="padding:8px 12px;border-bottom:1px solid #F0F0F0;font-size:13px">${b.ko}${tag}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #F0F0F0;font-size:13px">${branchLabel(b)}${tag}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #F0F0F0;font-size:14px;font-weight:700;text-align:right;color:${price>0?'#222':'#bbb'}">${fmtPrice(price)}</td>
     </tr>`;
   }).join('');
@@ -1486,12 +1512,12 @@ function showSingleResult(p) {
 
       <div class="price-row">
         <div>
-          <div class="price-label">📍 ${curBranchLabel} 판매가</div>
+          <div class="price-label">📍 ${curBranchLabel} ${lt('label_branch_price')}</div>
           <div class="price-value">${priceDisplay}</div>
         </div>
         <div style="text-align:right">
           <button onclick="toggleBranchCompare()" style="background:#fff;border:1.5px solid var(--red);color:var(--red);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">
-            🔍 전체 지점 비교
+            ${lt('compare_btn')}
           </button>
         </div>
       </div>
@@ -1502,26 +1528,26 @@ function showSingleResult(p) {
 
       <div class="info-grid">
         <div class="info-item">
-          <div class="info-item-label">재고</div>
+          <div class="info-item-label">${lt('label_stock')}</div>
           <div class="info-item-value ${stockClass}">${getStockText(p.STOCK)}</div>
         </div>
         <div class="info-item">
-          <div class="info-item-label">공급업체</div>
+          <div class="info-item-label">${lt('label_vendor')}</div>
           <div class="info-item-value">${p.VENDOR || '-'}</div>
         </div>
         <div class="info-item">
-          <div class="info-item-label">벤더 코드</div>
+          <div class="info-item-label">${lt('label_vendor_code')}</div>
           <div class="info-item-value" style="font-family:monospace;font-size:12px">${p.CODE || '-'}</div>
         </div>
         <div class="info-item">
-          <div class="info-item-label">원가</div>
+          <div class="info-item-label">${lt('label_cost')}</div>
           <div class="info-item-value">${p.COST > 0 ? '$' + p.COST.toFixed(2) : '-'}</div>
         </div>
       </div>
 
       <div class="barcode-display">
         <div>
-          <div class="barcode-label">FULL BARCODE</div>
+          <div class="barcode-label">${lt('label_full_barcode')}</div>
           <div>${p.FULL_BARCODE || p.CODE}</div>
         </div>
         <div style="font-size:20px">|||</div>
