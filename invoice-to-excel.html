@@ -695,9 +695,10 @@ function parseRefArrayBuffer(arrayBuf){
     const vc   = String(row[vci]||'').trim().toUpperCase();
     const nmKR = nkIdx >= 0 ? String(row[nkIdx]||'').trim() : '';
     const nmEN = neIdx >= 0 ? String(row[neIdx]||'').trim() : '';
-    if (!bc) continue;
+    // Keep rows that have at least a vendor code; barcode can be filled later.
+    if (!vc && !bc) continue;
     if (vc && !byVC[vc]) byVC[vc] = { barcode: bc, nameKR: nmKR, nameEN: nmEN, name: nmKR || nmEN };
-    const addName = (s) => { if (s && !byName[s.toUpperCase()]) byName[s.toUpperCase()] = { barcode: bc, vc }; };
+    const addName = (s) => { if (bc && s && !byName[s.toUpperCase()]) byName[s.toUpperCase()] = { barcode: bc, vc }; };
     addName(nmKR); addName(nmEN);
     count++;
   }
@@ -977,12 +978,17 @@ function saveRefEditor(){
     const nmKR = (tr.querySelector('.re-nk')?.value || '').trim();
     const nmEN = (tr.querySelector('.re-ne')?.value || '').trim();
     const bc   = (tr.querySelector('.re-bc')?.value || '').replace(/\s/g,'').trim();
-    if (!bc) { skipped++; return; }
+    // Drop only rows where everything is empty. Rows with a vendor code +
+    // KR/EN name but no barcode used to be silently dropped — that lost
+    // every Walong row the user manually labeled before scanning a UPC.
+    if (!vc && !bc && !nmKR && !nmEN) { skipped++; return; }
     if (vc && !byVC[vc]){
       byVC[vc] = { barcode: bc, nameKR: nmKR, nameEN: nmEN, name: nmKR || nmEN };
     }
-    addName(nmKR, bc, vc);
-    addName(nmEN, bc, vc);
+    if (bc){
+      addName(nmKR, bc, vc);
+      addName(nmEN, bc, vc);
+    }
     count++;
   });
   REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
