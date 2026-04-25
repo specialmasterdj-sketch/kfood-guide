@@ -807,12 +807,24 @@ function onRefFile(f){
         count++;
       }
       REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
-      try { localStorage.setItem(refKeyFor(currentVendor), JSON.stringify(REF)); }
-      catch(e){ console.warn('localStorage full:', e); }
+      // Persist + verify the round-trip so we know the user's reference will
+      // actually survive a refresh — silent quota failures used to look like
+      // "the reference disappeared on its own."
+      let saved = false;
+      try {
+        const json = JSON.stringify(REF);
+        localStorage.setItem(refKeyFor(currentVendor), json);
+        const back = localStorage.getItem(refKeyFor(currentVendor));
+        saved = back && back.length === json.length;
+      } catch(e){ console.warn('localStorage save failed:', e); }
       renderRefInfo();
       hideL();
       const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
-      toast(`✅ ${vLabel} 참조 ${count}건 로드`);
+      if (saved){
+        toast(`✅ ${vLabel} 참조 ${count}건 저장됨 (브라우저에 영구 보관)`);
+      } else {
+        toast(`⚠️ ${vLabel} 참조 ${count}건 로드 — 영구 저장 실패 (브라우저 저장공간 부족). 새로고침 시 사라질 수 있어요.`, 6000);
+      }
     } catch(err){
       hideL();
       console.error('parse error:', err);
@@ -974,7 +986,9 @@ function closeRefEditor(){
 }
 
 function clearRef(){
-  if (!confirm('이 공급사의 참조 엑셀을 삭제할까요?')) return;
+  const vLabel = VENDORS_PARSER[currentVendor]?.name || currentVendor;
+  const cnt = (REF && REF.count) || 0;
+  if (!confirm(`⚠️ ${vLabel} 참조 ${cnt}건을 정말 삭제할까요?\n\n다음 인보이스부터 바코드 자동 채움이 안 되고, 참조 엑셀을 다시 업로드해야 합니다.`)) return;
   REF = null;
   try { localStorage.removeItem(refKeyFor(currentVendor)); } catch(e){}
   const inp = id('ref-f'); if (inp) inp.value = '';
