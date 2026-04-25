@@ -2733,115 +2733,62 @@ function parseJFC(rows){
  * it in downstream.
  */
 function parseWellLuck(rows){
-  // Flatten: word list with global-Y already in place from extractPDF/extractScannedPDF.
-  const words = [];
-  for (const r of rows){
-    for (const it of (r.items || [])) words.push({text: (it.text || '').trim(), x: it.x, y: it.y, pg: r.pg || it.pg});
-  }
-  if (!words.length) return [];
-
-  // Page width: pdfjs uses raw PDF points (~612 wide for letter).
-  // Detect: look at max x and pick a scale so the LN column starts near x=0.
-  const maxX = Math.max(...words.map(w => w.x));
-  // Welluck invoice pages are landscape-ish 612-wide. Use 612 as reference,
-  // but compute relative bins so we tolerate scanner crops.
-  const W = Math.max(maxX + 50, 600);
-
-  // Column ranges as fractions of page width — calibrated against the actual
-  // OCR coordinates of welluck.04.23.2026.di430975.pdf (W≈1620):
-  //   LN x≈170, ITEM x≈252, QTY x≈515, UM x≈570, brand x≈1050, prices x≈1100..1500
-  const COL_FRAC = {
-    ln:     [0.07, 0.14],
-    item:   [0.14, 0.28],
-    qty:    [0.28, 0.34],
-    um:     [0.34, 0.40],
-    desc:   [0.40, 0.62],
-    brand:  [0.62, 0.95],
-  };
-  // Welluck's prices stretch into the right margin; clamp via real numeric-rich detection
-  // instead of fraction bounds. We'll reassign bottom-row numeric tokens by ordering.
-
-  const inFrac = (x, [a,b]) => x >= a*W && x < b*W;
-  function topCol(x){
-    if (inFrac(x, COL_FRAC.ln))     return 'ln';
-    if (inFrac(x, COL_FRAC.item))   return 'item';
-    if (inFrac(x, COL_FRAC.qty))    return 'qty';
-    if (inFrac(x, COL_FRAC.um))     return 'um';
-    if (inFrac(x, COL_FRAC.desc))   return 'desc';
-    if (inFrac(x, COL_FRAC.brand))  return 'brand';
-    return null;
-  }
-
-  // Anchor = numeric LN# (1-3 digits) in the LN column. Skip very-top rows
-  // (page headers also have stray numbers like dates "04/16/26").
-  const anchors = words
-    .filter(w => /^\d{1,3}$/.test(w.text) && inFrac(w.x, COL_FRAC.ln))
-    .filter(w => {
-      // ITEM# (5 digits) must be present in the same row to confirm
-      const sameRow = words.find(o => Math.abs(o.y - w.y) < 8 && /^\d{5}$/.test(o.text) && inFrac(o.x, COL_FRAC.item));
-      return !!sameRow;
-    })
-    .sort((a,b) => a.y - b.y);
-
-  const numRe = /^[\d,]+(?:\.\d{1,2})?$/;
+  // OCR for Welluck clusters cleanly into per-line text:
+  //   "1 02526 80 BG KOKUHO YELLOW KOKUHO RICE 15LB (POLY)"
+  //   "                                    1216 10.25 820.00"
+  // So we scan each row's joined text for "LN# ITEM# QTY UM ..." and pull
+  // the case price + amount from the next 1-2 rows' decimal tokens.
+  // (Coord/fraction-based parsing was too brittle against tesseract's
+  // x-coordinate jitter on this layout.)
   const out = [];
+  const seenItems = new Set();
+  // Accept OCR slop on the unit token (BG/CS/EA but also "cs"/"es"/"c").
+  const HDR_RE = /^\s*(\d{1,3})\s+(\d{5})\s+(\d{1,4})\s+([A-Za-z]{1,3})\b\s*(.*)$/;
+  // Decimal price tokens. Plain integers are mostly weight/qty noise.
+  const NUM_RE = /\b\d{1,5}(?:[.,]\d{2})\b/g;
 
-  for (const anchor of anchors){
-    const yMin = anchor.y - 8;
-    const yMax = anchor.y + 50;       // include bottom row with prices
-    const win = words.filter(w => w.y >= yMin && w.y <= yMax)
-                     .sort((a,b) => a.y - b.y || a.x - b.x);
+  for (let i = 0; i < rows.length; i++){
+    const row = rows[i];
+    const text = (row.items || []).map(it => it.text || '').join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const m = text.match(HDR_RE);
+    if (!m) continue;
+    const [, ln, item, qty, um, rest] = m;
+    if (seenItems.has(item)) continue;
 
-    const cols = { ln:'', item:'', qty:'', um:'', desc:'', brand:'' };
-    const bottomNumeric = [];   // rightward bottom-row numbers → weight/uprice/amount
-
-    for (const w of win){
-      const isBottom = w.y > anchor.y + 12;
-      if (isBottom){
-        // Numbers on the bottom row are weight/uprice/amount.
-        if (numRe.test(w.text)){
-          bottomNumeric.push(w);
-        }
-        continue;
-      }
-      const col = topCol(w.x);
-      if (!col) continue;
-      // Skip junk single chars unless meaningful
-      if (w.text === '—' || w.text === '|' || !w.text) continue;
-      cols[col] = (cols[col] ? cols[col] + ' ' : '') + w.text;
+    // Collect price candidates from this line and the next 1-2 (Welluck
+    // prints WEIGHT / UPRICE / AMOUNT below the description row).
+    const priceCandidates = (rest.match(NUM_RE) || []).slice();
+    for (let j = 1; j <= 2 && i + j < rows.length; j++){
+      const nextText = (rows[i+j].items || []).map(it => it.text || '').join(' ');
+      if (HDR_RE.test(nextText)) break; // next item starts — stop collecting
+      const more = nextText.match(NUM_RE) || [];
+      priceCandidates.push(...more);
     }
+    if (priceCandidates.length < 2) continue;
 
-    // Sort bottom numerics by X (left to right). The rightmost is AMOUNT,
-    // second-from-right is U.PRICE (case price), third is WEIGHT (ignore).
-    bottomNumeric.sort((a,b) => a.x - b.x);
-    const nums = bottomNumeric.map(w => parseFloat(w.text.replace(/,/g,'')));
-    let uPrice = 0, amount = 0;
-    if (nums.length >= 2){
-      amount = nums[nums.length - 1];
-      uPrice = nums[nums.length - 2];
-    } else if (nums.length === 1){
-      amount = uPrice = nums[0];
-    } else continue;
+    const nums = priceCandidates.map(s => parseFloat(s.replace(/,/g,'')));
+    const amount = nums[nums.length - 1];
+    const uPrice = nums[nums.length - 2];
 
-    const item = (cols.item || '').replace(/\s/g,'');
-    if (!/^\d{5}$/.test(item)) continue;
-    const qtyN = parseInt((cols.qty || '').replace(/\D/g,''), 10) || 0;
-    const um = (cols.um || '').toUpperCase().replace(/[^A-Z]/g,'');
-    const name = ((cols.desc || '') + ' ' + (cols.brand || '')).trim();
+    // Description = rest with decimals stripped (those are stray weight/price).
+    const desc = rest.replace(NUM_RE, '').replace(/\s+/g, ' ').trim();
 
-    // EA price = U.PRICE / pack count. Pack count = first N/N in brand text.
+    // EA pack count = first "N/M" pattern (e.g. 12/16.9 OZ → 12),
+    // skipping "#NNN" packing codes.
     let eaPack = 1;
-    const packMatch = name.replace(/#\d+/g, '').match(/(?:^|[^\d])(\d{1,3})\s*\/\s*\d/);
-    if (packMatch) eaPack = parseInt(packMatch[1], 10) || 1;
+    const pm = desc.replace(/#\d+/g, '').match(/(?:^|[^\d])(\d{1,3})\s*\/\s*\d/);
+    if (pm) eaPack = parseInt(pm[1], 10) || 1;
 
+    seenItems.add(item);
     out.push({
       vendorCode: item,
       barcode:    '',
-      name:       name,
+      name:       desc,
       eaPrice:    eaPack > 0 ? +(uPrice / eaPack).toFixed(4) : uPrice,
       casePrice:  uPrice,
-      qty:        qtyN || '',
-      unit:       um,
+      qty:        parseInt(qty, 10) || '',
+      unit:       um.toUpperCase(),
       total:      amount,
     });
   }
