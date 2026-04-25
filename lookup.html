@@ -681,11 +681,50 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // Unified price accessor: per-branch override, else legacy PRICE field.
+// Multi-branch Vela snapshots (PRICE + STOCK per branch). Filled lazily by
+// loadAllBranchPrices() — once on page load — by reading every branch's
+// localStorage cache populated by lookup's Firebase subscription. New
+// branches' prices appear the moment that branch's POS pushes a snapshot.
+const ALL_BRANCH_INDEX = {}; // { branchId: { byKey: {KEY: {PRICE, STOCK}} } }
+function indexBranchPayload(payload){
+  const byKey = Object.create(null);
+  for (const r of (payload?.rows || [])){
+    const norm = (s) => String(s || '').trim().toUpperCase();
+    const keys = [norm(r.CODE), norm(r.FULL_BARCODE), norm(r.PID)];
+    const entry = { PRICE: +r.PRICE || 0, STOCK: +r.STOCK || 0 };
+    for (const k of keys) if (k && !(k in byKey)) byKey[k] = entry;
+  }
+  return { byKey };
+}
+function loadAllBranchPrices(){
+  for (const b of BRANCHES){
+    try {
+      const raw = localStorage.getItem('kimchi-products-override-' + b.id);
+      if (raw) ALL_BRANCH_INDEX[b.id] = indexBranchPayload(JSON.parse(raw));
+    } catch(e){}
+  }
+}
+function lookupBranchEntry(p, branchId){
+  const idx = ALL_BRANCH_INDEX[branchId];
+  if (!idx) return null;
+  const norm = (s) => String(s || '').trim().toUpperCase();
+  const keys = [norm(p.CODE), norm(p.FULL_BARCODE), norm(p.PID)];
+  for (const k of keys) if (k && idx.byKey[k]) return idx.byKey[k];
+  return null;
+}
+loadAllBranchPrices();
+window.addEventListener('products-override', () => loadAllBranchPrices());
+
 function getPrice(p, branch){
   const b = branch || CURRENT_BRANCH;
+  // 1. Per-product PRICES override (legacy column header style)
   if (p && p.PRICES && b && p.PRICES[b] != null && p.PRICES[b] !== '') {
     return +p.PRICES[b] || 0;
   }
+  // 2. Per-branch Vela snapshot (live POS push)
+  const hit = lookupBranchEntry(p, b);
+  if (hit && hit.PRICE > 0) return hit.PRICE;
+  // 3. Fall back to the baked-in PRICE field
   return +p.PRICE || 0;
 }
 function fmtPrice(n){
@@ -1679,7 +1718,7 @@ works for both caches.
 -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-import { getDatabase, ref, set, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+import { getDatabase, ref, set, get, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
@@ -1750,6 +1789,27 @@ window.setBranch = function(id){
   // matters if the caller skipped reload.
   if (id && id !== currentSub) subscribeProducts(id);
 };
+
+// One-shot fetch of every other branch's snapshot so the "전체 지점 비교" panel
+// shows real per-branch prices instead of repeating the current branch's
+// PRICE for every row. Cached in localStorage and the in-memory
+// ALL_BRANCH_INDEX (defined alongside getPrice). Only branches whose POS
+// hasn't pushed yet are skipped.
+async function fetchAllBranchPrices(){
+  if (typeof BRANCHES === 'undefined') return;
+  for (const b of BRANCHES){
+    if (b.id === CURRENT_BRANCH) continue; // already streamed via subscribeProducts
+    try {
+      const snap = await get(ref(db, prodPath(b.id)));
+      const remote = snap.val();
+      if (!remote || !Array.isArray(remote.rows) || !remote.rows.length) continue;
+      try { localStorage.setItem('kimchi-products-override-' + b.id, JSON.stringify(remote)); } catch(e){}
+      window.dispatchEvent(new CustomEvent('products-override', { detail: { branchId: b.id, remote } }));
+    } catch(e){ /* offline / no data — skip */ }
+  }
+  console.info('[Firebase] all-branch price snapshot loaded');
+}
+fetchAllBranchPrices();
 
 console.info('[Firebase] POS data sync active');
 </script>
