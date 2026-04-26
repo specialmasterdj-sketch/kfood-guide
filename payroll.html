@@ -14,7 +14,7 @@
 <script>
 // One-shot SW reset: payroll.html 열 때 구 캐시 강제 갱신 (한 번만)
 (function(){
-  var KEY='kmtools_payroll_reset_v50';
+  var KEY='kmtools_payroll_reset_v51';
   if(!('serviceWorker' in navigator)) return;
   if(localStorage.getItem(KEY)==='1'){
     navigator.serviceWorker.register('sw.js').catch(function(){});
@@ -420,6 +420,8 @@ function _normName(s){ return String(s||'').toLowerCase().replace(/[\s.\-_]/g,''
 function findMyRole(){
   const me = _meIdentity();
   if (!me || !me.name) return null;
+  // verified가 true면 me.role을 신뢰 (dropdown으로 등록된 경우 — 캐시 동기화 타이밍 문제 우회)
+  if (me.verifiedRole && me.role) return me.role;
   const myN = _normName(me.name);
   if (!myN) return null;
   if ((GLOBAL_OWNERS||[]).some(o => _normName(o.name) === myN)) return 'OWNER';
@@ -432,7 +434,8 @@ function findMyRole(){
       if (e) return e.role;
     } catch(_){}
   }
-  return null;
+  // 마지막 폴백: me.role도 사용 (수동 입력 등)
+  return me.role || null;
 }
 function canEditRole(role){
   if (!role) return false;
@@ -552,13 +555,18 @@ function lookupRoleFor(name, branchId){
 }
 function refreshMeRoleDisplay(){
   const custom = document.getElementById('meModalNameCustom').value.trim();
-  const sel = document.getElementById('meModalName').value;
-  // 우선순위: dropdown 선택 > 직접 입력 (충돌 시 dropdown 승리)
+  const nsel = document.getElementById('meModalName');
+  const sel = nsel.value;
   const name = sel || custom;
-  // dropdown이 선택되면 custom 자동 비움 (UI 정리)
   if (sel && custom) document.getElementById('meModalNameCustom').value = '';
   const branchId = document.getElementById('meModalBranch').value;
-  const role = lookupRoleFor(name, branchId);
+  // dropdown 선택 시: data-role 속성을 직접 사용 (lookup 우회 — async 타이밍 문제 무시)
+  let role = '';
+  if (sel){
+    const opt = nsel.options[nsel.selectedIndex];
+    role = (opt && opt.dataset.role) || '';
+  }
+  if (!role) role = lookupRoleFor(name, branchId);
   const disp = document.getElementById('meModalRoleDisplay');
   if (!name){ disp.textContent = '— (이름 먼저 선택/입력)'; return; }
   if (!role){ disp.innerHTML = '⚠ 스케줄에 미등록 → <b>읽기 전용</b>'; return; }
@@ -567,12 +575,21 @@ function refreshMeRoleDisplay(){
 }
 function saveMeIdentity(){
   const branchId = document.getElementById('meModalBranch').value;
-  const sel = document.getElementById('meModalName').value;
+  const nsel = document.getElementById('meModalName');
+  const sel = nsel.value;
   const custom = document.getElementById('meModalNameCustom').value.trim();
-  const name = sel || custom;  // dropdown 우선
+  const name = sel || custom;
   if (!name){ alert('이름을 선택하거나 입력하세요'); return; }
-  const role = lookupRoleFor(name, branchId) || '';
-  const meObj = { name, branch:branchId, role, color:'#3b82f6', isManager: canEditRole(role) };
+  // dropdown에서 선택된 경우 data-role 속성을 직접 사용 (가장 신뢰할 수 있음)
+  let role = '';
+  if (sel){
+    const opt = nsel.options[nsel.selectedIndex];
+    role = (opt && opt.dataset.role) || '';
+  }
+  if (!role) role = lookupRoleFor(name, branchId) || '';
+  // dropdown에서 선택했으면 verified — canEdit이 신뢰함 (lookup async 우회)
+  const verified = !!sel && !!role;
+  const meObj = { name, branch:branchId, role, color:'#3b82f6', isManager: canEditRole(role), verifiedRole: verified };
   localStorage.setItem('chat.me', JSON.stringify(meObj));
   closeMeModal();
   applyReadonlyMode();
