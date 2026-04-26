@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>김치마트 — 스케줄</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+
+/* TOP BAR */
+.topbar{background:#fff;border-bottom:1px solid #e5e7eb;padding:10px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50;flex-wrap:wrap}
+.back{background:transparent;border:0;font-size:1.2em;color:#6b7280}
+.brand{font-weight:800;color:#1a5c3a;display:flex;align-items:center;gap:8px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900}
+.spacer{flex:1}
+.branch-select,.week-nav button,.lang-btn{background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.85em;font-weight:600}
+.lang-toggle{display:flex;gap:3px}
+.lang-btn{padding:5px 9px;color:#6b7280;border-color:#e5e7eb;font-size:.75em}
+.lang-btn.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+
+.week-nav{display:flex;align-items:center;gap:6px}
+.week-nav .label{font-weight:700;font-size:.95em;min-width:160px;text-align:center}
+.btn{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 12px;font-size:.85em;font-weight:600}
+.btn.secondary{background:#fff;color:#1a5c3a;border:1px solid #1a5c3a}
+.btn.danger{background:#dc2626}
+
+/* PAGE */
+.page{padding:14px;max-width:1500px;margin:0 auto}
+.summary-bar{background:#fff;border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;gap:24px;flex-wrap:wrap;font-size:.9em}
+.summary-bar b{color:#1a5c3a;margin-right:5px}
+
+/* GRID */
+.grid-wrap{background:#fff;border-radius:12px;overflow:auto;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.grid{display:grid;grid-template-columns:200px repeat(7,minmax(125px,1fr));min-width:900px}
+.gh{position:sticky;top:0;background:#f9fafb;border-bottom:2px solid #e5e7eb;padding:10px 8px;font-weight:700;font-size:.82em;text-align:center;z-index:5}
+.gh.emp{text-align:left;padding-left:14px}
+.gh.today{background:#dbeafe;color:#1e40af}
+.gh .date{color:#6b7280;font-weight:500;font-size:.85em;margin-top:2px}
+.gh .day-stats{font-size:.7em;color:#6b7280;font-weight:500;margin-top:3px}
+
+.role-band{grid-column:1 / -1;background:#f3f4f6;padding:8px 14px;font-weight:700;font-size:.78em;text-transform:uppercase;letter-spacing:.04em;color:#374151;display:flex;align-items:center;gap:10px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
+.role-band .totals{margin-left:auto;display:flex;gap:14px;font-weight:500;color:#6b7280;text-transform:none;letter-spacing:0;font-size:.95em}
+.role-band .add-emp{margin-left:8px;background:#fff;border:1px dashed #9ca3af;color:#374151;font-size:.78em;padding:3px 9px;border-radius:6px}
+
+.emp-cell{background:#fff;padding:10px 12px;border-bottom:1px solid #f3f4f6;display:flex;align-items:center;gap:10px;position:sticky;left:0;z-index:2}
+.emp-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.78em;flex-shrink:0}
+.emp-info{flex:1;min-width:0}
+.emp-name{font-weight:600;font-size:.88em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.emp-meta{font-size:.72em;color:#6b7280;margin-top:1px}
+.emp-actions{display:none;gap:4px}
+.emp-cell:hover .emp-actions{display:flex}
+.emp-actions button{background:transparent;border:0;color:#9ca3af;font-size:.95em;padding:2px 4px}
+.emp-actions button:hover{color:#dc2626}
+
+.shift-cell{background:#fff;border-bottom:1px solid #f3f4f6;border-left:1px solid #f3f4f6;padding:4px;min-height:60px;display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:.1s}
+.shift-cell:hover{background:#f9fafb}
+.shift-cell.today{background:#eff6ff}
+.shift-cell.weekend{background:#fafafa}
+.shift{border-radius:6px;padding:4px 6px;font-size:.74em;font-weight:600;color:#fff;line-height:1.2;cursor:pointer;border-left:3px solid rgba(0,0,0,.18)}
+.shift .time{font-size:.95em}
+.shift .role{opacity:.92;font-weight:500;font-size:.92em;margin-top:1px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+.shift.unavail{background:#fee2e2;color:#991b1b;border-left-color:#dc2626;text-align:center}
+.add-shift{flex:1;display:flex;align-items:center;justify-content:center;color:transparent;font-size:1.1em}
+.shift-cell:hover .add-shift{color:#9ca3af}
+
+/* MODALS */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;padding:14px}
+.overlay.show{display:flex}
+.modal{background:#fff;border-radius:14px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto}
+.modal h3{font-size:1.1em;font-weight:700;margin-bottom:14px}
+.field{margin-bottom:10px}
+.field label{display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:.9em;font-family:inherit}
+.field .row{display:flex;gap:8px}
+.field .row > *{flex:1}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.color-picker{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.color-swatch{width:28px;height:28px;border-radius:6px;cursor:pointer;border:2px solid transparent}
+.color-swatch.active{border-color:#1f2937}
+
+.empty{padding:30px;text-align:center;color:#9ca3af;font-size:.9em}
+
+/* TEMPLATE / IMPORT */
+.tpl-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.tpl-chip{background:#f4f6f9;border:1px solid #e5e7eb;border-radius:6px;padding:4px 9px;font-size:.78em;cursor:pointer}
+.tpl-chip:hover{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+
+@media(max-width:680px){
+  .grid{grid-template-columns:140px repeat(7,minmax(95px,1fr));min-width:760px}
+  .summary-bar{font-size:.82em;gap:14px}
+  .week-nav .label{min-width:120px;font-size:.85em}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="back" onclick="location.href='hub.html'">←</button>
+  <div class="brand"><div class="logo">K</div><span data-t="title">스케줄</span></div>
+  <select id="branchSel" class="branch-select" onchange="setBranch(this.value)"></select>
+  <div class="week-nav">
+    <button class="btn secondary" onclick="shiftWeek(-1)">‹</button>
+    <button class="btn secondary" onclick="goToday()" data-t="btn_today">오늘</button>
+    <span class="label" id="weekLabel"></span>
+    <button class="btn secondary" onclick="shiftWeek(1)">›</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn secondary" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
+  <button class="btn" onclick="openEmployeeModal()" data-t="btn_emp">＋ 직원</button>
+  <div class="lang-toggle">
+    <button class="lang-btn" data-lang="ko" onclick="setLang('ko')">KO</button>
+    <button class="lang-btn" data-lang="en" onclick="setLang('en')">EN</button>
+    <button class="lang-btn" data-lang="es" onclick="setLang('es')">ES</button>
+  </div>
+</div>
+
+<div class="page">
+
+  <div class="summary-bar" id="summaryBar"></div>
+
+  <div class="grid-wrap">
+    <div class="grid" id="grid"></div>
+  </div>
+
+</div>
+
+<!-- EMPLOYEE MODAL -->
+<div class="overlay" id="empOverlay">
+  <div class="modal">
+    <h3 id="empModalTitle" data-t="emp_modal_title">직원 추가</h3>
+    <div class="field">
+      <label data-t="lbl_name">이름</label>
+      <input type="text" id="empName" placeholder="예) Mirna Montoya">
+    </div>
+    <div class="field row">
+      <div>
+        <label data-t="lbl_role">역할 그룹</label>
+        <select id="empRole"></select>
+      </div>
+      <div>
+        <label data-t="lbl_target">주간 목표 시간</label>
+        <input type="number" id="empTarget" value="40" min="0" max="80">
+      </div>
+    </div>
+    <div class="field">
+      <label data-t="lbl_color">색상</label>
+      <div class="color-picker" id="empColors"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('empOverlay')" data-t="btn_cancel">취소</button>
+      <button class="btn danger" id="empDeleteBtn" style="display:none" onclick="deleteEmployee()" data-t="btn_delete">삭제</button>
+      <button class="btn" onclick="saveEmployee()" data-t="btn_save">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- SHIFT MODAL -->
+<div class="overlay" id="shiftOverlay">
+  <div class="modal">
+    <h3 id="shiftModalTitle" data-t="shift_modal_title">시프트</h3>
+    <div id="shiftSubtitle" style="color:#6b7280;font-size:.85em;margin-bottom:12px"></div>
+    <div class="field row">
+      <div>
+        <label data-t="lbl_start">시작</label>
+        <input type="time" id="shiftStart" value="09:00">
+      </div>
+      <div>
+        <label data-t="lbl_end">종료</label>
+        <input type="time" id="shiftEnd" value="17:00">
+      </div>
+    </div>
+    <div class="field">
+      <label data-t="lbl_position">포지션</label>
+      <input type="text" id="shiftPos" placeholder="cashier / stocker / sushi king / kitchen ...">
+    </div>
+    <div class="field">
+      <label data-t="lbl_note">메모 (선택)</label>
+      <input type="text" id="shiftNote" placeholder="">
+    </div>
+    <div class="field" id="tplWrap" style="display:none">
+      <label data-t="lbl_recent">최근 시프트 (클릭하여 채우기)</label>
+      <div class="tpl-row" id="tplRow"></div>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="shiftUnavail"> <span data-t="lbl_unavail">결근 / Unavailable (전일)</span></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('shiftOverlay')" data-t="btn_cancel">취소</button>
+      <button class="btn danger" id="shiftDeleteBtn" style="display:none" onclick="deleteShift()" data-t="btn_delete">삭제</button>
+      <button class="btn" onclick="saveShift()" data-t="btn_save">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ROLE MODAL -->
+<div class="overlay" id="roleOverlay">
+  <div class="modal">
+    <h3 data-t="role_modal_title">역할 그룹 관리</h3>
+    <div id="roleList" style="margin-bottom:12px"></div>
+    <div class="field row">
+      <input type="text" id="newRoleName" placeholder="예) BAKERY">
+      <button class="btn" onclick="addRole()" data-t="btn_add">＋ 추가</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeOverlay('roleOverlay')" data-t="btn_close">닫기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========= STATE =========
+const BRANCHES = [
+  { id:'MIAMI',         ko:'마이애미',       en:'Miami',           es:'Miami' },
+  { id:'PEMBROKE_PINES',ko:'펨브로크 파인즈', en:'Pembroke Pines',  es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',     ko:'할리우드',       en:'Hollywood',       es:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs' },
+  { id:'LASOLAS',       ko:'라스올라스',     en:'LASOLAS',         es:'LASOLAS' },
+  { id:'WEST_PALM',     ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+];
+const DEFAULT_ROLES = ['CASHIER/STOCKER','SUSHI/KITCHEN','BUTCHER','DELI','SUPERVISOR','OFFICE'];
+const COLORS = ['#22c55e','#3b82f6','#a855f7','#ec4899','#f59e0b','#ef4444','#06b6d4','#0ea5e9','#84cc16','#f97316'];
+
+let LANG = localStorage.getItem('hub.lang') || 'ko';
+let BRANCH = localStorage.getItem('hub.branch') || 'MIAMI';
+let weekStart = mondayOf(new Date());
+
+// modal state
+let editingEmp = null;
+let editingShift = null;
+
+// ========= I18N =========
+const T = {
+  title:           {ko:'스케줄',                en:'Schedule',           es:'Horarios'},
+  btn_today:       {ko:'오늘',                  en:'Today',              es:'Hoy'},
+  btn_role:        {ko:'＋ 역할',               en:'＋ Role',            es:'＋ Rol'},
+  btn_emp:         {ko:'＋ 직원',               en:'＋ Employee',        es:'＋ Empleado'},
+  btn_save:        {ko:'저장',                  en:'Save',               es:'Guardar'},
+  btn_cancel:      {ko:'취소',                  en:'Cancel',             es:'Cancelar'},
+  btn_delete:      {ko:'삭제',                  en:'Delete',             es:'Eliminar'},
+  btn_close:       {ko:'닫기',                  en:'Close',              es:'Cerrar'},
+  btn_add:         {ko:'＋ 추가',               en:'＋ Add',             es:'＋ Añadir'},
+  emp_modal_title: {ko:'직원 추가',             en:'Add Employee',       es:'Añadir Empleado'},
+  emp_modal_edit:  {ko:'직원 편집',             en:'Edit Employee',      es:'Editar Empleado'},
+  shift_modal_title:{ko:'시프트',               en:'Shift',              es:'Turno'},
+  role_modal_title:{ko:'역할 그룹 관리',         en:'Manage Role Groups', es:'Gestionar Grupos'},
+  lbl_name:        {ko:'이름',                  en:'Name',               es:'Nombre'},
+  lbl_role:        {ko:'역할 그룹',             en:'Role group',         es:'Grupo'},
+  lbl_target:      {ko:'주간 목표 시간',         en:'Weekly target hrs',  es:'Horas semanales'},
+  lbl_color:       {ko:'색상',                  en:'Color',              es:'Color'},
+  lbl_start:       {ko:'시작',                  en:'Start',              es:'Inicio'},
+  lbl_end:         {ko:'종료',                  en:'End',                es:'Fin'},
+  lbl_position:    {ko:'포지션',                en:'Position',           es:'Posición'},
+  lbl_note:        {ko:'메모 (선택)',           en:'Note (optional)',    es:'Nota'},
+  lbl_recent:      {ko:'최근 시프트 (클릭하여 채우기)', en:'Recent shifts (click to fill)', es:'Turnos recientes'},
+  lbl_unavail:     {ko:'결근 / Unavailable (전일)', en:'Unavailable (all day)', es:'No disponible (todo el día)'},
+  sum_hours:       {ko:'주간 시간',             en:'Weekly hours',       es:'Horas semanales'},
+  sum_shifts:      {ko:'시프트',                en:'Shifts',             es:'Turnos'},
+  sum_users:       {ko:'직원',                  en:'Employees',          es:'Empleados'},
+  empty_grid:      {ko:'직원을 추가하면 스케줄이 여기 나타납니다.', en:'Add employees and shifts will appear here.', es:'Añade empleados y verás los turnos aquí.'},
+  confirm_del_emp: {ko:'이 직원을 삭제할까요? (해당 시프트도 모두 삭제됩니다)', en:'Delete this employee? (all their shifts will be removed)', es:'¿Eliminar este empleado?'},
+  confirm_del_role:{ko:'이 역할을 삭제할까요? (소속 직원은 \"미배정\"으로 이동)', en:'Delete this role? (members move to \"Unassigned\")', es:'¿Eliminar este rol?'},
+  unassigned:      {ko:'미배정',                en:'Unassigned',         es:'Sin asignar'},
+  total_hours:     {ko:'합계',                  en:'Total',              es:'Total'},
+};
+function lt(k){ return (T[k] && T[k][LANG]) || (T[k] && T[k].ko) || k; }
+function applyLang(){
+  document.querySelectorAll('[data-t]').forEach(el => { const k = el.dataset.t; if (T[k]) el.textContent = lt(k); });
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === LANG));
+  document.documentElement.lang = LANG;
+  renderBranches();
+  render();
+}
+function setLang(l){ LANG = l; localStorage.setItem('hub.lang', l); applyLang(); }
+
+// ========= DATA (per-branch in localStorage) =========
+function loadBranchData(){
+  const k = 'shifts.' + BRANCH;
+  let raw = localStorage.getItem(k);
+  if (!raw) {
+    return { roles: DEFAULT_ROLES.slice(), employees: [], shifts: {} };
+  }
+  try {
+    const d = JSON.parse(raw);
+    if (!d.roles)     d.roles = DEFAULT_ROLES.slice();
+    if (!d.employees) d.employees = [];
+    if (!d.shifts)    d.shifts = {};
+    return d;
+  } catch(e){
+    return { roles: DEFAULT_ROLES.slice(), employees: [], shifts: {} };
+  }
+}
+function saveBranchData(d){ localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); }
+let DATA = loadBranchData();
+
+function setBranch(id){
+  BRANCH = id; localStorage.setItem('hub.branch', id);
+  DATA = loadBranchData();
+  render();
+}
+
+// ========= DATE HELPERS =========
+function mondayOf(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = x.getDay() || 7;       // Sun=0 -> 7
+  if (day !== 1) x.setDate(x.getDate() - (day - 1));
+  return x;
+}
+function fmtDate(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
+function fmtMD(d){ return (d.getMonth()+1) + '/' + d.getDate(); }
+function fmtKey(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
+function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+function isToday(d){ const t = new Date(); return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate(); }
+function dayName(d, lang){
+  const ko=['일','월','화','수','목','금','토'], en=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], es=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  return (lang==='ko'?ko:lang==='es'?es:en)[d.getDay()];
+}
+function shiftWeek(n){ weekStart = addDays(weekStart, 7*n); render(); }
+function goToday(){ weekStart = mondayOf(new Date()); render(); }
+
+// ========= HOURS =========
+function shiftHours(s){
+  if (!s || s.unavail) return 0;
+  const [sh,sm] = s.start.split(':').map(Number);
+  const [eh,em] = s.end.split(':').map(Number);
+  let mins = (eh*60+em) - (sh*60+sm);
+  if (mins < 0) mins += 24*60;
+  return mins / 60;
+}
+function shiftKey(empId, dateStr){ return empId + '@' + dateStr; }
+function getShift(empId, dateStr){ return DATA.shifts[shiftKey(empId, dateStr)] || null; }
+
+// ========= BRANCH PICKER =========
+function renderBranches(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b => `<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b[LANG]||b.ko}</option>`).join('');
+}
+
+// ========= MAIN GRID =========
+function render(){
+  // week label
+  const end = addDays(weekStart, 6);
+  document.getElementById('weekLabel').textContent = fmtDate(weekStart) + ' – ' + fmtDate(end);
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+
+  // header row
+  const hEmp = document.createElement('div');
+  hEmp.className = 'gh emp';
+  hEmp.textContent = lt('lbl_name');
+  grid.appendChild(hEmp);
+
+  let totalHours = 0, totalShifts = 0;
+  const dayHours = [0,0,0,0,0,0,0];
+  const dayShifts = [0,0,0,0,0,0,0];
+
+  // build day headers (placeholder cells; fill stats after counting)
+  const dayHeaders = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(weekStart, i);
+    const h = document.createElement('div');
+    h.className = 'gh' + (isToday(d) ? ' today' : '');
+    h.innerHTML = `${dayName(d, LANG)} <div class="date">${fmtMD(d)}</div><div class="day-stats" data-i="${i}">·</div>`;
+    grid.appendChild(h);
+    dayHeaders.push(h);
+  }
+
+  // group employees by role
+  const groups = {};
+  DATA.roles.forEach(r => groups[r] = []);
+  groups['__UNASSIGNED__'] = [];
+  DATA.employees.forEach(e => {
+    if (DATA.roles.includes(e.role)) groups[e.role].push(e);
+    else groups['__UNASSIGNED__'].push(e);
+  });
+
+  // empty state
+  if (DATA.employees.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.style.gridColumn = '1 / -1';
+    empty.textContent = lt('empty_grid');
+    grid.appendChild(empty);
+  }
+
+  // render groups
+  const rolesToShow = DATA.roles.concat(groups['__UNASSIGNED__'].length ? ['__UNASSIGNED__'] : []);
+  rolesToShow.forEach(role => {
+    const members = groups[role] || [];
+    if (members.length === 0 && role !== '__UNASSIGNED__') {
+      // still show role band if there are no members, with add-emp button
+      const band = document.createElement('div');
+      band.className = 'role-band';
+      band.innerHTML = `<span>${role}</span> <button class="add-emp" onclick="openEmployeeModal(null, '${role.replace(/'/g,"\\'")}')">＋ ${lt('btn_emp')}</button> <span class="totals"><span data-t="sum_users">직원</span> 0</span>`;
+      grid.appendChild(band);
+      return;
+    }
+    const groupHrs = members.reduce((sum, e) => {
+      let h = 0;
+      for (let i = 0; i < 7; i++) h += shiftHours(getShift(e.id, fmtKey(addDays(weekStart, i))));
+      return sum + h;
+    }, 0);
+    const groupShifts = members.reduce((sum, e) => {
+      let c = 0;
+      for (let i = 0; i < 7; i++) if (getShift(e.id, fmtKey(addDays(weekStart, i)))) c++;
+      return sum + c;
+    }, 0);
+
+    const band = document.createElement('div');
+    band.className = 'role-band';
+    const roleLabel = role === '__UNASSIGNED__' ? lt('unassigned') : role;
+    band.innerHTML = `
+      <span>${roleLabel}</span>
+      <button class="add-emp" onclick="openEmployeeModal(null, '${role.replace(/'/g,"\\'")}')">＋ ${lt('btn_emp')}</button>
+      <span class="totals">
+        <span>⏱ ${groupHrs.toFixed(1)}h</span>
+        <span>📋 ${groupShifts}</span>
+        <span>👥 ${members.length}</span>
+      </span>`;
+    grid.appendChild(band);
+
+    // employee rows
+    members.forEach(emp => {
+      const empCell = document.createElement('div');
+      empCell.className = 'emp-cell';
+      let weekHrs = 0;
+      for (let i = 0; i < 7; i++) weekHrs += shiftHours(getShift(emp.id, fmtKey(addDays(weekStart, i))));
+      const initials = (emp.initials || (emp.name || '?').slice(0,2)).toUpperCase();
+      empCell.innerHTML = `
+        <div class="emp-avatar" style="background:${emp.color || '#6b7280'}">${initials}</div>
+        <div class="emp-info">
+          <div class="emp-name" title="${emp.name}">${emp.name}</div>
+          <div class="emp-meta">⏱ ${weekHrs.toFixed(1)}h${emp.target ? ' / ' + emp.target + 'h' : ''}</div>
+        </div>
+        <div class="emp-actions">
+          <button title="Edit" onclick="event.stopPropagation();openEmployeeModal('${emp.id}')">✎</button>
+        </div>`;
+      grid.appendChild(empCell);
+
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(weekStart, i);
+        const dKey = fmtKey(d);
+        const cell = document.createElement('div');
+        cell.className = 'shift-cell' + (isToday(d) ? ' today' : '') + ([0,6].includes(d.getDay()) ? ' weekend' : '');
+        const s = getShift(emp.id, dKey);
+        cell.onclick = () => openShiftModal(emp, dKey, s);
+        if (s) {
+          if (s.unavail) {
+            cell.innerHTML = `<div class="shift unavail">${lt('lbl_unavail').split('/')[0].trim()}</div>`;
+          } else {
+            const hrs = shiftHours(s);
+            const color = emp.color || '#6b7280';
+            cell.innerHTML = `<div class="shift" style="background:${color}">
+              <div class="time">${fmtTime(s.start)}-${fmtTime(s.end)}</div>
+              <div class="role">${s.position || emp.role || ''}</div>
+            </div>`;
+            dayHours[i] += hrs;
+            dayShifts[i] += 1;
+            totalHours += hrs;
+            totalShifts += 1;
+          }
+        } else {
+          cell.innerHTML = '<div class="add-shift">＋</div>';
+        }
+        grid.appendChild(cell);
+      }
+    });
+  });
+
+  // backfill day-header stats
+  for (let i = 0; i < 7; i++) {
+    dayHeaders[i].querySelector('.day-stats').textContent = `${dayHours[i].toFixed(0)}h · ${dayShifts[i]}`;
+  }
+
+  // summary bar
+  document.getElementById('summaryBar').innerHTML = `
+    <span><b>${lt('sum_hours')}:</b> ${totalHours.toFixed(1)} h</span>
+    <span><b>${lt('sum_shifts')}:</b> ${totalShifts}</span>
+    <span><b>${lt('sum_users')}:</b> ${DATA.employees.length}</span>
+    <span style="color:#9ca3af;font-size:.85em;margin-left:auto">💾 ${BRANCH} · ${weekKey()}</span>
+  `;
+}
+
+function fmtTime(t){
+  const [h,m] = t.split(':').map(Number);
+  const ap = h < 12 ? 'a' : 'p';
+  const hh = (h % 12) || 12;
+  return hh + (m ? ':' + String(m).padStart(2,'0') : '') + ap;
+}
+function weekKey(){
+  const y = weekStart.getFullYear();
+  const onejan = new Date(y, 0, 1);
+  const wk = Math.ceil(((weekStart - onejan) / 86400000 + onejan.getDay() + 1) / 7);
+  return y + '-W' + String(wk).padStart(2, '0');
+}
+
+// ========= EMPLOYEE MODAL =========
+function openEmployeeModal(id, presetRole){
+  editingEmp = id ? DATA.employees.find(e => e.id === id) : null;
+  document.getElementById('empModalTitle').textContent = editingEmp ? lt('emp_modal_edit') : lt('emp_modal_title');
+  document.getElementById('empName').value = editingEmp ? editingEmp.name : '';
+  document.getElementById('empTarget').value = editingEmp ? (editingEmp.target || 40) : 40;
+
+  const roleSel = document.getElementById('empRole');
+  roleSel.innerHTML = DATA.roles.map(r => `<option value="${r}">${r}</option>`).join('');
+  roleSel.value = editingEmp ? editingEmp.role : (presetRole || DATA.roles[0]);
+
+  // colors
+  const cp = document.getElementById('empColors');
+  const activeColor = editingEmp ? editingEmp.color : COLORS[Math.floor(Math.random()*COLORS.length)];
+  cp.innerHTML = COLORS.map(c => `<div class="color-swatch ${c===activeColor?'active':''}" style="background:${c}" data-c="${c}"></div>`).join('');
+  cp.onclick = (e) => {
+    if (!e.target.dataset.c) return;
+    cp.querySelectorAll('.color-swatch').forEach(s => s.classList.toggle('active', s.dataset.c === e.target.dataset.c));
+  };
+
+  document.getElementById('empDeleteBtn').style.display = editingEmp ? '' : 'none';
+  document.getElementById('empOverlay').classList.add('show');
+}
+function saveEmployee(){
+  const name = document.getElementById('empName').value.trim();
+  if (!name) { alert(lt('lbl_name')); return; }
+  const role = document.getElementById('empRole').value;
+  const target = parseInt(document.getElementById('empTarget').value, 10) || 0;
+  const color = document.querySelector('#empColors .color-swatch.active')?.dataset.c || COLORS[0];
+  const initials = name.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase();
+
+  if (editingEmp) {
+    Object.assign(editingEmp, { name, role, target, color, initials });
+  } else {
+    DATA.employees.push({ id: 'e' + Date.now() + Math.floor(Math.random()*900), name, role, target, color, initials });
+  }
+  saveBranchData(DATA);
+  closeOverlay('empOverlay');
+  render();
+}
+function deleteEmployee(){
+  if (!editingEmp) return;
+  if (!confirm(lt('confirm_del_emp'))) return;
+  DATA.employees = DATA.employees.filter(e => e.id !== editingEmp.id);
+  // also strip their shifts
+  Object.keys(DATA.shifts).forEach(k => { if (k.startsWith(editingEmp.id + '@')) delete DATA.shifts[k]; });
+  saveBranchData(DATA);
+  closeOverlay('empOverlay');
+  render();
+}
+
+// ========= SHIFT MODAL =========
+function openShiftModal(emp, dateKey, existing){
+  editingShift = { empId: emp.id, dateKey };
+  document.getElementById('shiftModalTitle').textContent = emp.name;
+  document.getElementById('shiftSubtitle').textContent = dateKey;
+  document.getElementById('shiftStart').value = existing && !existing.unavail ? existing.start : '09:00';
+  document.getElementById('shiftEnd').value = existing && !existing.unavail ? existing.end : '17:00';
+  document.getElementById('shiftPos').value = existing && existing.position ? existing.position : (emp.role || '');
+  document.getElementById('shiftNote').value = existing && existing.note ? existing.note : '';
+  document.getElementById('shiftUnavail').checked = !!(existing && existing.unavail);
+  document.getElementById('shiftDeleteBtn').style.display = existing ? '' : 'none';
+
+  // recent-shifts templates from this branch (last 14 days, distinct start-end-position)
+  const recent = {};
+  Object.entries(DATA.shifts).forEach(([k, s]) => {
+    if (!s || s.unavail) return;
+    const sig = s.start + '-' + s.end + '|' + (s.position || '');
+    recent[sig] = s;
+  });
+  const tplKeys = Object.keys(recent).slice(-8);
+  const wrap = document.getElementById('tplWrap');
+  if (tplKeys.length > 0) {
+    wrap.style.display = '';
+    document.getElementById('tplRow').innerHTML = tplKeys.map(k => {
+      const s = recent[k];
+      return `<span class="tpl-chip" onclick="applyTpl('${s.start}','${s.end}','${(s.position||'').replace(/'/g,"\\'")}')">${fmtTime(s.start)}–${fmtTime(s.end)} · ${s.position||''}</span>`;
+    }).join('');
+  } else {
+    wrap.style.display = 'none';
+  }
+
+  document.getElementById('shiftOverlay').classList.add('show');
+}
+function applyTpl(s, e, p){
+  document.getElementById('shiftStart').value = s;
+  document.getElementById('shiftEnd').value = e;
+  document.getElementById('shiftPos').value = p;
+}
+function saveShift(){
+  if (!editingShift) return;
+  const k = shiftKey(editingShift.empId, editingShift.dateKey);
+  if (document.getElementById('shiftUnavail').checked) {
+    DATA.shifts[k] = { unavail: true };
+  } else {
+    const start = document.getElementById('shiftStart').value;
+    const end = document.getElementById('shiftEnd').value;
+    const position = document.getElementById('shiftPos').value.trim();
+    const note = document.getElementById('shiftNote').value.trim();
+    DATA.shifts[k] = { start, end, position, note };
+  }
+  saveBranchData(DATA);
+  closeOverlay('shiftOverlay');
+  render();
+}
+function deleteShift(){
+  if (!editingShift) return;
+  delete DATA.shifts[shiftKey(editingShift.empId, editingShift.dateKey)];
+  saveBranchData(DATA);
+  closeOverlay('shiftOverlay');
+  render();
+}
+
+// ========= ROLE MODAL =========
+function openRoleModal(){
+  const list = document.getElementById('roleList');
+  list.innerHTML = DATA.roles.map(r => {
+    const count = DATA.employees.filter(e => e.role === r).length;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f3f4f6">
+      <span><b>${r}</b> <span style="color:#9ca3af;font-size:.85em">(${count})</span></span>
+      <button class="btn danger" style="padding:3px 8px;font-size:.78em" onclick="removeRole('${r.replace(/'/g,"\\'")}')">✕</button>
+    </div>`;
+  }).join('');
+  document.getElementById('newRoleName').value = '';
+  document.getElementById('roleOverlay').classList.add('show');
+}
+function addRole(){
+  const v = document.getElementById('newRoleName').value.trim().toUpperCase();
+  if (!v) return;
+  if (DATA.roles.includes(v)) { alert(v + ' already exists'); return; }
+  DATA.roles.push(v);
+  saveBranchData(DATA);
+  openRoleModal();
+  render();
+}
+function removeRole(r){
+  if (!confirm(lt('confirm_del_role'))) return;
+  DATA.roles = DATA.roles.filter(x => x !== r);
+  saveBranchData(DATA);
+  openRoleModal();
+  render();
+}
+
+// ========= MISC =========
+function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
+document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
+
+// init
+applyLang();
+</script>
+
+</body>
+</html>
