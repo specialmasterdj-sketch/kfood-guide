@@ -176,6 +176,7 @@ a{color:inherit;text-decoration:none}
       <label>또는 직접 입력 (스케줄에 없는 경우)</label>
       <input type="text" id="meCustom" placeholder="이름을 입력">
     </div>
+    <div id="meRoleHint" style="font-size:.82em;color:#1a5c3a;font-weight:600;margin-bottom:8px"></div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeOverlay('meOverlay')">취소</button>
       <button class="btn" onclick="saveMe()">저장</button>
@@ -312,20 +313,43 @@ function renderMeNames(){
 function renderMeNamesList(employees, branchId){
   const sel = document.getElementById('meName_select');
   sel.innerHTML = '<option value="">— 직접 입력 —</option>' +
-    employees.map(e => `<option value="${e.name}" ${me?.name===e.name?'selected':''}>${e.name} (${e.role||''})</option>`).join('');
+    employees.map(e => `<option value="${e.name}" data-role="${e.role||''}" ${me?.name===e.name?'selected':''}>${e.name} (${e.role||''})${isManagerRole(e.role)?' 👔':''}</option>`).join('');
   sel.onchange = () => {
     if (sel.value) document.getElementById('meCustom').value = sel.value;
+    const role = sel.options[sel.selectedIndex]?.dataset.role || '';
+    document.getElementById('meRoleHint').textContent = role
+      ? (isManagerRole(role) ? `👔 매니저 권한 (역할: ${role})` : `일반 직원 (역할: ${role})`)
+      : '';
   };
+}
+
+const MANAGER_ROLE_TOKENS = ['MANAGER','SUPERVISOR','OFFICE','OWNER','매니저','점장','감독'];
+function isManagerRole(role){
+  if (!role) return false;
+  const r = role.toUpperCase();
+  return MANAGER_ROLE_TOKENS.some(t => r.includes(t));
 }
 function saveMe(){
   const branchId = document.getElementById('meBranch').value;
-  const fromSel = document.getElementById('meName_select').value;
+  const sel = document.getElementById('meName_select');
+  const fromSel = sel.value;
+  const selRole = sel.options[sel.selectedIndex]?.dataset.role || '';
   const fromCustom = document.getElementById('meCustom').value.trim();
   const name = fromCustom || fromSel;
   if (!name) { alert('이름을 입력하거나 선택하세요'); return; }
-  me = { name, branch: branchId, color: colorFor(name) };
+  // If they typed a custom name that matches a roster entry, use that role
+  let role = selRole;
+  if (!role && fromCustom) {
+    try {
+      const data = JSON.parse(localStorage.getItem('shifts.' + branchId) || 'null');
+      const emp = data?.employees?.find(e => e.name.toLowerCase() === fromCustom.toLowerCase());
+      role = emp?.role || '';
+    } catch(e){}
+  }
+  me = { name, branch: branchId, color: colorFor(name), role, isManager: isManagerRole(role) };
   localStorage.setItem('chat.me', JSON.stringify(me));
   refreshMePill();
+  renderRooms();   // show/hide manager-only room
   closeOverlay('meOverlay');
   if (ACTIVE_ROOM) document.getElementById('composer').style.display = '';
 }
@@ -334,13 +358,15 @@ function refreshMePill(){
   document.getElementById('meAv').textContent = initialsOf(me.name);
   document.getElementById('meAv').style.background = me.color || '#1a5c3a';
   const branch = BRANCH_BY_ID[me.branch];
-  document.getElementById('meName').textContent = me.name + (branch ? ' · ' + branch.ko : '');
+  document.getElementById('meName').textContent = (me.isManager ? '👔 ' : '') + me.name + (branch ? ' · ' + branch.ko : '');
 }
 
 // ============ ROOMS ============
 function renderRooms(){
   const list = document.getElementById('roomsList');
-  const items = Object.entries(ROOMS).sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
+  const items = Object.entries(ROOMS)
+    .filter(([id, r]) => !(r.managersOnly || id === 'managers') || me?.isManager)
+    .sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
   if (items.length === 0) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">방이 없습니다.<br>＋ 버튼으로 만드세요.</div>';
     return;
@@ -449,7 +475,7 @@ function renderMessages(){
     html += `<div class="msg ${mine?'mine':''}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
-        <div class="who">${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}</div>
+        <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}</div>
         ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
         ${photoHtml}
         <div class="ts">${time}</div>
@@ -548,6 +574,8 @@ async function sendMessage(){
   const msg = {
     sender: me.name,
     senderBranch: me.branch,
+    senderRole: me.role || '',
+    isManager: !!me.isManager,
     color: me.color || colorFor(me.name),
     text,
     ts,
