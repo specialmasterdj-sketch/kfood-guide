@@ -90,7 +90,8 @@ hr.sep{border:0;border-top:1px solid #e5e7eb;margin:18px 0}
 
 <div class="topbar">
   <a href="./hub.html" title="HUB로">←</a>
-  <h1>💵 현금 급여 지급</h1>
+  <h1 id="pageTitle">💵 현금 급여 지급</h1>
+  <button id="typeToggle" onclick="toggleType()" style="background:rgba(255,255,255,.18);border:0;color:#fff;border-radius:6px;padding:5px 10px;font-size:.78em;font-weight:700;cursor:pointer">📊 CPA로</button>
   <select id="branchSel" onchange="onBranchChange()"></select>
   <input type="week" id="weekInput" onchange="onWeekChange()">
   <button id="meBtn" onclick="openMeModal()" title="본인 등록">👤 <span id="meBtnName">나</span></button>
@@ -139,6 +140,7 @@ hr.sep{border:0;border-top:1px solid #e5e7eb;margin:18px 0}
     <button class="btn secondary editor-only" onclick="toggleAddRow()">＋ 직원 추가</button>
     <button class="btn secondary editor-only" onclick="autoFillFromShifts()" title="해당 주의 시프트 시간을 자동으로 채워넣기">⏱ 시프트에서 시간 자동 채우기</button>
     <button class="btn warn editor-only" onclick="saveReport()" title="저장 + 매니저 전용 채팅방 자동 전송">💾 저장 & 채팅방 전송</button>
+    <button class="btn secondary" id="cpaEmailBtn" onclick="emailToCPA()" style="display:none">📧 CPA에게 이메일</button>
     <button class="btn secondary" onclick="window.print()">🖨 인쇄</button>
   </div>
   <div class="add-row-form" id="addRowForm">
@@ -186,7 +188,7 @@ hr.sep{border:0;border-top:1px solid #e5e7eb;margin:18px 0}
 // ================== STATE ==================
 const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 const BRANCHES = [
-  { id:'MIAMI',         ko:'마이애미',       en:'Miami',           addr:'15355 S DIXIE HWY\nMIAMI, FL 33157\n(305) 964-5083', label:'MIAMI Branch KIMCHI 1' },
+  { id:'MIAMI',         ko:'마이애미',       en:'Miami',           addr:'15355 S DIXIE HWY\nMIAMI, FL 33157\n(305) 964-5083', label:'MIAMI Branch KIMCHI 1', cpaLabel:'Palmetto Bay' },
   { id:'PEMBROKE_PINES',ko:'펨브로크 파인즈', en:'Pembroke Pines',  addr:'11230 PINES BLVD\nPEMBROKE PINES, FL 33026\n(754) 217-4919', label:'Pembroke Branch KIMCHI 2' },
   { id:'HOLLYWOOD',     ko:'할리우드',       en:'Hollywood',       addr:'2420 NORTH DIXIE HWY\nHOLLYWOOD, FL 33020', label:'KIMCHI MART AT HOLLYWOOD' },
   { id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   addr:'2693 N University Dr\nCoral Springs FL 33065\n(954) 688-9437', label:'Kimchi Mart at Coral Springs' },
@@ -194,13 +196,27 @@ const BRANCHES = [
   { id:'WEST_PALM',     ko:'웨스트 팜 비치', en:'West Palm Beach', addr:'', label:'WEST PALM Branch KIMCHI 6' }
 ];
 
+// 보고서 유형: 'cash' (현금 지급) | 'cpa' (CPA 회계용 — 정식 W-2 근무자)
+const TYPE = (new URLSearchParams(location.search).get('type') === 'cpa') ? 'cpa' : 'cash';
+
 let BRANCH = localStorage.getItem('payroll.branch') || localStorage.getItem('hub.branch') || 'MIAMI';
 let WEEK = localStorage.getItem('payroll.week') || isoWeekKey(mondayOf(new Date(Date.now()-7*86400000)));
 let DATA = { rows: [], total: 0, sig: '', sigDate: '' };
 let GLOBAL_OWNERS = [];
 
-// 기본 직원 명단 (매주 같은 사람들 — hours/current는 비워두고 매니저가 매주 입력)
-// rate/memo는 표준값으로 prefill, 매니저가 필요 시 수정
+// CPA 급여 보고용 명단 (W-2 근무자, 정식 풀네임)
+const PAYROLL_ROSTER_CPA = {
+  MIAMI: [
+    { name:'ANA VIRGEN PALACIO PENA',  rate:14, memo:'' },
+    { name:'STEVEN DAVIO JARQUIN',     rate:14, memo:'' },
+    { name:'JASON ESQUIVEL',           rate:15, memo:'' },
+    { name:'Melinda Rodriguez Vega',   rate:14, memo:'' },
+    { name:'GABRIELA ITURALDE',        rate:14, memo:'' },
+    { name:'LEONARDO DALEO',           rate:14, memo:'' }
+  ]
+};
+
+// 현금 급여 지급 명단 (매주 같은 사람들 — hours/current는 비워두고 매니저가 매주 입력)
 const PAYROLL_ROSTER = {
   MIAMI: [
     { name:'ANA PALACIO',     rate:14, memo:'40시간외(TAX)' },
@@ -427,7 +443,21 @@ function saveMeIdentity(){
 // ================== RENDER ==================
 function renderHeader(){
   const b = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
-  document.getElementById('branchName').textContent = b.label;
+  document.getElementById('branchName').textContent = (TYPE==='cpa' && b.cpaLabel) ? b.cpaLabel : b.label;
+  // 페이지 타이틀 / 토글 / CPA 이메일 버튼
+  document.title = (TYPE==='cpa'?'CPA 급여 보고서':'현금 급여 지급') + ' — 김치마트';
+  const pt = document.getElementById('pageTitle');
+  const tg = document.getElementById('typeToggle');
+  const eb = document.getElementById('cpaEmailBtn');
+  if (TYPE==='cpa'){
+    pt.textContent = '📊 CPA 급여 보고';
+    if (tg) tg.textContent = '💵 현금으로';
+    if (eb) eb.style.display = '';
+  } else {
+    pt.textContent = '💵 현금 급여 지급';
+    if (tg) tg.textContent = '📊 CPA로';
+    if (eb) eb.style.display = 'none';
+  }
   const addrEl = document.getElementById('branchAddr');
   addrEl.innerHTML = (b.addr || '').split('\n').map(line => '<div>' + line + '</div>').join('');
   document.getElementById('weekLabel').textContent = weekRange(WEEK);
@@ -574,9 +604,9 @@ function showStatus(msg, isErr){
   el.textContent = msg; el.className = 'status show' + (isErr?' err':'');
   clearTimeout(showStatus._t); showStatus._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
-function fbKey(){ return 'payroll/' + BRANCH + '/' + WEEK; }
+function fbKey(){ return (TYPE==='cpa'?'payroll-cpa/':'payroll/') + BRANCH + '/' + WEEK; }
 function prefillFromRoster(){
-  const roster = PAYROLL_ROSTER[BRANCH];
+  const roster = (TYPE==='cpa' ? PAYROLL_ROSTER_CPA : PAYROLL_ROSTER)[BRANCH];
   if (!roster) return;
   if (DATA.rows && DATA.rows.length) return; // already has data, don't overwrite
   DATA.rows = roster.map(r => {
@@ -706,7 +736,9 @@ async function postToPayrollRoom(){
   }
 
   // 짧은 캡션만 텍스트로 (표는 이미지에 포함)
-  const text = '📊 ' + branch.label + ' · ' + weekRange(WEEK)
+  const branchLabel = (TYPE==='cpa' && branch.cpaLabel) ? branch.cpaLabel : branch.label;
+  const typeTag = TYPE === 'cpa' ? '[CPA]' : '[현금]';
+  const text = typeTag + ' ' + branchLabel + ' · ' + weekRange(WEEK)
     + ' · 인원 ' + rowCount + '명 · 총 $' + total.toLocaleString('en-US')
     + ' · 사인: ' + (DATA.sig || '(공란)');
   const msg = {
@@ -736,6 +768,54 @@ function onBranchChange(){
   BRANCH = document.getElementById('branchSel').value;
   localStorage.setItem('payroll.branch', BRANCH);
   loadReport();
+}
+function toggleType(){
+  // type 토글: cash <-> cpa
+  const next = (TYPE === 'cpa') ? 'cash' : 'cpa';
+  const params = new URLSearchParams(location.search);
+  if (next === 'cash') params.delete('type'); else params.set('type', 'cpa');
+  location.href = location.pathname + (params.toString()?'?'+params.toString():'');
+}
+async function emailToCPA(){
+  // 1) 표 캡처 → 2) 이미지 다운로드 → 3) mailto: 열기 (사용자가 첨부)
+  const cpaEmail = localStorage.getItem('payroll.cpaEmail') || '';
+  let to = cpaEmail;
+  if (!to){
+    to = prompt('CPA 이메일 주소를 입력하세요 (다음에 자동 사용)', '');
+    if (!to) return;
+    to = to.trim();
+    if (to) localStorage.setItem('payroll.cpaEmail', to);
+  }
+  const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
+  const branchLabel = (TYPE==='cpa' && branch.cpaLabel) ? branch.cpaLabel : branch.label;
+  showStatus('이미지 캡처 중...', false);
+  try {
+    const blob = await captureReportImage();
+    // 다운로드
+    const safeName = branchLabel.replace(/[^A-Za-z0-9가-힣]+/g,'_');
+    const fname = `payroll_${safeName}_${WEEK}.jpg`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showStatus('✓ 이미지 다운로드됨 — 이메일에 첨부하세요', false);
+  } catch(e){ console.warn(e); showStatus('이미지 캡처 실패', true); }
+  // 메일 열기
+  const total = (DATA.total || 0).toLocaleString('en-US');
+  const rowCount = (DATA.rows||[]).filter(r=>r.name).length;
+  const summary = (DATA.rows||[]).filter(r=>r.name).map((r,i) => {
+    const hr = r.hours==null?'':r.hours+'h';
+    const rt = r.rate==null?'':'$'+r.rate;
+    const cur = parseFloat(r.current||0);
+    return (i+1)+') '+r.name+' '+rt+'*'+hr+'='+'$'+cur.toLocaleString('en-US')+(r.memo?' ('+r.memo+')':'');
+  }).join('\n');
+  const subject = `[${branchLabel}] CPA 급여 보고 ${WEEK} (${weekRange(WEEK)})`;
+  const body = `${branchLabel} ${weekRange(WEEK)}\n\n${summary}\n\nTOTAL: $${total}\n인원: ${rowCount}명\n\n— 자동 생성 (김치마트 매니저 앱)`;
+  const mailto = 'mailto:' + encodeURIComponent(to)
+    + '?subject=' + encodeURIComponent(subject)
+    + '&body=' + encodeURIComponent(body);
+  setTimeout(() => { location.href = mailto; }, 800);
 }
 function onWeekChange(){
   WEEK = document.getElementById('weekInput').value;
