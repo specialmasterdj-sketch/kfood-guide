@@ -96,6 +96,34 @@ button{font-family:inherit;cursor:pointer}
   .summary-bar{font-size:.82em;gap:14px}
   .week-nav .label{min-width:120px;font-size:.85em}
 }
+
+/* ===== PRINT ===== */
+@media print {
+  .topbar, .summary-bar > span:last-child, .modal, .overlay, .emp-actions { display:none !important; }
+  body { background:#fff }
+  .page { padding:0; max-width:none }
+  .grid-wrap { box-shadow:none; border-radius:0 }
+  .grid { font-size:11px }
+  .shift { font-size:9px !important; padding:3px 4px }
+  .role-band { background:#f3f4f6 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact }
+  .shift, .gh.today, .shift-cell.today, .emp-avatar { -webkit-print-color-adjust:exact; print-color-adjust:exact }
+}
+
+/* ===== SHARE-VIEW (single employee read-only) ===== */
+.share-view { max-width:560px; margin:24px auto; padding:18px; background:#fff; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.06) }
+.share-hd { text-align:center; padding:14px 0 10px; border-bottom:2px solid #1a5c3a; margin-bottom:14px }
+.share-hd .who { font-size:1.4em; font-weight:800; color:#1f2937 }
+.share-hd .meta { color:#6b7280; font-size:.88em; margin-top:4px }
+.share-day { display:flex; gap:12px; padding:10px 6px; border-bottom:1px solid #f3f4f6 }
+.share-day .d { width:80px; font-weight:700; color:#1a5c3a }
+.share-day .d small { color:#9ca3af; font-weight:500; font-size:.85em }
+.share-day .v { flex:1; font-weight:600; color:#374151 }
+.share-day .v.unavail { color:#dc2626; font-weight:500 }
+.share-day .v.off { color:#9ca3af; font-weight:400 }
+.share-tot { background:#f0fdf4; padding:12px; border-radius:8px; margin-top:12px; text-align:center; font-weight:700; color:#1a5c3a }
+.share-foot { text-align:center; color:#9ca3af; font-size:.78em; margin-top:14px }
+.share-actions { display:flex; gap:8px; justify-content:center; margin-top:12px }
+.share-actions button { background:#1a5c3a; color:#fff; border:0; border-radius:8px; padding:8px 14px; font-weight:600 }
 </style>
 </head>
 <body>
@@ -113,6 +141,7 @@ button{font-family:inherit;cursor:pointer}
   <div class="spacer"></div>
   <button class="btn secondary" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
   <button class="btn secondary" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
+  <button class="btn secondary" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
   <button class="btn" onclick="openEmployeeModal()" data-t="btn_emp">＋ 직원</button>
   <div class="lang-toggle">
     <button class="lang-btn" data-lang="ko" onclick="setLang('ko')">KO</button>
@@ -238,6 +267,25 @@ button{font-family:inherit;cursor:pointer}
   </div>
 </div>
 
+<!-- PUBLISH MODAL -->
+<div class="overlay" id="publishOverlay">
+  <div class="modal" style="max-width:620px">
+    <h3 data-t="publish_title">📤 직원에게 배포</h3>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn" onclick="window.print()" data-t="btn_print">🖨️ 인쇄 / PDF</button>
+      <button class="btn secondary" onclick="copyAllShareText()" data-t="btn_copy_all">📋 전체 직원 메시지 복사</button>
+    </div>
+    <div style="font-size:.78em;color:#6b7280;margin-bottom:8px" data-t="publish_help">
+      직원 옆 <b>📋</b> 버튼 → 그 직원 본인의 일주일 메시지 복사 (WhatsApp 등 붙여넣기).<br>
+      <b>🔗</b> 버튼 → 본인 전용 보기 링크 (모바일에서 열면 본인 시프트만 표시).
+    </div>
+    <div id="pubList" style="max-height:380px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeOverlay('publishOverlay')" data-t="btn_close">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- ROLE MODAL -->
 <div class="overlay" id="roleOverlay">
   <div class="modal">
@@ -324,6 +372,20 @@ const T = {
   btn_seed:        {ko:'🏢 Hollywood 샘플 적용', en:'🏢 Apply Hollywood Sample', es:'🏢 Aplicar muestra Hollywood'},
   seed_done:       {ko:'명 + 시프트 시드 완료. 자동으로 HOLLYWOOD 지점으로 이동합니다.', en:'employees + shifts seeded. Switching to HOLLYWOOD.', es:'empleados + turnos cargados. Cambiando a HOLLYWOOD.'},
   shifts_imported: {ko:'개 시프트 추가됨', en:'shifts imported', es:'turnos importados'},
+  btn_publish:     {ko:'📤 배포',                en:'📤 Publish',          es:'📤 Publicar'},
+  publish_title:   {ko:'📤 직원에게 배포',         en:'📤 Publish to staff', es:'📤 Publicar al personal'},
+  publish_help:    {ko:'직원 옆 <b>📋</b> 버튼 → 그 직원 본인의 일주일 메시지 복사 (WhatsApp 등 붙여넣기).<br><b>🔗</b> 버튼 → 본인 전용 보기 링크 (모바일에서 열면 본인 시프트만 표시).', en:'<b>📋</b> = copy that person\'s week as text (paste to WhatsApp).<br><b>🔗</b> = personal view link.', es:'<b>📋</b> copia el texto. <b>🔗</b> enlace personal.'},
+  btn_print:       {ko:'🖨️ 인쇄 / PDF',           en:'🖨️ Print / PDF',     es:'🖨️ Imprimir / PDF'},
+  btn_copy_all:    {ko:'📋 전체 직원 메시지 복사',   en:'📋 Copy all messages', es:'📋 Copiar todos'},
+  btn_close:       {ko:'닫기',                    en:'Close',              es:'Cerrar'},
+  copy_link:       {ko:'🔗 링크 복사',            en:'🔗 Copy link',       es:'🔗 Copiar enlace'},
+  copy_msg:        {ko:'📋 메시지 복사',          en:'📋 Copy message',    es:'📋 Copiar mensaje'},
+  copied:          {ko:'복사됨!',                 en:'Copied!',            es:'¡Copiado!'},
+  share_week:      {ko:'주간 스케줄',             en:'Weekly Schedule',    es:'Horario Semanal'},
+  share_off:       {ko:'쉬는 날',                 en:'Off',                es:'Libre'},
+  share_total:     {ko:'주간 합계',               en:'Weekly total',       es:'Total semanal'},
+  share_foot:      {ko:'스케줄 변경 시 새 링크가 발송됩니다.', en:'A new link is sent when the schedule changes.', es:'Se envía un nuevo enlace al cambiar.'},
+  back_to_full:    {ko:'← 전체 스케줄 보기',       en:'← Full schedule',    es:'← Horario completo'},
 };
 function lt(k){ return (T[k] && T[k][LANG]) || (T[k] && T[k].ko) || k; }
 function applyLang(){
@@ -997,12 +1059,169 @@ function loadDemoData(){
   previewImport(parseImportText(demo));
 }
 
+// ========= PUBLISH (per-employee distribution) =========
+function buildEmployeePayload(emp){
+  // Compact array: [name, weekStartISO, branchId, [ [s,e,p] | "U" | 0 , ... 7 ]]
+  const monday = mondayOf(weekStart);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const k = shiftKey(emp.id, fmtKey(addDays(monday, i)));
+    const s = DATA.shifts[k];
+    if (!s) days.push(0);
+    else if (s.unavail) days.push('U');
+    else days.push([s.start, s.end, s.position || '']);
+  }
+  return [emp.name, fmtKey(monday), BRANCH, days, emp.color || '#1a5c3a'];
+}
+
+function encodePayload(p){
+  // base64url-encode JSON; small enough for QR / SMS / WhatsApp
+  const json = JSON.stringify(p);
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodePayload(s){
+  try {
+    const b64 = s.replace(/-/g,'+').replace(/_/g,'/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    return JSON.parse(decodeURIComponent(escape(atob(b64 + pad))));
+  } catch(e){ return null; }
+}
+
+function shareLinkFor(emp){
+  return location.origin + location.pathname + '#emp=' + encodePayload(buildEmployeePayload(emp));
+}
+
+function shareTextFor(emp){
+  const monday = mondayOf(weekStart);
+  const branch = BRANCHES.find(b => b.id === BRANCH);
+  const branchName = branch ? (branch[LANG] || branch.ko) : BRANCH;
+  const lines = [];
+  lines.push(`📅 ${branchName} — ${lt('share_week')}`);
+  lines.push(`👤 ${emp.name}`);
+  lines.push(`(${fmtDate(monday)} – ${fmtDate(addDays(monday,6))})`);
+  lines.push('');
+  let total = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(monday, i);
+    const s = DATA.shifts[shiftKey(emp.id, fmtKey(d))];
+    const dn = dayName(d, LANG);
+    const dStr = `${dn} ${fmtMD(d)}`;
+    if (!s) lines.push(`${dStr}: — ${lt('share_off')}`);
+    else if (s.unavail) lines.push(`${dStr}: ❌ ${lt('lbl_unavail').split('/')[0].trim()}`);
+    else { lines.push(`${dStr}: ${fmtTime(s.start)}–${fmtTime(s.end)}${s.position?' · '+s.position:''}`); total += shiftHours(s); }
+  }
+  lines.push('');
+  lines.push(`⏱ ${lt('share_total')}: ${total.toFixed(1)}h`);
+  lines.push('');
+  lines.push('🔗 ' + shareLinkFor(emp));
+  return lines.join('\n');
+}
+
+function openPublishModal(){
+  if (DATA.employees.length === 0) { alert(lt('empty_grid')); return; }
+  // help text contains <b> tags — render via innerHTML
+  document.querySelector('#publishOverlay [data-t="publish_help"]').innerHTML = lt('publish_help');
+  const list = document.getElementById('pubList');
+  list.innerHTML = DATA.employees.map(emp => {
+    const initials = (emp.initials || emp.name.slice(0,2)).toUpperCase();
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #f3f4f6">
+        <div class="emp-avatar" style="background:${emp.color||'#6b7280'};width:30px;height:30px;font-size:.72em">${initials}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:.88em">${emp.name}</div>
+          <div style="font-size:.72em;color:#6b7280">${emp.role}</div>
+        </div>
+        <button class="btn secondary" style="padding:4px 8px;font-size:.78em" onclick="copyEmpText('${emp.id}', this)">📋 ${LANG==='ko'?'메시지':'Msg'}</button>
+        <button class="btn secondary" style="padding:4px 8px;font-size:.78em" onclick="copyEmpLink('${emp.id}', this)">🔗 ${LANG==='ko'?'링크':'Link'}</button>
+      </div>`;
+  }).join('');
+  document.getElementById('publishOverlay').classList.add('show');
+}
+
+function flashCopied(btn){
+  const orig = btn.textContent;
+  btn.textContent = '✓ ' + lt('copied');
+  setTimeout(() => { btn.textContent = orig; }, 1200);
+}
+function copyEmpText(empId, btn){
+  const emp = DATA.employees.find(e => e.id === empId);
+  navigator.clipboard.writeText(shareTextFor(emp)).then(() => flashCopied(btn));
+}
+function copyEmpLink(empId, btn){
+  const emp = DATA.employees.find(e => e.id === empId);
+  navigator.clipboard.writeText(shareLinkFor(emp)).then(() => flashCopied(btn));
+}
+function copyAllShareText(){
+  const all = DATA.employees.map(e => shareTextFor(e)).join('\n\n──────────\n\n');
+  navigator.clipboard.writeText(all).then(() => alert(lt('copied') + ' (' + DATA.employees.length + ')'));
+}
+
+// ========= SHARE-VIEW (employee's read-only personal page) =========
+function renderShareView(payload){
+  document.body.innerHTML = '';
+  const [name, weekISO, branchId, days, color] = payload;
+  const branch = BRANCHES.find(b => b.id === branchId);
+  const branchName = branch ? (branch[LANG] || branch.ko) : branchId;
+  const monday = new Date(weekISO + 'T00:00');
+  const initials = name.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase();
+
+  const v = document.createElement('div');
+  v.className = 'share-view';
+  let total = 0;
+  let dayHtml = '';
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(monday, i);
+    const dn = dayName(d, LANG);
+    const cell = days[i];
+    let val;
+    if (cell === 0) val = `<span class="v off">— ${lt('share_off')}</span>`;
+    else if (cell === 'U') val = `<span class="v unavail">❌ ${lt('lbl_unavail').split('/')[0].trim()}</span>`;
+    else {
+      const [s, e, p] = cell;
+      let mins = (parseInt(e.slice(0,2),10)*60 + parseInt(e.slice(3),10)) - (parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(3),10));
+      if (mins < 0) mins += 24*60;
+      total += mins/60;
+      val = `<span class="v">${fmtTime(s)} – ${fmtTime(e)}${p?' · '+p:''}</span>`;
+    }
+    dayHtml += `<div class="share-day"><div class="d">${dn} <small>${fmtMD(d)}</small></div>${val}</div>`;
+  }
+  v.innerHTML = `
+    <div class="share-hd">
+      <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:8px">
+        <div class="emp-avatar" style="background:${color};width:48px;height:48px;font-size:1.1em">${initials}</div>
+      </div>
+      <div class="who">${name}</div>
+      <div class="meta">${branchName} · ${fmtDate(monday)} – ${fmtDate(addDays(monday,6))}</div>
+    </div>
+    ${dayHtml}
+    <div class="share-tot">⏱ ${lt('share_total')}: ${total.toFixed(1)} h</div>
+    <div class="share-actions">
+      <button onclick="window.print()">🖨️ ${LANG==='ko'?'인쇄':'Print'}</button>
+    </div>
+    <div class="share-foot">${lt('share_foot')}</div>
+  `;
+  document.body.appendChild(v);
+}
+
 // ========= MISC =========
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
 
-// init
-applyLang();
+// ========= INIT =========
+// Detect share-view URL: shifts.html#emp=<base64>
+const empMatch = location.hash.match(/^#emp=(.+)$/);
+if (empMatch) {
+  const payload = decodePayload(empMatch[1]);
+  if (payload) {
+    document.title = payload[0] + ' — ' + lt('share_week');
+    renderShareView(payload);
+  } else {
+    applyLang();
+  }
+} else {
+  applyLang();
+}
 </script>
 
 </body>
