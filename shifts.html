@@ -6,6 +6,7 @@
 <title>김치마트 — 스케줄</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px}
@@ -111,6 +112,7 @@ button{font-family:inherit;cursor:pointer}
   </div>
   <div class="spacer"></div>
   <button class="btn secondary" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
+  <button class="btn secondary" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
   <button class="btn" onclick="openEmployeeModal()" data-t="btn_emp">＋ 직원</button>
   <div class="lang-toggle">
     <button class="lang-btn" data-lang="ko" onclick="setLang('ko')">KO</button>
@@ -197,6 +199,37 @@ button{font-family:inherit;cursor:pointer}
   </div>
 </div>
 
+<!-- IMPORT MODAL -->
+<div class="overlay" id="importOverlay">
+  <div class="modal" style="max-width:560px">
+    <h3 data-t="import_title">📥 직원 가져오기</h3>
+    <div style="font-size:.85em;color:#6b7280;margin-bottom:12px" data-t="import_help">
+      한 줄에 한 명. <code>이름</code> 또는 <code>이름, 역할</code> 또는 <code>이름, 역할, 주간시간</code> 형식.
+      엑셀/CSV에서 복사 → 붙여넣기 가능.
+    </div>
+    <div class="field">
+      <label data-t="import_paste">텍스트 붙여넣기</label>
+      <textarea id="importText" rows="10" style="font-family:'Consolas',monospace;font-size:.85em" placeholder="Mirna Montoya, CASHIER/STOCKER, 40&#10;Cristian Cortes, CASHIER/STOCKER, 38&#10;Neall Aouad, SUSHI/KITCHEN, 60&#10;Yamile Murga&#10;..."></textarea>
+    </div>
+    <div class="field">
+      <label data-t="import_xlsx">엑셀 / CSV 파일 업로드</label>
+      <input type="file" id="importFile" accept=".xlsx,.xls,.csv" onchange="parseImportFile(event)">
+      <div style="font-size:.75em;color:#9ca3af;margin-top:4px" data-t="import_xlsx_hint">
+        첫 행이 헤더면 자동 감지 (이름·name·역할·role·시간·hours·hrs·target 컬럼).
+      </div>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="importSkipDup" checked> <span data-t="import_skip_dup">같은 이름 직원은 건너뛰기</span></label>
+    </div>
+    <div id="importPreview" style="background:#f9fafb;border-radius:8px;padding:10px;font-size:.82em;max-height:140px;overflow:auto;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('importOverlay')" data-t="btn_cancel">취소</button>
+      <button class="btn secondary" onclick="loadDemoData()" data-t="btn_demo">데모 데이터</button>
+      <button class="btn" onclick="runImport()" data-t="btn_import_run">가져오기 실행</button>
+    </div>
+  </div>
+</div>
+
 <!-- ROLE MODAL -->
 <div class="overlay" id="roleOverlay">
   <div class="modal">
@@ -266,6 +299,18 @@ const T = {
   confirm_del_role:{ko:'이 역할을 삭제할까요? (소속 직원은 \"미배정\"으로 이동)', en:'Delete this role? (members move to \"Unassigned\")', es:'¿Eliminar este rol?'},
   unassigned:      {ko:'미배정',                en:'Unassigned',         es:'Sin asignar'},
   total_hours:     {ko:'합계',                  en:'Total',              es:'Total'},
+  btn_import:      {ko:'📥 가져오기',           en:'📥 Import',          es:'📥 Importar'},
+  import_title:    {ko:'📥 직원 가져오기',       en:'📥 Import Employees', es:'📥 Importar Empleados'},
+  import_help:     {ko:'한 줄에 한 명. <code>이름</code> 또는 <code>이름, 역할</code> 또는 <code>이름, 역할, 주간시간</code> 형식. 엑셀/CSV에서 복사 → 붙여넣기 가능.', en:'One per line. <code>Name</code> or <code>Name, Role</code> or <code>Name, Role, Weekly hours</code>. Paste from Excel/CSV.', es:'Uno por línea. <code>Nombre</code> o <code>Nombre, Rol</code> o <code>Nombre, Rol, Horas</code>.'},
+  import_paste:    {ko:'텍스트 붙여넣기',        en:'Paste text',         es:'Pegar texto'},
+  import_xlsx:     {ko:'엑셀 / CSV 파일 업로드',  en:'Upload Excel / CSV', es:'Subir Excel / CSV'},
+  import_xlsx_hint:{ko:'첫 행이 헤더면 자동 감지 (이름·name·역할·role·시간·hours·hrs·target 컬럼).', en:'Header row auto-detected (name / role / hours / target columns).', es:'Encabezado detectado automáticamente.'},
+  import_skip_dup: {ko:'같은 이름 직원은 건너뛰기', en:'Skip employees with the same name', es:'Omitir empleados con el mismo nombre'},
+  btn_demo:        {ko:'데모 데이터',            en:'Demo Data',          es:'Datos Demo'},
+  btn_import_run:  {ko:'가져오기 실행',          en:'Run Import',         es:'Ejecutar'},
+  import_added:    {ko:'명 추가됨',             en:'added',              es:'añadidos'},
+  import_skipped:  {ko:'명 건너뜀 (중복)',       en:'skipped (duplicate)', es:'omitidos (duplicado)'},
+  import_empty:    {ko:'가져올 데이터가 없습니다.', en:'Nothing to import.',  es:'Nada que importar.'},
 };
 function lt(k){ return (T[k] && T[k][LANG]) || (T[k] && T[k].ko) || k; }
 function applyLang(){
@@ -640,6 +685,139 @@ function removeRole(r){
   saveBranchData(DATA);
   openRoleModal();
   render();
+}
+
+// ========= IMPORT =========
+let importQueue = [];   // [{name, role, target}]
+
+function openImportModal(){
+  document.getElementById('importText').value = '';
+  document.getElementById('importFile').value = '';
+  document.getElementById('importPreview').style.display = 'none';
+  importQueue = [];
+  // help string contains <code>, render via innerHTML
+  document.querySelector('#importOverlay [data-t="import_help"]').innerHTML = lt('import_help');
+  document.getElementById('importOverlay').classList.add('show');
+}
+
+function parseImportText(text){
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    // tab- or comma-separated
+    const parts = line.split(/[\t,;|]/).map(s => s.trim()).filter(Boolean);
+    if (parts.length === 0) continue;
+    const name = parts[0];
+    if (!name) continue;
+    // skip header-like rows
+    if (out.length === 0 && /^(이름|name|nombre|직원)$/i.test(name)) continue;
+    let role = parts[1] || '';
+    let target = parseInt(parts[2], 10);
+    if (isNaN(target)) target = 40;
+    // normalize role: match against known roles case-insensitive
+    if (role) {
+      const found = DATA.roles.find(r => r.toUpperCase() === role.toUpperCase());
+      if (found) role = found;
+      else {
+        // create the new role on import
+        DATA.roles.push(role.toUpperCase());
+        role = role.toUpperCase();
+      }
+    } else {
+      role = DATA.roles[0];
+    }
+    out.push({ name, role, target });
+  }
+  return out;
+}
+
+function parseImportFile(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (rows.length === 0) { alert(lt('import_empty')); return; }
+      // detect header row
+      const first = rows[0].map(x => String(x).toLowerCase().trim());
+      const hasHeader = first.some(c => /name|이름|nombre|직원|role|역할|rol|hrs|hours|시간|target|목표/.test(c));
+      let nameIdx = 0, roleIdx = 1, hrsIdx = 2;
+      if (hasHeader) {
+        nameIdx = first.findIndex(c => /name|이름|nombre|직원/.test(c));
+        roleIdx = first.findIndex(c => /role|역할|rol|position|포지션/.test(c));
+        hrsIdx  = first.findIndex(c => /hrs|hours|시간|target|목표/.test(c));
+        if (nameIdx < 0) nameIdx = 0;
+      }
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+      // convert to comma text and reuse parseImportText
+      const text = dataRows.map(r => {
+        const nm  = String(r[nameIdx] ?? '').trim();
+        const rl  = roleIdx >= 0 ? String(r[roleIdx] ?? '').trim() : '';
+        const hrs = hrsIdx  >= 0 ? String(r[hrsIdx]  ?? '').trim() : '';
+        return [nm, rl, hrs].filter(Boolean).join(', ');
+      }).filter(Boolean).join('\n');
+      document.getElementById('importText').value = text;
+      // show preview count
+      const parsed = parseImportText(text);
+      previewImport(parsed);
+    } catch (err) {
+      alert('Failed to parse file: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function previewImport(rows){
+  importQueue = rows;
+  const box = document.getElementById('importPreview');
+  if (rows.length === 0) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const head = `<b>${rows.length}${LANG==='ko'?'명 미리보기':' rows preview'}</b><br>`;
+  box.innerHTML = head + rows.slice(0,12).map(r => `• ${r.name}${r.role?' — '+r.role:''}${r.target?' ('+r.target+'h)':''}`).join('<br>') + (rows.length > 12 ? `<br>… +${rows.length-12}` : '');
+}
+
+function runImport(){
+  const txt = document.getElementById('importText').value;
+  const rows = parseImportText(txt);
+  if (rows.length === 0) { alert(lt('import_empty')); return; }
+  const skipDup = document.getElementById('importSkipDup').checked;
+  const existingNames = new Set(DATA.employees.map(e => e.name.toLowerCase()));
+  let added = 0, skipped = 0;
+  rows.forEach(r => {
+    if (skipDup && existingNames.has(r.name.toLowerCase())) { skipped++; return; }
+    const initials = r.name.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase();
+    const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    DATA.employees.push({
+      id: 'e' + Date.now() + Math.floor(Math.random()*900) + added,
+      name: r.name, role: r.role, target: r.target, color, initials
+    });
+    existingNames.add(r.name.toLowerCase());
+    added++;
+  });
+  saveBranchData(DATA);
+  closeOverlay('importOverlay');
+  render();
+  alert(`✓ ${added} ${lt('import_added')}` + (skipped ? `\n${skipped} ${lt('import_skipped')}` : ''));
+}
+
+function loadDemoData(){
+  const demo = [
+    'Cristian Cortes, CASHIER/STOCKER, 40',
+    'Erika Garcia, CASHIER/STOCKER, 40',
+    'Mirna Montoya, CASHIER/STOCKER, 40',
+    'Shreya Shrestha, SUPERVISOR, 38',
+    'Neall Aouad, SUSHI/KITCHEN, 60',
+    'Odalys Ledesma, SUSHI/KITCHEN, 50',
+    'Yamile Murga, SUSHI/KITCHEN, 55',
+    'Ysabel Castillo, SUSHI/KITCHEN, 45',
+    'Aurora Tablada, OFFICE, 40',
+    'B.H. Kim, OFFICE, 40',
+  ].join('\n');
+  document.getElementById('importText').value = demo;
+  previewImport(parseImportText(demo));
 }
 
 // ========= MISC =========
