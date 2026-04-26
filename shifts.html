@@ -1394,8 +1394,54 @@ function renderShareView(payload){
 }
 
 // ========= FIREBASE SYNC =========
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 let __fbUnsub = null;
 let __lastFbSnapshot = '';
+
+function applyRemote(remote){
+  if (!remote) return false;
+  const sig = JSON.stringify(remote);
+  if (sig === __lastFbSnapshot) return false;
+  const localEmpty = !DATA.employees || DATA.employees.length === 0;
+  const remoteHasData = (remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length);
+  const remoteNewer = (remote.lastChangedAt || 0) > (DATA.lastChangedAt || 0);
+  if ((localEmpty && remoteHasData) || remoteNewer) {
+    __suppressFbWrite = true;
+    DATA = Object.assign(emptyData(), remote);
+    localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
+    __suppressFbWrite = false;
+    __lastFbSnapshot = sig;
+    render();
+    return true;
+  }
+  return false;
+}
+
+// REST-based fetch — works even if the ES-module Firebase SDK is blocked
+// (corporate proxy, locked-down WebView, file:// origin, etc.)
+function syncFetchRest(){
+  const branch = BRANCH;
+  fetch(FB_DB_URL + '/schedules/' + branch + '.json')
+    .then(r => r.ok ? r.json() : null)
+    .then(remote => {
+      if (BRANCH !== branch) return;     // user switched branches mid-fetch
+      if (applyRemote(remote)) updateSyncDot('synced');
+      else if (!window.__fb) updateSyncDot('synced');   // got a clean read even without SDK
+    })
+    .catch(() => updateSyncDot('offline'));
+}
+function syncPushRest(){
+  const branch = BRANCH;
+  const payload = JSON.parse(JSON.stringify(DATA));
+  __lastFbSnapshot = JSON.stringify(payload);
+  fetch(FB_DB_URL + '/schedules/' + branch + '.json', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(r => updateSyncDot(r.ok ? 'synced' : 'offline'))
+    .catch(() => updateSyncDot('offline'));
+}
 
 function updateSyncDot(state){
   const dot = document.getElementById('syncDot');
@@ -1407,53 +1453,39 @@ function updateSyncDot(state){
 }
 
 function syncSubscribeBranch(){
+  // Always pull a fresh REST snapshot so populated branches hydrate even
+  // if the ES-module SDK never loads (some PWAs/WebViews block it).
+  syncFetchRest();
+  // Live updates via SDK if available
   if (!window.__fb) return;
-  // detach previous listener
   if (__fbUnsub) { try { __fbUnsub(); } catch(e){} __fbUnsub = null; }
-  __lastFbSnapshot = '';
   const { db, ref, onValue } = window.__fb;
   const r = ref(db, 'schedules/' + BRANCH);
   __fbUnsub = onValue(r, snap => {
-    const remote = snap.val();
-    if (!remote) { updateSyncDot('synced'); return; }
-    const sig = JSON.stringify(remote);
-    if (sig === __lastFbSnapshot) return;   // echo of our own write
-    // Apply remote if newer OR if local is empty (fresh page-load against a populated branch)
-    const localEmpty = !DATA.employees || DATA.employees.length === 0;
-    const remoteNewer = (remote.lastChangedAt || 0) > (DATA.lastChangedAt || 0);
-    const remoteHasData = (remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length);
-    if (localEmpty && remoteHasData) {
-      __suppressFbWrite = true;
-      DATA = Object.assign(emptyData(), remote);
-      localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
-      __suppressFbWrite = false;
-      __lastFbSnapshot = sig;
-      render();
-    } else if (remoteNewer) {
-      __suppressFbWrite = true;
-      DATA = Object.assign(emptyData(), remote);
-      localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
-      __suppressFbWrite = false;
-      __lastFbSnapshot = sig;
-      render();
-    }
+    if (applyRemote(snap.val())) {/* render already called */}
     updateSyncDot('synced');
   }, err => { updateSyncDot('offline'); });
 }
 
 function syncPushBranch(){
-  if (!window.__fb) { updateSyncDot('local'); return; }
+  // Use SDK when present (faster, batched). Otherwise REST fallback.
+  if (!window.__fb) { syncPushRest(); return; }
   const { db, ref, set } = window.__fb;
   const payload = JSON.parse(JSON.stringify(DATA));
   __lastFbSnapshot = JSON.stringify(payload);
   set(ref(db, 'schedules/' + BRANCH), payload)
     .then(() => updateSyncDot('synced'))
-    .catch(() => updateSyncDot('offline'));
+    .catch(() => syncPushRest());
 }
 
 window.addEventListener('fb-ready', () => {
   syncSubscribeBranch();
 });
+
+// If the SDK never loaded after 2.5s, kick off REST sync anyway.
+setTimeout(() => {
+  if (!window.__fb) { syncFetchRest(); }
+}, 2500);
 
 // ========= MISC =========
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
@@ -1472,6 +1504,8 @@ if (empMatch) {
   }
 } else {
   applyLang();
+  // Kick off REST fetch immediately — fb-ready may take a moment or never fire
+  syncFetchRest();
 }
 </script>
 
