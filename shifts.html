@@ -7,6 +7,22 @@
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, set } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const firebaseConfig = {
+    apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+    authDomain: "kimchi-mart-order.firebaseapp.com",
+    databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+    projectId: "kimchi-mart-order",
+    storageBucket: "kimchi-mart-order.firebasestorage.app",
+    messagingSenderId: "640942647201",
+    appId: "1:640942647201:web:1e3421fb55c89155230de0"
+  };
+  const app = initializeApp(firebaseConfig);
+  window.__fb = { db: getDatabase(app), ref, onValue, set };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px}
@@ -143,6 +159,7 @@ button{font-family:inherit;cursor:pointer}
   <button class="btn secondary" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
   <button class="btn secondary" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
   <button class="btn" onclick="openEmployeeModal()" data-t="btn_emp">＋ 직원</button>
+  <span id="syncDot" title="" style="margin-left:6px;font-size:1.1em">⚪</span>
   <div class="lang-toggle">
     <button class="lang-btn" data-lang="ko" onclick="setLang('ko')">KO</button>
     <button class="lang-btn" data-lang="en" onclick="setLang('en')">EN</button>
@@ -271,8 +288,10 @@ button{font-family:inherit;cursor:pointer}
 <div class="overlay" id="publishOverlay">
   <div class="modal" style="max-width:620px">
     <h3 data-t="publish_title">📤 직원에게 배포</h3>
-    <div style="display:flex;gap:8px;margin-bottom:14px">
-      <button class="btn" onclick="window.print()" data-t="btn_print">🖨️ 인쇄 / PDF</button>
+    <div id="pubStatus" style="background:#f0fdf4;border-radius:8px;padding:10px;margin-bottom:12px;font-size:.88em"></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn" id="pubMainBtn" onclick="publishWeek()"></button>
+      <button class="btn secondary" onclick="window.print()" data-t="btn_print">🖨️ 인쇄 / PDF</button>
       <button class="btn secondary" onclick="copyAllShareText()" data-t="btn_copy_all">📋 전체 직원 메시지 복사</button>
     </div>
     <div style="font-size:.78em;color:#6b7280;margin-bottom:8px" data-t="publish_help">
@@ -386,6 +405,16 @@ const T = {
   share_total:     {ko:'주간 합계',               en:'Weekly total',       es:'Total semanal'},
   share_foot:      {ko:'스케줄 변경 시 새 링크가 발송됩니다.', en:'A new link is sent when the schedule changes.', es:'Se envía un nuevo enlace al cambiar.'},
   back_to_full:    {ko:'← 전체 스케줄 보기',       en:'← Full schedule',    es:'← Horario completo'},
+  not_published:   {ko:'· 미발표',                en:'· Not published',     es:'· Sin publicar'},
+  published_at:    {ko:'발표됨',                  en:'Published',           es:'Publicado'},
+  republish_needed:{ko:'미발표 변경 있음 (재발표 필요)', en:'Unpublished changes (republish)', es:'Cambios sin publicar'},
+  btn_publish_now: {ko:'🚀 이번 주 발표하기',       en:'🚀 Publish this week', es:'🚀 Publicar esta semana'},
+  btn_republish:   {ko:'🔄 재발표하기',            en:'🔄 Re-publish',        es:'🔄 Republicar'},
+  publish_confirm: {ko:'이번 주 스케줄을 발표할까요? 모든 직원 링크가 활성화됩니다.', en:'Publish this week? All employee links will be live.', es:'¿Publicar esta semana?'},
+  publish_done:    {ko:'발표 완료. 직원에게 링크/메시지를 전달하세요.', en:'Published. Now share links/messages with staff.', es:'Publicado.'},
+  sync_local:      {ko:'로컬 저장만',              en:'Local only',          es:'Solo local'},
+  sync_synced:     {ko:'다중 기기 동기화 중',       en:'Synced across devices', es:'Sincronizado'},
+  sync_offline:    {ko:'오프라인',                en:'Offline',             es:'Sin conexión'},
 };
 function lt(k){ return (T[k] && T[k][LANG]) || (T[k] && T[k].ko) || k; }
 function applyLang(){
@@ -398,28 +427,34 @@ function applyLang(){
 function setLang(l){ LANG = l; localStorage.setItem('hub.lang', l); applyLang(); }
 
 // ========= DATA (per-branch in localStorage) =========
+function emptyData(){ return { roles: DEFAULT_ROLES.slice(), employees: [], shifts: {}, publishedAt: 0, lastChangedAt: 0 }; }
 function loadBranchData(){
   const k = 'shifts.' + BRANCH;
   let raw = localStorage.getItem(k);
-  if (!raw) {
-    return { roles: DEFAULT_ROLES.slice(), employees: [], shifts: {} };
-  }
+  if (!raw) return emptyData();
   try {
     const d = JSON.parse(raw);
     if (!d.roles)     d.roles = DEFAULT_ROLES.slice();
     if (!d.employees) d.employees = [];
     if (!d.shifts)    d.shifts = {};
+    if (!d.publishedAt)   d.publishedAt = 0;
+    if (!d.lastChangedAt) d.lastChangedAt = 0;
     return d;
-  } catch(e){
-    return { roles: DEFAULT_ROLES.slice(), employees: [], shifts: {} };
-  }
+  } catch(e){ return emptyData(); }
 }
-function saveBranchData(d){ localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); }
+let __suppressFbWrite = false;
+function saveBranchData(d, opts){
+  d.lastChangedAt = (opts && opts.skipDirty) ? d.lastChangedAt : Date.now();
+  localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d));
+  if (!__suppressFbWrite) syncPushBranch();
+  updateSyncDot('local');
+}
 let DATA = loadBranchData();
 
 function setBranch(id){
   BRANCH = id; localStorage.setItem('hub.branch', id);
   DATA = loadBranchData();
+  syncSubscribeBranch();
   render();
 }
 
@@ -598,10 +633,21 @@ function render(){
   }
 
   // summary bar
+  let pubBadge = '';
+  if (DATA.publishedAt) {
+    const dirty = DATA.lastChangedAt > DATA.publishedAt;
+    const when = new Date(DATA.publishedAt).toLocaleString();
+    pubBadge = dirty
+      ? `<span style="color:#b91c1c;font-weight:600">⚠ ${lt('republish_needed')}</span>`
+      : `<span style="color:#15803d;font-weight:600">✓ ${lt('published_at')} ${when}</span>`;
+  } else {
+    pubBadge = `<span style="color:#9ca3af">${lt('not_published')}</span>`;
+  }
   document.getElementById('summaryBar').innerHTML = `
     <span><b>${lt('sum_hours')}:</b> ${totalHours.toFixed(1)} h</span>
     <span><b>${lt('sum_shifts')}:</b> ${totalShifts}</span>
     <span><b>${lt('sum_users')}:</b> ${DATA.employees.length}</span>
+    ${pubBadge}
     <span style="color:#9ca3af;font-size:.85em;margin-left:auto">💾 ${BRANCH} · ${weekKey()}</span>
   `;
 }
@@ -1120,8 +1166,27 @@ function shareTextFor(emp){
 
 function openPublishModal(){
   if (DATA.employees.length === 0) { alert(lt('empty_grid')); return; }
-  // help text contains <b> tags — render via innerHTML
   document.querySelector('#publishOverlay [data-t="publish_help"]').innerHTML = lt('publish_help');
+  // status banner + main publish button
+  const pubBtn = document.getElementById('pubMainBtn');
+  const status = document.getElementById('pubStatus');
+  if (DATA.publishedAt) {
+    const dirty = DATA.lastChangedAt > DATA.publishedAt;
+    const when = new Date(DATA.publishedAt).toLocaleString();
+    status.style.background = dirty ? '#fef2f2' : '#f0fdf4';
+    status.style.color = dirty ? '#991b1b' : '#15803d';
+    status.innerHTML = dirty
+      ? `⚠ ${lt('republish_needed')}<br><small style="opacity:.75">${lt('published_at')}: ${when}</small>`
+      : `✓ ${lt('published_at')}: ${when}`;
+    pubBtn.textContent = dirty ? lt('btn_republish') : lt('btn_publish_now');
+    pubBtn.style.background = dirty ? '#dc2626' : '#1a5c3a';
+  } else {
+    status.style.background = '#f9fafb';
+    status.style.color = '#6b7280';
+    status.textContent = lt('not_published');
+    pubBtn.textContent = lt('btn_publish_now');
+    pubBtn.style.background = '#1a5c3a';
+  }
   const list = document.getElementById('pubList');
   list.innerHTML = DATA.employees.map(emp => {
     const initials = (emp.initials || emp.name.slice(0,2)).toUpperCase();
@@ -1152,6 +1217,15 @@ function copyEmpLink(empId, btn){
   const emp = DATA.employees.find(e => e.id === empId);
   navigator.clipboard.writeText(shareLinkFor(emp)).then(() => flashCopied(btn));
 }
+function publishWeek(){
+  if (!confirm(lt('publish_confirm'))) return;
+  DATA.publishedAt = Date.now();
+  saveBranchData(DATA, { skipDirty: true });
+  alert(lt('publish_done'));
+  closeOverlay('publishOverlay');
+  render();
+}
+
 function copyAllShareText(){
   const all = DATA.employees.map(e => shareTextFor(e)).join('\n\n──────────\n\n');
   navigator.clipboard.writeText(all).then(() => alert(lt('copied') + ' (' + DATA.employees.length + ')'));
@@ -1203,6 +1277,58 @@ function renderShareView(payload){
   `;
   document.body.appendChild(v);
 }
+
+// ========= FIREBASE SYNC =========
+let __fbUnsub = null;
+let __lastFbSnapshot = '';
+
+function updateSyncDot(state){
+  const dot = document.getElementById('syncDot');
+  if (!dot) return;
+  if (state === 'synced')      { dot.textContent = '🟢'; dot.title = lt('sync_synced'); }
+  else if (state === 'local')  { dot.textContent = '🟡'; dot.title = lt('sync_local'); }
+  else if (state === 'offline'){ dot.textContent = '🔴'; dot.title = lt('sync_offline'); }
+  else                          { dot.textContent = '⚪'; dot.title = ''; }
+}
+
+function syncSubscribeBranch(){
+  if (!window.__fb) return;
+  // detach previous listener
+  if (__fbUnsub) { try { __fbUnsub(); } catch(e){} __fbUnsub = null; }
+  __lastFbSnapshot = '';
+  const { db, ref, onValue } = window.__fb;
+  const r = ref(db, 'schedules/' + BRANCH);
+  __fbUnsub = onValue(r, snap => {
+    const remote = snap.val();
+    if (!remote) { updateSyncDot('synced'); return; }
+    const sig = JSON.stringify(remote);
+    if (sig === __lastFbSnapshot) return;   // echo of our own write
+    // remote-wins if remote is newer
+    if ((remote.lastChangedAt || 0) > (DATA.lastChangedAt || 0)) {
+      __suppressFbWrite = true;
+      DATA = Object.assign(emptyData(), remote);
+      localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
+      __suppressFbWrite = false;
+      __lastFbSnapshot = sig;
+      render();
+    }
+    updateSyncDot('synced');
+  }, err => { updateSyncDot('offline'); });
+}
+
+function syncPushBranch(){
+  if (!window.__fb) { updateSyncDot('local'); return; }
+  const { db, ref, set } = window.__fb;
+  const payload = JSON.parse(JSON.stringify(DATA));
+  __lastFbSnapshot = JSON.stringify(payload);
+  set(ref(db, 'schedules/' + BRANCH), payload)
+    .then(() => updateSyncDot('synced'))
+    .catch(() => updateSyncDot('offline'));
+}
+
+window.addEventListener('fb-ready', () => {
+  syncSubscribeBranch();
+});
 
 // ========= MISC =========
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
