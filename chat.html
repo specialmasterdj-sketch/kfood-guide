@@ -352,16 +352,31 @@ function renderMeNames(){
     const data = JSON.parse(localStorage.getItem('shifts.' + branchId) || 'null');
     if (data && data.employees) employees = data.employees;
   } catch(e){}
-  // Also pull from Firebase REST as a fallback
+  // 전 지점 공통 OWNER 가져오기
+  let globalOwners = [];
+  try {
+    const g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
+    if (g && g.owners) globalOwners = g.owners.map(o => Object.assign({}, o, {role:'OWNER'}));
+  } catch(e){}
+  // Firebase REST 보강 (employees + global)
   if (employees.length === 0) {
     fetch(`${FB_DB_URL}/schedules/${branchId}.json`).then(r => r.json()).then(d => {
       if (d && d.employees) {
         employees = d.employees;
-        renderMeNamesList(employees, branchId);
+        renderMeNamesList(globalOwners.concat(employees), branchId);
       }
     }).catch(()=>{});
   }
-  renderMeNamesList(employees, branchId);
+  if (globalOwners.length === 0) {
+    fetch(`${FB_DB_URL}/schedules/_global.json`).then(r => r.json()).then(d => {
+      if (d && d.owners){
+        globalOwners = d.owners.map(o => Object.assign({}, o, {role:'OWNER'}));
+        try { localStorage.setItem('shifts.global', JSON.stringify(d)); } catch(e){}
+        renderMeNamesList(globalOwners.concat(employees), branchId);
+      }
+    }).catch(()=>{});
+  }
+  renderMeNamesList(globalOwners.concat(employees), branchId);
 }
 function renderMeNamesList(employees, branchId){
   const sel = document.getElementById('meName_select');
@@ -381,6 +396,15 @@ function isManagerRole(role){
   if (!role) return false;
   const r = role.toUpperCase();
   return MANAGER_ROLE_TOKENS.some(t => r.includes(t));
+}
+// 더 엄격: payroll 방은 OWNER / MANAGER / ASSISTANT MANAGER만 (SUPERVISOR 제외)
+// 'MANAGER' substring은 'ASSISTANT MANAGER'와 'MANAGER' 둘 다 매치, 'SUPERVISOR'는 미매치
+const PAYROLL_ACCESS_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+  'MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE'];
+function canAccessPayrollRoom(){
+  if (!me || !me.role) return false;
+  const r = me.role.toUpperCase();
+  return PAYROLL_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase()));
 }
 function saveMe(){
   const branchId = document.getElementById('meBranch').value;
@@ -418,7 +442,12 @@ function refreshMePill(){
 function renderRooms(){
   const list = document.getElementById('roomsList');
   const items = Object.entries(ROOMS)
-    .filter(([id, r]) => !(r.managersOnly || id === 'managers' || id === 'payroll') || me?.isManager)
+    .filter(([id, r]) => {
+      // payroll 방은 더 엄격: OWNER/MANAGER/ASSISTANT MANAGER만
+      if (id === 'payroll' || (r.managersOnly && /payroll|급여/i.test(r.name||''))) return canAccessPayrollRoom();
+      const restricted = r.managersOnly || id === 'managers';
+      return !restricted || me?.isManager;
+    })
     .sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
   if (items.length === 0) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">방이 없습니다.<br>＋ 버튼으로 만드세요.</div>';
@@ -473,6 +502,16 @@ function createRoom(){
   openRoom(id);
 }
 function openRoom(id){
+  // 권한 체크: payroll 방은 OWNER/MANAGER/ASSISTANT MANAGER만 입장 가능
+  const room = ROOMS[id] || {};
+  if (id === 'payroll' || (room.managersOnly && /payroll|급여/i.test(room.name||''))) {
+    if (!canAccessPayrollRoom()){
+      alert('이 방은 매니저 전용입니다.\nOWNER · MANAGER · ASSISTANT MANAGER만 입장 가능합니다.');
+      return;
+    }
+  } else if (room.managersOnly || id === 'managers') {
+    if (!me?.isManager){ alert('매니저 전용 방입니다.'); return; }
+  }
   ACTIVE_ROOM = id;
   localStorage.setItem('chat.activeRoom', id);
   const r = ROOMS[id] || { name: id, desc: '' };
