@@ -165,6 +165,33 @@ hr.sep{border:0;border-top:1px solid #e5e7eb;margin:18px 0}
   </div>
 </div>
 
+<!-- 이메일 발송 모달 -->
+<div id="emailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center;padding:14px">
+  <div style="background:#fff;border-radius:14px;padding:20px;max-width:480px;width:100%;max-height:90vh;overflow:auto">
+    <h3 style="font-size:1.1em;font-weight:700;margin-bottom:8px">📧 CPA 이메일 발송</h3>
+    <div style="font-size:.84em;color:#6b7280;margin-bottom:14px">받는 사람을 선택하세요. 메일이 자동으로 작성됩니다 (제목·본문 포함). 표 이미지는 별도 다운로드 후 첨부하세요.</div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px">발송 방식</label>
+      <select id="emailMethod" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:9px 12px;font-family:inherit">
+        <option value="gmail">Gmail (웹) — 권장</option>
+        <option value="outlook">Outlook (웹)</option>
+        <option value="mailto">기본 메일 앱 (mailto)</option>
+      </select>
+    </div>
+    <div style="margin-bottom:8px;font-size:.85em;font-weight:700;color:#374151">받는 사람 목록</div>
+    <div id="emailList" style="margin-bottom:14px"></div>
+    <div style="background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;padding:10px;margin-bottom:12px">
+      <div style="font-size:.78em;font-weight:600;color:#374151;margin-bottom:6px">＋ 새 이메일 추가</div>
+      <input type="text" id="newEmailLabel" placeholder="이름 (예: CPA Jaesung)" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em;margin-bottom:6px">
+      <input type="email" id="newEmailAddr" placeholder="이메일 주소" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em;margin-bottom:6px">
+      <button class="btn" onclick="addEmailEntry()" style="width:100%">＋ 추가</button>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn secondary" onclick="closeEmailModal()">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 본인 등록 모달 (shifts.html과 동일) -->
 <div id="meOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center;padding:14px">
   <div style="background:#fff;border-radius:14px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto">
@@ -837,18 +864,19 @@ function toggleType(){
   if (next === 'cash') params.delete('type'); else params.set('type', 'cpa');
   location.href = location.pathname + (params.toString()?'?'+params.toString():'');
 }
-function emailToCPA(){
-  // CPA 이메일 가져오기 (없으면 prompt)
-  let to = localStorage.getItem('payroll.cpaEmail') || '';
-  if (!to){
-    to = prompt('CPA 이메일 주소를 입력하세요 (다음에 자동 사용)', '');
-    if (!to) return;
-    to = to.trim();
-    if (to) localStorage.setItem('payroll.cpaEmail', to);
-  }
+// 이메일 수신자 관리
+function loadEmailList(){
+  try { return JSON.parse(localStorage.getItem('payroll.cpaEmails') || '[]'); } catch(_){ return []; }
+  // [{label:'CPA Jaesung', email:'cpa@example.com'}, ...]
+}
+function saveEmailList(list){
+  localStorage.setItem('payroll.cpaEmails', JSON.stringify(list));
+  // 호환: 단일 키도 같이 유지
+  if (list[0]) localStorage.setItem('payroll.cpaEmail', list[0].email);
+}
+function buildMailContent(){
   const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
   const branchLabel = (TYPE==='cpa' && branch.cpaLabel) ? branch.cpaLabel : branch.label;
-  // 메일 본문 만들기
   const total = (DATA.total || 0).toLocaleString('en-US');
   const rowCount = (DATA.rows||[]).filter(r => r.name).length;
   const summary = (DATA.rows||[]).filter(r => r.name).map((r,i) => {
@@ -861,15 +889,80 @@ function emailToCPA(){
   const subject = WEEK + ' ' + branchLabel + ' PAYROLL ' + weekRange(WEEK);
   const body = branchLabel + ' ' + weekRange(WEEK) + '\n\n' + summary
     + '\n\nTOTAL: $' + total + '\n인원: ' + rowCount + '명\n\n— 김치마트 매니저 앱';
+  return { subject, body };
+}
+function emailToCPA(){
+  // 마이그레이션: 구 단일 이메일이 있으면 list로 옮김
+  let list = loadEmailList();
+  const legacy = localStorage.getItem('payroll.cpaEmail');
+  if (list.length === 0 && legacy){
+    list = [{ label:'CPA', email: legacy }];
+    saveEmailList(list);
+  }
+  // 모달 열기
+  const modal = document.getElementById('emailModal');
+  renderEmailList();
+  modal.style.display = 'flex';
+}
+function closeEmailModal(){ document.getElementById('emailModal').style.display = 'none'; }
+function renderEmailList(){
+  const list = loadEmailList();
+  const ul = document.getElementById('emailList');
+  if (!list.length){
+    ul.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:20px">저장된 이메일이 없습니다.<br>아래에서 추가하세요.</div>';
+    return;
+  }
+  ul.innerHTML = list.map((it, i) => `
+    <div style="display:flex;gap:8px;align-items:center;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:6px">
+      <button onclick="sendEmailTo(${i})" style="flex:1;text-align:left;background:#fff;border:0;cursor:pointer;font-family:inherit;padding:0">
+        <div style="font-weight:700;color:#1a5c3a">${escapeAttr(it.label||'(무제)')}</div>
+        <div style="font-size:.85em;color:#6b7280">${escapeAttr(it.email)}</div>
+      </button>
+      <button onclick="deleteEmailEntry(${i})" style="background:transparent;border:0;color:#dc2626;cursor:pointer;font-size:1.1em;padding:4px 8px" title="삭제">✕</button>
+    </div>
+  `).join('');
+}
+function addEmailEntry(){
+  const lbl = document.getElementById('newEmailLabel').value.trim();
+  const em = document.getElementById('newEmailAddr').value.trim();
+  if (!em){ alert('이메일 주소 입력'); return; }
+  const list = loadEmailList();
+  list.push({ label: lbl || em, email: em });
+  saveEmailList(list);
+  document.getElementById('newEmailLabel').value = '';
+  document.getElementById('newEmailAddr').value = '';
+  renderEmailList();
+}
+function deleteEmailEntry(i){
+  const list = loadEmailList();
+  if (!confirm('이 이메일을 목록에서 삭제할까요?')) return;
+  list.splice(i, 1);
+  saveEmailList(list);
+  renderEmailList();
+}
+function sendEmailTo(i){
+  const list = loadEmailList();
+  const item = list[i];
+  if (!item) return;
+  const { subject, body } = buildMailContent();
   const qs = 'subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
-  const mailto = 'mailto:' + encodeURIComponent(to) + '?' + qs;
-  // 1) 메일 즉시 열기 (user gesture 보존 위해 sync)
-  const opened = window.open(mailto, '_self');
-  // 2) Gmail web fallback (mailto가 차단/무시되는 경우 클릭할 수 있도록 status에 링크 표시)
-  const gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to) + '&' + qs;
-  showStatusHTML('📧 메일 클라이언트 열림 · ' +
-    '<a href="'+gmailUrl+'" target="_blank" style="color:#fff;text-decoration:underline;font-weight:700">Gmail로 열기</a>' +
-    ' · <a href="#" onclick="downloadReportImage();return false;" style="color:#fff;text-decoration:underline;font-weight:700">이미지 다운로드</a>'
+  const to = encodeURIComponent(item.email);
+  // 선호 방법 선택 모달
+  const choice = document.getElementById('emailMethod').value || 'gmail';
+  closeEmailModal();
+  let url;
+  if (choice === 'mailto'){
+    url = 'mailto:' + to + '?' + qs;
+    window.open(url, '_self');
+  } else if (choice === 'outlook'){
+    url = 'https://outlook.office.com/mail/deeplink/compose?to=' + to + '&' + qs;
+    window.open(url, '_blank');
+  } else { // gmail
+    url = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + to + '&' + qs;
+    window.open(url, '_blank');
+  }
+  showStatusHTML('📧 ' + (item.label||item.email) + ' 메일 작성 화면 열림 · ' +
+    '<a href="#" onclick="downloadReportImage();return false;" style="color:#fff;text-decoration:underline;font-weight:700">이미지 다운로드</a>'
   );
 }
 function showStatusHTML(html){
