@@ -622,9 +622,76 @@ function saveReport(){
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(DATA)
   }).then(r => {
-    showStatus(r.ok ? '✓ 저장됨 · ' + BRANCH + ' / ' + WEEK : '저장 실패', !r.ok);
-    if (r.ok){ document.getElementById('syncDot').textContent = '🟢'; renderRows(); }
+    if (r.ok){
+      document.getElementById('syncDot').textContent = '🟢';
+      renderRows();
+      // 채팅방에 보고 전송 (매니저 전용 'payroll' 방)
+      postToPayrollRoom();
+    } else {
+      showStatus('저장 실패', true);
+    }
   }).catch(() => showStatus('저장 실패 (오프라인)', true));
+}
+
+// 매니저 전용 채팅방('payroll')에 급여 리포트 요약 전송
+function postToPayrollRoom(){
+  const me = _meIdentity();
+  if (!me) return;
+  const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
+  const rows = (DATA.rows || []).filter(r => r.name);
+  const total = DATA.total || 0;
+  const cashRows = rows.filter(r => parseFloat(r.current||0) > 0);
+  const summary = rows.map(r => {
+    const cur = parseFloat(r.current||0);
+    const memo = r.memo ? ' · ' + r.memo : '';
+    const hr = r.hours==null?'':r.hours+'h';
+    return '• ' + r.name + (hr?' ('+hr+')':'') + ' — $' + (cur||0).toLocaleString('en-US') + memo;
+  }).join('\n');
+  const text = '📊 *' + branch.label + '*\n주차: ' + weekRange(WEEK)
+    + '\n인원: ' + rows.length + '명 (현금 지급 ' + cashRows.length + '명)'
+    + '\n총액: *$' + total.toLocaleString('en-US') + '*'
+    + '\n사인: ' + (DATA.sig||'(공란)') + ' · ' + (DATA.sigDate||'(공란)')
+    + '\n\n' + summary;
+  const ts = Date.now();
+  const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  const msg = {
+    sender: me.name, senderBranch: me.branch || BRANCH, senderRole: me.role || '',
+    isManager: true, color: me.color || '#1a5c3a',
+    text, ts, photos: []
+  };
+  // 방 메타데이터 보장 (managersOnly 플래그 포함)
+  fetch(FB_DB_URL + '/chat/rooms/payroll.json?t=' + ts, {cache:'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(existing => {
+      if (!existing || !existing.managersOnly){
+        fetch(FB_DB_URL + '/chat/rooms/payroll.json', {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            name: '💵 현금 급여 보고', desc:'매니저 전용 · 주간 급여 리포트',
+            managersOnly: true, created: existing && existing.created || ts
+          })
+        }).catch(()=>{});
+      }
+    });
+  // 메시지 전송
+  fetch(FB_DB_URL + '/chat/messages/payroll/' + msgId + '.json', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(msg)
+  }).then(r => {
+    if (r.ok){
+      // 방 메타에 lastMsg 업데이트
+      fetch(FB_DB_URL + '/chat/rooms/payroll.json', {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          lastMsg: '📊 ' + branch.label + ' / ' + weekRange(WEEK) + ' / $' + total.toLocaleString('en-US'),
+          lastTs: ts, lastSender: me.name
+        })
+      }).catch(()=>{});
+      showStatus('✓ 저장 + 채팅방 전송 완료 · ' + BRANCH + ' / ' + WEEK, false);
+    } else {
+      showStatus('저장됨 · 채팅 전송 실패', true);
+    }
+  }).catch(() => showStatus('저장됨 · 채팅 전송 실패 (오프라인)', true));
 }
 function onBranchChange(){
   BRANCH = document.getElementById('branchSel').value;

@@ -316,11 +316,12 @@ let __unsubMsgs = null;
 const DEFAULT_ROOMS = [
   { id:'general', name:'전체 공지', desc:'모든 지점 공통', icon:'📢' },
   { id:'managers', name:'매니저 룸', desc:'매니저 전용', icon:'👔' },
+  { id:'payroll', name:'💵 현금 급여 보고', desc:'매니저 전용 · 주간 급여 리포트', icon:'💵', managersOnly:true },
   { id:'produce', name:'PRODUCE EVALUATION', desc:'야채 진열 사진 평가', icon:'🥬' },
   { id:'meat', name:'MEAT DEPT', desc:'정육 부서', icon:'🥩' },
   { id:'sushi', name:'SUSHI / KITCHEN', desc:'스시 / 키친', icon:'🍱' },
 ];
-const ROOM_ICONS = {general:'📢', managers:'👔', produce:'🥬', meat:'🥩', sushi:'🍱'};
+const ROOM_ICONS = {general:'📢', managers:'👔', payroll:'💵', produce:'🥬', meat:'🥩', sushi:'🍱'};
 function roomIconFor(id, name){
   if (ROOM_ICONS[id]) return ROOM_ICONS[id];
   // hash name -> emoji
@@ -417,7 +418,7 @@ function refreshMePill(){
 function renderRooms(){
   const list = document.getElementById('roomsList');
   const items = Object.entries(ROOMS)
-    .filter(([id, r]) => !(r.managersOnly || id === 'managers') || me?.isManager)
+    .filter(([id, r]) => !(r.managersOnly || id === 'managers' || id === 'payroll') || me?.isManager)
     .sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
   if (items.length === 0) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">방이 없습니다.<br>＋ 버튼으로 만드세요.</div>';
@@ -437,11 +438,17 @@ function renderRooms(){
 }
 function ensureDefaultRooms(){
   if (!window.__fb) return;
-  const { db, ref, set } = window.__fb;
+  const { db, ref, set, update } = window.__fb;
   for (const r of DEFAULT_ROOMS) {
     if (!ROOMS[r.id]) {
-      ROOMS[r.id] = { name: r.name, desc: r.desc };
-      set(ref(db, 'chat/rooms/' + r.id), { name:r.name, desc:r.desc, created: Date.now() }).catch(()=>{});
+      ROOMS[r.id] = { name: r.name, desc: r.desc, managersOnly: !!r.managersOnly };
+      const payload = { name:r.name, desc:r.desc, created: Date.now() };
+      if (r.managersOnly) payload.managersOnly = true;
+      set(ref(db, 'chat/rooms/' + r.id), payload).catch(()=>{});
+    } else if (r.managersOnly && !ROOMS[r.id].managersOnly) {
+      // 기존 방에 managersOnly 플래그가 빠져있으면 부착
+      ROOMS[r.id].managersOnly = true;
+      try { update(ref(db, 'chat/rooms/' + r.id), { managersOnly:true }); } catch(_){}
     }
   }
   renderRooms();
