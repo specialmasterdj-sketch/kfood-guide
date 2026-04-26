@@ -834,10 +834,9 @@ function toggleType(){
   if (next === 'cash') params.delete('type'); else params.set('type', 'cpa');
   location.href = location.pathname + (params.toString()?'?'+params.toString():'');
 }
-async function emailToCPA(){
-  // 1) 표 캡처 → 2) 이미지 다운로드 → 3) mailto: 열기 (사용자가 첨부)
-  const cpaEmail = localStorage.getItem('payroll.cpaEmail') || '';
-  let to = cpaEmail;
+function emailToCPA(){
+  // CPA 이메일 가져오기 (없으면 prompt)
+  let to = localStorage.getItem('payroll.cpaEmail') || '';
   if (!to){
     to = prompt('CPA 이메일 주소를 입력하세요 (다음에 자동 사용)', '');
     if (!to) return;
@@ -846,34 +845,49 @@ async function emailToCPA(){
   }
   const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
   const branchLabel = (TYPE==='cpa' && branch.cpaLabel) ? branch.cpaLabel : branch.label;
-  showStatus('이미지 캡처 중...', false);
+  // 메일 본문 만들기
+  const total = (DATA.total || 0).toLocaleString('en-US');
+  const rowCount = (DATA.rows||[]).filter(r => r.name).length;
+  const summary = (DATA.rows||[]).filter(r => r.name).map((r,i) => {
+    const hr = r.hours==null?'':r.hours+'h';
+    const rt = r.rate==null?'':'$'+r.rate;
+    const cur = parseFloat(r.current||0);
+    const calc = (rt&&hr) ? rt+'*'+hr+'=' : '';
+    return (i+1)+') '+r.name+' '+calc+'$'+cur.toLocaleString('en-US')+(r.memo?' ('+r.memo+')':'');
+  }).join('\n');
+  const subject = WEEK + ' ' + branchLabel + ' PAYROLL ' + weekRange(WEEK);
+  const body = branchLabel + ' ' + weekRange(WEEK) + '\n\n' + summary
+    + '\n\nTOTAL: $' + total + '\n인원: ' + rowCount + '명\n\n— 김치마트 매니저 앱';
+  const qs = 'subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  const mailto = 'mailto:' + encodeURIComponent(to) + '?' + qs;
+  // 1) 메일 즉시 열기 (user gesture 보존 위해 sync)
+  const opened = window.open(mailto, '_self');
+  // 2) Gmail web fallback (mailto가 차단/무시되는 경우 클릭할 수 있도록 status에 링크 표시)
+  const gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to) + '&' + qs;
+  showStatusHTML('📧 메일 클라이언트 열림 · ' +
+    '<a href="'+gmailUrl+'" target="_blank" style="color:#fff;text-decoration:underline;font-weight:700">Gmail로 열기</a>' +
+    ' · <a href="#" onclick="downloadReportImage();return false;" style="color:#fff;text-decoration:underline;font-weight:700">이미지 다운로드</a>'
+  );
+}
+function showStatusHTML(html){
+  const el = document.getElementById('status');
+  el.innerHTML = html; el.className = 'status show';
+  clearTimeout(showStatus._t); showStatus._t = setTimeout(() => el.classList.remove('show'), 8000);
+}
+async function downloadReportImage(){
+  const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
+  const branchLabel = (TYPE==='cpa' && branch.cpaLabel) ? branch.cpaLabel : branch.label;
   try {
     const blob = await captureReportImage();
-    // 다운로드
     const safeName = branchLabel.replace(/[^A-Za-z0-9가-힣]+/g,'_');
-    const fname = `payroll_${safeName}_${WEEK}.jpg`;
+    const fname = 'payroll_' + safeName + '_' + WEEK + '.jpg';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = fname;
     document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    showStatus('✓ 이미지 다운로드됨 — 이메일에 첨부하세요', false);
-  } catch(e){ console.warn(e); showStatus('이미지 캡처 실패', true); }
-  // 메일 열기
-  const total = (DATA.total || 0).toLocaleString('en-US');
-  const rowCount = (DATA.rows||[]).filter(r=>r.name).length;
-  const summary = (DATA.rows||[]).filter(r=>r.name).map((r,i) => {
-    const hr = r.hours==null?'':r.hours+'h';
-    const rt = r.rate==null?'':'$'+r.rate;
-    const cur = parseFloat(r.current||0);
-    return (i+1)+') '+r.name+' '+rt+'*'+hr+'='+'$'+cur.toLocaleString('en-US')+(r.memo?' ('+r.memo+')':'');
-  }).join('\n');
-  const subject = `[${branchLabel}] CPA 급여 보고 ${WEEK} (${weekRange(WEEK)})`;
-  const body = `${branchLabel} ${weekRange(WEEK)}\n\n${summary}\n\nTOTAL: $${total}\n인원: ${rowCount}명\n\n— 자동 생성 (김치마트 매니저 앱)`;
-  const mailto = 'mailto:' + encodeURIComponent(to)
-    + '?subject=' + encodeURIComponent(subject)
-    + '&body=' + encodeURIComponent(body);
-  setTimeout(() => { location.href = mailto; }, 800);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showStatus('✓ 이미지 다운로드됨', false);
+  } catch(e){ console.warn(e); showStatus('이미지 캡처 실패: ' + e.message, true); }
 }
 function onWeekChange(){
   WEEK = document.getElementById('weekInput').value;
