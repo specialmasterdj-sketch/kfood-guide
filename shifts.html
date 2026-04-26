@@ -547,7 +547,10 @@ function render(){
     const empty = document.createElement('div');
     empty.className = 'empty';
     empty.style.gridColumn = '1 / -1';
-    empty.textContent = lt('empty_grid');
+    // While cold-start retries are still running, show "loading" instead of "add employees"
+    empty.textContent = (typeof __coldRetries !== 'undefined' && __coldRetries > 0)
+      ? '⏳ 스케줄을 불러오는 중...'
+      : lt('empty_grid');
     grid.appendChild(empty);
   }
 
@@ -1351,7 +1354,8 @@ function applyRemote(remote){
 // (corporate proxy, locked-down WebView, file:// origin, etc.)
 function syncFetchRest(){
   const branch = BRANCH;
-  fetch(FB_DB_URL + '/schedules/' + branch + '.json')
+  // Cache-busting query string so PWA WebViews don't hand back a stale response
+  fetch(FB_DB_URL + '/schedules/' + branch + '.json?t=' + Date.now(), { cache:'no-store' })
     .then(r => r.ok ? r.json() : null)
     .then(remote => {
       if (BRANCH !== branch) return;     // user switched branches mid-fetch
@@ -1432,6 +1436,16 @@ window.addEventListener('fb-ready', () => {
 setTimeout(() => {
   if (!window.__fb) { syncFetchRest(); }
 }, 2500);
+
+// Aggressive cold-start retry: for the first 10s, if local has 0 employees,
+// re-pull from Firebase every 2s. Catches PWA cold-starts where the first
+// fetch silently fails or arrives before render is ready.
+let __coldRetries = 5;
+const __coldTimer = setInterval(() => {
+  if (DATA.employees && DATA.employees.length > 0) { clearInterval(__coldTimer); return; }
+  if (--__coldRetries <= 0) { clearInterval(__coldTimer); return; }
+  syncFetchRest();
+}, 2000);
 
 // ========= MISC =========
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
