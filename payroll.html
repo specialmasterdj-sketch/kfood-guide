@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="pwa-assets/icon-192.png">
 <script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;min-height:100vh;color:#1f2937}
@@ -633,32 +634,50 @@ function saveReport(){
   }).catch(() => showStatus('저장 실패 (오프라인)', true));
 }
 
-// 매니저 전용 채팅방('payroll')에 급여 리포트 요약 전송
-function postToPayrollRoom(){
+// 매니저 전용 채팅방('payroll')에 급여 리포트 — 표 그대로 이미지로 전송
+const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
+
+async function captureReportImage(){
+  if (typeof html2canvas !== 'function') throw new Error('html2canvas not loaded');
+  const el = document.getElementById('report');
+  // 인쇄 영역만 캡처: 임시로 .print-hide 숨김
+  const hidden = el.querySelectorAll('.print-hide');
+  hidden.forEach(h => h.dataset._prevDisp = h.style.display, h.style.display = 'none');
+  try {
+    const canvas = await html2canvas(el, { backgroundColor:'#ffffff', scale:2, useCORS:true, logging:false });
+    return await new Promise(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.85));
+  } finally {
+    hidden.forEach(h => h.style.display = h.dataset._prevDisp || '');
+  }
+}
+async function uploadImage(blob, msgId){
+  const path = 'chat/payroll/' + msgId + '/0.jpg';
+  try {
+    const r = await fetch(FB_STORAGE_URL + '?name=' + encodeURIComponent(path) + '&uploadType=media',
+      { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: blob });
+    if (r.ok){
+      const meta = await r.json();
+      return FB_STORAGE_URL + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || '');
+    }
+  } catch(_){}
+  // Fallback: base64 dataURL (작게 압축해서 RTDB에 직접 저장)
+  return await new Promise(res => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.readAsDataURL(blob);
+  });
+}
+
+async function postToPayrollRoom(){
   const me = _meIdentity();
   if (!me) return;
   const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
-  const rows = (DATA.rows || []).filter(r => r.name);
   const total = DATA.total || 0;
-  const cashRows = rows.filter(r => parseFloat(r.current||0) > 0);
-  const summary = rows.map(r => {
-    const cur = parseFloat(r.current||0);
-    const memo = r.memo ? ' · ' + r.memo : '';
-    const hr = r.hours==null?'':r.hours+'h';
-    return '• ' + r.name + (hr?' ('+hr+')':'') + ' — $' + (cur||0).toLocaleString('en-US') + memo;
-  }).join('\n');
-  const text = '📊 *' + branch.label + '*\n주차: ' + weekRange(WEEK)
-    + '\n인원: ' + rows.length + '명 (현금 지급 ' + cashRows.length + '명)'
-    + '\n총액: *$' + total.toLocaleString('en-US') + '*'
-    + '\n사인: ' + (DATA.sig||'(공란)') + ' · ' + (DATA.sigDate||'(공란)')
-    + '\n\n' + summary;
+  const rowCount = (DATA.rows||[]).filter(r => r.name).length;
   const ts = Date.now();
   const msgId = 'm' + ts + Math.floor(Math.random()*900);
-  const msg = {
-    sender: me.name, senderBranch: me.branch || BRANCH, senderRole: me.role || '',
-    isManager: true, color: me.color || '#1a5c3a',
-    text, ts, photos: []
-  };
+
   // 방 메타데이터 보장 (managersOnly 플래그 포함)
   fetch(FB_DB_URL + '/chat/rooms/payroll.json?t=' + ts, {cache:'no-store'})
     .then(r => r.ok ? r.json() : null)
@@ -667,27 +686,46 @@ function postToPayrollRoom(){
         fetch(FB_DB_URL + '/chat/rooms/payroll.json', {
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
-            name: '💵 현금 급여 보고', desc:'매니저 전용 · 주간 급여 리포트',
-            managersOnly: true, created: existing && existing.created || ts
+            name:'💵 현금 급여 보고', desc:'매니저 전용 · 주간 급여 리포트',
+            managersOnly:true, created: (existing && existing.created) || ts
           })
         }).catch(()=>{});
       }
     });
-  // 메시지 전송
+
+  showStatus('표 이미지 캡처 중...', false);
+  let photos = [];
+  try {
+    const blob = await captureReportImage();
+    showStatus('이미지 업로드 중...', false);
+    const url = await uploadImage(blob, msgId);
+    if (url) photos.push(url);
+  } catch(e){
+    console.warn('capture failed', e);
+  }
+
+  // 짧은 캡션만 텍스트로 (표는 이미지에 포함)
+  const text = '📊 ' + branch.label + ' · ' + weekRange(WEEK)
+    + ' · 인원 ' + rowCount + '명 · 총 $' + total.toLocaleString('en-US')
+    + ' · 사인: ' + (DATA.sig || '(공란)');
+  const msg = {
+    sender: me.name, senderBranch: me.branch || BRANCH, senderRole: me.role || '',
+    isManager: true, color: me.color || '#1a5c3a',
+    text, ts, photos
+  };
   fetch(FB_DB_URL + '/chat/messages/payroll/' + msgId + '.json', {
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(msg)
   }).then(r => {
     if (r.ok){
-      // 방 메타에 lastMsg 업데이트
       fetch(FB_DB_URL + '/chat/rooms/payroll.json', {
         method:'PATCH', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
-          lastMsg: '📊 ' + branch.label + ' / ' + weekRange(WEEK) + ' / $' + total.toLocaleString('en-US'),
-          lastTs: ts, lastSender: me.name
+          lastMsg:'📊 ' + branch.label + ' / ' + weekRange(WEEK) + ' / $' + total.toLocaleString('en-US'),
+          lastTs:ts, lastSender:me.name
         })
       }).catch(()=>{});
-      showStatus('✓ 저장 + 채팅방 전송 완료 · ' + BRANCH + ' / ' + WEEK, false);
+      showStatus('✓ 저장 + 채팅방 전송 완료 (표 이미지 포함)', false);
     } else {
       showStatus('저장됨 · 채팅 전송 실패', true);
     }
