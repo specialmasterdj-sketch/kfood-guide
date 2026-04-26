@@ -73,6 +73,18 @@ a{color:inherit;text-decoration:none}
 
 .day-divider{align-self:center;background:#e5e7eb;color:#374151;border-radius:12px;padding:3px 12px;font-size:.74em;margin:6px 0}
 
+/* REACTIONS */
+.reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center}
+.rxn{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:14px;padding:2px 9px;font-size:.82em;cursor:pointer;user-select:none;line-height:1.5;transition:.12s}
+.rxn:hover{background:#e5e7eb}
+.rxn.mine{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8;font-weight:600}
+.rxn-add{background:#fff;border:1px dashed #cbd5e1;border-radius:14px;padding:2px 8px;font-size:.82em;cursor:pointer;color:#64748b;line-height:1.5}
+.rxn-add:hover{background:#f8fafc;border-color:#94a3b8}
+.rxn-picker{position:fixed;background:#fff;border:1px solid #e5e7eb;border-radius:24px;padding:6px 10px;box-shadow:0 6px 24px rgba(0,0,0,.18);display:none;z-index:150;gap:2px}
+.rxn-picker.show{display:flex}
+.rxn-picker button{background:none;border:0;font-size:1.5em;padding:4px 6px;cursor:pointer;border-radius:8px;line-height:1}
+.rxn-picker button:hover{background:#f3f4f6;transform:scale(1.2)}
+
 /* COMPOSER — pinned to bottom, never hidden by parent layout glitches */
 .composer{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:2px solid #1a5c3a;padding:10px 10px calc(10px + env(safe-area-inset-bottom));display:flex !important;gap:8px;align-items:flex-end;flex-shrink:0;z-index:60;box-shadow:0 -4px 12px rgba(0,0,0,.08)}
 @media(min-width:761px){
@@ -225,6 +237,17 @@ a{color:inherit;text-decoration:none}
       <button class="btn" onclick="createRoom()">방 만들기</button>
     </div>
   </div>
+</div>
+
+<div class="rxn-picker" id="rxnPicker">
+  <button type="button" onclick="pickReaction('👍')">👍</button>
+  <button type="button" onclick="pickReaction('❤️')">❤️</button>
+  <button type="button" onclick="pickReaction('😂')">😂</button>
+  <button type="button" onclick="pickReaction('😮')">😮</button>
+  <button type="button" onclick="pickReaction('😢')">😢</button>
+  <button type="button" onclick="pickReaction('🙏')">🙏</button>
+  <button type="button" onclick="pickReaction('🔥')">🔥</button>
+  <button type="button" onclick="pickReaction('✅')">✅</button>
 </div>
 
 <div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
@@ -507,6 +530,7 @@ function renderMessages(){
       ? `<div class="photo-grid n${Math.min(m.photos.length,6)}">${m.photos.map((u,i) => `<img src="${u}" onclick="openLightbox(${JSON.stringify(m.photos).replace(/"/g,'&quot;')}, ${i})">`).join('')}</div>`
       : '';
     const delBtn = mine ? `<button class="del" title="삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
+    const rxnHtml = renderReactions(m);
     html += `<div class="msg ${mine?'mine':''}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
@@ -515,6 +539,7 @@ function renderMessages(){
         ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
         ${photoHtml}
         <div class="ts">${time}</div>
+        ${rxnHtml}
       </div>
     </div>`;
   }
@@ -661,6 +686,76 @@ async function sendMessage(){
   }
 }
 
+// ============ REACTIONS ============
+function reactionUserKey(){
+  if (!me) return '';
+  return ((me.branch||'') + '_' + (me.name||'')).replace(/[.\/\[\]#$\s]/g, '_');
+}
+function renderReactions(m){
+  var rx = m.reactions || {};
+  var keys = Object.keys(rx).filter(function(k){ return rx[k] && Object.keys(rx[k]).length; });
+  if (!keys.length && !me) return '';
+  var myKey = reactionUserKey();
+  var chips = keys.map(function(emoji){
+    var users = rx[emoji] || {};
+    var names = Object.values(users);
+    var mine = !!users[myKey];
+    var title = names.join(', ');
+    return '<span class="rxn '+(mine?'mine':'')+'" title="'+escapeHtml(title)+'" onclick="toggleReaction(\''+m.id+'\',\''+emoji+'\')">'+emoji+' '+names.length+'</span>';
+  }).join('');
+  var addBtn = me ? '<button class="rxn-add" type="button" onclick="openReactionPicker(event,\''+m.id+'\')">+ 😀</button>' : '';
+  return '<div class="reactions">'+chips+addBtn+'</div>';
+}
+var _rxnTargetMsg = null;
+function openReactionPicker(e, msgId){
+  e.stopPropagation();
+  if (!ensureMe()) return;
+  _rxnTargetMsg = msgId;
+  var picker = document.getElementById('rxnPicker');
+  picker.classList.add('show');
+  // Position above the clicked button
+  var rect = e.currentTarget.getBoundingClientRect();
+  var pw = picker.offsetWidth, ph = picker.offsetHeight;
+  var top = rect.top - ph - 8;
+  if (top < 8) top = rect.bottom + 8;
+  var left = rect.left + rect.width/2 - pw/2;
+  if (left < 8) left = 8;
+  if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+  picker.style.top = top + 'px';
+  picker.style.left = left + 'px';
+}
+function closeReactionPicker(){
+  document.getElementById('rxnPicker').classList.remove('show');
+  _rxnTargetMsg = null;
+}
+function pickReaction(emoji){
+  var id = _rxnTargetMsg;
+  closeReactionPicker();
+  if (id) toggleReaction(id, emoji);
+}
+async function toggleReaction(msgId, emoji){
+  if (!ensureMe()) return;
+  var m = MSGS.find(function(x){ return x.id === msgId; });
+  if (!m) return;
+  var key = reactionUserKey();
+  var url = FB_DB_URL+'/chat/messages/'+ACTIVE_ROOM+'/'+msgId+'/reactions/'+encodeURIComponent(emoji)+'/'+key+'.json';
+  var existing = m.reactions && m.reactions[emoji] && m.reactions[emoji][key];
+  try {
+    if (existing){
+      await fetch(url, {method:'DELETE'});
+    } else {
+      await fetch(url, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(me.name)});
+    }
+  } catch(err){ console.warn('reaction failed', err); }
+}
+// 바깥 클릭으로 picker 닫기
+document.addEventListener('click', function(e){
+  var picker = document.getElementById('rxnPicker');
+  if (!picker || !picker.classList.contains('show')) return;
+  if (picker.contains(e.target)) return;
+  closeReactionPicker();
+});
+
 // ============ DELETE MESSAGE ============
 async function deleteMessage(msgId){
   const m = MSGS.find(x => x.id === msgId);
@@ -774,6 +869,9 @@ window.openLightbox = openLightbox;
 window.closeLightbox = closeLightbox;
 window.lightboxStep = lightboxStep;
 window.deleteMessage = deleteMessage;
+window.toggleReaction = toggleReaction;
+window.openReactionPicker = openReactionPicker;
+window.pickReaction = pickReaction;
 window.closeOverlay = closeOverlay;
 
 // ============ INIT ============
