@@ -1355,8 +1355,24 @@ function syncFetchRest(){
     .then(r => r.ok ? r.json() : null)
     .then(remote => {
       if (BRANCH !== branch) return;     // user switched branches mid-fetch
+      // If remote has data but local is empty, force-apply even if dedup would skip.
+      // (handles cold-start races where __lastFbSnapshot was set before render finished)
+      const localEmpty = !DATA.employees || DATA.employees.length === 0;
+      const remoteHasData = remote && ((remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length));
+      if (localEmpty && remoteHasData) {
+        __suppressFbWrite = true;
+        DATA = Object.assign(emptyData(), remote);
+        localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
+        __suppressFbWrite = false;
+        __lastFbSnapshot = JSON.stringify(remote);
+        render();
+        updateSyncDot('synced');
+        return;
+      }
       if (applyRemote(remote)) updateSyncDot('synced');
-      else if (!window.__fb) updateSyncDot('synced');   // got a clean read even without SDK
+      else updateSyncDot('synced');
+      // Always re-render to reflect latest state — cheap and prevents stale UI
+      render();
     })
     .catch(() => updateSyncDot('offline'));
 }
