@@ -355,8 +355,11 @@ body.readonly .shift-cell { cursor:default !important; }
       <input type="text" id="meModalNameCustom" placeholder="이름 (스케줄에 없는 경우)">
     </div>
     <div class="field-row">
-      <label>역할</label>
-      <select id="meModalRole"></select>
+      <label>역할 (스케줄에서 자동 조회 — 본인이 선택할 수 없음)</label>
+      <div id="meModalRoleDisplay" style="background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;font-weight:600;color:#374151">—</div>
+    </div>
+    <div style="font-size:.78em;color:#6b7280;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px;margin-top:6px;line-height:1.5">
+      ℹ️ 편집 권한이 필요하면 매니저에게 본인을 OWNER / MANAGER / ASSISTANT MANAGER 그룹에 추가해 달라고 요청하세요.
     </div>
     <div id="meModalStatus" style="font-size:.85em;padding:6px 10px;border-radius:6px;margin-top:6px;display:none"></div>
     <div class="modal-actions">
@@ -573,10 +576,34 @@ const EDITOR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','
 function _meIdentity(){
   try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
 }
-function canEdit(){
+// 역할은 chat.me에 저장된 값을 신뢰하지 않고, 스케줄(employees + global owners)에서 자동 조회.
+// 자칭 OWNER로 등록해도 매니저가 실제 OWNER 그룹에 넣어주지 않으면 편집 권한 없음.
+function findMyRole(){
   var me = _meIdentity();
-  if (!me || !me.role) return false;
-  var r = String(me.role).toUpperCase();
+  if (!me || !me.name) return null;
+  // 1. 전 지점 공통 OWNER
+  if ((GLOBAL.owners || []).some(function(o){ return o.name === me.name; })) return 'OWNER';
+  // 2. 현재 지점 employees
+  var emp = DATA.employees.find(function(e){ return e.name === me.name; });
+  if (emp) return emp.role;
+  // 3. 다른 지점 employees (지점 이동한 매니저 대비)
+  for (var i=0; i<BRANCHES.length; i++){
+    var bid = BRANCHES[i].id;
+    if (bid === BRANCH) continue;
+    try {
+      var raw = localStorage.getItem('shifts.' + bid);
+      if (!raw) continue;
+      var d = JSON.parse(raw);
+      var e2 = (d.employees || []).find(function(x){ return x.name === me.name; });
+      if (e2) return e2.role;
+    } catch(_){}
+  }
+  return null;
+}
+function canEdit(){
+  var role = findMyRole();
+  if (!role) return false;
+  var r = String(role).toUpperCase();
   return EDITOR_ROLE_TOKENS.some(function(t){ return r.indexOf(t.toUpperCase()) >= 0; });
 }
 function applyReadonlyMode(){
@@ -588,31 +615,53 @@ function applyReadonlyMode(){
   if (nameEl) nameEl.textContent = me ? me.name : '나';
 }
 
-// 본인 등록 모달
+// 본인 등록 모달 (역할은 자동 조회, 사용자가 선택 못 함)
 function openMeModal(){
   var me = _meIdentity();
-  // 지점 채우기
   var bsel = document.getElementById('meModalBranch');
   bsel.innerHTML = BRANCHES.map(function(b){ return '<option value="'+b.id+'">'+(b[LANG]||b.ko)+'</option>'; }).join('');
   bsel.value = me ? (me.branch || BRANCH) : BRANCH;
-  var rsel = document.getElementById('meModalRole');
-  rsel.innerHTML = orderedRoles(DATA.roles).map(function(r){ return '<option value="'+r+'">'+r+'</option>'; }).join('');
-  rsel.value = me ? me.role : 'CASHIER/STOCKER';
   populateMeNames();
   document.getElementById('meModalNameCustom').value = '';
-  bsel.onchange = populateMeNames;
+  bsel.onchange = function(){ populateMeNames(); refreshMeRoleDisplay(); };
   var nsel = document.getElementById('meModalName');
-  nsel.onchange = function(){
-    var opt = nsel.options[nsel.selectedIndex];
-    var role = opt && opt.dataset.role;
-    if (role) rsel.value = role;
-  };
+  nsel.onchange = refreshMeRoleDisplay;
+  document.getElementById('meModalNameCustom').oninput = refreshMeRoleDisplay;
   if (me) {
     nsel.value = me.name;
     if (nsel.value !== me.name) document.getElementById('meModalNameCustom').value = me.name;
   }
+  refreshMeRoleDisplay();
   document.getElementById('meModalStatus').style.display = 'none';
   document.getElementById('meOverlay').classList.add('show');
+}
+function refreshMeRoleDisplay(){
+  var custom = document.getElementById('meModalNameCustom').value.trim();
+  var nameSel = document.getElementById('meModalName').value;
+  var name = custom || nameSel;
+  var branchId = document.getElementById('meModalBranch').value;
+  var role = lookupRoleFor(name, branchId);
+  var disp = document.getElementById('meModalRoleDisplay');
+  if (!name){ disp.textContent = '— (이름 먼저 선택/입력)'; disp.style.color='#9ca3af'; return; }
+  if (!role){ disp.innerHTML = '⚠ 스케줄에 미등록 → <b>읽기 전용</b>'; disp.style.color='#92400e'; return; }
+  var canEditFlag = canEditRole(role);
+  disp.innerHTML = role + (canEditFlag ? ' <span style="color:#059669;font-weight:700">· 편집 가능</span>' : ' <span style="color:#6b7280">· 읽기 전용</span>');
+  disp.style.color = '#374151';
+}
+function lookupRoleFor(name, branchId){
+  if (!name) return null;
+  if ((GLOBAL.owners||[]).some(function(o){ return o.name === name; })) return 'OWNER';
+  // 검색 우선순위: 지정 지점 → 다른 지점들
+  var order = [branchId].concat(BRANCHES.map(function(b){return b.id;}).filter(function(b){return b!==branchId;}));
+  for (var i=0;i<order.length;i++){
+    var bid = order[i];
+    var emps = (bid === BRANCH) ? DATA.employees : (function(){
+      try { var raw = localStorage.getItem('shifts.' + bid); return raw ? (JSON.parse(raw).employees||[]) : []; } catch(_){ return []; }
+    })();
+    var e = emps.find(function(x){ return x.name === name; });
+    if (e) return e.role;
+  }
+  return null;
 }
 function populateMeNames(){
   var branchId = document.getElementById('meModalBranch').value;
@@ -638,7 +687,6 @@ function saveMeIdentity(){
   var nameSel = document.getElementById('meModalName').value;
   var custom = document.getElementById('meModalNameCustom').value.trim();
   var name = custom || nameSel;
-  var role = document.getElementById('meModalRole').value;
   if (!name){
     var s = document.getElementById('meModalStatus');
     s.style.display='block';
@@ -646,6 +694,8 @@ function saveMeIdentity(){
     s.textContent='이름을 선택하거나 입력하세요';
     return;
   }
+  // 역할은 스케줄에서 자동 조회 — 사용자 선택 불가
+  var role = lookupRoleFor(name, branchId) || '';
   var meObj = { name: name, branch: branchId, role: role,
     color: '#3b82f6', isManager: canEditRole(role) };
   localStorage.setItem('chat.me', JSON.stringify(meObj));
