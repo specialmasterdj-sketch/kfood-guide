@@ -118,32 +118,6 @@ button{font-family:inherit;cursor:pointer}
   .week-nav .btn{padding:5px 10px}
 }
 
-/* ===== MOBILE DAY VIEW ===== */
-.day-pick{display:none;background:#fff;border-radius:12px;padding:8px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.04);overflow-x:auto;white-space:nowrap}
-.day-pick .pill{display:inline-flex;flex-direction:column;align-items:center;background:#f4f6f9;border:1px solid #e5e7eb;border-radius:10px;padding:7px 12px;margin-right:6px;cursor:pointer;font-size:.8em;color:#374151;min-width:54px}
-.day-pick .pill .d{font-weight:700;font-size:1.1em}
-.day-pick .pill .h{font-size:.7em;color:#9ca3af;margin-top:2px}
-.day-pick .pill.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
-.day-pick .pill.active .h{color:#a7f3d0}
-.day-pick .pill.today{box-shadow:0 0 0 2px #93c5fd}
-.day-pick .toggle{float:right;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:8px;padding:5px 10px;font-size:.78em;font-weight:600;cursor:pointer;margin-left:4px}
-
-.day-list{display:none;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
-.day-list .role-band{padding:10px 14px}
-.day-list .row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;cursor:pointer}
-.day-list .row:hover{background:#f9fafb}
-.day-list .nm{flex:1;min-width:0}
-.day-list .nm .n{font-weight:600;font-size:.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.day-list .nm .r{font-size:.72em;color:#9ca3af}
-.day-list .sh{font-size:.82em;font-weight:600;padding:6px 10px;border-radius:6px;color:#fff;text-align:center;min-width:96px}
-.day-list .sh.unavail{background:#fee2e2;color:#991b1b}
-.day-list .sh.off{background:#f4f6f9;color:#9ca3af;font-weight:500}
-
-@media(max-width:680px){
-  .grid-wrap{display:none}
-  .day-pick{display:block}
-  .day-list{display:block}
-}
 
 /* ===== PRINT ===== */
 @media print {
@@ -202,9 +176,6 @@ button{font-family:inherit;cursor:pointer}
 <div class="page">
 
   <div class="summary-bar" id="summaryBar"></div>
-
-  <div class="day-pick" id="dayPick"></div>
-  <div class="day-list" id="dayList"></div>
 
   <div class="grid-wrap">
     <div class="grid" id="grid"></div>
@@ -371,13 +342,6 @@ const COLORS = ['#22c55e','#3b82f6','#a855f7','#ec4899','#f59e0b','#ef4444','#06
 let LANG = localStorage.getItem('hub.lang') || 'ko';
 let BRANCH = localStorage.getItem('hub.branch') || 'MIAMI';
 let weekStart = mondayOf(new Date());
-let mobileDayIdx = (() => {
-  // default to today's index in week, fallback to Monday
-  const t = new Date();
-  const m = mondayOf(t);
-  const i = Math.floor((t - m) / 86400000);
-  return (i >= 0 && i < 7) ? i : 0;
-})();
 
 // modal state
 let editingEmp = null;
@@ -674,9 +638,6 @@ function render(){
     dayHeaders[i].querySelector('.day-stats').textContent = `${dayHours[i].toFixed(0)}h · ${dayShifts[i]}`;
   }
 
-  // mobile day view (CSS toggles its visibility)
-  renderMobileDay();
-
   // summary bar
   let pubBadge = '';
   if (DATA.publishedAt) {
@@ -696,76 +657,6 @@ function render(){
     <span style="color:#9ca3af;font-size:.85em;margin-left:auto">💾 ${BRANCH} · ${weekKey()}</span>
   `;
 }
-
-function renderMobileDay(){
-  const pick = document.getElementById('dayPick');
-  const list = document.getElementById('dayList');
-
-  // pills (Mon..Sun) with each day's hour count
-  const dayHrs = [0,0,0,0,0,0,0];
-  for (let i = 0; i < 7; i++) {
-    const dKey = fmtKey(addDays(weekStart, i));
-    DATA.employees.forEach(e => { dayHrs[i] += shiftHours(DATA.shifts[shiftKey(e.id, dKey)]); });
-  }
-  pick.innerHTML = (function(){
-    let html = '';
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(weekStart, i);
-      const cls = 'pill' + (i === mobileDayIdx ? ' active' : '') + (isToday(d) ? ' today' : '');
-      html += `<div class="${cls}" onclick="selectDay(${i})"><div class="d">${dayName(d, LANG)}</div><div style="font-weight:600">${fmtMD(d)}</div><div class="h">${dayHrs[i].toFixed(0)}h</div></div>`;
-    }
-    return html;
-  })();
-
-  // selected day's roster grouped by role
-  const d = addDays(weekStart, mobileDayIdx);
-  const dKey = fmtKey(d);
-  const groups = {};
-  DATA.roles.forEach(r => groups[r] = []);
-  groups['__UNASSIGNED__'] = [];
-  DATA.employees.forEach(e => {
-    if (DATA.roles.includes(e.role)) groups[e.role].push(e); else groups['__UNASSIGNED__'].push(e);
-  });
-
-  if (DATA.employees.length === 0) {
-    list.innerHTML = `<div class="empty">${lt('empty_grid')}</div>`;
-    return;
-  }
-  let html = '';
-  const rolesToShow = DATA.roles.concat(groups['__UNASSIGNED__'].length ? ['__UNASSIGNED__'] : []);
-  for (const role of rolesToShow) {
-    const members = groups[role] || [];
-    if (members.length === 0) continue;
-    let groupHrs = 0;
-    members.forEach(e => groupHrs += shiftHours(DATA.shifts[shiftKey(e.id, dKey)]));
-    const label = role === '__UNASSIGNED__' ? lt('unassigned') : role;
-    html += `<div class="role-band"><span>${label}</span><span class="totals"><span>⏱ ${groupHrs.toFixed(1)}h</span></span></div>`;
-    for (const emp of members) {
-      const s = DATA.shifts[shiftKey(emp.id, dKey)];
-      const initials = (emp.initials || emp.name.slice(0,2)).toUpperCase();
-      let shHtml;
-      if (!s) shHtml = `<div class="sh off">— ${lt('share_off')}</div>`;
-      else if (s.unavail) shHtml = `<div class="sh unavail">${lt('lbl_unavail').split('/')[0].trim()}</div>`;
-      else shHtml = `<div class="sh" style="background:${emp.color || '#6b7280'}">${fmtTime(s.start)}–${fmtTime(s.end)}<br><small style="opacity:.85;font-weight:500">${s.position || ''}</small></div>`;
-      html += `<div class="row" data-emp="${emp.id}" data-d="${dKey}">
-        <div class="emp-avatar" style="background:${emp.color||'#6b7280'};width:34px;height:34px;font-size:.78em">${initials}</div>
-        <div class="nm"><div class="n">${emp.name}</div><div class="r">${emp.role}</div></div>
-        ${shHtml}
-      </div>`;
-    }
-  }
-  list.innerHTML = html;
-}
-function selectDay(i){ mobileDayIdx = i; renderMobileDay(); }
-
-document.getElementById('dayList').addEventListener('click', (ev) => {
-  const row = ev.target.closest('.row[data-emp]');
-  if (!row) return;
-  const emp = DATA.employees.find(e => e.id === row.dataset.emp);
-  const dKey = row.dataset.d;
-  const s = DATA.shifts[shiftKey(emp.id, dKey)] || null;
-  openShiftModal(emp, dKey, s);
-});
 
 function fmtTime(t){
   const [h,m] = t.split(':').map(Number);
