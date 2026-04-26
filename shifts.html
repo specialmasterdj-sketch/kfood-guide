@@ -527,6 +527,37 @@ function saveBranchData(d, opts){
 }
 let DATA = loadBranchData();
 
+// ========= GLOBAL (전 지점 공통 OWNER) =========
+// 모든 지점에 같이 표시되는 사람들. 현재는 OWNER만 사용.
+let GLOBAL = (function(){
+  try { return JSON.parse(localStorage.getItem('shifts.global') || '{"owners":[]}'); }
+  catch(e){ return {owners:[]}; }
+})();
+function saveGlobal(){
+  GLOBAL.lastChangedAt = Date.now();
+  localStorage.setItem('shifts.global', JSON.stringify(GLOBAL));
+  fetch(FB_DB_URL + '/schedules/_global.json', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(GLOBAL)
+  }).then(()=>updateSyncDot('synced')).catch(()=>updateSyncDot('offline'));
+}
+function fetchGlobal(){
+  fetch(FB_DB_URL + '/schedules/_global.json?t=' + Date.now(), {cache:'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (!d) return;
+      var remoteNewer = (d.lastChangedAt || 0) > (GLOBAL.lastChangedAt || 0);
+      var localEmpty = !GLOBAL.owners || GLOBAL.owners.length === 0;
+      if (remoteNewer || (localEmpty && d.owners && d.owners.length)){
+        GLOBAL = d;
+        if (!GLOBAL.owners) GLOBAL.owners = [];
+        localStorage.setItem('shifts.global', JSON.stringify(GLOBAL));
+        render();
+      }
+    }).catch(()=>{});
+}
+function isOwnerRole(r){ return ['OWNER','오너','사장','대표','BOSS','DUEÑO','DUENO','PROPIETARIO'].indexOf(String(r||'').toUpperCase()) >= 0 || String(r||'').toUpperCase() === 'OWNER'; }
+
 function setBranch(id){
   BRANCH = id; localStorage.setItem('hub.branch', id);
   DATA = loadBranchData();
@@ -610,6 +641,11 @@ function render(){
     if (DATA.roles.includes(e.role)) groups[e.role].push(e);
     else groups['__UNASSIGNED__'].push(e);
   });
+  // 전 지점 공통 OWNER → OWNER 그룹 맨 위에 prepend
+  if (groups['OWNER'] && GLOBAL.owners && GLOBAL.owners.length){
+    var injected = GLOBAL.owners.map(function(o){ return Object.assign({}, o, {_isGlobal:true}); });
+    groups['OWNER'] = injected.concat(groups['OWNER']);
+  }
 
   // empty state
   if (DATA.employees.length === 0) {
@@ -649,9 +685,14 @@ function render(){
     const band = document.createElement('div');
     band.className = 'role-band';
     const roleLabel = role === '__UNASSIGNED__' ? lt('unassigned') : role;
+    const isOwnerBand = role === 'OWNER';
+    const globalBtn = isOwnerBand
+      ? `<button class="add-emp" style="background:#fef3c7;border-color:#f59e0b;color:#92400e" onclick="openGlobalOwnerModal()">＋ 전 지점 공통</button>`
+      : '';
     band.innerHTML = `
       <span>${roleLabel}</span>
       <button class="add-emp" onclick="openEmployeeModal(null, '${role.replace(/'/g,"\\'")}')">＋ ${lt('btn_emp')}</button>
+      ${globalBtn}
       <span class="totals">
         <span>⏱ ${groupHrs.toFixed(1)}h</span>
         <span>📋 ${groupShifts}</span>
@@ -664,16 +705,20 @@ function render(){
       const empCell = document.createElement('div');
       empCell.className = 'emp-cell';
       let weekHrs = 0;
-      for (let i = 0; i < 7; i++) weekHrs += shiftHours(getShift(emp.id, fmtKey(addDays(weekStart, i))));
+      if (!emp._isGlobal){
+        for (let i = 0; i < 7; i++) weekHrs += shiftHours(getShift(emp.id, fmtKey(addDays(weekStart, i))));
+      }
       const initials = (emp.initials || (emp.name || '?').slice(0,2)).toUpperCase();
+      const globalBadge = emp._isGlobal ? '<span style="background:#fef3c7;color:#92400e;border-radius:8px;font-size:.7em;padding:1px 6px;margin-left:4px;font-weight:700">전 지점</span>' : '';
+      const editFn = emp._isGlobal ? `openGlobalOwnerModal('${emp.id}')` : `openEmployeeModal('${emp.id}')`;
       empCell.innerHTML = `
         <div class="emp-avatar" style="background:${emp.color || '#6b7280'}">${initials}</div>
         <div class="emp-info">
-          <div class="emp-name" title="${emp.name}">${emp.name}</div>
-          <div class="emp-meta">⏱ ${weekHrs.toFixed(1)}h${emp.target ? ' / ' + emp.target + 'h' : ''}</div>
+          <div class="emp-name" title="${emp.name}">${emp.name}${globalBadge}</div>
+          <div class="emp-meta">${emp._isGlobal ? '🏢 모든 지점 공통' : ('⏱ ' + weekHrs.toFixed(1) + 'h' + (emp.target ? ' / ' + emp.target + 'h' : ''))}</div>
         </div>
         <div class="emp-actions">
-          <button title="Edit" onclick="event.stopPropagation();openEmployeeModal('${emp.id}')">✎</button>
+          <button title="Edit" onclick="event.stopPropagation();${editFn}">✎</button>
         </div>`;
       grid.appendChild(empCell);
 
@@ -682,6 +727,12 @@ function render(){
         const dKey = fmtKey(d);
         const cell = document.createElement('div');
         cell.className = 'shift-cell' + (isToday(d) ? ' today' : '') + ([0,6].includes(d.getDay()) ? ' weekend' : '');
+        if (emp._isGlobal){
+          cell.innerHTML = '';
+          cell.style.background = '#fffbeb';
+          grid.appendChild(cell);
+          continue;
+        }
         const s = getShift(emp.id, dKey);
         cell.onclick = () => openShiftModal(emp, dKey, s);
         if (s) {
@@ -743,6 +794,37 @@ function weekKey(){
   const onejan = new Date(y, 0, 1);
   const wk = Math.ceil(((weekStart - onejan) / 86400000 + onejan.getDay() + 1) / 7);
   return y + '-W' + String(wk).padStart(2, '0');
+}
+
+// ========= GLOBAL OWNER MODAL (전 지점 공통) =========
+function openGlobalOwnerModal(id){
+  var existing = id ? (GLOBAL.owners || []).find(function(o){ return o.id === id; }) : null;
+  var defaultName = existing ? existing.name : '';
+  var defaultColor = existing ? existing.color : '#fbbf24';
+  var name = prompt(existing ? '오너 이름 (전 지점 공통)\n비우면 삭제' : '오너 이름 (전 지점 공통)', defaultName);
+  if (name === null) return; // cancel
+  name = name.trim();
+  if (!GLOBAL.owners) GLOBAL.owners = [];
+  if (!name) {
+    if (existing && confirm('이 오너를 삭제할까요?')){
+      GLOBAL.owners = GLOBAL.owners.filter(function(o){ return o.id !== id; });
+      saveGlobal(); render();
+    }
+    return;
+  }
+  var color = prompt('색상 (HEX, 예: #fbbf24)', defaultColor) || defaultColor;
+  if (existing){
+    existing.name = name; existing.color = color;
+    existing.initials = name.split(/\s+/).map(function(w){return w[0];}).join('').slice(0,2).toUpperCase();
+  } else {
+    GLOBAL.owners.push({
+      id: 'gowner_' + Date.now() + '_' + Math.floor(Math.random()*999),
+      name: name, color: color, role: 'OWNER',
+      initials: name.split(/\s+/).map(function(w){return w[0];}).join('').slice(0,2).toUpperCase()
+    });
+  }
+  saveGlobal();
+  render();
 }
 
 // ========= EMPLOYEE MODAL =========
@@ -1536,6 +1618,8 @@ function syncSubscribeBranch(){
   // Always pull a fresh REST snapshot so populated branches hydrate even
   // if the ES-module SDK never loads (some PWAs/WebViews block it).
   syncFetchRest();
+  // 전 지점 공통 OWNER도 최신으로 동기화
+  fetchGlobal();
   // Live updates via SDK if available
   if (!window.__fb) return;
   if (__fbUnsub) { try { __fbUnsub(); } catch(e){} __fbUnsub = null; }
