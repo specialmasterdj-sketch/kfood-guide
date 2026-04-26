@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>현금 급여 지급 Report — 김치마트</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="김치마트 급여">
+<link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="pwa-assets/icon-192.png">
+<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;min-height:100vh;color:#1f2937}
+.topbar{background:#1a5c3a;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+.topbar a{color:#fff;text-decoration:none;font-size:1.2em}
+.topbar h1{font-size:1.05em;font-weight:700;flex:1}
+.topbar select,.topbar input,.topbar button{font-size:.85em;padding:5px 10px;border-radius:6px;border:0;background:rgba(255,255,255,.18);color:#fff;font-family:inherit}
+.topbar button{cursor:pointer;font-weight:600}
+.topbar select option{color:#1f2937}
+.topbar .me-tag{background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:8px;font-size:.78em;font-weight:700;cursor:pointer;border:0}
+
+.report{max-width:780px;margin:18px auto;background:#fff;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:32px 36px}
+.report-hd{margin-bottom:18px}
+.branch-name{font-size:1.5em;font-weight:700;color:#7c3aed}
+.branch-addr{font-size:.85em;color:#6b7280;line-height:1.5;margin-top:4px}
+.branch-addr div{}
+.title{font-size:2em;font-weight:800;color:#1e3a8a;margin-top:24px}
+.week{font-size:1em;color:#dc2626;font-weight:700;margin-top:4px}
+hr.sep{border:0;border-top:1px solid #e5e7eb;margin:18px 0}
+
+.tbl{width:100%;border-collapse:collapse}
+.tbl th,.tbl td{padding:10px 8px;text-align:left;border-bottom:1px solid #f3f4f6;font-size:.92em}
+.tbl th{font-weight:700;color:#374151;border-bottom:2px solid #e5e7eb}
+.tbl td.num{text-align:left}
+.tbl tbody tr:nth-child(even){background:#fafafa}
+.tbl tbody tr.editing input{width:100%;border:1px solid #93c5fd;border-radius:4px;padding:4px 6px;font-size:.92em;font-family:inherit;background:#fff}
+.tbl input{width:100%;border:1px solid transparent;border-radius:4px;padding:4px 6px;font-size:.92em;font-family:inherit;background:transparent}
+.tbl input:focus{border-color:#3b82f6;background:#fff;outline:none}
+.tbl input.disabled{background:#f3f4f6;color:#9ca3af}
+.tbl .name{font-weight:600;color:#7c3aed;text-transform:uppercase}
+.tbl tfoot td{padding-top:14px;font-weight:700;font-size:1.05em;border-top:2px solid #1f2937}
+
+.sig-row{margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.sig-block{border-bottom:1px solid #6b7280;padding-bottom:6px;min-height:42px}
+.sig-block .lbl{font-size:.78em;color:#6b7280;font-weight:600;margin-bottom:4px}
+.sig-block .val{font-size:1em;font-weight:600;color:#1f2937}
+
+.row-actions{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.btn{background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:.88em;font-weight:600;cursor:pointer;font-family:inherit}
+.btn.secondary{background:#fff;color:#1a5c3a;border:1px solid #1a5c3a}
+.btn.danger{background:#dc2626}
+.btn.warn{background:#f59e0b}
+.btn:disabled{background:#9ca3af;cursor:not-allowed}
+.del-row{background:transparent;color:#dc2626;border:0;cursor:pointer;font-size:1em;padding:2px 6px}
+
+.add-row-form{background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;padding:10px;margin-top:10px;display:none;flex-wrap:wrap;gap:6px;align-items:center}
+.add-row-form.show{display:flex}
+.add-row-form input{border:1px solid #d1d5db;border-radius:4px;padding:6px 8px;font-size:.85em;font-family:inherit}
+.add-row-form input.name-input{flex:1.5;min-width:120px}
+.add-row-form input.num-input{width:70px}
+.add-row-form input.memo-input{flex:1;min-width:90px}
+
+.readonly-banner{background:#fef3c7;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 12px;font-size:.85em;font-weight:600;margin:0 0 14px;text-align:center}
+.status{position:fixed;bottom:14px;right:14px;background:#1a5c3a;color:#fff;padding:8px 14px;border-radius:20px;font-size:.85em;box-shadow:0 2px 10px rgba(0,0,0,.2);opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
+.status.show{opacity:1}
+.status.err{background:#dc2626}
+
+@media print{
+  body{background:#fff}
+  .topbar,.row-actions,.del-row,.add-row-form,.readonly-banner,.status,.print-hide{display:none !important}
+  .report{box-shadow:none;border-radius:0;margin:0;max-width:100%;padding:14px 22px}
+  .tbl input{padding:0;border:0}
+}
+
+@media(max-width:680px){
+  .report{padding:18px 16px;margin:8px}
+  .title{font-size:1.5em}
+  .branch-name{font-size:1.2em}
+  .tbl th,.tbl td{padding:8px 4px;font-size:.84em}
+  .sig-row{grid-template-columns:1fr;gap:14px}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="./hub.html" title="HUB로">←</a>
+  <h1>💵 현금 급여 지급</h1>
+  <select id="branchSel" onchange="onBranchChange()"></select>
+  <input type="week" id="weekInput" onchange="onWeekChange()">
+  <button id="meBtn" onclick="openMeModal()" title="본인 등록">👤 <span id="meBtnName">나</span></button>
+  <button id="readonlyBadge" class="me-tag" onclick="openMeModal()" style="display:none">👁 읽기 전용</button>
+  <span id="syncDot" title="" style="font-size:1em">⚪</span>
+</div>
+
+<div class="report" id="report">
+  <div class="report-hd">
+    <div class="branch-name" id="branchName">— Branch KIMCHI 1</div>
+    <div class="branch-addr" id="branchAddr">
+      <div></div><div></div><div></div>
+    </div>
+    <div class="title">현금 급여 지급 Report</div>
+    <div class="week" id="weekLabel">— / — / —</div>
+  </div>
+  <hr class="sep">
+
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th style="width:32%">Name</th>
+        <th style="width:12%">Hours</th>
+        <th style="width:12%">Rate</th>
+        <th style="width:14%">Current</th>
+        <th style="width:24%">Memo</th>
+        <th class="print-hide" style="width:6%"></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+    <tfoot>
+      <tr>
+        <td>TOTAL</td>
+        <td></td>
+        <td></td>
+        <td id="totalCell">$0</td>
+        <td></td>
+        <td class="print-hide"></td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="row-actions print-hide">
+    <button class="btn secondary editor-only" onclick="toggleAddRow()">＋ 직원 추가</button>
+    <button class="btn secondary editor-only" onclick="autoFillFromShifts()" title="해당 주의 시프트 시간을 자동으로 채워넣기">⏱ 시프트에서 시간 자동 채우기</button>
+    <button class="btn warn editor-only" onclick="saveReport()">💾 저장</button>
+    <button class="btn secondary" onclick="window.print()">🖨 인쇄</button>
+  </div>
+  <div class="add-row-form" id="addRowForm">
+    <input type="text" class="name-input" id="addName" placeholder="이름">
+    <input type="number" step="0.5" class="num-input" id="addHours" placeholder="Hours">
+    <input type="number" step="0.01" class="num-input" id="addRate" placeholder="Rate">
+    <input type="number" step="0.01" class="num-input" id="addCurrent" placeholder="Current">
+    <input type="text" class="memo-input" id="addMemo" placeholder="Memo">
+    <button class="btn" onclick="addRow()">추가</button>
+    <button class="btn secondary" onclick="toggleAddRow()">취소</button>
+  </div>
+
+  <div class="sig-row">
+    <div class="sig-block">
+      <div class="lbl">Signature</div>
+      <div class="val" id="sigName">—</div>
+    </div>
+    <div class="sig-block">
+      <div class="lbl">Date</div>
+      <div class="val" id="sigDate">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- 본인 등록 모달 (shifts.html과 동일) -->
+<div id="meOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center;padding:14px">
+  <div style="background:#fff;border-radius:14px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto">
+    <h3 style="font-size:1.1em;font-weight:700;margin-bottom:14px">본인 등록</h3>
+    <div style="font-size:.84em;color:#6b7280;margin-bottom:12px">급여 보고서를 수정하려면 본인 이름과 역할을 등록하세요.<br>OWNER · MANAGER · ASSISTANT MANAGER만 편집 가능합니다.</div>
+    <div style="margin-bottom:12px"><label style="display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px">지점</label><select id="meModalBranch" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:9px 12px"></select></div>
+    <div style="margin-bottom:12px"><label style="display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px">이름 (스케줄 등록자)</label><select id="meModalName" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:9px 12px"></select></div>
+    <div style="margin-bottom:12px"><label style="display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px">또는 직접 입력</label><input type="text" id="meModalNameCustom" placeholder="이름 (스케줄에 없는 경우)" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:9px 12px"></div>
+    <div style="margin-bottom:12px"><label style="display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px">역할 (스케줄에서 자동 조회)</label><div id="meModalRoleDisplay" style="background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;font-weight:600;color:#374151">—</div></div>
+    <div style="font-size:.78em;color:#6b7280;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px;margin-top:6px;line-height:1.5">ℹ️ 편집 권한이 필요하면 매니저에게 본인을 OWNER / MANAGER / ASSISTANT MANAGER 그룹에 추가해 달라고 요청하세요.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn secondary" onclick="closeMeModal()">취소</button>
+      <button class="btn" onclick="saveMeIdentity()">저장</button>
+    </div>
+  </div>
+</div>
+
+<div class="status" id="status"></div>
+
+<script>
+// ================== STATE ==================
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BRANCHES = [
+  { id:'MIAMI',         ko:'마이애미',       en:'Miami',           addr:'15355 S DIXIE HWY\nMIAMI, FL 33157\n(305) 964-5083', label:'MIAMI Branch KIMCHI 1' },
+  { id:'PEMBROKE_PINES',ko:'펨브로크 파인즈', en:'Pembroke Pines',  addr:'', label:'PEMBROKE PINES Branch KIMCHI 2' },
+  { id:'HOLLYWOOD',     ko:'할리우드',       en:'Hollywood',       addr:'', label:'HOLLYWOOD Branch KIMCHI 3' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   addr:'', label:'CORAL SPRINGS Branch KIMCHI 4' },
+  { id:'LASOLAS',       ko:'라스올라스',     en:'LASOLAS',         addr:'', label:'LASOLAS Branch KIMCHI 5' },
+  { id:'WEST_PALM',     ko:'웨스트 팜 비치', en:'West Palm Beach', addr:'', label:'WEST PALM Branch KIMCHI 6' }
+];
+
+let BRANCH = localStorage.getItem('payroll.branch') || localStorage.getItem('hub.branch') || 'MIAMI';
+let WEEK = localStorage.getItem('payroll.week') || isoWeekKey(mondayOf(new Date(Date.now()-7*86400000)));
+let DATA = { rows: [], total: 0, sig: '', sigDate: '' };
+let GLOBAL_OWNERS = [];
+
+// 기본 직원 명단 (매주 같은 사람들 — hours/current는 비워두고 매니저가 매주 입력)
+// rate/memo는 표준값으로 prefill, 매니저가 필요 시 수정
+const PAYROLL_ROSTER = {
+  MIAMI: [
+    { name:'ANA PALACIO',     rate:14, memo:'40시간외(TAX)' },
+    { name:'STEVEN OLIVAS',   rate:14, memo:'40시간외(TAX)' },
+    { name:'JASON ESQUIVEL',  rate:14, memo:'40시간외(TAX)' },
+    { name:'Dienni Estrada',  rate:13, memo:'' },
+    { name:'YILEYMI',         rate:13, memo:'' },
+    { name:'MYNOR',           rate:null, memo:'Weekly wage' },
+    { name:'ROBERTO',         rate:13, memo:'' },
+    { name:'ROLAND',          rate:null, memo:'Weekly wage' }
+  ],
+  HOLLYWOOD: [
+    { name:'ANDERSON',     rate:null, memo:'주급' },
+    { name:'CHRISTOPHER',  rate:13,   memo:'' },
+    { name:'DAIRIT',       rate:14,   memo:'' },
+    { name:'SHREYA',       rate:14,   memo:'' },
+    { name:'YSABEL',       rate:14,   memo:'' },
+    { name:'NEALL',        rate:null, memo:'SALARY' },
+    { name:'LIMBERKIN',    rate:13,   memo:'' },
+    { name:'ERIKA',        rate:13,   memo:'' },
+    { name:'ODALYS',       rate:15,   memo:'' },
+    { name:'CRISTIAN',     rate:13,   memo:'40h CHECK' },
+    { name:'MIRNA',        rate:13,   memo:'40h CHECK' },
+    { name:'YAMILE',       rate:14,   memo:'' }
+  ]
+};
+
+// ================== DATE HELPERS ==================
+function mondayOf(d){ const x=new Date(d); const dow=(x.getDay()+6)%7; x.setDate(x.getDate()-dow); x.setHours(0,0,0,0); return x; }
+function fmtDate(d){ return (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear(); }
+function fmtKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function isoWeekKey(monday){
+  const y = monday.getFullYear();
+  const onejan = new Date(y, 0, 1);
+  const wk = Math.ceil((((monday - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+  return y + '-W' + String(wk).padStart(2,'0');
+}
+function mondayFromWeekKey(wk){
+  // wk like "2026-W16"
+  const [yr, w] = wk.split('-W').map(Number);
+  const jan4 = new Date(yr, 0, 4);
+  const jan4Day = (jan4.getDay()+6)%7;
+  const week1Mon = new Date(jan4); week1Mon.setDate(jan4.getDate() - jan4Day);
+  const target = new Date(week1Mon); target.setDate(week1Mon.getDate() + (w-1)*7);
+  return target;
+}
+function weekRange(wk){
+  const m = mondayFromWeekKey(wk);
+  const e = new Date(m); e.setDate(m.getDate()+6);
+  return fmtDate(m) + ' - ' + fmtDate(e);
+}
+function endOfWeek(wk){
+  const m = mondayFromWeekKey(wk);
+  const e = new Date(m); e.setDate(m.getDate()+6);
+  return e;
+}
+
+// ================== ACCESS CONTROL ==================
+const EDITOR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+  'MANAGER','GERENTE','매니저','점장',
+  'ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','부매니저','GERENTE ASISTENTE'];
+function _meIdentity(){ try{ return JSON.parse(localStorage.getItem('chat.me') || 'null'); }catch(_){ return null; } }
+function _normName(s){ return String(s||'').toLowerCase().replace(/[\s.\-_]/g,''); }
+function findMyRole(){
+  const me = _meIdentity();
+  if (!me || !me.name) return null;
+  const myN = _normName(me.name);
+  if (!myN) return null;
+  if ((GLOBAL_OWNERS||[]).some(o => _normName(o.name) === myN)) return 'OWNER';
+  for (const b of BRANCHES){
+    try {
+      const raw = localStorage.getItem('shifts.' + b.id);
+      if (!raw) continue;
+      const d = JSON.parse(raw);
+      const e = (d.employees||[]).find(x => _normName(x.name) === myN);
+      if (e) return e.role;
+    } catch(_){}
+  }
+  return null;
+}
+function canEditRole(role){
+  if (!role) return false;
+  const r = String(role).toUpperCase();
+  return EDITOR_ROLE_TOKENS.some(t => r.indexOf(t.toUpperCase()) >= 0);
+}
+function canEdit(){ return canEditRole(findMyRole()); }
+function applyReadonlyMode(){
+  document.body.classList.toggle('readonly', !canEdit());
+  document.querySelectorAll('.editor-only').forEach(el => el.style.display = canEdit() ? '' : 'none');
+  document.getElementById('readonlyBadge').style.display = canEdit() ? 'none' : 'inline-block';
+  document.getElementById('meBtn').style.display = canEdit() ? '' : 'none';
+  const me = _meIdentity();
+  document.getElementById('meBtnName').textContent = me ? me.name : '나';
+  // also disable inputs in readonly
+  renderRows();
+}
+function requireEdit(){
+  if (canEdit()) return true;
+  const me = _meIdentity();
+  if (!me){
+    if (confirm('급여 보고서를 수정하려면 본인 등록이 필요합니다.\n\n지금 등록할까요?')) openMeModal();
+    return false;
+  }
+  const role = findMyRole();
+  if (!role) alert('본인 이름 "' + me.name + '"이 스케줄에 등록되어 있지 않습니다.\n매니저에게 본인 등록 요청하세요.');
+  else alert('현재 역할 (' + role + ')은 편집 권한이 없습니다.\nOWNER / MANAGER / ASSISTANT MANAGER만 가능합니다.');
+  return false;
+}
+
+// ================== ME MODAL ==================
+function openMeModal(){
+  const me = _meIdentity();
+  const bsel = document.getElementById('meModalBranch');
+  bsel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">${b.ko}</option>`).join('');
+  bsel.value = me ? (me.branch || BRANCH) : BRANCH;
+  populateMeNames();
+  document.getElementById('meModalNameCustom').value = '';
+  bsel.onchange = () => { populateMeNames(); refreshMeRoleDisplay(); };
+  const nsel = document.getElementById('meModalName');
+  nsel.onchange = refreshMeRoleDisplay;
+  document.getElementById('meModalNameCustom').oninput = refreshMeRoleDisplay;
+  if (me){
+    nsel.value = me.name;
+    if (nsel.value !== me.name) document.getElementById('meModalNameCustom').value = me.name;
+  }
+  refreshMeRoleDisplay();
+  document.getElementById('meOverlay').style.display = 'flex';
+}
+function closeMeModal(){ document.getElementById('meOverlay').style.display = 'none'; }
+function populateMeNames(){
+  const branchId = document.getElementById('meModalBranch').value;
+  const nsel = document.getElementById('meModalName');
+  let emps = [];
+  try { const raw = localStorage.getItem('shifts.' + branchId); if (raw) emps = JSON.parse(raw).employees || []; } catch(_){}
+  const owners = (GLOBAL_OWNERS||[]).map(o => Object.assign({}, o, {role:'OWNER'}));
+  const all = owners.concat(emps).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(e =>
+    `<option value="${e.name}" data-role="${e.role||''}">${e.name}${e.role?' ('+e.role+')':''}</option>`).join('');
+}
+function lookupRoleFor(name, branchId){
+  if (!name) return null;
+  const norm = _normName(name);
+  if ((GLOBAL_OWNERS||[]).some(o => _normName(o.name) === norm)) return 'OWNER';
+  const order = [branchId].concat(BRANCHES.map(b => b.id).filter(b => b !== branchId));
+  for (const bid of order){
+    try {
+      const raw = localStorage.getItem('shifts.' + bid);
+      if (!raw) continue;
+      const d = JSON.parse(raw);
+      const e = (d.employees||[]).find(x => _normName(x.name) === norm);
+      if (e) return e.role;
+    } catch(_){}
+  }
+  return null;
+}
+function refreshMeRoleDisplay(){
+  const custom = document.getElementById('meModalNameCustom').value.trim();
+  const sel = document.getElementById('meModalName').value;
+  const name = custom || sel;
+  const branchId = document.getElementById('meModalBranch').value;
+  const role = lookupRoleFor(name, branchId);
+  const disp = document.getElementById('meModalRoleDisplay');
+  if (!name){ disp.textContent = '— (이름 먼저 선택/입력)'; return; }
+  if (!role){ disp.innerHTML = '⚠ 스케줄에 미등록 → <b>읽기 전용</b>'; return; }
+  const ed = canEditRole(role);
+  disp.innerHTML = role + (ed ? ' <span style="color:#059669;font-weight:700">· 편집 가능</span>' : ' <span style="color:#6b7280">· 읽기 전용</span>');
+}
+function saveMeIdentity(){
+  const branchId = document.getElementById('meModalBranch').value;
+  const sel = document.getElementById('meModalName').value;
+  const custom = document.getElementById('meModalNameCustom').value.trim();
+  const name = custom || sel;
+  if (!name){ alert('이름을 선택하거나 입력하세요'); return; }
+  const role = lookupRoleFor(name, branchId) || '';
+  const meObj = { name, branch:branchId, role, color:'#3b82f6', isManager: canEditRole(role) };
+  localStorage.setItem('chat.me', JSON.stringify(meObj));
+  closeMeModal();
+  applyReadonlyMode();
+}
+
+// ================== RENDER ==================
+function renderHeader(){
+  const b = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
+  document.getElementById('branchName').textContent = b.label;
+  const addrEl = document.getElementById('branchAddr');
+  addrEl.innerHTML = (b.addr || '').split('\n').map(line => '<div>' + line + '</div>').join('');
+  document.getElementById('weekLabel').textContent = weekRange(WEEK);
+  // populate selects
+  const bs = document.getElementById('branchSel');
+  if (!bs.options.length){
+    bs.innerHTML = BRANCHES.map(x => `<option value="${x.id}">${x.ko}</option>`).join('');
+  }
+  bs.value = BRANCH;
+  document.getElementById('weekInput').value = WEEK;
+}
+function renderRows(){
+  const tbody = document.getElementById('rows');
+  const ed = canEdit();
+  tbody.innerHTML = (DATA.rows||[]).map((r, i) => `
+    <tr>
+      <td class="name"><input value="${escapeAttr(r.name||'')}" oninput="updateRow(${i},'name',this.value)" ${ed?'':'disabled'}></td>
+      <td class="num"><input type="number" step="0.5" value="${r.hours==null?'':r.hours}" oninput="updateRow(${i},'hours',this.value);recalc(${i})" ${ed?'':'disabled'}></td>
+      <td class="num"><input type="number" step="0.01" value="${r.rate==null?'':r.rate}" placeholder="" oninput="updateRow(${i},'rate',this.value);recalc(${i})" ${ed?'':'disabled'}></td>
+      <td class="num"><input type="text" value="${r.current==null?'':('$'+formatNum(r.current))}" oninput="onCurrentInput(${i},this.value)" ${ed?'':'disabled'}></td>
+      <td><input value="${escapeAttr(r.memo||'')}" oninput="updateRow(${i},'memo',this.value)" ${ed?'':'disabled'}></td>
+      <td class="print-hide">${ed ? `<button class="del-row" onclick="delRow(${i})" title="삭제">✕</button>` : ''}</td>
+    </tr>
+  `).join('');
+  recalcTotal();
+  // signature
+  const me = _meIdentity();
+  document.getElementById('sigName').textContent = DATA.sig || (canEdit() && me ? me.name : '—');
+  document.getElementById('sigDate').textContent = DATA.sigDate || fmtDate(endOfWeek(WEEK));
+}
+function escapeAttr(s){ return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function formatNum(n){
+  const v = parseFloat(n);
+  if (isNaN(v)) return '0';
+  return v.toLocaleString('en-US', {maximumFractionDigits:2});
+}
+function updateRow(i, field, val){
+  if (!DATA.rows[i]) return;
+  if (field === 'hours' || field === 'rate'){
+    DATA.rows[i][field] = val === '' ? null : parseFloat(val);
+  } else {
+    DATA.rows[i][field] = val;
+  }
+}
+function onCurrentInput(i, val){
+  const num = parseFloat(String(val).replace(/[$,\s]/g,''));
+  DATA.rows[i].current = isNaN(num) ? 0 : num;
+  recalcTotal();
+}
+function recalc(i){
+  const r = DATA.rows[i];
+  if (!r) return;
+  // If both hours and rate are set, current = hours * rate
+  if (r.hours != null && r.rate != null){
+    r.current = +(r.hours * r.rate).toFixed(2);
+    // refresh just the current cell
+    const tr = document.getElementById('rows').children[i];
+    if (tr){
+      const inp = tr.children[3].querySelector('input');
+      inp.value = '$' + formatNum(r.current);
+    }
+  }
+  recalcTotal();
+}
+function recalcTotal(){
+  const total = (DATA.rows||[]).reduce((s,r) => s + (parseFloat(r.current)||0), 0);
+  DATA.total = +total.toFixed(2);
+  document.getElementById('totalCell').textContent = '$' + formatNum(DATA.total);
+}
+function delRow(i){
+  if (!requireEdit()) return;
+  if (!confirm('이 행을 삭제할까요?')) return;
+  DATA.rows.splice(i,1);
+  renderRows();
+}
+function toggleAddRow(){
+  if (!requireEdit()) return;
+  const f = document.getElementById('addRowForm');
+  f.classList.toggle('show');
+  if (f.classList.contains('show')) document.getElementById('addName').focus();
+}
+function addRow(){
+  if (!requireEdit()) return;
+  const name = document.getElementById('addName').value.trim();
+  if (!name){ alert('이름 입력'); return; }
+  const hours = parseFloat(document.getElementById('addHours').value);
+  const rate = parseFloat(document.getElementById('addRate').value);
+  let current = parseFloat(document.getElementById('addCurrent').value);
+  if (isNaN(current) && !isNaN(hours) && !isNaN(rate)) current = +(hours*rate).toFixed(2);
+  const memo = document.getElementById('addMemo').value.trim();
+  DATA.rows.push({
+    name, hours: isNaN(hours)?null:hours, rate: isNaN(rate)?null:rate,
+    current: isNaN(current)?0:current, memo
+  });
+  ['addName','addHours','addRate','addCurrent','addMemo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('addRowForm').classList.remove('show');
+  renderRows();
+}
+
+// ================== AUTO-FILL FROM SHIFTS ==================
+function shiftHours(s){
+  if (!s || s.unavail || !s.start || !s.end) return 0;
+  const [sh,sm]=s.start.split(':').map(Number);
+  const [eh,em]=s.end.split(':').map(Number);
+  let mins = (eh*60+em) - (sh*60+sm);
+  if (mins < 0) mins += 24*60;
+  return mins/60;
+}
+function autoFillFromShifts(){
+  if (!requireEdit()) return;
+  let raw;
+  try { raw = JSON.parse(localStorage.getItem('shifts.' + BRANCH) || 'null'); } catch(_){}
+  if (!raw || !raw.employees){ alert('해당 지점의 스케줄 데이터가 없습니다.'); return; }
+  const monday = mondayFromWeekKey(WEEK);
+  const dayKeys = []; for (let i=0;i<7;i++){ const d=new Date(monday); d.setDate(monday.getDate()+i); dayKeys.push(fmtKey(d)); }
+  let changed = 0;
+  raw.employees.forEach(emp => {
+    let total = 0;
+    dayKeys.forEach(dk => { const s = (raw.shifts||{})[emp.id+'@'+dk]; total += shiftHours(s); });
+    if (total === 0) return;
+    // find existing row
+    let row = DATA.rows.find(r => _normName(r.name) === _normName(emp.name));
+    if (!row){
+      row = { name: emp.name, hours: null, rate: null, current: 0, memo: '' };
+      DATA.rows.push(row);
+    }
+    row.hours = +total.toFixed(2);
+    if (row.rate != null) row.current = +(row.hours * row.rate).toFixed(2);
+    changed++;
+  });
+  renderRows();
+  showStatus(`✓ ${changed}명 시간 자동 채움`, false);
+}
+
+// ================== FIREBASE SYNC ==================
+function showStatus(msg, isErr){
+  const el = document.getElementById('status');
+  el.textContent = msg; el.className = 'status show' + (isErr?' err':'');
+  clearTimeout(showStatus._t); showStatus._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+function fbKey(){ return 'payroll/' + BRANCH + '/' + WEEK; }
+function prefillFromRoster(){
+  const roster = PAYROLL_ROSTER[BRANCH];
+  if (!roster) return;
+  if (DATA.rows && DATA.rows.length) return; // already has data, don't overwrite
+  DATA.rows = roster.map(r => ({
+    name: r.name, hours: null, rate: r.rate==null?null:r.rate,
+    current: 0, memo: r.memo || ''
+  }));
+}
+function loadReport(){
+  const local = (() => { try { return JSON.parse(localStorage.getItem(fbKey()) || 'null'); } catch(_){ return null; } })();
+  DATA = local || { rows: [], total: 0, sig: '', sigDate: '' };
+  const wasEmpty = !DATA.rows || !DATA.rows.length;
+  if (wasEmpty) prefillFromRoster();
+  renderHeader(); renderRows();
+  // Pull remote — remote은 lastChangedAt가 있으면 무조건 우선 (저장된 데이터)
+  fetch(FB_DB_URL + '/' + fbKey() + '.json?t=' + Date.now(), {cache:'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(remote => {
+      if (!remote || !remote.rows) return;
+      const remoteNewer = (remote.lastChangedAt||0) > (DATA.lastChangedAt||0);
+      // 로컬이 단지 roster prefill 상태면 remote가 어떻든 받기
+      if (remoteNewer || wasEmpty){
+        DATA = remote;
+        localStorage.setItem(fbKey(), JSON.stringify(DATA));
+        renderRows();
+      }
+    }).catch(()=>{});
+  // Pull global owners (for role lookup + me modal)
+  fetch(FB_DB_URL + '/schedules/_global.json?t=' + Date.now(), {cache:'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && d.owners) GLOBAL_OWNERS = d.owners; applyReadonlyMode(); }).catch(()=>{});
+}
+function saveReport(){
+  if (!requireEdit()) return;
+  const me = _meIdentity();
+  if (!DATA.sig) DATA.sig = me ? me.name : '';
+  if (!DATA.sigDate) DATA.sigDate = fmtDate(endOfWeek(WEEK));
+  DATA.lastChangedAt = Date.now();
+  localStorage.setItem(fbKey(), JSON.stringify(DATA));
+  fetch(FB_DB_URL + '/' + fbKey() + '.json', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(DATA)
+  }).then(r => {
+    showStatus(r.ok ? '✓ 저장됨 · ' + BRANCH + ' / ' + WEEK : '저장 실패', !r.ok);
+    if (r.ok){ document.getElementById('syncDot').textContent = '🟢'; renderRows(); }
+  }).catch(() => showStatus('저장 실패 (오프라인)', true));
+}
+function onBranchChange(){
+  BRANCH = document.getElementById('branchSel').value;
+  localStorage.setItem('payroll.branch', BRANCH);
+  loadReport();
+}
+function onWeekChange(){
+  WEEK = document.getElementById('weekInput').value;
+  localStorage.setItem('payroll.week', WEEK);
+  loadReport();
+}
+
+// ================== INIT ==================
+window.addEventListener('storage', e => {
+  if (e.key === 'chat.me') applyReadonlyMode();
+});
+loadReport();
+</script>
+</body>
+</html>
