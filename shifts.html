@@ -131,6 +131,13 @@ button{font-family:inherit;cursor:pointer}
   .shift, .gh.today, .shift-cell.today, .emp-avatar { -webkit-print-color-adjust:exact; print-color-adjust:exact }
 }
 
+/* ===== ACCESS CONTROL (BOSS / MANAGER / ASSISTANT MANAGER만 편집) ===== */
+body.readonly .editor-only { display:none !important; }
+body:not(.readonly) .readonly-only { display:none !important; }
+body.readonly .add-shift { display:none !important; }
+body.readonly .emp-actions button { display:none !important; }
+body.readonly .shift-cell { cursor:default !important; }
+
 /* ===== SHARE-VIEW (single employee read-only) ===== */
 .share-view { max-width:560px; margin:24px auto; padding:18px; background:#fff; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.06) }
 .share-hd { text-align:center; padding:14px 0 10px; border-bottom:2px solid #1a5c3a; margin-bottom:14px }
@@ -161,10 +168,11 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn secondary" onclick="shiftWeek(1)">›</button>
   </div>
   <div class="spacer"></div>
-  <button class="btn secondary" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
-  <button class="btn secondary" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
-  <button class="btn secondary" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
-  <button class="btn" onclick="openEmployeeModal()" data-t="btn_emp">＋ 직원</button>
+  <button class="btn secondary editor-only" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
+  <button class="btn secondary editor-only" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
+  <button class="btn secondary editor-only" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
+  <button class="btn editor-only" onclick="openEmployeeModal()" data-t="btn_emp">＋ 직원</button>
+  <span id="readonlyBadge" class="readonly-only" style="display:none;background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280;border-radius:8px;padding:6px 10px;font-size:.78em;font-weight:600">👁 읽기 전용</span>
   <span id="syncDot" title="" style="margin-left:6px;font-size:1.1em">⚪</span>
   <div class="lang-toggle">
     <button class="lang-btn" data-lang="ko" onclick="setLang('ko')">KO</button>
@@ -455,6 +463,7 @@ function applyLang(){
   document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === LANG));
   document.documentElement.lang = LANG;
   renderBranches();
+  applyReadonlyMode();
   render();
 }
 function setLang(l){
@@ -526,6 +535,36 @@ function saveBranchData(d, opts){
   updateSyncDot('local');
 }
 let DATA = loadBranchData();
+
+// ========= ACCESS CONTROL =========
+// 편집 가능 역할: BOSS/OWNER, MANAGER, ASSISTANT MANAGER (다국어 변형 포함)
+const EDITOR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+  'MANAGER','GERENTE','매니저','점장',
+  'ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','부매니저','GERENTE ASISTENTE'];
+function _meIdentity(){
+  try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
+}
+function canEdit(){
+  var me = _meIdentity();
+  if (!me || !me.role) return false;
+  var r = String(me.role).toUpperCase();
+  return EDITOR_ROLE_TOKENS.some(function(t){ return r.indexOf(t.toUpperCase()) >= 0; });
+}
+function applyReadonlyMode(){
+  document.body.classList.toggle('readonly', !canEdit());
+  var badge = document.getElementById('readonlyBadge');
+  if (badge) badge.style.display = canEdit() ? 'none' : 'inline-block';
+}
+function requireEdit(){
+  if (canEdit()) return true;
+  var me = _meIdentity();
+  if (!me) alert('스케줄을 수정하려면 먼저 채팅에서 본인 이름을 등록하세요.');
+  else alert('스케줄 수정 권한이 없습니다.\n(BOSS / MANAGER / ASSISTANT MANAGER만 가능)\n현재 역할: ' + (me.role || '없음'));
+  return false;
+}
+window.addEventListener('storage', function(e){
+  if (e.key === 'chat.me') applyReadonlyMode();
+});
 
 // ========= GLOBAL (전 지점 공통 OWNER) =========
 // 모든 지점에 같이 표시되는 사람들. 현재는 OWNER만 사용.
@@ -798,6 +837,7 @@ function weekKey(){
 
 // ========= GLOBAL OWNER MODAL (전 지점 공통) =========
 function openGlobalOwnerModal(id){
+  if (!requireEdit()) return;
   var existing = id ? (GLOBAL.owners || []).find(function(o){ return o.id === id; }) : null;
   var defaultName = existing ? existing.name : '';
   var defaultColor = existing ? existing.color : '#fbbf24';
@@ -829,6 +869,7 @@ function openGlobalOwnerModal(id){
 
 // ========= EMPLOYEE MODAL =========
 function openEmployeeModal(id, presetRole){
+  if (!requireEdit()) return;
   editingEmp = id ? DATA.employees.find(e => e.id === id) : null;
   document.getElementById('empModalTitle').textContent = editingEmp ? lt('emp_modal_edit') : lt('emp_modal_title');
   document.getElementById('empName').value = editingEmp ? editingEmp.name : '';
@@ -918,6 +959,7 @@ function deleteEmployee(){
 
 // ========= SHIFT MODAL =========
 function openShiftModal(emp, dateKey, existing){
+  if (!requireEdit()) return;
   editingShift = { empId: emp.id, dateKey };
   document.getElementById('shiftModalTitle').textContent = emp.name;
   document.getElementById('shiftSubtitle').textContent = dateKey;
@@ -980,6 +1022,7 @@ function deleteShift(){
 
 // ========= ROLE MODAL =========
 function openRoleModal(){
+  if (!requireEdit()) return;
   const list = document.getElementById('roleList');
   list.innerHTML = orderedRoles(DATA.roles).map(r => {
     const count = DATA.employees.filter(e => e.role === r).length;
@@ -1012,6 +1055,7 @@ function removeRole(r){
 let importQueue = [];   // [{name, role, target}]
 
 function openImportModal(){
+  if (!requireEdit()) return;
   document.getElementById('importText').value = '';
   document.getElementById('importFile').value = '';
   document.getElementById('importPreview').style.display = 'none';
@@ -1424,6 +1468,7 @@ function shareTextFor(emp){
 }
 
 function openPublishModal(){
+  if (!requireEdit()) return;
   if (DATA.employees.length === 0) { alert(lt('empty_grid')); return; }
   document.querySelector('#publishOverlay [data-t="publish_help"]').innerHTML = lt('publish_help');
   // status banner + main publish button
