@@ -169,15 +169,7 @@ hr.sep{border:0;border-top:1px solid #e5e7eb;margin:18px 0}
 <div id="emailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center;padding:14px">
   <div style="background:#fff;border-radius:14px;padding:20px;max-width:480px;width:100%;max-height:90vh;overflow:auto">
     <h3 style="font-size:1.1em;font-weight:700;margin-bottom:8px">📧 CPA 이메일 발송</h3>
-    <div style="font-size:.84em;color:#6b7280;margin-bottom:14px">받는 사람을 선택하세요. 메일이 자동으로 작성됩니다 (제목·본문 포함). 표 이미지는 별도 다운로드 후 첨부하세요.</div>
-    <div style="margin-bottom:12px">
-      <label style="display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px">발송 방식</label>
-      <select id="emailMethod" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:9px 12px;font-family:inherit">
-        <option value="gmail">Gmail (웹) — 권장</option>
-        <option value="outlook">Outlook (웹)</option>
-        <option value="mailto">기본 메일 앱 (mailto)</option>
-      </select>
-    </div>
+    <div style="font-size:.84em;color:#6b7280;margin-bottom:14px">받는 사람의 <b>발송 버튼</b>(Gmail / Outlook / 기본 메일)을 직접 클릭하세요. 메일 작성 화면이 새 탭으로 열립니다 (제목·본문 자동 채움). 표 이미지는 별도 다운로드 후 첨부하세요.</div>
     <div style="margin-bottom:8px;font-size:.85em;font-weight:700;color:#374151">받는 사람 목록</div>
     <div id="emailList" style="margin-bottom:14px"></div>
     <div style="background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;padding:10px;margin-bottom:12px">
@@ -905,6 +897,17 @@ function emailToCPA(){
   modal.style.display = 'flex';
 }
 function closeEmailModal(){ document.getElementById('emailModal').style.display = 'none'; }
+function buildEmailUrls(toEmail){
+  const { subject, body } = buildMailContent();
+  const qs = 'subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  const to = encodeURIComponent(toEmail);
+  const fromAddr = localStorage.getItem('payroll.fromEmail') || 'info@miamikimchi.com';
+  return {
+    gmail: 'https://mail.google.com/mail/?view=cm&fs=1&authuser=' + encodeURIComponent(fromAddr) + '&to=' + to + '&' + qs,
+    outlook: 'https://outlook.office.com/mail/deeplink/compose?to=' + to + '&' + qs,
+    mailto: 'mailto:' + to + '?' + qs
+  };
+}
 function renderEmailList(){
   const list = loadEmailList();
   const ul = document.getElementById('emailList');
@@ -912,15 +915,30 @@ function renderEmailList(){
     ul.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:20px">저장된 이메일이 없습니다.<br>아래에서 추가하세요.</div>';
     return;
   }
-  ul.innerHTML = list.map((it, i) => `
-    <div style="display:flex;gap:8px;align-items:center;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:6px">
-      <button onclick="sendEmailTo(${i})" style="flex:1;text-align:left;background:#fff;border:0;cursor:pointer;font-family:inherit;padding:0">
-        <div style="font-weight:700;color:#1a5c3a">${escapeAttr(it.label||'(무제)')}</div>
-        <div style="font-size:.85em;color:#6b7280">${escapeAttr(it.email)}</div>
-      </button>
-      <button onclick="deleteEmailEntry(${i})" style="background:transparent;border:0;color:#dc2626;cursor:pointer;font-size:1.1em;padding:4px 8px" title="삭제">✕</button>
-    </div>
-  `).join('');
+  ul.innerHTML = list.map((it, i) => {
+    const u = buildEmailUrls(it.email);
+    return `
+    <div style="padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <div style="flex:1">
+          <div style="font-weight:700;color:#1a5c3a">${escapeAttr(it.label||'(무제)')}</div>
+          <div style="font-size:.85em;color:#6b7280">${escapeAttr(it.email)}</div>
+        </div>
+        <button onclick="deleteEmailEntry(${i})" style="background:transparent;border:0;color:#dc2626;cursor:pointer;font-size:1.1em;padding:4px 8px" title="삭제">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <a href="${u.gmail}" target="_blank" rel="noopener" onclick="onSentClick('${escapeAttr(it.label||it.email)}')" style="flex:1;min-width:90px;text-align:center;background:#dc2626;color:#fff;text-decoration:none;padding:8px 10px;border-radius:6px;font-size:.85em;font-weight:700">📬 Gmail</a>
+        <a href="${u.outlook}" target="_blank" rel="noopener" onclick="onSentClick('${escapeAttr(it.label||it.email)}')" style="flex:1;min-width:90px;text-align:center;background:#0078d4;color:#fff;text-decoration:none;padding:8px 10px;border-radius:6px;font-size:.85em;font-weight:700">📧 Outlook</a>
+        <a href="${u.mailto}" onclick="onSentClick('${escapeAttr(it.label||it.email)}')" style="flex:1;min-width:90px;text-align:center;background:#1a5c3a;color:#fff;text-decoration:none;padding:8px 10px;border-radius:6px;font-size:.85em;font-weight:700">✉️ 기본 메일</a>
+      </div>
+    </div>`;
+  }).join('');
+}
+function onSentClick(label){
+  closeEmailModal();
+  showStatusHTML('📧 ' + label + ' 메일 작성 화면 열림 · ' +
+    '<a href="#" onclick="downloadReportImage();return false;" style="color:#fff;text-decoration:underline;font-weight:700">이미지 다운로드</a>'
+  );
 }
 function addEmailEntry(){
   const lbl = document.getElementById('newEmailLabel').value.trim();
