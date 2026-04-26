@@ -175,6 +175,8 @@ button{font-family:inherit;cursor:pointer}
 
 <div class="page">
 
+  <div id="toast" style="position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:10px 18px;border-radius:20px;font-weight:600;font-size:.92em;z-index:200;display:none;box-shadow:0 4px 14px rgba(0,0,0,.2)"></div>
+
   <div class="summary-bar" id="summaryBar"></div>
 
   <div class="grid-wrap">
@@ -691,12 +693,28 @@ function openEmployeeModal(id, presetRole){
     cp.querySelectorAll('.color-swatch').forEach(s => s.classList.toggle('active', s.dataset.c === e.target.dataset.c));
   };
 
-  document.getElementById('empDeleteBtn').style.display = editingEmp ? '' : 'none';
+  // Reset delete button to its idle state every time the modal opens
+  const dBtn = document.getElementById('empDeleteBtn');
+  dBtn.dataset.armed = '0';
+  dBtn.textContent = lt('btn_delete');
+  dBtn.style.background = '';
+  dBtn.style.display = editingEmp ? '' : 'none';
   document.getElementById('empOverlay').classList.add('show');
 }
+function showToast(msg, color){
+  const t = document.getElementById('toast');
+  if (!t) { console.log(msg); return; }
+  t.textContent = msg;
+  t.style.background = color || '#1a5c3a';
+  t.style.display = 'block';
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(() => { t.style.display = 'none'; }, 2200);
+}
 function saveEmployee(){
+  // Blur any focused input first — iOS soft keyboard can swallow click events
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   const name = document.getElementById('empName').value.trim();
-  if (!name) { alert(lt('lbl_name')); return; }
+  if (!name) { showToast('이름을 입력하세요', '#dc2626'); return; }
   const role = document.getElementById('empRole').value;
   const target = parseInt(document.getElementById('empTarget').value, 10) || 0;
   const color = document.querySelector('#empColors .color-swatch.active')?.dataset.c || COLORS[0];
@@ -710,16 +728,37 @@ function saveEmployee(){
   saveBranchData(DATA);
   closeOverlay('empOverlay');
   render();
+  showToast('✓ ' + name + ' 저장됨');
 }
+let __delConfirmTimer = null;
 function deleteEmployee(){
   if (!editingEmp) return;
-  if (!confirm(lt('confirm_del_emp'))) return;
+  const btn = document.getElementById('empDeleteBtn');
+  if (btn.dataset.armed !== '1') {
+    // First click: arm and ask for second click
+    btn.dataset.armed = '1';
+    const orig = btn.textContent;
+    btn.textContent = '한 번 더 클릭하여 삭제';
+    btn.style.background = '#7f1d1d';
+    clearTimeout(__delConfirmTimer);
+    __delConfirmTimer = setTimeout(() => {
+      btn.dataset.armed = '0';
+      btn.textContent = orig;
+      btn.style.background = '';
+    }, 4000);
+    return;
+  }
+  // Second click: actually delete
+  clearTimeout(__delConfirmTimer);
+  btn.dataset.armed = '0';
+  btn.style.background = '';
+  const name = editingEmp.name;
   DATA.employees = DATA.employees.filter(e => e.id !== editingEmp.id);
-  // also strip their shifts
   Object.keys(DATA.shifts).forEach(k => { if (k.startsWith(editingEmp.id + '@')) delete DATA.shifts[k]; });
   saveBranchData(DATA);
   closeOverlay('empOverlay');
   render();
+  showToast('🗑 ' + name + ' 삭제됨', '#dc2626');
 }
 
 // ========= SHIFT MODAL =========
