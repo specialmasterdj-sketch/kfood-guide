@@ -899,15 +899,35 @@ function toggleType(){
   if (next === 'cash') params.delete('type'); else params.set('type', 'cpa');
   location.href = location.pathname + (params.toString()?'?'+params.toString():'');
 }
-// 이메일 수신자 관리
+// 이메일 수신자 관리 (Firebase 동기화 — 모든 매니저 공통)
 function loadEmailList(){
   try { return JSON.parse(localStorage.getItem('payroll.cpaEmails') || '[]'); } catch(_){ return []; }
   // [{label:'CPA Jaesung', email:'cpa@example.com'}, ...]
 }
 function saveEmailList(list){
   localStorage.setItem('payroll.cpaEmails', JSON.stringify(list));
-  // 호환: 단일 키도 같이 유지
   if (list[0]) localStorage.setItem('payroll.cpaEmail', list[0].email);
+  // Firebase에도 저장 (전 매니저 공유)
+  fetch(FB_DB_URL + '/payroll-emails.json', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({list, lastChangedAt: Date.now()})
+  }).catch(()=>{});
+}
+function fetchEmailListFromFirebase(){
+  return fetch(FB_DB_URL + '/payroll-emails.json?t=' + Date.now(), {cache:'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (d && Array.isArray(d.list)){
+        const local = loadEmailList();
+        const remoteNewer = (d.lastChangedAt||0) >= 0 && (!local.length || JSON.stringify(d.list) !== JSON.stringify(local));
+        if (remoteNewer){
+          localStorage.setItem('payroll.cpaEmails', JSON.stringify(d.list));
+          if (d.list[0]) localStorage.setItem('payroll.cpaEmail', d.list[0].email);
+        }
+        return d.list;
+      }
+      return loadEmailList();
+    }).catch(() => loadEmailList());
 }
 function buildMailContent(){
   const branch = BRANCHES.find(x => x.id === BRANCH) || BRANCHES[0];
@@ -934,10 +954,13 @@ function emailToCPA(){
     list = [{ label:'CPA', email: legacy }];
     saveEmailList(list);
   }
-  // 모달 열기
-  const modal = document.getElementById('emailModal');
+  // 모달 열고 Firebase에서 최신 동기화
+  document.getElementById('emailModal').style.display = 'flex';
   renderEmailList();
-  modal.style.display = 'flex';
+  fetchEmailListFromFirebase().then(remote => {
+    // remote 가 있으면 다시 렌더
+    if (remote && remote.length) renderEmailList();
+  });
 }
 function closeEmailModal(){ document.getElementById('emailModal').style.display = 'none'; }
 function buildEmailUrls(toEmail){
