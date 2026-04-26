@@ -8,6 +8,7 @@
 <meta name="theme-color" content="#1a5c3a">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;font-size:14px}
 button,input,textarea{font-family:inherit}
 a{color:inherit;text-decoration:none}
@@ -109,6 +110,8 @@ a{color:inherit;text-decoration:none}
 .lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:200;align-items:center;justify-content:center;padding:20px;cursor:zoom-out}
 .lightbox.show{display:flex}
 .lightbox img{max-width:100%;max-height:100%;object-fit:contain}
+.lightbox-close{position:absolute;top:14px;right:18px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:2px solid rgba(255,255,255,.7);font-size:24px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:201}
+.lightbox-close:hover{background:rgba(0,0,0,.85)}
 
 /* Mobile overrides — placed last so they win the cascade */
 @media(max-width:760px){
@@ -131,6 +134,8 @@ a{color:inherit;text-decoration:none}
     <div class="av" id="meAv">?</div>
     <span id="meName">이름 선택</span>
   </button>
+  <button onclick="resetCache()" title="캐시 초기화" style="background:transparent;border:0;font-size:1.1em;cursor:pointer;padding:0 4px;color:#9ca3af">🔄</button>
+  <span style="font-size:.65em;color:#9ca3af;font-weight:600">v11</span>
 </div>
 
 <div class="shell">
@@ -215,8 +220,9 @@ a{color:inherit;text-decoration:none}
   </div>
 </div>
 
-<div class="lightbox" id="lightbox" onclick="this.classList.remove('show')">
-  <img id="lightboxImg" alt="">
+<div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
+  <button class="lightbox-close" type="button" aria-label="닫기" onclick="event.stopPropagation();closeLightbox()">✕</button>
+  <img id="lightboxImg" alt="" onclick="event.stopPropagation()">
 </div>
 
 <script type="module">
@@ -673,10 +679,29 @@ async function deleteMessage(msgId){
 }
 
 // ============ LIGHTBOX ============
+// PWA에서 사진 열고 뒤로가기/창닫기 누르면 앱이 통째로 꺼지는 문제 방지:
+// 라이트박스 열 때 history.pushState로 한 칸 추가해서, 뒤로가기/제스처가 라이트박스만 닫게 함.
 function openLightbox(url){
   document.getElementById('lightboxImg').src = url;
   document.getElementById('lightbox').classList.add('show');
+  if (history.state && history.state.lightbox) return; // already open
+  history.pushState({lightbox:true}, '');
 }
+function closeLightbox(e){
+  if (e && e.target && e.target.id !== 'lightbox' && !e.target.classList.contains('lightbox-close')) return;
+  var lb = document.getElementById('lightbox');
+  if (!lb.classList.contains('show')) return;
+  lb.classList.remove('show');
+  document.getElementById('lightboxImg').src = '';
+  if (history.state && history.state.lightbox) history.back(); // consume the pushed state
+}
+window.addEventListener('popstate', function(){
+  var lb = document.getElementById('lightbox');
+  if (lb && lb.classList.contains('show')){
+    lb.classList.remove('show');
+    document.getElementById('lightboxImg').src = '';
+  }
+});
 
 // ============ MISC ============
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -695,6 +720,7 @@ window.removeAttach = removeAttach;
 window.autoGrow = autoGrow;
 window.sendMessage = sendMessage;
 window.openLightbox = openLightbox;
+window.closeLightbox = closeLightbox;
 window.deleteMessage = deleteMessage;
 window.closeOverlay = closeOverlay;
 
