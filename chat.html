@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>김치마트 — 채팅</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;height:100vh;display:flex;flex-direction:column;overflow:hidden;font-size:14px}
+button,input,textarea{font-family:inherit}
+a{color:inherit;text-decoration:none}
+
+/* TOP BAR */
+.topbar{background:#fff;border-bottom:1px solid #e5e7eb;padding:8px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.back{background:transparent;border:0;font-size:1.3em;color:#6b7280;padding:0 4px}
+.brand{font-weight:800;color:#1a5c3a;display:flex;align-items:center;gap:8px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900}
+.spacer{flex:1}
+.me-pill{background:#f0fdf4;color:#1a5c3a;border:1px solid #bbf7d0;border-radius:20px;padding:5px 12px;font-size:.78em;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px}
+.me-pill .av{width:22px;height:22px;border-radius:50%;background:#1a5c3a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:.7em;font-weight:700}
+
+/* LAYOUT */
+.shell{flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0}
+@media(max-width:760px){
+  .shell{grid-template-columns:1fr}
+  .rooms{display:none;position:absolute;inset:0;background:#fff;z-index:30}
+  .rooms.show{display:flex}
+  .topbar .menu{display:block}
+}
+.menu{display:none;background:transparent;border:0;font-size:1.3em;color:#1a5c3a;padding:0 4px}
+
+/* ROOMS SIDEBAR */
+.rooms{background:#fff;border-right:1px solid #e5e7eb;display:flex;flex-direction:column;min-height:0}
+.rooms-h{padding:12px 14px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between}
+.rooms-h h2{font-size:1em;font-weight:700}
+.rooms-h .add{background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:4px 8px;font-size:.78em;font-weight:600;cursor:pointer}
+.rooms-list{flex:1;overflow-y:auto;padding:6px 0}
+.room-item{padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;border-left:3px solid transparent}
+.room-item:hover{background:#f9fafb}
+.room-item.active{background:#f0fdf4;border-left-color:#1a5c3a}
+.room-item .icon{width:36px;height:36px;border-radius:50%;background:#dbeafe;color:#1d4ed8;display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0}
+.room-item .info{flex:1;min-width:0}
+.room-item .nm{font-size:.9em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.room-item .last{font-size:.75em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.room-item .un{background:#dc2626;color:#fff;border-radius:10px;font-size:.7em;padding:1px 7px;font-weight:700;margin-left:auto}
+
+/* CHAT MAIN */
+.chat{display:flex;flex-direction:column;min-height:0;background:#eff6ff}
+.chat-h{background:#fff;border-bottom:1px solid #e5e7eb;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.chat-h .icon{width:38px;height:38px;border-radius:50%;background:#dbeafe;color:#1d4ed8;display:flex;align-items:center;justify-content:center;font-size:1.1em}
+.chat-h .info{flex:1;min-width:0}
+.chat-h .nm{font-weight:700;font-size:1em}
+.chat-h .meta{font-size:.78em;color:#9ca3af}
+
+.msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{display:flex;gap:10px;max-width:85%}
+.msg .av{width:36px;height:36px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.8em;flex-shrink:0}
+.msg .body{background:#fff;border-radius:14px;padding:8px 12px;box-shadow:0 1px 1px rgba(0,0,0,.04);min-width:80px}
+.msg .body .who{font-size:.8em;font-weight:700;color:#1a5c3a;margin-bottom:2px}
+.msg .body .text{font-size:.92em;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.msg .body .ts{font-size:.7em;color:#9ca3af;margin-top:4px;text-align:right}
+.msg.mine{align-self:flex-end;flex-direction:row-reverse}
+.msg.mine .body{background:#dcfce7}
+.msg.mine .who{color:#15803d}
+
+.photo-grid{display:grid;gap:4px;margin-top:6px;border-radius:8px;overflow:hidden}
+.photo-grid.n1{grid-template-columns:1fr;max-width:300px}
+.photo-grid.n2{grid-template-columns:repeat(2,1fr);max-width:300px}
+.photo-grid.n3,.photo-grid.n4{grid-template-columns:repeat(2,1fr);max-width:300px}
+.photo-grid.n5,.photo-grid.n6{grid-template-columns:repeat(3,1fr);max-width:330px}
+.photo-grid img{width:100%;height:120px;object-fit:cover;cursor:pointer;background:#e5e7eb;display:block}
+.photo-grid.n1 img{height:auto;max-height:300px}
+
+.day-divider{align-self:center;background:#e5e7eb;color:#374151;border-radius:12px;padding:3px 12px;font-size:.74em;margin:6px 0}
+
+/* COMPOSER */
+.composer{background:#fff;border-top:1px solid #e5e7eb;padding:10px;display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+.composer .attach{background:#f4f6f9;border:0;border-radius:50%;width:42px;height:42px;font-size:1.3em;cursor:pointer;flex-shrink:0}
+.composer .field{flex:1;display:flex;flex-direction:column;gap:6px}
+.composer textarea{border:1px solid #e5e7eb;border-radius:14px;padding:10px 14px;font-size:.95em;resize:none;width:100%;outline:none;font-family:inherit;line-height:1.4}
+.composer textarea:focus{border-color:#1a5c3a}
+.composer .send{background:#1a5c3a;color:#fff;border:0;border-radius:50%;width:42px;height:42px;font-size:1.2em;cursor:pointer;flex-shrink:0}
+.composer .send:disabled{background:#9ca3af;cursor:not-allowed}
+.composer input[type=file]{display:none}
+.previews{display:flex;gap:6px;flex-wrap:wrap}
+.previews .pv{position:relative;width:60px;height:60px;border-radius:8px;overflow:hidden;background:#e5e7eb}
+.previews .pv img{width:100%;height:100%;object-fit:cover}
+.previews .pv .x{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border:0;border-radius:50%;width:18px;height:18px;font-size:.7em;cursor:pointer}
+
+.empty-chat{flex:1;display:flex;align-items:center;justify-content:center;color:#9ca3af;text-align:center;padding:20px;font-size:.92em}
+.upload-status{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:8px 16px;border-radius:20px;font-size:.85em;z-index:50;box-shadow:0 2px 10px rgba(0,0,0,.2);display:none}
+.upload-status.show{display:block}
+
+/* MODALS */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:center;justify-content:center;padding:14px}
+.overlay.show{display:flex}
+.modal{background:#fff;border-radius:14px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto}
+.modal h3{font-size:1.1em;font-weight:700;margin-bottom:14px}
+.field-row{margin-bottom:12px}
+.field-row label{display:block;font-size:.78em;font-weight:600;color:#374151;margin-bottom:4px}
+.field-row input,.field-row select{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:9px 12px;font-size:.95em}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.btn{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 16px;font-size:.9em;font-weight:600;cursor:pointer}
+.btn.secondary{background:#fff;color:#1a5c3a;border:1px solid #1a5c3a}
+
+.lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:200;align-items:center;justify-content:center;padding:20px;cursor:zoom-out}
+.lightbox.show{display:flex}
+.lightbox img{max-width:100%;max-height:100%;object-fit:contain}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="back" onclick="location.href='hub.html'">←</button>
+  <button class="menu" onclick="document.querySelector('.rooms').classList.add('show')">☰</button>
+  <div class="brand"><div class="logo">K</div><span>채팅</span></div>
+  <div class="spacer"></div>
+  <button class="me-pill" id="mePill" onclick="openMeModal()">
+    <div class="av" id="meAv">?</div>
+    <span id="meName">이름 선택</span>
+  </button>
+</div>
+
+<div class="shell">
+  <aside class="rooms" id="roomsBar">
+    <div class="rooms-h">
+      <h2>채팅방</h2>
+      <button class="add" onclick="openRoomModal()">＋ 새 방</button>
+    </div>
+    <div class="rooms-list" id="roomsList"></div>
+  </aside>
+
+  <main class="chat">
+    <div class="chat-h" id="chatHead">
+      <div class="icon">💬</div>
+      <div class="info">
+        <div class="nm">방을 선택하세요</div>
+        <div class="meta">왼쪽에서 채팅방 클릭</div>
+      </div>
+    </div>
+    <div class="msgs" id="msgs">
+      <div class="empty-chat">왼쪽에서 채팅방을 선택하면 메시지가 여기 나타납니다.</div>
+    </div>
+    <div class="composer" id="composer" style="display:none">
+      <button class="attach" onclick="document.getElementById('fileInput').click()" title="사진 첨부">📎</button>
+      <input type="file" id="fileInput" accept="image/*" multiple capture="environment" onchange="handleFiles(event)">
+      <div class="field">
+        <div class="previews" id="previews"></div>
+        <textarea id="msgInput" rows="1" placeholder="메시지 입력…" oninput="autoGrow(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+      </div>
+      <button class="send" id="sendBtn" onclick="sendMessage()">➤</button>
+    </div>
+  </main>
+</div>
+
+<div class="upload-status" id="uploadStatus"></div>
+
+<!-- ME MODAL -->
+<div class="overlay" id="meOverlay">
+  <div class="modal">
+    <h3>본인 이름 선택</h3>
+    <div style="font-size:.85em;color:#6b7280;margin-bottom:12px">
+      모든 메시지/사진에 이 이름이 표시됩니다.
+    </div>
+    <div class="field-row">
+      <label>지점</label>
+      <select id="meBranch" onchange="renderMeNames()"></select>
+    </div>
+    <div class="field-row">
+      <label>이름</label>
+      <select id="meName_select"></select>
+    </div>
+    <div class="field-row">
+      <label>또는 직접 입력 (스케줄에 없는 경우)</label>
+      <input type="text" id="meCustom" placeholder="이름을 입력">
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('meOverlay')">취소</button>
+      <button class="btn" onclick="saveMe()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW ROOM MODAL -->
+<div class="overlay" id="roomOverlay">
+  <div class="modal">
+    <h3>새 채팅방</h3>
+    <div class="field-row">
+      <label>방 이름</label>
+      <input type="text" id="roomName" placeholder="예) PRODUCE EVALUATION">
+    </div>
+    <div class="field-row">
+      <label>설명 (선택)</label>
+      <input type="text" id="roomDesc" placeholder="예) 야채 진열 사진 평가용">
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('roomOverlay')">취소</button>
+      <button class="btn" onclick="createRoom()">방 만들기</button>
+    </div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox" onclick="this.classList.remove('show')">
+  <img id="lightboxImg" alt="">
+</div>
+
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, push, set, update } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const firebaseConfig = {
+    apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+    authDomain: "kimchi-mart-order.firebaseapp.com",
+    databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+    projectId: "kimchi-mart-order",
+    storageBucket: "kimchi-mart-order.firebasestorage.app",
+    messagingSenderId: "640942647201",
+    appId: "1:640942647201:web:1e3421fb55c89155230de0"
+  };
+  const app = initializeApp(firebaseConfig);
+  window.__fb = { db: getDatabase(app), ref, onValue, push, set, update };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<script>
+// ============ STATE ============
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
+
+const BRANCHES = [
+  { id:'MIAMI',         ko:'마이애미' },
+  { id:'PEMBROKE_PINES',ko:'펨브로크 파인즈' },
+  { id:'HOLLYWOOD',     ko:'할리우드' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스' },
+  { id:'LASOLAS',       ko:'라스올라스' },
+  { id:'WEST_PALM',     ko:'웨스트 팜 비치' },
+];
+const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
+
+const COLORS = ['#22c55e','#3b82f6','#a855f7','#ec4899','#f59e0b','#ef4444','#06b6d4','#0ea5e9','#84cc16','#f97316'];
+function colorFor(name){
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return COLORS[Math.abs(h) % COLORS.length];
+}
+function initialsOf(name){ return (name || '?').split(/\s+/).map(w => w[0] || '').join('').slice(0,2).toUpperCase(); }
+
+// ME (current user)
+let me = (function(){
+  try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
+})();
+
+// Rooms + active room
+let ROOMS = {};            // { roomId: { name, desc, lastMsg, lastTs, unread } }
+let ACTIVE_ROOM = localStorage.getItem('chat.activeRoom') || null;
+let MSGS = [];             // current room's messages
+let ATTACH = [];           // composer attachments [{dataUrl, blob}]
+let __unsubMsgs = null;
+
+// ============ DEFAULT ROOMS ============
+const DEFAULT_ROOMS = [
+  { id:'general', name:'전체 공지', desc:'모든 지점 공통', icon:'📢' },
+  { id:'managers', name:'매니저 룸', desc:'매니저 전용', icon:'👔' },
+  { id:'produce', name:'PRODUCE EVALUATION', desc:'야채 진열 사진 평가', icon:'🥬' },
+  { id:'meat', name:'MEAT DEPT', desc:'정육 부서', icon:'🥩' },
+  { id:'sushi', name:'SUSHI / KITCHEN', desc:'스시 / 키친', icon:'🍱' },
+];
+const ROOM_ICONS = {general:'📢', managers:'👔', produce:'🥬', meat:'🥩', sushi:'🍱'};
+function roomIconFor(id, name){
+  if (ROOM_ICONS[id]) return ROOM_ICONS[id];
+  // hash name -> emoji
+  const pool = ['💬','📷','🛒','🏪','🍞','🐟','🧺','🧹','📦','🚚','📋','🔥','⚡','🎯','🎉'];
+  let h = 0; for (let i=0;i<name.length;i++) h = (h*31+name.charCodeAt(i))|0;
+  return pool[Math.abs(h) % pool.length];
+}
+
+// ============ ME ============
+function ensureMe(){
+  if (!me || !me.name) {
+    openMeModal();
+    return false;
+  }
+  return true;
+}
+function openMeModal(){
+  const bSel = document.getElementById('meBranch');
+  bSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}" ${me?.branch===b.id?'selected':''}>${b.ko}</option>`).join('');
+  document.getElementById('meCustom').value = me?.name || '';
+  renderMeNames();
+  document.getElementById('meOverlay').classList.add('show');
+}
+function renderMeNames(){
+  const branchId = document.getElementById('meBranch').value;
+  let employees = [];
+  try {
+    const data = JSON.parse(localStorage.getItem('shifts.' + branchId) || 'null');
+    if (data && data.employees) employees = data.employees;
+  } catch(e){}
+  // Also pull from Firebase REST as a fallback
+  if (employees.length === 0) {
+    fetch(`${FB_DB_URL}/schedules/${branchId}.json`).then(r => r.json()).then(d => {
+      if (d && d.employees) {
+        employees = d.employees;
+        renderMeNamesList(employees, branchId);
+      }
+    }).catch(()=>{});
+  }
+  renderMeNamesList(employees, branchId);
+}
+function renderMeNamesList(employees, branchId){
+  const sel = document.getElementById('meName_select');
+  sel.innerHTML = '<option value="">— 직접 입력 —</option>' +
+    employees.map(e => `<option value="${e.name}" ${me?.name===e.name?'selected':''}>${e.name} (${e.role||''})</option>`).join('');
+  sel.onchange = () => {
+    if (sel.value) document.getElementById('meCustom').value = sel.value;
+  };
+}
+function saveMe(){
+  const branchId = document.getElementById('meBranch').value;
+  const fromSel = document.getElementById('meName_select').value;
+  const fromCustom = document.getElementById('meCustom').value.trim();
+  const name = fromCustom || fromSel;
+  if (!name) { alert('이름을 입력하거나 선택하세요'); return; }
+  me = { name, branch: branchId, color: colorFor(name) };
+  localStorage.setItem('chat.me', JSON.stringify(me));
+  refreshMePill();
+  closeOverlay('meOverlay');
+  if (ACTIVE_ROOM) document.getElementById('composer').style.display = '';
+}
+function refreshMePill(){
+  if (!me) return;
+  document.getElementById('meAv').textContent = initialsOf(me.name);
+  document.getElementById('meAv').style.background = me.color || '#1a5c3a';
+  const branch = BRANCH_BY_ID[me.branch];
+  document.getElementById('meName').textContent = me.name + (branch ? ' · ' + branch.ko : '');
+}
+
+// ============ ROOMS ============
+function renderRooms(){
+  const list = document.getElementById('roomsList');
+  const items = Object.entries(ROOMS).sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
+  if (items.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">방이 없습니다.<br>＋ 버튼으로 만드세요.</div>';
+    return;
+  }
+  list.innerHTML = items.map(([id, r]) => {
+    const active = id === ACTIVE_ROOM ? ' active' : '';
+    const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
+    return `<div class="room-item${active}" onclick="openRoom('${id}')">
+      <div class="icon">${roomIconFor(id, r.name)}</div>
+      <div class="info">
+        <div class="nm">${escapeHtml(r.name)}</div>
+        <div class="last">${escapeHtml(r.lastMsg || r.desc || '')} ${lastTime ? '· '+lastTime : ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function ensureDefaultRooms(){
+  if (!window.__fb) return;
+  const { db, ref, set } = window.__fb;
+  for (const r of DEFAULT_ROOMS) {
+    if (!ROOMS[r.id]) {
+      ROOMS[r.id] = { name: r.name, desc: r.desc };
+      set(ref(db, 'chat/rooms/' + r.id), { name:r.name, desc:r.desc, created: Date.now() }).catch(()=>{});
+    }
+  }
+  renderRooms();
+}
+function openRoomModal(){
+  document.getElementById('roomName').value = '';
+  document.getElementById('roomDesc').value = '';
+  document.getElementById('roomOverlay').classList.add('show');
+}
+function createRoom(){
+  const name = document.getElementById('roomName').value.trim();
+  if (!name) return;
+  const desc = document.getElementById('roomDesc').value.trim();
+  const id = name.toLowerCase().replace(/[^a-z0-9가-힣]+/g,'_').slice(0,30) || 'room_' + Date.now();
+  ROOMS[id] = { name, desc };
+  if (window.__fb) {
+    const { db, ref, set } = window.__fb;
+    set(ref(db, 'chat/rooms/' + id), { name, desc, created: Date.now() });
+  }
+  closeOverlay('roomOverlay');
+  renderRooms();
+  openRoom(id);
+}
+function openRoom(id){
+  ACTIVE_ROOM = id;
+  localStorage.setItem('chat.activeRoom', id);
+  const r = ROOMS[id];
+  document.getElementById('chatHead').innerHTML = `
+    <div class="icon">${roomIconFor(id, r.name)}</div>
+    <div class="info">
+      <div class="nm">${escapeHtml(r.name)}</div>
+      <div class="meta">${escapeHtml(r.desc || '')}</div>
+    </div>`;
+  document.getElementById('composer').style.display = me ? '' : 'none';
+  document.querySelector('.rooms').classList.remove('show');
+  subscribeMessages(id);
+  renderRooms();
+}
+
+// ============ MESSAGES ============
+function subscribeMessages(roomId){
+  if (__unsubMsgs) { try { __unsubMsgs(); } catch(e){} __unsubMsgs = null; }
+  if (!window.__fb) {
+    // REST fallback for one-shot
+    fetch(`${FB_DB_URL}/chat/messages/${roomId}.json`).then(r => r.json()).then(d => {
+      MSGS = msgsFromObj(d);
+      renderMessages();
+    });
+    return;
+  }
+  const { db, ref, onValue } = window.__fb;
+  __unsubMsgs = onValue(ref(db, 'chat/messages/' + roomId), snap => {
+    MSGS = msgsFromObj(snap.val());
+    renderMessages();
+  });
+}
+function msgsFromObj(d){
+  if (!d) return [];
+  return Object.entries(d).map(([id, m]) => Object.assign({ id }, m)).sort((a,b) => (a.ts||0) - (b.ts||0));
+}
+function renderMessages(){
+  const cont = document.getElementById('msgs');
+  if (MSGS.length === 0) {
+    cont.innerHTML = `<div class="empty-chat">아직 메시지가 없습니다.<br>첫 메시지를 보내보세요!</div>`;
+    return;
+  }
+  let html = '';
+  let lastDay = '';
+  for (const m of MSGS) {
+    const d = new Date(m.ts || 0);
+    const dayKey = d.toLocaleDateString();
+    if (dayKey !== lastDay) {
+      html += `<div class="day-divider">${dayLabel(d)}</div>`;
+      lastDay = dayKey;
+    }
+    const mine = me && m.sender === me.name && m.senderBranch === me.branch;
+    const branch = BRANCH_BY_ID[m.senderBranch];
+    const branchTxt = branch ? ' · ' + branch.ko : '';
+    const time = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    const photoHtml = (m.photos && m.photos.length)
+      ? `<div class="photo-grid n${Math.min(m.photos.length,6)}">${m.photos.map(u => `<img src="${u}" onclick="openLightbox('${u}')">`).join('')}</div>`
+      : '';
+    html += `<div class="msg ${mine?'mine':''}">
+      <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
+      <div class="body">
+        <div class="who">${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}</div>
+        ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
+        ${photoHtml}
+        <div class="ts">${time}</div>
+      </div>
+    </div>`;
+  }
+  cont.innerHTML = html;
+  cont.scrollTop = cont.scrollHeight;
+}
+function dayLabel(d){
+  const t = new Date();
+  const today = t.toDateString();
+  const yest = new Date(t.getTime() - 86400000).toDateString();
+  if (d.toDateString() === today) return '오늘';
+  if (d.toDateString() === yest) return '어제';
+  return d.toLocaleDateString();
+}
+
+// ============ COMPOSER ============
+function autoGrow(t){
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 120) + 'px';
+}
+async function handleFiles(ev){
+  const files = Array.from(ev.target.files || []);
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue;
+    const compressed = await compressImage(f);
+    ATTACH.push(compressed);
+  }
+  ev.target.value = '';
+  renderPreviews();
+}
+function renderPreviews(){
+  const wrap = document.getElementById('previews');
+  wrap.innerHTML = ATTACH.map((a, i) => `
+    <div class="pv"><img src="${a.dataUrl}"><button class="x" onclick="removeAttach(${i})">✕</button></div>
+  `).join('');
+}
+function removeAttach(i){ ATTACH.splice(i, 1); renderPreviews(); }
+
+// Client-side image compression — target ~150KB JPEG, max 1280px
+function compressImage(file){
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const maxDim = 1280;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > maxDim || h > maxDim) {
+        const r = Math.min(maxDim/w, maxDim/h);
+        w = Math.round(w*r); h = Math.round(h*r);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      c.toBlob(blob => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ dataUrl: reader.result, blob });
+        reader.readAsDataURL(blob);
+      }, 'image/jpeg', 0.78);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ dataUrl: '', blob: null }); };
+    img.src = url;
+  });
+}
+
+async function uploadPhoto(blob, roomId, msgId, idx){
+  const path = `chat/${roomId}/${msgId}/${idx}.jpg`;
+  const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`;
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+  if (!r.ok) throw new Error('upload failed: ' + r.status);
+  const meta = await r.json();
+  // Public download URL
+  return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+}
+
+function showStatus(msg){
+  const el = document.getElementById('uploadStatus');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+function hideStatus(){ document.getElementById('uploadStatus').classList.remove('show'); }
+
+async function sendMessage(){
+  if (!ensureMe()) return;
+  if (!ACTIVE_ROOM) return;
+  const text = document.getElementById('msgInput').value.trim();
+  if (!text && ATTACH.length === 0) return;
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+
+  const ts = Date.now();
+  const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  const msg = {
+    sender: me.name,
+    senderBranch: me.branch,
+    color: me.color || colorFor(me.name),
+    text,
+    ts,
+    photos: []
+  };
+
+  try {
+    if (ATTACH.length > 0) {
+      showStatus(`사진 업로드 중... 0 / ${ATTACH.length}`);
+      for (let i = 0; i < ATTACH.length; i++) {
+        const url = await uploadPhoto(ATTACH[i].blob, ACTIVE_ROOM, msgId, i);
+        msg.photos.push(url);
+        showStatus(`사진 업로드 중... ${i+1} / ${ATTACH.length}`);
+      }
+      hideStatus();
+    }
+    // Save message via REST (works whether or not SDK loaded)
+    await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${msgId}.json`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(msg)
+    });
+    // Update room lastMsg
+    const lastMsg = msg.text ? msg.text : (msg.photos.length ? `📷 사진 ${msg.photos.length}장` : '');
+    await fetch(`${FB_DB_URL}/chat/rooms/${ACTIVE_ROOM}.json`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg, lastTs: ts, lastSender: me.name })
+    });
+    document.getElementById('msgInput').value = '';
+    document.getElementById('msgInput').style.height = 'auto';
+    ATTACH = [];
+    renderPreviews();
+  } catch(e) {
+    hideStatus();
+    alert('전송 실패: ' + e.message);
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+// ============ LIGHTBOX ============
+function openLightbox(url){
+  document.getElementById('lightboxImg').src = url;
+  document.getElementById('lightbox').classList.add('show');
+}
+
+// ============ MISC ============
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
+document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
+
+// expose
+window.openMeModal = openMeModal;
+window.saveMe = saveMe;
+window.renderMeNames = renderMeNames;
+window.openRoomModal = openRoomModal;
+window.createRoom = createRoom;
+window.openRoom = openRoom;
+window.handleFiles = handleFiles;
+window.removeAttach = removeAttach;
+window.autoGrow = autoGrow;
+window.sendMessage = sendMessage;
+window.openLightbox = openLightbox;
+window.closeOverlay = closeOverlay;
+
+// ============ INIT ============
+function loadRoomsRest(){
+  fetch(`${FB_DB_URL}/chat/rooms.json`).then(r => r.json()).then(d => {
+    if (d) {
+      Object.entries(d).forEach(([id, r]) => { ROOMS[id] = Object.assign(ROOMS[id]||{}, r); });
+    }
+    ensureDefaultRooms();
+    renderRooms();
+    if (ACTIVE_ROOM && ROOMS[ACTIVE_ROOM]) openRoom(ACTIVE_ROOM);
+  }).catch(() => {
+    // load just defaults
+    DEFAULT_ROOMS.forEach(r => { ROOMS[r.id] = { name: r.name, desc: r.desc }; });
+    renderRooms();
+    if (ACTIVE_ROOM && ROOMS[ACTIVE_ROOM]) openRoom(ACTIVE_ROOM);
+  });
+}
+function subscribeRooms(){
+  if (!window.__fb) { loadRoomsRest(); return; }
+  const { db, ref, onValue } = window.__fb;
+  onValue(ref(db, 'chat/rooms'), snap => {
+    const d = snap.val() || {};
+    Object.entries(d).forEach(([id, r]) => { ROOMS[id] = Object.assign(ROOMS[id]||{}, r); });
+    ensureDefaultRooms();
+    renderRooms();
+    if (ACTIVE_ROOM && ROOMS[ACTIVE_ROOM] && !document.getElementById('composer').style.display) {
+      // rooms loaded after page mount — open the previously active one
+      openRoom(ACTIVE_ROOM);
+    }
+  });
+}
+
+window.addEventListener('fb-ready', () => { subscribeRooms(); });
+setTimeout(() => { if (!window.__fb) loadRoomsRest(); }, 2500);
+
+if (me) refreshMePill();
+loadRoomsRest();   // immediate REST kick
+if (!me) openMeModal();
+</script>
+
+</body>
+</html>
