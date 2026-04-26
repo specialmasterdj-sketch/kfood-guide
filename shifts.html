@@ -1418,8 +1418,18 @@ function syncSubscribeBranch(){
     if (!remote) { updateSyncDot('synced'); return; }
     const sig = JSON.stringify(remote);
     if (sig === __lastFbSnapshot) return;   // echo of our own write
-    // remote-wins if remote is newer
-    if ((remote.lastChangedAt || 0) > (DATA.lastChangedAt || 0)) {
+    // Apply remote if newer OR if local is empty (fresh page-load against a populated branch)
+    const localEmpty = !DATA.employees || DATA.employees.length === 0;
+    const remoteNewer = (remote.lastChangedAt || 0) > (DATA.lastChangedAt || 0);
+    const remoteHasData = (remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length);
+    if (localEmpty && remoteHasData) {
+      __suppressFbWrite = true;
+      DATA = Object.assign(emptyData(), remote);
+      localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
+      __suppressFbWrite = false;
+      __lastFbSnapshot = sig;
+      render();
+    } else if (remoteNewer) {
       __suppressFbWrite = true;
       DATA = Object.assign(emptyData(), remote);
       localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
