@@ -466,15 +466,51 @@ function openMeModal(){
   document.getElementById('meOverlay').style.display = 'flex';
 }
 function closeMeModal(){ document.getElementById('meOverlay').style.display = 'none'; }
+function _renderMeNamesOptions(emps, owners){
+  const nsel = document.getElementById('meModalName');
+  if (!nsel) return;
+  const all = (owners||[]).map(o => Object.assign({}, o, {role:'OWNER'}))
+    .concat(emps||[]).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const me = _meIdentity();
+  nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(e =>
+    `<option value="${escapeAttr(e.name)}" data-role="${escapeAttr(e.role||'')}" ${me && me.name===e.name?'selected':''}>${e.name}${e.role?' ('+e.role+')':''}</option>`).join('');
+}
 function populateMeNames(){
   const branchId = document.getElementById('meModalBranch').value;
-  const nsel = document.getElementById('meModalName');
   let emps = [];
   try { const raw = localStorage.getItem('shifts.' + branchId); if (raw) emps = JSON.parse(raw).employees || []; } catch(_){}
-  const owners = (GLOBAL_OWNERS||[]).map(o => Object.assign({}, o, {role:'OWNER'}));
-  const all = owners.concat(emps).sort((a,b) => (a.name||'').localeCompare(b.name||''));
-  nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(e =>
-    `<option value="${e.name}" data-role="${e.role||''}">${e.name}${e.role?' ('+e.role+')':''}</option>`).join('');
+  let owners = (GLOBAL_OWNERS||[]).slice();
+  // 로컬 글로벌 owners가 비어있으면 캐시 시도
+  if (!owners.length){
+    try { const g = JSON.parse(localStorage.getItem('shifts.global') || 'null'); if (g && g.owners) owners = g.owners; } catch(_){}
+  }
+  _renderMeNamesOptions(emps, owners);
+  // 로컬에 직원 데이터 없으면 Firebase에서 가져와서 다시 렌더
+  if (!emps.length){
+    fetch(FB_DB_URL + '/schedules/' + branchId + '.json?t=' + Date.now(), {cache:'no-store'})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d && d.employees){
+          try { localStorage.setItem('shifts.' + branchId, JSON.stringify(d)); } catch(_){}
+          _renderMeNamesOptions(d.employees, owners);
+        }
+      }).catch(()=>{});
+  }
+  // 글로벌 owners도 비었으면 가져오기
+  if (!owners.length){
+    fetch(FB_DB_URL + '/schedules/_global.json?t=' + Date.now(), {cache:'no-store'})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d && d.owners){
+          GLOBAL_OWNERS = d.owners;
+          try { localStorage.setItem('shifts.global', JSON.stringify(d)); } catch(_){}
+          // re-fetch latest emps
+          let curEmps = [];
+          try { const raw = localStorage.getItem('shifts.' + branchId); if (raw) curEmps = JSON.parse(raw).employees || []; } catch(_){}
+          _renderMeNamesOptions(curEmps, d.owners);
+        }
+      }).catch(()=>{});
+  }
 }
 function lookupRoleFor(name, branchId){
   if (!name) return null;
