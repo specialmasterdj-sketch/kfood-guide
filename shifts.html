@@ -212,11 +212,19 @@ button{font-family:inherit;cursor:pointer}
       <textarea id="importText" rows="10" style="font-family:'Consolas',monospace;font-size:.85em" placeholder="Mirna Montoya, CASHIER/STOCKER, 40&#10;Cristian Cortes, CASHIER/STOCKER, 38&#10;Neall Aouad, SUSHI/KITCHEN, 60&#10;Yamile Murga&#10;..."></textarea>
     </div>
     <div class="field">
-      <label data-t="import_xlsx">엑셀 / CSV 파일 업로드</label>
+      <label data-t="import_xlsx">엑셀 / CSV 파일 업로드 (직원 또는 시프트)</label>
       <input type="file" id="importFile" accept=".xlsx,.xls,.csv" onchange="parseImportFile(event)">
       <div style="font-size:.75em;color:#9ca3af;margin-top:4px" data-t="import_xlsx_hint">
-        첫 행이 헤더면 자동 감지 (이름·name·역할·role·시간·hours·hrs·target 컬럼).
+        직원 목록: 이름·역할·시간 컬럼 자동 감지.<br>
+        Connecteam 시프트 export: 이름·날짜·시작·종료·포지션 자동 감지 → 직원 + 시프트 한 번에 생성.
       </div>
+    </div>
+    <div class="field" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px">
+      <label style="color:#92400e" data-t="import_seed_lbl">🏢 Connecteam 스크린샷 데이터 (이번 주)</label>
+      <div style="font-size:.78em;color:#92400e;margin-bottom:6px" data-t="import_seed_help">
+        제공된 Hollywood 화면의 11명 + 이번 주 시프트를 즉시 시드합니다 (현재 지점에 적용).
+      </div>
+      <button class="btn secondary" onclick="seedHollywood()" data-t="btn_seed">🏢 Hollywood 샘플 적용</button>
     </div>
     <div class="field">
       <label><input type="checkbox" id="importSkipDup" checked> <span data-t="import_skip_dup">같은 이름 직원은 건너뛰기</span></label>
@@ -311,6 +319,11 @@ const T = {
   import_added:    {ko:'명 추가됨',             en:'added',              es:'añadidos'},
   import_skipped:  {ko:'명 건너뜀 (중복)',       en:'skipped (duplicate)', es:'omitidos (duplicado)'},
   import_empty:    {ko:'가져올 데이터가 없습니다.', en:'Nothing to import.',  es:'Nada que importar.'},
+  import_seed_lbl: {ko:'🏢 Connecteam 스크린샷 데이터 (이번 주)', en:'🏢 Connecteam screenshot data (this week)', es:'🏢 Datos de Connecteam (esta semana)'},
+  import_seed_help:{ko:'제공된 Hollywood 화면의 11명 + 이번 주 시프트를 즉시 시드합니다 (현재 지점에 적용).', en:'Seeds the 11 employees + this week\'s shifts from the Hollywood screenshot into the current branch.', es:'Carga los 11 empleados + turnos de la semana de Hollywood en la sucursal actual.'},
+  btn_seed:        {ko:'🏢 Hollywood 샘플 적용', en:'🏢 Apply Hollywood Sample', es:'🏢 Aplicar muestra Hollywood'},
+  seed_done:       {ko:'명 + 시프트 시드 완료. 자동으로 HOLLYWOOD 지점으로 이동합니다.', en:'employees + shifts seeded. Switching to HOLLYWOOD.', es:'empleados + turnos cargados. Cambiando a HOLLYWOOD.'},
+  shifts_imported: {ko:'개 시프트 추가됨', en:'shifts imported', es:'turnos importados'},
 };
 function lt(k){ return (T[k] && T[k][LANG]) || (T[k] && T[k].ko) || k; }
 function applyLang(){
@@ -741,8 +754,60 @@ function parseImportFile(ev){
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
       if (rows.length === 0) { alert(lt('import_empty')); return; }
+
       // detect header row
       const first = rows[0].map(x => String(x).toLowerCase().trim());
+      const looksLikeShifts = first.some(c => /date|날짜|fecha/.test(c)) &&
+                              first.some(c => /start|시작|inicio/.test(c)) &&
+                              first.some(c => /end|종료|fin/.test(c));
+
+      // ---- Connecteam-style SHIFT export: name, date, start, end, position[, branch] ----
+      if (looksLikeShifts) {
+        const nameI  = first.findIndex(c => /name|이름|nombre|user|employee/.test(c));
+        const dateI  = first.findIndex(c => /date|날짜|fecha/.test(c));
+        const startI = first.findIndex(c => /start|시작|inicio/.test(c));
+        const endI   = first.findIndex(c => /end|종료|fin/.test(c));
+        const posI   = first.findIndex(c => /position|역할|role|rol|job/.test(c));
+        const brI    = first.findIndex(c => /branch|지점|sucursal|location|store/.test(c));
+        let added = 0, shiftsAdded = 0;
+        const seenNames = new Set(DATA.employees.map(e => e.name.toLowerCase()));
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i];
+          const nm = String(r[nameI] ?? '').trim();
+          if (!nm) continue;
+          if (brI >= 0) {
+            const b = String(r[brI] ?? '').trim();
+            // if a branch column exists and doesn't match current, skip
+            if (b && !branchMatches(b, BRANCH)) continue;
+          }
+          const pos = posI >= 0 ? String(r[posI] ?? '').trim() : '';
+          // ensure employee exists
+          let emp = DATA.employees.find(e => e.name.toLowerCase() === nm.toLowerCase());
+          if (!emp) {
+            const role = pickRoleFor(pos) || DATA.roles[0];
+            const initials = nm.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase();
+            const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+            emp = { id: 'e' + Date.now() + Math.floor(Math.random()*900) + i, name: nm, role, target: 40, color, initials };
+            DATA.employees.push(emp);
+            seenNames.add(nm.toLowerCase());
+            added++;
+          }
+          const dKey = parseDateLike(r[dateI]);
+          if (!dKey) continue;
+          const s = parseTimeLike(r[startI]);
+          const e2 = parseTimeLike(r[endI]);
+          if (!s || !e2) continue;
+          DATA.shifts[shiftKey(emp.id, dKey)] = { start: s, end: e2, position: pos, note: '' };
+          shiftsAdded++;
+        }
+        saveBranchData(DATA);
+        closeOverlay('importOverlay');
+        render();
+        alert(`✓ ${added} ${lt('import_added')}\n${shiftsAdded} ${lt('shifts_imported')}`);
+        return;
+      }
+
+      // ---- Plain employee list (name, role, hours) ----
       const hasHeader = first.some(c => /name|이름|nombre|직원|role|역할|rol|hrs|hours|시간|target|목표/.test(c));
       let nameIdx = 0, roleIdx = 1, hrsIdx = 2;
       if (hasHeader) {
@@ -752,7 +817,6 @@ function parseImportFile(ev){
         if (nameIdx < 0) nameIdx = 0;
       }
       const dataRows = hasHeader ? rows.slice(1) : rows;
-      // convert to comma text and reuse parseImportText
       const text = dataRows.map(r => {
         const nm  = String(r[nameIdx] ?? '').trim();
         const rl  = roleIdx >= 0 ? String(r[roleIdx] ?? '').trim() : '';
@@ -760,14 +824,125 @@ function parseImportFile(ev){
         return [nm, rl, hrs].filter(Boolean).join(', ');
       }).filter(Boolean).join('\n');
       document.getElementById('importText').value = text;
-      // show preview count
-      const parsed = parseImportText(text);
-      previewImport(parsed);
+      previewImport(parseImportText(text));
     } catch (err) {
       alert('Failed to parse file: ' + err.message);
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+function branchMatches(b, branchId){
+  const norm = String(b).toUpperCase().replace(/[\s_-]/g,'');
+  return norm.includes(branchId.replace(/_/g,'')) || branchId.includes(norm);
+}
+
+function pickRoleFor(position){
+  if (!position) return null;
+  const p = position.toLowerCase();
+  for (const role of DATA.roles) {
+    const tokens = role.toLowerCase().split(/[\/\s,]+/).filter(Boolean);
+    if (tokens.some(t => p.includes(t))) return role;
+  }
+  return null;
+}
+
+function parseDateLike(v){
+  if (!v) return null;
+  if (typeof v === 'number') {  // Excel serial date
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return fmtKey(d);
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (m) {
+    let y = m[3]; if (y.length === 2) y = '20' + y;
+    return `${y}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  }
+  const d = new Date(s);
+  return isNaN(d) ? null : fmtKey(d);
+}
+
+function parseTimeLike(v){
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') {  // Excel time fraction 0..1
+    const total = Math.round(v * 24 * 60);
+    return String(Math.floor(total/60)).padStart(2,'0') + ':' + String(total%60).padStart(2,'0');
+  }
+  const s = String(v).trim().toLowerCase();
+  let m = s.match(/^(\d{1,2}):?(\d{0,2})\s*(a|p)?m?/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  let min = m[2] ? parseInt(m[2], 10) : 0;
+  if (m[3] === 'p' && h < 12) h += 12;
+  if (m[3] === 'a' && h === 12) h = 0;
+  return String(h).padStart(2,'0') + ':' + String(min).padStart(2,'0');
+}
+
+// ========= HOLLYWOOD SEED (from screenshot) =========
+function seedHollywood(){
+  // switch to HOLLYWOOD branch and load its data
+  if (BRANCH !== 'HOLLYWOOD') {
+    BRANCH = 'HOLLYWOOD';
+    localStorage.setItem('hub.branch', 'HOLLYWOOD');
+    DATA = loadBranchData();
+    renderBranches();
+  }
+  // ensure roles exist
+  ['CASHIER/STOCKER','SUSHI/KITCHEN','SUPERVISOR','OFFICE','PRODUCE'].forEach(r => {
+    if (!DATA.roles.includes(r)) DATA.roles.push(r);
+  });
+  // Roster (this week, mon-sun) shifts inferred from screenshot
+  const seed = [
+    { name:'Cristian Cortes',  role:'CASHIER/STOCKER', target:72, color:'#22c55e',
+      shifts: { 0:['10:00','22:00','cashier/stocker'], 1:['09:00','22:00','cashier/stocker'], 3:['10:00','22:00','cashier/stocker'], 4:['09:00','22:00','cashier/stocker'], 5:['09:00','19:00','cashier/stocker'], 6:['10:00','22:00','cashier/stocker'] }},
+    { name:'Erika Garcia',     role:'CASHIER/STOCKER', target:57, color:'#16a34a',
+      shifts: { 0:['08:00','17:00','cashier/stocker'], 1:['11:00','22:00','cashier/stocker'], 2:['13:00','22:00','cashier/stocker'], 3:['11:00','20:00','cashier/stocker'], 5:['11:00','22:00','cashier/stocker'], 6:['11:00','19:00','cashier/stocker'] }},
+    { name:'Mirna Montoya',    role:'CASHIER/STOCKER', target:66, color:'#ec4899',
+      shifts: { 0:{unavail:true}, 1:['08:00','20:00','cashier/stocker'], 2:['08:00','21:00','cashier/stocker'], 3:['08:00','17:00','cashier/stocker'], 4:['08:00','21:00','cashier/stocker'], 5:['08:00','17:00','cashier/stocker'], 6:['08:00','18:00','cashier/stocker'] }},
+    { name:'Shreya Shrestha',  role:'CASHIER/STOCKER', target:69, color:'#a855f7',
+      shifts: { 0:['09:00','21:00','SUPERVISOR'], 2:['10:00','22:00','SUPERVISOR'], 3:['09:00','22:00','SUPERVISOR'], 4:['10:00','21:00','SUPERVISOR'], 5:['09:00','21:00','SUPERVISOR'], 6:['10:00','19:00','SUPERVISOR'] }},
+
+    { name:'Neall Aouad',      role:'SUSHI/KITCHEN', target:66, color:'#06b6d4',
+      shifts: { 0:['05:00','16:00','Sushi King'], 1:['05:00','16:00','Sushi King'], 2:['05:00','16:00','Sushi King'], 4:['05:00','16:00','Sushi King'], 5:['05:00','16:00','Sushi King'], 6:['05:00','16:00','Sushi King'] }},
+    { name:'Odalys Ledesma',   role:'SUSHI/KITCHEN', target:54, color:'#ef4444',
+      shifts: { 1:['07:00','16:00','Kitchen'], 2:['07:00','16:00','Kitchen'], 3:['07:00','16:00','Kitchen'], 4:['07:00','16:00','Kitchen'], 5:['07:00','16:00','Kitchen'], 6:['07:00','16:00','Kitchen'] }},
+    { name:'Yamile Murga',     role:'SUSHI/KITCHEN', target:60, color:'#84cc16',
+      shifts: { 1:['06:00','16:00','Sushi King'], 2:['06:00','16:00','Sushi King'], 3:['06:00','16:00','Sushi King'], 4:['06:00','16:00','Sushi King'], 5:['06:00','16:00','Sushi King'], 6:['06:00','16:00','Sushi King'] }},
+    { name:'Ysabel Castillo',  role:'SUSHI/KITCHEN', target:54, color:'#f59e0b',
+      shifts: { 0:['07:00','16:00','Kitchen'], 2:['07:00','16:00','Kitchen'], 3:['07:00','16:00','Kitchen'], 4:['07:00','16:00','Kitchen'], 5:['07:00','16:00','Kitchen'], 6:['07:00','16:00','Kitchen'] }},
+
+    { name:'Anderson Gomez',   role:'OFFICE', target:40, color:'#3b82f6', shifts: {} },
+    { name:'Cristopher Lopez', role:'SUPERVISOR', target:72, color:'#f97316',
+      shifts: { 0:['10:00','22:00','SUPERVISOR'], 1:['10:00','22:00','SUPERVISOR'], 2:['10:00','22:00','SUPERVISOR'], 3:['10:00','22:00','SUPERVISOR'], 5:['10:00','22:00','SUPERVISOR'], 6:['10:00','22:00','SUPERVISOR'] }},
+    { name:'Dairit Zambrano',  role:'PRODUCE', target:60, color:'#0ea5e9',
+      shifts: { 0:['08:00','18:00','Vegetable'], 1:['08:00','18:00','Vegetable'], 2:{unavail:true}, 3:['08:00','18:00','Vegetable'], 4:['08:00','18:00','Vegetable'], 5:['08:00','18:00','Vegetable'], 6:['08:00','18:00','Vegetable'] }},
+  ];
+  // Anchor the seed on the currently displayed week's Monday
+  const monday = mondayOf(weekStart);
+  let added = 0, shifts = 0;
+  const existingNames = new Set(DATA.employees.map(e => e.name.toLowerCase()));
+  for (const row of seed) {
+    if (!existingNames.has(row.name.toLowerCase())) {
+      const initials = row.name.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase();
+      DATA.employees.push({ id:'e_seed_' + row.name.replace(/\W+/g,'_'), name:row.name, role:row.role, target:row.target, color:row.color, initials });
+      added++;
+    }
+    const emp = DATA.employees.find(e => e.name === row.name);
+    for (const [dayIdx, info] of Object.entries(row.shifts)) {
+      const d = addDays(monday, parseInt(dayIdx, 10));
+      const k = shiftKey(emp.id, fmtKey(d));
+      if (info.unavail) DATA.shifts[k] = { unavail:true };
+      else DATA.shifts[k] = { start:info[0], end:info[1], position:info[2], note:'' };
+      shifts++;
+    }
+  }
+  saveBranchData(DATA);
+  closeOverlay('importOverlay');
+  render();
+  alert(`✓ ${added} ${lt('seed_done')}\n${shifts} ${lt('shifts_imported')}`);
 }
 
 function previewImport(rows){
