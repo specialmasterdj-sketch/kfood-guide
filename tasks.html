@@ -124,6 +124,23 @@ button{font-family:inherit;cursor:pointer}
 
 .empty{text-align:center;padding:40px 20px;color:#9ca3af;font-size:.9em;background:#fff;border-radius:14px}
 
+/* === CLOCK-IN CARD === */
+.clockin-card{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;margin-bottom:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.clockin-card .ic{font-size:1.4em;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f3f4f6;flex-shrink:0}
+.clockin-card .body{flex:1;min-width:0;word-break:keep-all}
+.clockin-card b{display:block;font-size:1em;font-weight:700}
+.clockin-card .sub{display:block;font-size:.78em;color:#6b7280;margin-top:2px}
+.clockin-card.ok{background:#f0fdf4}
+.clockin-card.ok .ic{background:#22c55e;color:#fff}
+.clockin-card.ok b{color:#15803d}
+.clockin-card.ready .ic{background:#1a5c3a;color:#fff}
+.clockin-card.far{background:#fef3c7}
+.clockin-card.far .ic{background:#f59e0b;color:#fff}
+.clockin-card.far b{color:#92400e}
+.clockin-card.warn{background:#fef2f2}
+.clockin-card.warn .ic{background:#dc2626;color:#fff}
+.clockin-card.warn b{color:#991b1b}
+
 /* === NOTIFY BANNER + TOAST === */
 .notify-banner{background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;font-size:.86em;color:#92400e}
 .notify-banner.ok{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}
@@ -174,6 +191,10 @@ button{font-family:inherit;cursor:pointer}
 
 <!-- ============= EMPLOYEE VIEW ============= -->
 <div class="page active" id="page-emp">
+  <div id="clockInCard" class="clockin-card warn" style="display:none">
+    <span class="ic">📡</span>
+    <div class="body"><b>위치 정보 받는 중...</b><span class="sub">위치 권한 허용 필요</span></div>
+  </div>
   <div class="summary-bar">
     <div class="big" id="empSumBig">0/0</div>
     <div class="lbl"><b id="empSumDate">오늘</b><span id="empSumSub">완료한 업무 / 전체</span></div>
@@ -350,6 +371,116 @@ function subscribeTasks(){
       renderAll();
     });
   }
+}
+
+// ================= CLOCK-IN (geofence) =================
+const BRANCH_GEO_PATH = 'tasks/_config/branchGeo';
+const ATTEND_BASE = 'attendance';
+const DEFAULT_RADIUS_M = 80;
+let BRANCH_GEO = {};
+let MY_LOCATION = null;
+let TODAY_CLOCKIN = null;
+let geoTickHandle = null;
+
+function distMeters(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function locateMe(){
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error('위치 기능 미지원'));
+    navigator.geolocation.getCurrentPosition(
+      p => res({lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy}),
+      e => rej(new Error(e.message || '위치 권한 거부됨')),
+      {enableHighAccuracy:true, timeout:12000, maximumAge:30000}
+    );
+  });
+}
+function slug(s){ return String(s||'').replace(/[^a-zA-Z0-9가-힣]/g,'_'); }
+function branchKo(id){ return (BRANCHES.find(b=>b.id===id)||{}).ko || id; }
+function subscribeBranchGeo(){
+  if (!window.__fb) return;
+  const r = window.__fb.ref(window.__fb.db, BRANCH_GEO_PATH);
+  window.__fb.onValue(r, snap => { BRANCH_GEO = snap.val() || {}; renderClockIn(); });
+}
+let attendUnsub = null;
+function subscribeMyAttendance(){
+  if (!me || !window.__fb) return;
+  if (attendUnsub) { try{attendUnsub();}catch(e){} attendUnsub=null; }
+  const path = ATTEND_BASE+'/'+me.branch+'/'+todayStr()+'/'+slug(me.name);
+  const r = window.__fb.ref(window.__fb.db, path);
+  attendUnsub = window.__fb.onValue(r, snap => { TODAY_CLOCKIN = snap.val(); renderClockIn(); });
+}
+async function tickLocation(){
+  if (!me) return;
+  try { MY_LOCATION = await locateMe(); }
+  catch(e) { MY_LOCATION = {error:e.message}; }
+  renderClockIn();
+}
+function renderClockIn(){
+  const el = document.getElementById('clockInCard');
+  if (!me || !el) { if(el) el.style.display='none'; return; }
+  el.style.display = '';
+  const branchGeo = BRANCH_GEO[me.branch];
+  const radius = (branchGeo && branchGeo.radius) || DEFAULT_RADIUS_M;
+  const canReg = isManager(me.role) || isOwner();
+  // 1) Already clocked in today
+  if (TODAY_CLOCKIN && TODAY_CLOCKIN.clockIn) {
+    const t = fmtTime(TODAY_CLOCKIN.clockIn);
+    el.className = 'clockin-card ok';
+    el.innerHTML = `<span class="ic">✓</span><div class="body"><b>출근 ${t}</b><span class="sub">${escHtml(branchKo(me.branch))} 도착 인증됨${TODAY_CLOCKIN.distance!=null?' · '+TODAY_CLOCKIN.distance+'m':''}</span></div>`;
+    return;
+  }
+  // 2) Branch coords not registered
+  if (!branchGeo || !branchGeo.lat) {
+    el.className = 'clockin-card warn';
+    el.innerHTML = `<span class="ic">📍</span><div class="body"><b>지점 좌표 미등록</b><span class="sub">${escHtml(branchKo(me.branch))} — ${canReg?'아래 버튼으로 현재 위치를 매장으로 등록':'관리자가 매장에서 등록해야 함'}</span></div>` + (canReg?'<button class="btn warn" onclick="registerBranchGeo()">현재 위치 등록</button>':'');
+    return;
+  }
+  // 3) Need user location
+  if (!MY_LOCATION || MY_LOCATION.error) {
+    el.className = 'clockin-card warn';
+    el.innerHTML = `<span class="ic">📡</span><div class="body"><b>위치 정보 받는 중...</b><span class="sub">${MY_LOCATION&&MY_LOCATION.error?escHtml(MY_LOCATION.error):'위치 권한 허용 필요'}</span></div><button class="btn sec" onclick="tickLocation()">다시 시도</button>`;
+    return;
+  }
+  // 4) Compute distance
+  const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
+  const canClock = d <= radius;
+  el.className = 'clockin-card ' + (canClock?'ready':'far');
+  el.innerHTML = `<span class="ic">${canClock?'📍':'🚶'}</span>`+
+    `<div class="body"><b>${canClock?'매장 도착 — 출근 가능':'매장에서 약 '+Math.round(d)+'m'}</b>`+
+    `<span class="sub">${escHtml(branchKo(me.branch))} · 정확도 ±${Math.round(MY_LOCATION.acc)}m${canClock?'':' · 반경 '+radius+'m 이내 진입 시 활성화'}</span></div>`+
+    `<button class="btn ${canClock?'':'gray'}" ${canClock?'':'disabled'} onclick="clockIn()">${canClock?'출근':'대기'}</button>`;
+}
+async function clockIn(){
+  if (!me || !MY_LOCATION || !MY_LOCATION.lat) return;
+  const branchGeo = BRANCH_GEO[me.branch];
+  if (!branchGeo) { alert('매장 좌표 미등록'); return; }
+  const radius = branchGeo.radius || DEFAULT_RADIUS_M;
+  const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
+  if (d > radius) { alert('매장에서 너무 멉니다 ('+Math.round(d)+'m)'); return; }
+  const path = ATTEND_BASE+'/'+me.branch+'/'+todayStr()+'/'+slug(me.name);
+  await window.__fb.set(window.__fb.ref(window.__fb.db, path), {
+    name: me.name, role: me.role || null, clockIn: Date.now(),
+    lat: MY_LOCATION.lat, lng: MY_LOCATION.lng, accuracy: Math.round(MY_LOCATION.acc), distance: Math.round(d)
+  });
+  showToast('✅ 출근 완료', fmtTime(Date.now()) + ' · ' + Math.round(d) + 'm 거리에서 인증');
+}
+async function registerBranchGeo(){
+  if (!me) return;
+  if (!isManager(me.role) && !isOwner()) { alert('매니저+ 만 등록 가능'); return; }
+  if (!confirm('현재 위치를 ['+branchKo(me.branch)+'] 매장 좌표로 등록할까요?\n반경 '+DEFAULT_RADIUS_M+'m 기본 (직원이 이 반경 안일 때만 출근 가능)')) return;
+  let loc;
+  try { loc = await locateMe(); } catch(e) { alert('위치 못 가져옴: '+e.message); return; }
+  const path = BRANCH_GEO_PATH+'/'+me.branch;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+    lat: loc.lat, lng: loc.lng, radius: DEFAULT_RADIUS_M,
+    registeredBy: me.name, registeredAt: Date.now()
+  });
+  showToast('✓ 매장 좌표 등록 완료', branchKo(me.branch) + ' · 반경 '+DEFAULT_RADIUS_M+'m');
 }
 
 // ================= NOTIFICATIONS =================
@@ -680,7 +811,7 @@ async function sendAssign(){
 function closeOv(id){ document.getElementById(id).classList.remove('show'); }
 function openLb(url){ document.getElementById('lbImg').src = url; document.getElementById('lbOv').classList.add('show'); }
 function renderAll(){ renderEmp(); renderMgr(); if (document.getElementById('page-rep').classList.contains('active')) renderReport(); }
-window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); } });
+window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); subscribeMyAttendance(); tickLocation(); } });
 window.addEventListener('fb-ready', () => subscribeTasks());
 
 // expose
@@ -696,17 +827,29 @@ window.setMgrFilter = setMgrFilter;
 window.goSetName = goSetName;
 window.enableNotify = enableNotify;
 window.dismissNotifyBanner = dismissNotifyBanner;
+window.tickLocation = tickLocation;
+window.clockIn = clockIn;
+window.registerBranchGeo = registerBranchGeo;
 
 // Init
 refreshMe();
 refreshNotifyBanner();
-if (window.__fb) subscribeTasks();
+function bootFb(){
+  subscribeTasks();
+  subscribeBranchGeo();
+  subscribeMyAttendance();
+  tickLocation();
+}
+if (window.__fb) bootFb();
+window.addEventListener('fb-ready', bootFb);
 // Live tick — recompute statuses every minute (for delay detection + notification)
 setInterval(() => {
   renderEmp();
   if (document.getElementById('page-mgr').classList.contains('active')) renderMgr();
   detectDelays();
 }, 60000);
+// Refresh location every 2 minutes (only if signed in and not yet clocked in)
+setInterval(() => { if (me && !(TODAY_CLOCKIN && TODAY_CLOCKIN.clockIn)) tickLocation(); }, 120000);
 </script>
 </body>
 </html>
