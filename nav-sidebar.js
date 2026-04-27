@@ -58,10 +58,13 @@
   style.textContent = css;
   document.head.appendChild(style);
 
-  // Pick the active language: same key tasks.html uses, falls back to nav language
+  // Pick the active language — try all keys other pages use, fall back to nav language
+  const LANG_KEYS = ['tasks.lang','kimchi_lang','hub.lang'];
   function currentLang(){
-    const ls = localStorage.getItem('tasks.lang');
-    if (ls && ['ko','en','es'].includes(ls)) return ls;
+    for (const k of LANG_KEYS) {
+      const v = localStorage.getItem(k);
+      if (v && ['ko','en','es'].includes(v)) return v;
+    }
     const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
     return ['ko','en','es'].includes(nav) ? nav : 'ko';
   }
@@ -100,8 +103,8 @@
     if (e.target.closest('a') && window.innerWidth <= 760) aside.classList.remove('open');
   });
 
-  // Re-render when language changes — listen to localStorage and a custom event
-  window.addEventListener('storage', e => { if (e.key === 'tasks.lang') renderInner(); });
+  // Re-render when language changes — listen to all known keys + a custom event
+  window.addEventListener('storage', e => { if (LANG_KEYS.includes(e.key)) renderInner(); });
   window.addEventListener('km-lang-changed', renderInner);
 
   function mount(){

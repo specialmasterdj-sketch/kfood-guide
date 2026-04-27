@@ -305,8 +305,11 @@ const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE
 // ================= LANGUAGE / TRANSLATION =================
 const LANG_KEY = 'tasks.lang';
 function detectLang(){
-  const saved = localStorage.getItem(LANG_KEY);
-  if (saved && ['ko','en','es'].includes(saved)) return saved;
+  // Honor any of the lang keys other pages set
+  for (const k of [LANG_KEY, 'kimchi_lang', 'hub.lang']) {
+    const v = localStorage.getItem(k);
+    if (v && ['ko','en','es'].includes(v)) return v;
+  }
   const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
   if (['ko','en','es'].includes(nav)) return nav;
   return 'ko';
@@ -316,13 +319,113 @@ function setLang(l){
   if (!['ko','en','es'].includes(l)) return;
   LANG = l;
   localStorage.setItem(LANG_KEY, l);
+  // Mirror to keys other pages use (apps.html, hub.html) so a single toggle covers everything
+  try { localStorage.setItem('kimchi_lang', l); localStorage.setItem('hub.lang', l); } catch(e){}
   refreshLangToggle();
+  if (typeof refreshStaticI18n === 'function') refreshStaticI18n();
   window.dispatchEvent(new CustomEvent('km-lang-changed', { detail: l }));
   if (typeof renderAll === 'function') renderAll();
 }
 function refreshLangToggle(){
   document.querySelectorAll('#langToggle button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
 }
+// Static UI strings — picked by t(key)
+const I18N = {
+  pageTitle:    { ko:'업무 지시',          en:'Tasks',                  es:'Tareas' },
+  tabEmp:       { ko:'📋 내 업무',         en:'📋 My Tasks',            es:'📋 Mis Tareas' },
+  tabMgr:       { ko:'👁 매니저 뷰',       en:'👁 Manager View',        es:'👁 Vista Gerente' },
+  tabRep:       { ko:'📊 리포트',          en:'📊 Report',              es:'📊 Informe' },
+  noName:       { ko:'이름 등록',          en:'Set name',               es:'Registrar nombre' },
+  doneTotal:    { ko:'완료한 업무 / 전체', en:'Done / Total',           es:'Hecho / Total' },
+  noTasksToday: { ko:'오늘 배정된 업무 없음', en:'No tasks today',      es:'Sin tareas hoy' },
+  emptyEmp:     { ko:'📋 오늘 배정된 업무가 없습니다.<br>매니저가 새 지시를 보내면 여기 표시됩니다.',
+                  en:'📋 No tasks assigned today.<br>New tasks from your manager will appear here.',
+                  es:'📋 Sin tareas hoy.<br>Las nuevas tareas aparecerán aquí.' },
+  emptyMgr:     { ko:'조건에 맞는 업무 없음', en:'No matching tasks',   es:'Sin tareas que coincidan' },
+  // Filter chips
+  fAll:         { ko:'전체',     en:'All',         es:'Todas' },
+  fPending:     { ko:'대기',     en:'Pending',     es:'Pendiente' },
+  fInProgress:  { ko:'진행중',   en:'In progress', es:'En curso' },
+  fCompleted:   { ko:'완료',     en:'Done',        es:'Hecho' },
+  fDelayed:     { ko:'⚠️ 지연',  en:'⚠️ Delayed',  es:'⚠️ Retrasado' },
+  newAssign:    { ko:'+ 새 지시', en:'+ New task', es:'+ Nueva tarea' },
+  // Manager table headers
+  thWho:        { ko:'담당자',   en:'Assignee',  es:'Encargado' },
+  thName:       { ko:'업무명',   en:'Task',      es:'Tarea' },
+  thDeadline:   { ko:'데드라인', en:'Due',       es:'Plazo' },
+  thStatus:     { ko:'상태',     en:'Status',    es:'Estado' },
+  thDone:       { ko:'완료 시간', en:'Done at',  es:'Terminado' },
+  thProof:      { ko:'증빙',     en:'Proof',     es:'Prueba' },
+  // Clock-in card
+  geoUnreg:     { ko:'지점 좌표 미등록', en:'Branch location not set', es:'Ubicación no registrada' },
+  geoUnregMgr:  { ko:'아래 버튼으로 현재 위치를 매장으로 등록', en:'Tap below to register your current location as the store', es:'Toque para registrar tu ubicación como la tienda' },
+  geoUnregEmp:  { ko:'관리자가 매장에서 등록해야 함', en:'Manager must register on-site', es:'El gerente debe registrar en la tienda' },
+  registerHere: { ko:'현재 위치 등록', en:'Register location', es:'Registrar ubicación' },
+  geoLoading:   { ko:'위치 정보 받는 중...', en:'Getting location...', es:'Obteniendo ubicación...' },
+  geoNeedPerm:  { ko:'위치 권한 허용 필요', en:'Location permission required', es:'Permiso de ubicación requerido' },
+  retry:        { ko:'다시 시도', en:'Retry', es:'Reintentar' },
+  arrived:      { ko:'매장 도착 — 출근 가능', en:'At store — clock in', es:'En tienda — registrar' },
+  awayFrom:     { ko:'매장에서 약 {d}m', en:'About {d}m from store', es:'A unos {d}m de la tienda' },
+  accuracy:     { ko:'정확도 ±{a}m', en:'accuracy ±{a}m', es:'precisión ±{a}m' },
+  withinRadius: { ko:' · 반경 {r}m 이내 진입 시 활성화', en:' · Active within {r}m', es:' · Activa dentro de {r}m' },
+  clockInBtn:   { ko:'출근', en:'Clock in', es:'Registrar' },
+  waitBtn:      { ko:'대기', en:'Wait', es:'Esperar' },
+  clockedIn:    { ko:'출근 {t}', en:'Clocked in {t}', es:'Registrado {t}' },
+  arrivalVerif: { ko:'{br} 도착 인증됨', en:'{br} arrival verified', es:'{br} llegada verificada' },
+  // Notify banner
+  notifyAsk:    { ko:'새 업무 지시를 즉시 받으려면 알림을 켜세요.', en:'Turn on notifications to receive new tasks instantly.', es:'Activa notificaciones para recibir nuevas tareas al instante.' },
+  notifyOn:     { ko:'알림 켜기', en:'Turn on', es:'Activar' },
+  notifyDenied: { ko:'⚠️ 알림이 차단되어 있습니다. 브라우저 설정에서 허용해 주세요.', en:'⚠️ Notifications blocked. Allow in browser settings.', es:'⚠️ Notificaciones bloqueadas. Permitir en configuración del navegador.' },
+  // Report
+  kpiCompletion:{ ko:'이번주 완료율', en:'Weekly completion', es:'Completado semanal' },
+  kpiMissed:    { ko:'누락 업무',     en:'Missed tasks',     es:'Tareas omitidas' },
+  kpiAvgTime:   { ko:'평균 소요시간', en:'Avg duration',     es:'Duración promedio' },
+  kpiPeak:      { ko:'피크 타임',     en:'Peak time',        es:'Hora pico' },
+  repByEmp:     { ko:'👥 직원별 평균 소요시간', en:'👥 Avg duration by employee', es:'👥 Duración promedio por empleado' },
+  repByHour:    { ko:'⏰ 시간대별 완료율 (피크 타임)', en:'⏰ Completion by hour (peak time)', es:'⏰ Completado por hora (hora pico)' },
+  noData:       { ko:'데이터 없음 — 업무 완료 기록이 쌓이면 표시됩니다', en:'No data yet — appears once tasks are completed', es:'Sin datos — aparece cuando se completen tareas' },
+};
+function t(key, vars) {
+  const obj = I18N[key];
+  if (!obj) return key;
+  let s = obj[LANG] || obj.ko || obj.en || key;
+  if (vars) for (const k in vars) s = s.replace('{'+k+'}', vars[k]);
+  return s;
+}
+function refreshStaticI18n(){
+  const set = (sel, txt) => { const e = document.querySelector(sel); if (e) e.textContent = txt; };
+  set('.topbar h1', t('pageTitle'));
+  document.querySelectorAll('.tabs button').forEach(b => {
+    const tab = b.dataset.tab;
+    if (tab === 'emp') {
+      const cnt = b.querySelector('.count'); const cntHtml = cnt ? cnt.outerHTML : '';
+      b.innerHTML = t('tabEmp') + ' ' + cntHtml;
+    } else if (tab === 'mgr') b.firstChild ? b.firstChild.textContent = t('tabMgr') : b.textContent = t('tabMgr');
+    else if (tab === 'rep') b.firstChild ? b.firstChild.textContent = t('tabRep') : b.textContent = t('tabRep');
+  });
+  // Summary bar
+  set('#empSumSub', t('doneTotal'));
+  // Notify banner
+  set('#notifyBannerText', t('notifyAsk'));
+  const onBtn = document.querySelector('#notifyBannerInner button:not(.x)');
+  if (onBtn) onBtn.textContent = t('notifyOn');
+  // Manager filters
+  const filterMap = { all:'fAll', pending:'fPending', in_progress:'fInProgress', completed:'fCompleted', delayed:'fDelayed' };
+  document.querySelectorAll('.mgr-toolbar .chip').forEach(c => { const k = filterMap[c.dataset.f]; if (k) c.textContent = t(k); });
+  const newBtn = document.querySelector('.mgr-toolbar > .btn');
+  if (newBtn) newBtn.textContent = t('newAssign');
+  // Manager table headers
+  const headers = ['thWho','thName','thDeadline','thStatus','thDone','thProof'];
+  document.querySelectorAll('.mgr-table thead th').forEach((th, i) => { if (headers[i]) th.textContent = t(headers[i]); });
+  // Report KPIs
+  const kpis = ['kpiCompletion','kpiMissed','kpiAvgTime','kpiPeak'];
+  document.querySelectorAll('.kpi .l').forEach((el, i) => { if (kpis[i]) el.textContent = t(kpis[i]); });
+  document.querySelectorAll('.report-card h3').forEach((h, i) => { if (i === 0) h.textContent = t('repByEmp'); if (i === 1) h.textContent = t('repByHour'); });
+  // Empty states (keeps placeholders if not yet present)
+  const emp = document.querySelector('#empList .empty');
+  if (emp) emp.innerHTML = t('emptyEmp');
+}
+
 // In-memory translation cache so we don't refetch the same string
 const TR_CACHE = new Map();
 async function translate(text, target) {
@@ -501,33 +604,35 @@ function renderClockIn(){
   const branchGeo = BRANCH_GEO[me.branch];
   const radius = (branchGeo && branchGeo.radius) || DEFAULT_RADIUS_M;
   const canReg = isManager(me.role) || isOwner();
+  const br = escHtml(branchKo(me.branch));
   // 1) Already clocked in today
   if (TODAY_CLOCKIN && TODAY_CLOCKIN.clockIn) {
-    const t = fmtTime(TODAY_CLOCKIN.clockIn);
+    const tm = fmtTime(TODAY_CLOCKIN.clockIn);
     el.className = 'clockin-card ok';
-    el.innerHTML = `<span class="ic">✓</span><div class="body"><b>출근 ${t}</b><span class="sub">${escHtml(branchKo(me.branch))} 도착 인증됨${TODAY_CLOCKIN.distance!=null?' · '+TODAY_CLOCKIN.distance+'m':''}</span></div>`;
+    el.innerHTML = `<span class="ic">✓</span><div class="body"><b>${t('clockedIn',{t:tm})}</b><span class="sub">${t('arrivalVerif',{br})}${TODAY_CLOCKIN.distance!=null?' · '+TODAY_CLOCKIN.distance+'m':''}</span></div>`;
     return;
   }
   // 2) Branch coords not registered
   if (!branchGeo || !branchGeo.lat) {
     el.className = 'clockin-card warn';
-    el.innerHTML = `<span class="ic">📍</span><div class="body"><b>지점 좌표 미등록</b><span class="sub">${escHtml(branchKo(me.branch))} — ${canReg?'아래 버튼으로 현재 위치를 매장으로 등록':'관리자가 매장에서 등록해야 함'}</span></div>` + (canReg?'<button class="btn warn" onclick="registerBranchGeo()">현재 위치 등록</button>':'');
+    el.innerHTML = `<span class="ic">📍</span><div class="body"><b>${t('geoUnreg')}</b><span class="sub">${br} — ${canReg?t('geoUnregMgr'):t('geoUnregEmp')}</span></div>` + (canReg?`<button class="btn warn" onclick="registerBranchGeo()">${t('registerHere')}</button>`:'');
     return;
   }
   // 3) Need user location
   if (!MY_LOCATION || MY_LOCATION.error) {
     el.className = 'clockin-card warn';
-    el.innerHTML = `<span class="ic">📡</span><div class="body"><b>위치 정보 받는 중...</b><span class="sub">${MY_LOCATION&&MY_LOCATION.error?escHtml(MY_LOCATION.error):'위치 권한 허용 필요'}</span></div><button class="btn sec" onclick="tickLocation()">다시 시도</button>`;
+    el.innerHTML = `<span class="ic">📡</span><div class="body"><b>${t('geoLoading')}</b><span class="sub">${MY_LOCATION&&MY_LOCATION.error?escHtml(MY_LOCATION.error):t('geoNeedPerm')}</span></div><button class="btn sec" onclick="tickLocation()">${t('retry')}</button>`;
     return;
   }
   // 4) Compute distance
   const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
   const canClock = d <= radius;
   el.className = 'clockin-card ' + (canClock?'ready':'far');
+  const headline = canClock ? t('arrived') : t('awayFrom', { d: Math.round(d) });
+  const sub = br + ' · ' + t('accuracy', { a: Math.round(MY_LOCATION.acc) }) + (canClock ? '' : t('withinRadius', { r: radius }));
   el.innerHTML = `<span class="ic">${canClock?'📍':'🚶'}</span>`+
-    `<div class="body"><b>${canClock?'매장 도착 — 출근 가능':'매장에서 약 '+Math.round(d)+'m'}</b>`+
-    `<span class="sub">${escHtml(branchKo(me.branch))} · 정확도 ±${Math.round(MY_LOCATION.acc)}m${canClock?'':' · 반경 '+radius+'m 이내 진입 시 활성화'}</span></div>`+
-    `<button class="btn ${canClock?'':'gray'}" ${canClock?'':'disabled'} onclick="clockIn()">${canClock?'출근':'대기'}</button>`;
+    `<div class="body"><b>${headline}</b><span class="sub">${sub}</span></div>`+
+    `<button class="btn ${canClock?'':'gray'}" ${canClock?'':'disabled'} onclick="clockIn()">${canClock?t('clockInBtn'):t('waitBtn')}</button>`;
 }
 async function clockIn(){
   if (!me || !MY_LOCATION || !MY_LOCATION.lat) return;
@@ -664,13 +769,14 @@ function renderEmp(){
   const total = my.length;
   const done = my.filter(t => t.completedAt).length;
   document.getElementById('empSumBig').textContent = done + ' / ' + total;
-  document.getElementById('empSumDate').textContent = new Date().toLocaleDateString('ko-KR',{month:'long',day:'numeric',weekday:'long'});
-  document.getElementById('empSumSub').textContent = total === 0 ? '오늘 배정된 업무 없음' : '완료한 업무 / 전체';
+  const localeMap = { ko:'ko-KR', en:'en-US', es:'es-ES' };
+  document.getElementById('empSumDate').textContent = new Date().toLocaleDateString(localeMap[LANG]||'ko-KR',{month:'long',day:'numeric',weekday:'long'});
+  document.getElementById('empSumSub').textContent = total === 0 ? t('noTasksToday') : t('doneTotal');
   document.getElementById('empSumFill').style.width = total ? (done/total*100) + '%' : '0%';
   const cnt = total - done;
   const cntEl = document.getElementById('empCount');
   if (cnt > 0) { cntEl.style.display=''; cntEl.textContent = cnt; } else cntEl.style.display='none';
-  if (total === 0) { list.innerHTML = '<div class="empty">📋 오늘 배정된 업무가 없습니다.<br>매니저가 새 지시를 보내면 여기 표시됩니다.</div>'; return; }
+  if (total === 0) { list.innerHTML = `<div class="empty">${t('emptyEmp')}</div>`; return; }
   list.innerHTML = my.map(renderTaskCard).join('');
 }
 function isAssignedToMe(t){
@@ -833,7 +939,7 @@ function renderMgr(){
   // Sort: delayed first, then in_progress, then pending, then completed
   const order = { delayed:0, in_progress:1, pending:2, completed:3 };
   rows.sort((a,b) => (order[a._status]-order[b._status]) || (a.deadline||'99').localeCompare(b.deadline||'99'));
-  if (rows.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#9ca3af">조건에 맞는 업무 없음</td></tr>'; return; }
+  if (rows.length === 0) { tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:#9ca3af">${t('emptyMgr')}</td></tr>`; return; }
   const stLabels = {
     pending:    { ko:'대기',   en:'Pending',     es:'Pendiente' },
     in_progress:{ ko:'진행중', en:'In progress', es:'En curso' },
@@ -985,7 +1091,17 @@ window.setLang = setLang;
 // Init
 refreshMe();
 refreshLangToggle();
+refreshStaticI18n();
 refreshNotifyBanner();
+// React to language changes from another tab/page (apps.html toggle, etc.)
+window.addEventListener('storage', e => {
+  if (['tasks.lang','kimchi_lang','hub.lang'].includes(e.key) && e.newValue && ['ko','en','es'].includes(e.newValue) && e.newValue !== LANG) {
+    LANG = e.newValue;
+    refreshLangToggle();
+    refreshStaticI18n();
+    if (typeof renderAll === 'function') renderAll();
+  }
+});
 function bootFb(){
   subscribeTasks();
   subscribeBranchGeo();
