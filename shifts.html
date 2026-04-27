@@ -79,6 +79,8 @@ button{font-family:inherit;cursor:pointer}
 .shift-cell.draft .shift{outline:2px dashed #f59e0b;outline-offset:-3px;opacity:.85}
 .shift-cell.draft::after{content:'임시';position:absolute;top:1px;right:2px;background:#f59e0b;color:#fff;font-size:.6em;font-weight:700;padding:0 4px;border-radius:3px;letter-spacing:.02em;pointer-events:none}
 .shift-cell.drop-hover{outline:3px solid #1a5c3a;outline-offset:-3px;background:#f0fdf4 !important}
+.shift-cell.drop-hover.drop-copy{outline-color:#2563eb;background:#eff6ff !important}
+.shift-cell.drop-hover.drop-copy::before{content:'+ 복사';position:absolute;top:4px;left:4px;background:#2563eb;color:#fff;font-size:.65em;font-weight:800;padding:2px 6px;border-radius:4px;z-index:5;pointer-events:none}
 .shift-cell .shift{cursor:grab}
 .shift-cell .shift.dragging{opacity:.4}
 .draft-bar{display:flex;align-items:center;gap:8px;background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:8px 14px;margin:8px 0;font-size:.9em;color:#92400e;font-weight:600}
@@ -920,43 +922,61 @@ let __DRAG_FROM = null;
 function onShiftDragStart(ev, empId, dKey){
   if (typeof requireEdit === 'function' && !canEditNow()) { ev.preventDefault(); return; }
   __DRAG_FROM = { empId, dKey };
-  ev.dataTransfer.effectAllowed = 'move';
+  ev.dataTransfer.effectAllowed = 'copyMove';
   try { ev.dataTransfer.setData('text/plain', empId+'|'+dKey); } catch(e){}
   ev.target.classList.add('dragging');
 }
 function onShiftDragEnd(ev){
   ev.target.classList.remove('dragging');
 }
+function isCopyModifier(ev){ return !!(ev.ctrlKey || ev.altKey || ev.metaKey); }
 function onCellDragOver(ev, empId, dKey){
   if (!__DRAG_FROM) return;
-  // Allow drop on any cell (move target — same employee or different)
   ev.preventDefault();
-  ev.dataTransfer.dropEffect = 'move';
+  const isCopy = isCopyModifier(ev);
+  ev.dataTransfer.dropEffect = isCopy ? 'copy' : 'move';
   ev.currentTarget.classList.add('drop-hover');
+  ev.currentTarget.classList.toggle('drop-copy', isCopy);
 }
-function onCellDragLeave(ev){ ev.currentTarget.classList.remove('drop-hover'); }
+function onCellDragLeave(ev){
+  ev.currentTarget.classList.remove('drop-hover');
+  ev.currentTarget.classList.remove('drop-copy');
+}
 function onCellDrop(ev, empId, dKey){
   ev.preventDefault();
   ev.currentTarget.classList.remove('drop-hover');
+  ev.currentTarget.classList.remove('drop-copy');
   if (!__DRAG_FROM) return;
+  const isCopy = isCopyModifier(ev);
   const fromK = shiftKey(__DRAG_FROM.empId, __DRAG_FROM.dKey);
   const toK   = shiftKey(empId, dKey);
   if (fromK === toK) { __DRAG_FROM = null; return; }
   const moving = DATA.shifts[fromK];
   if (!moving) { __DRAG_FROM = null; return; }
   const dest = DATA.shifts[toK];
-  if (dest) {
-    // Swap: dest moves to origin
-    DATA.shifts[fromK] = dest;
-    DATA.shifts[toK] = moving;
+
+  if (isCopy) {
+    // COPY: leave origin in place, drop a clone on destination.
+    // Skip silently if destination already has a shift — never overwrite.
+    if (dest) { __DRAG_FROM = null; return; }
+    const clone = JSON.parse(JSON.stringify(moving));
+    DATA.shifts[toK] = clone;
   } else {
-    DATA.shifts[toK] = moving;
-    delete DATA.shifts[fromK];
+    // MOVE / SWAP
+    if (dest) {
+      DATA.shifts[fromK] = dest;
+      DATA.shifts[toK] = moving;
+    } else {
+      DATA.shifts[toK] = moving;
+      delete DATA.shifts[fromK];
+    }
   }
   __DRAG_FROM = null;
-  // Drag operations on already-committed shifts persist immediately;
-  // drag operations involving drafts stay as drafts until commit.
-  if (!moving._draft && !(dest && dest._draft)) saveBranchData(DATA);
+  // Persist immediately if no drafts are involved on either side
+  const sourceDraft = moving && moving._draft;
+  const destDraft = dest && dest._draft;
+  const newDraft = DATA.shifts[toK] && DATA.shifts[toK]._draft;
+  if (!sourceDraft && !destDraft && !newDraft) saveBranchData(DATA);
   render();
 }
 function goToday(){ weekStart = mondayOf(new Date()); render(); }
@@ -1123,7 +1143,7 @@ function render(){
           } else {
             const hrs = shiftHours(s);
             const color = emp.color || '#6b7280';
-            cell.innerHTML = `<div class="shift" draggable="true" style="background:${color}" ondragstart="onShiftDragStart(event,'${emp.id}','${dKey}')" ondragend="onShiftDragEnd(event)">
+            cell.innerHTML = `<div class="shift" draggable="true" title="드래그: 이동 · Ctrl+드래그: 복사" style="background:${color}" ondragstart="onShiftDragStart(event,'${emp.id}','${dKey}')" ondragend="onShiftDragEnd(event)">
               <div class="time">${fmtTime(s.start)}-${fmtTime(s.end)}</div>
               <div class="role">${s.position || emp.role || ''}</div>
             </div>`;
