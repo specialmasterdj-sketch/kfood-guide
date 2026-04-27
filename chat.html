@@ -551,40 +551,67 @@ function isManagerVerified(){
   // Currently logged-in me must be MANAGER+ AND have used a PIN (i.e. pin hash exists in Firebase)
   return !!(me && me.name && me.branch && isManagerRole(me.role));
 }
+// 전 지점 통합 관리 권한자 — OWNER 역할 또는 이름 화이트리스트 (역할 표시는 매니저 유지)
+const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이'];
+function isOwnerVerified(){
+  if (!me || !me.name) return false;
+  const nm = me.name.replace(/\s+/g,'').toUpperCase();
+  if (EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === nm)) return true;
+  const r = (me.role || '').toUpperCase();
+  return /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(r);
+}
 async function openPinAdmin(){
   if (!isManagerVerified()) { alert('매니저 본인 등록 후 사용 가능합니다.'); return; }
-  const branchId = me.branch;
-  const branchKo = (BRANCHES.find(b => b.id === branchId)?.ko) || branchId;
-  document.getElementById('pinAdminBranch').textContent = '📍 ' + branchKo + ' (관리자: ' + me.name + ')';
   const list = document.getElementById('pinAdminList');
   list.innerHTML = '<div style="padding:14px;color:#9ca3af;text-align:center">로딩 중…</div>';
   closeOverlay('meOverlay');
   document.getElementById('pinAdminOverlay').classList.add('show');
-  // fetch branch employees + existing PINs
-  const [pins, brData] = await Promise.all([
-    listBranchPins(branchId),
-    fetch(`${FB_DB_URL}/schedules/${branchId}.json`).then(r => r.json()).catch(() => null),
-  ]);
-  const employees = (brData?.employees || []).filter(e => isManagerRole(e.role));
-  if (employees.length === 0) { list.innerHTML = '<div style="padding:14px;color:#9ca3af;text-align:center">매니저급 직원이 없습니다.</div>'; return; }
-  list.innerHTML = employees.map(e => {
-    const slug = nameSlug(e.name);
-    const has = !!(pins[slug] && pins[slug].hash);
-    const setAt = has && pins[slug].setAt ? new Date(pins[slug].setAt).toLocaleDateString() : '';
-    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6">
-      <div style="width:30px;height:30px;border-radius:50%;background:${e.color||'#9ca3af'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.78em;flex-shrink:0">${(e.initials||e.name[0]||'?').toUpperCase()}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.name)}</div>
-        <div style="font-size:.74em;color:#6b7280">${escapeHtml(e.role||'')} ${has ? '· PIN 등록됨 ('+setAt+')' : '· PIN 미등록'}</div>
-      </div>
-      ${has ? `<button class="btn danger" style="font-size:.78em;padding:5px 10px" onclick="resetEmpPin('${escapeHtml(e.name).replace(/'/g,"\\'")}')">PIN 리셋</button>` : '<span style="font-size:.78em;color:#9ca3af">—</span>'}
-    </div>`;
-  }).join('');
+
+  const owner = isOwnerVerified();
+  const scopeLabel = owner ? '👑 OWNER · 전 지점 통합 관리' : '📍 ' + ((BRANCHES.find(b => b.id === me.branch)?.ko) || me.branch);
+  document.getElementById('pinAdminBranch').textContent = scopeLabel + ' (관리자: ' + me.name + ')';
+
+  const targetBranches = owner ? BRANCHES.map(b => b.id) : [me.branch];
+  const sections = await Promise.all(targetBranches.map(async (bid) => {
+    const [pins, brData] = await Promise.all([
+      listBranchPins(bid),
+      fetch(`${FB_DB_URL}/schedules/${bid}.json`).then(r => r.json()).catch(() => null),
+    ]);
+    const employees = (brData?.employees || []).filter(e => isManagerRole(e.role));
+    return { bid, ko: (BRANCHES.find(b => b.id === bid)?.ko) || bid, pins, employees };
+  }));
+
+  let html = '';
+  for (const s of sections) {
+    if (owner) {
+      html += `<div style="background:#f0fdf4;color:#1a5c3a;font-weight:700;font-size:.82em;padding:8px 12px;border-bottom:1px solid #bbf7d0;text-transform:uppercase;letter-spacing:.04em">📍 ${escapeHtml(s.ko)} (${s.employees.length}명)</div>`;
+    }
+    if (s.employees.length === 0) {
+      html += '<div style="padding:14px;color:#9ca3af;text-align:center;font-size:.85em">매니저급 직원 없음</div>';
+      continue;
+    }
+    html += s.employees.map(e => {
+      const slug = nameSlug(e.name);
+      const has = !!(s.pins[slug] && s.pins[slug].hash);
+      const setAt = has && s.pins[slug].setAt ? new Date(s.pins[slug].setAt).toLocaleDateString() : '';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6">
+        <div style="width:30px;height:30px;border-radius:50%;background:${e.color||'#9ca3af'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.78em;flex-shrink:0">${(e.initials||e.name[0]||'?').toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.name)}</div>
+          <div style="font-size:.74em;color:#6b7280">${escapeHtml(e.role||'')} ${has ? '· PIN 등록됨 ('+setAt+')' : '· PIN 미등록'}</div>
+        </div>
+        ${has ? `<button class="btn danger" style="font-size:.78em;padding:5px 10px" onclick="resetEmpPin('${s.bid}','${escapeHtml(e.name).replace(/'/g,"\\'")}')">PIN 리셋</button>` : '<span style="font-size:.78em;color:#9ca3af">—</span>'}
+      </div>`;
+    }).join('');
+  }
+  list.innerHTML = html;
 }
-async function resetEmpPin(name){
+async function resetEmpPin(branchId, name){
   if (!isManagerVerified()) return;
-  if (!confirm(`"${name}"의 PIN을 리셋합니다.\n\n그 직원이 다음 로그인 시 새 PIN을 등록할 수 있게 됩니다. 진행할까요?`)) return;
-  const ok = await deletePinHash(me.branch, name);
+  // 권한 범위: OWNER는 전 지점, 그 외는 본인 지점만
+  if (!isOwnerVerified() && branchId !== me.branch) { alert('본인 지점 직원만 리셋 가능합니다.'); return; }
+  if (!confirm(`"${name}" (${branchId})의 PIN을 리셋합니다.\n\n그 직원이 다음 로그인 시 새 PIN을 등록할 수 있게 됩니다. 진행할까요?`)) return;
+  const ok = await deletePinHash(branchId, name);
   if (ok) { alert('✅ "' + name + '" PIN 리셋 완료. 본인이 다시 등록하면 됩니다.'); openPinAdmin(); }
   else alert('실패. 다시 시도해 주세요.');
 }
