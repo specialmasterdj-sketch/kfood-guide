@@ -295,6 +295,11 @@ a{color:inherit;text-decoration:none}
       <input type="text" id="meCustom" placeholder="이름을 입력">
     </div>
     <div id="meRoleHint" style="font-size:.82em;color:#1a5c3a;font-weight:600;margin-bottom:8px"></div>
+    <div class="field-row" id="mePinRow" style="display:none">
+      <label>🔒 PIN (4자리 숫자)</label>
+      <input type="password" id="mePin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="****">
+      <div id="mePinHint" style="font-size:.78em;color:#6b7280;margin-top:4px"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeOverlay('meOverlay')">취소</button>
       <button class="btn" onclick="saveMe()">저장</button>
@@ -476,7 +481,54 @@ function renderMeNamesList(employees, branchId){
     document.getElementById('meRoleHint').textContent = role
       ? (isManagerRole(role) ? `👔 매니저 권한 (역할: ${role})` : `일반 직원 (역할: ${role})`)
       : '';
+    updatePinUI(role, sel.value);
   };
+  // also react to custom name typing
+  document.getElementById('meCustom').oninput = () => {
+    const cname = document.getElementById('meCustom').value.trim();
+    let role = sel.options[sel.selectedIndex]?.dataset.role || '';
+    if (!role) {
+      const opt = Array.from(sel.options).find(o => o.value && o.value.toLowerCase() === cname.toLowerCase());
+      role = opt?.dataset.role || '';
+    }
+    updatePinUI(role, cname);
+  };
+}
+
+// === PIN AUTH ===
+function nameSlug(s){ return String(s||'').trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g,'_').replace(/^_|_$/g,''); }
+async function sha256Hex(txt){
+  const buf = new TextEncoder().encode(String(txt));
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+function pinPath(branch, name){ return `chat/auth/${branch}/${nameSlug(name)}`; }
+async function fetchPinHash(branch, name){
+  try {
+    const r = await fetch(`${FB_DB_URL}/${pinPath(branch, name)}.json`, { cache:'no-store' });
+    return await r.json(); // null or {hash, setAt, setBy}
+  } catch(e){ return null; }
+}
+async function setPinHash(branch, name, hash, byName){
+  try {
+    await fetch(`${FB_DB_URL}/${pinPath(branch, name)}.json`, { method:'PUT', body: JSON.stringify({ hash, setAt: Date.now(), setBy: byName || name }) });
+  } catch(e){}
+}
+async function updatePinUI(role, name){
+  const row = document.getElementById('mePinRow');
+  const hint = document.getElementById('mePinHint');
+  const inp = document.getElementById('mePin');
+  inp.value = '';
+  if (!isManagerRole(role) || !name) { row.style.display = 'none'; return; }
+  row.style.display = '';
+  hint.textContent = '확인 중…';
+  const branchId = document.getElementById('meBranch').value;
+  const existing = await fetchPinHash(branchId, name);
+  if (existing && existing.hash) {
+    hint.innerHTML = `🔒 등록된 PIN을 입력하세요. <span style="color:#dc2626">PIN을 잊으셨나요? 오너에게 리셋 요청.</span>`;
+  } else {
+    hint.innerHTML = `⚠️ 처음 등록입니다. <b>설정한 PIN은 다음부터 본인 확인용으로 사용됩니다.</b> 다른 사람이 먼저 등록하면 변경 불가.`;
+  }
 }
 
 const MANAGER_ROLE_TOKENS = ['MANAGER','SUPERVISOR','OFFICE','OWNER','매니저','점장','감독'];
@@ -494,7 +546,7 @@ function canAccessPayrollRoom(){
   const r = me.role.toUpperCase();
   return PAYROLL_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase()));
 }
-function saveMe(){
+async function saveMe(){
   const branchId = document.getElementById('meBranch').value;
   const sel = document.getElementById('meName_select');
   const fromSel = sel.value;
@@ -511,6 +563,22 @@ function saveMe(){
       role = emp?.role || '';
     } catch(e){}
   }
+
+  // PIN 인증: 매니저급(MANAGER/SUPERVISOR/OWNER 등) 역할은 PIN 필수
+  if (isManagerRole(role)) {
+    const pin = (document.getElementById('mePin').value || '').trim();
+    if (!/^\d{4,6}$/.test(pin)) { alert('PIN 4-6자리 숫자를 입력하세요.'); return; }
+    const hash = await sha256Hex(pin + '|' + nameSlug(name) + '|' + branchId);
+    const existing = await fetchPinHash(branchId, name);
+    if (existing && existing.hash) {
+      if (existing.hash !== hash) { alert('🔒 PIN이 일치하지 않습니다.'); return; }
+    } else {
+      // 처음 등록 — FCFS 경고
+      if (!confirm(`⚠️ "${name}" PIN을 처음 등록합니다.\n\n다음부터 이 PIN으로만 본인 확인이 가능하며, 다른 사람이 먼저 등록하면 변경 불가합니다.\n\n진행하시겠어요?`)) return;
+      await setPinHash(branchId, name, hash, name);
+    }
+  }
+
   me = { name, branch: branchId, color: colorFor(name), role, isManager: isManagerRole(role) };
   localStorage.setItem('chat.me', JSON.stringify(me));
   refreshMePill();
