@@ -179,6 +179,7 @@ body.readonly .shift-cell { cursor:default !important; }
     <button class="btn secondary" onclick="shiftWeek(1)">›</button>
   </div>
   <div class="spacer"></div>
+  <button class="btn secondary editor-only" id="batchEditBtn" onclick="toggleBatchEdit()" data-t="btn_batch_edit" title="ON: 변경 사항을 모아 [확정]까지 저장하지 않음">📝 일괄 편집 OFF</button>
   <button class="btn secondary editor-only" onclick="copyFromLastWeek()" data-t="btn_copy_last" title="지난 주 시프트를 이번 주로 복사">📋 지난 주 복사</button>
   <button class="btn secondary editor-only" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
   <button class="btn secondary editor-only" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
@@ -433,6 +434,7 @@ const T = {
   title:           {ko:'스케줄',                en:'Schedule',           es:'Horarios'},
   btn_today:       {ko:'오늘',                  en:'Today',              es:'Hoy'},
   btn_copy_last:   {ko:'📋 지난 주 복사',        en:'📋 Copy last week',  es:'📋 Copiar semana anterior'},
+  btn_batch_edit:  {ko:'📝 일괄 편집',          en:'📝 Batch edit',       es:'📝 Edición por lotes'},
   btn_role:        {ko:'＋ 역할',               en:'＋ Role',            es:'＋ Rol'},
   btn_emp:         {ko:'＋ 직원',               en:'＋ Employee',        es:'＋ Empleado'},
   btn_save:        {ko:'저장',                  en:'Save',               es:'Guardar'},
@@ -883,6 +885,58 @@ function copyFromLastWeek(skipConfirm){
   render();
 }
 
+// ===== BATCH EDIT MODE =====
+// When ON, every shift change (cell edit, drag/move, drag-copy, copy-from-last-week)
+// stays as a draft (_draft:true) and is NOT pushed to Firebase until the manager
+// hits [✅ 확정]. [❌ 취소] restores the snapshot taken when the mode was turned on.
+let __BATCH_EDIT = false;
+let __BATCH_SNAPSHOT = null;
+function isBatchEdit(){ return __BATCH_EDIT; }
+function refreshBatchEditBtn(){
+  const btn = document.getElementById('batchEditBtn');
+  if (!btn) return;
+  const baseLabel = lt('btn_batch_edit') || '📝 일괄 편집';
+  btn.textContent = baseLabel + (__BATCH_EDIT ? ' ON' : ' OFF');
+  btn.style.background = __BATCH_EDIT ? '#fef3c7' : '';
+  btn.style.color = __BATCH_EDIT ? '#92400e' : '';
+  btn.style.borderColor = __BATCH_EDIT ? '#fde68a' : '';
+}
+function toggleBatchEdit(){
+  if (typeof requireEdit === 'function' && !requireEdit()) return;
+  if (!__BATCH_EDIT) {
+    // OFF → ON: snapshot the current shifts so we can roll back on cancel
+    __BATCH_SNAPSHOT = JSON.parse(JSON.stringify(DATA.shifts || {}));
+    __BATCH_EDIT = true;
+    refreshBatchEditBtn();
+    showToast(LANG==='en'?'📝 Batch edit ON — changes are pending until you commit':LANG==='es'?'📝 Edición por lotes ON':'📝 일괄 편집 ON — 변경 사항은 [확정]까지 저장되지 않습니다');
+    render();
+    return;
+  }
+  // Already ON: refuse to silently exit if pending drafts exist
+  if (countDraftShifts() > 0) {
+    alert(LANG==='en'?'You have pending changes — commit or cancel first.':LANG==='es'?'Tienes cambios pendientes — confirma o cancela primero.':'대기 중인 변경 사항이 있습니다. 먼저 확정 또는 취소하세요.');
+    return;
+  }
+  __BATCH_EDIT = false;
+  __BATCH_SNAPSHOT = null;
+  refreshBatchEditBtn();
+  render();
+}
+function showToast(msg){
+  // lightweight inline toast — uses a fixed-position div
+  let t = document.getElementById('__shiftToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '__shiftToast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:10px 18px;border-radius:10px;font-size:.9em;z-index:9999;box-shadow:0 4px 14px rgba(0,0,0,.2);max-width:90vw;text-align:center';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.display = '';
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(() => { t.style.display = 'none'; }, 3000);
+}
+
 // ===== DRAFT COMMIT / CANCEL =====
 function countDraftShifts(){
   let n = 0;
@@ -901,6 +955,8 @@ function commitDrafts(){
   if (!confirm(msg)) return;
   Object.values(DATA.shifts).forEach(s => { if (s && s._draft) delete s._draft; });
   saveBranchData(DATA);
+  // exit batch mode if active
+  if (__BATCH_EDIT) { __BATCH_EDIT = false; __BATCH_SNAPSHOT = null; refreshBatchEditBtn(); }
   render();
 }
 function cancelDrafts(){
@@ -908,12 +964,21 @@ function cancelDrafts(){
   const n = countDraftShifts();
   if (n === 0) return;
   const msg = LANG==='en'
-    ? `Discard ${n} draft shifts?`
+    ? `Discard ${n} draft changes? Pre-edit state will be restored.`
     : LANG==='es'
-    ? `¿Descartar ${n} turnos en borrador?`
-    : `임시 시프트 ${n}개를 모두 취소할까요?`;
+    ? `¿Descartar ${n} cambios? Se restaurará el estado anterior.`
+    : `임시 변경 ${n}개를 취소하고 편집 시작 상태로 되돌릴까요?`;
   if (!confirm(msg)) return;
-  Object.keys(DATA.shifts).forEach(k => { if (DATA.shifts[k] && DATA.shifts[k]._draft) delete DATA.shifts[k]; });
+  if (__BATCH_EDIT && __BATCH_SNAPSHOT) {
+    // Restore the entire shifts object from the snapshot taken at batch-edit start
+    DATA.shifts = JSON.parse(JSON.stringify(__BATCH_SNAPSHOT));
+    __BATCH_EDIT = false;
+    __BATCH_SNAPSHOT = null;
+    refreshBatchEditBtn();
+  } else {
+    // Pure draft cleanup (e.g. copyFromLastWeek without batch mode)
+    Object.keys(DATA.shifts).forEach(k => { if (DATA.shifts[k] && DATA.shifts[k]._draft) delete DATA.shifts[k]; });
+  }
   render();
 }
 
@@ -956,13 +1021,11 @@ function onCellDrop(ev, empId, dKey){
   const dest = DATA.shifts[toK];
 
   if (isCopy) {
-    // COPY: leave origin in place, drop a clone on destination.
-    // Skip silently if destination already has a shift — never overwrite.
     if (dest) { __DRAG_FROM = null; return; }
     const clone = JSON.parse(JSON.stringify(moving));
+    if (isBatchEdit()) clone._draft = true;
     DATA.shifts[toK] = clone;
   } else {
-    // MOVE / SWAP
     if (dest) {
       DATA.shifts[fromK] = dest;
       DATA.shifts[toK] = moving;
@@ -970,13 +1033,17 @@ function onCellDrop(ev, empId, dKey){
       DATA.shifts[toK] = moving;
       delete DATA.shifts[fromK];
     }
+    // In batch-edit mode, mark both sides as drafts so they show as pending
+    if (isBatchEdit()) {
+      if (DATA.shifts[fromK]) DATA.shifts[fromK]._draft = true;
+      if (DATA.shifts[toK])   DATA.shifts[toK]._draft = true;
+    }
   }
   __DRAG_FROM = null;
-  // Persist immediately if no drafts are involved on either side
-  const sourceDraft = moving && moving._draft;
-  const destDraft = dest && dest._draft;
-  const newDraft = DATA.shifts[toK] && DATA.shifts[toK]._draft;
-  if (!sourceDraft && !destDraft && !newDraft) saveBranchData(DATA);
+  // Persist immediately only if nothing is in draft state
+  const sourceDraft = (DATA.shifts[fromK] && DATA.shifts[fromK]._draft) || (moving && moving._draft);
+  const destDraft = DATA.shifts[toK] && DATA.shifts[toK]._draft;
+  if (!sourceDraft && !destDraft && !isBatchEdit()) saveBranchData(DATA);
   render();
 }
 function goToday(){ weekStart = mondayOf(new Date()); render(); }
@@ -1184,6 +1251,7 @@ function render(){
     <span style="color:#9ca3af;font-size:.85em;margin-left:auto">💾 ${BRANCH} · ${weekKey()}</span>
   `;
   renderDraftBar();
+  refreshBatchEditBtn();
 }
 function renderDraftBar(){
   let bar = document.getElementById('draftBar');
@@ -1394,10 +1462,10 @@ function saveShift(){
     const note = document.getElementById('shiftNote').value.trim();
     DATA.shifts[k] = { start, end, position, note };
   }
-  // Preserve draft flag if the shift being edited was a draft
-  if (wasDraft) DATA.shifts[k]._draft = true;
+  // Preserve draft flag if the shift being edited was a draft, or if batch-edit mode is on
+  if (wasDraft || isBatchEdit()) DATA.shifts[k]._draft = true;
   // Only persist now if it's NOT a draft — drafts wait for commit
-  if (!wasDraft) saveBranchData(DATA);
+  if (!DATA.shifts[k]._draft) saveBranchData(DATA);
   closeOverlay('shiftOverlay');
   render();
 }
