@@ -698,14 +698,24 @@ async function finishTask(){
     const photoUrls = [];
     for (const p of DONE_PHOTOS) {
       const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
-      const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg' },
-        body: p.file
-      });
-      if (!r.ok) throw new Error('업로드 실패 ('+r.status+')');
-      const meta = await r.json();
-      const url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+      let url = null;
+      // 1) Try Firebase Storage REST upload
+      try {
+        const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'image/jpeg' },
+          body: p.file
+        });
+        if (r.ok) {
+          const meta = await r.json();
+          url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+        }
+      } catch(e) { /* fall through */ }
+      // 2) Fallback: re-compress smaller and embed as base64 dataURL in RTDB
+      if (!url) {
+        const small = await compressImage(p.file, 720, 0.55);
+        url = await readDataUrl(small);
+      }
       photoUrls.push(url);
     }
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
