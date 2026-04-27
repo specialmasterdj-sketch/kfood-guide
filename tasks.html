@@ -289,6 +289,8 @@ button{font-family:inherit;cursor:pointer}
 <script>
 // ================= STATE =================
 const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
 const BRANCHES = [
   { id:'MIAMI', ko:'마이애미' },
   { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈' },
@@ -695,10 +697,15 @@ async function finishTask(){
   try {
     const photoUrls = [];
     for (const p of DONE_PHOTOS) {
-      const fname = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
-      const sr = window.__fb.sRef(window.__fb.st, fname);
-      await window.__fb.uploadBytes(sr, p.file);
-      const url = await window.__fb.getDownloadURL(sr);
+      const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
+      const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: p.file
+      });
+      if (!r.ok) throw new Error('업로드 실패 ('+r.status+')');
+      const meta = await r.json();
+      const url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
       photoUrls.push(url);
     }
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
