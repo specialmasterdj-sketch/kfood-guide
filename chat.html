@@ -31,6 +31,12 @@ a{color:inherit;text-decoration:none}
 .rooms-h{padding:12px 14px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between}
 .rooms-h h2{font-size:1em;font-weight:700}
 .rooms-h .add{background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:4px 8px;font-size:.78em;font-weight:600;cursor:pointer}
+.rooms-search{padding:8px 12px;border-bottom:1px solid #f3f4f6;display:flex;align-items:center;gap:8px;background:#fafafa}
+.rooms-search input{flex:1;border:1px solid #e5e7eb;border-radius:8px;padding:7px 10px;font-size:.85em;background:#fff;outline:none}
+.rooms-search input:focus{border-color:#1a5c3a}
+.rooms-tabs{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid #f3f4f6;background:#fff}
+.rooms-tabs button{flex:1;background:#f4f6f9;border:0;border-radius:14px;padding:5px 10px;font-size:.78em;font-weight:600;color:#6b7280;cursor:pointer}
+.rooms-tabs button.active{background:#1a5c3a;color:#fff}
 .rooms-list{flex:1;overflow-y:auto;padding:6px 0}
 .room-item{padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;border-left:3px solid transparent}
 .room-item:hover{background:#f9fafb}
@@ -162,6 +168,15 @@ a{color:inherit;text-decoration:none}
     <div class="rooms-h">
       <h2>채팅방</h2>
       <button class="add" onclick="openRoomModal()">＋ 새 방</button>
+    </div>
+    <div class="rooms-search">
+      <span style="color:#9ca3af">🔎</span>
+      <input id="roomSearch" type="text" placeholder="채팅방 검색…" oninput="filterRooms()">
+    </div>
+    <div class="rooms-tabs">
+      <button class="active" data-filter="all" onclick="setRoomFilter('all',this)">전체</button>
+      <button data-filter="unread" onclick="setRoomFilter('unread',this)">안읽음</button>
+      <button data-filter="mine" data-i="3" onclick="setRoomFilter('mine',this)">내 부서</button>
     </div>
     <div class="rooms-list" id="roomsList"></div>
   </aside>
@@ -315,13 +330,19 @@ let __unsubMsgs = null;
 // ============ DEFAULT ROOMS ============
 const DEFAULT_ROOMS = [
   { id:'general', name:'전체 공지', desc:'모든 지점 공통', icon:'📢' },
-  { id:'managers', name:'매니저 룸', desc:'매니저 전용', icon:'👔' },
-  { id:'payroll', name:'💵 현금 급여 보고', desc:'매니저 전용 · 주간 급여 리포트', icon:'💵', managersOnly:true },
+  { id:'need_overstock', name:'Need and over stock', desc:'재고 부족/과다 보고', icon:'📦' },
+  { id:'managers', name:'Supervisors and Managers', desc:'매니저 / 슈퍼바이저', icon:'👔' },
+  { id:'payroll', name:'💵 현금 급여지급 Report방', desc:'매니저 전용 · 주간 급여 리포트', icon:'💵', managersOnly:true },
+  { id:'closing', name:'CLOSING ROOM', desc:'마감 사진/리포트', icon:'🌙' },
+  { id:'kfood_eval', name:'K-FOOD EVALUATION', desc:'한식 진열/품질 평가', icon:'🍚' },
   { id:'produce', name:'PRODUCE EVALUATION', desc:'야채 진열 사진 평가', icon:'🥬' },
+  { id:'grocery_eval', name:'GROCERY EVALUATION', desc:'그로서리 진열 평가', icon:'🛒' },
   { id:'meat', name:'MEAT DEPT', desc:'정육 부서', icon:'🥩' },
-  { id:'sushi', name:'SUSHI / KITCHEN', desc:'스시 / 키친', icon:'🍱' },
+  { id:'sushi', name:'SUSHI KING', desc:'스시 / 키친', icon:'🍱' },
+  { id:'expired', name:'Expired-Damaged', desc:'유통기한/파손 보고', icon:'⚠️' },
+  { id:'supply_req', name:'Supply request / 비품 요청', desc:'비품·소모품 요청', icon:'🧺' },
 ];
-const ROOM_ICONS = {general:'📢', managers:'👔', payroll:'💵', produce:'🥬', meat:'🥩', sushi:'🍱'};
+const ROOM_ICONS = {general:'📢', need_overstock:'📦', managers:'👔', payroll:'💵', closing:'🌙', kfood_eval:'🍚', produce:'🥬', grocery_eval:'🛒', meat:'🥩', sushi:'🍱', expired:'⚠️', supply_req:'🧺'};
 function roomIconFor(id, name){
   if (ROOM_ICONS[id]) return ROOM_ICONS[id];
   // hash name -> emoji
@@ -439,6 +460,28 @@ function refreshMePill(){
 }
 
 // ============ ROOMS ============
+let ROOM_FILTER = 'all';
+let ROOM_QUERY = '';
+function setRoomFilter(f, btn){
+  ROOM_FILTER = f;
+  document.querySelectorAll('.rooms-tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderRooms();
+}
+function filterRooms(){
+  ROOM_QUERY = (document.getElementById('roomSearch')?.value || '').trim().toLowerCase();
+  renderRooms();
+}
+function roomMatchesMyDept(id, r){
+  const dept = (me?.role || '').toUpperCase();
+  if (!dept) return false;
+  if (dept.includes('MEAT') && /meat|seafood|정육/i.test(r.name+id)) return true;
+  if (dept.includes('SUSHI') || dept.includes('KITCHEN')) return /sushi|kitchen|키친|스시/i.test(r.name+id);
+  if (dept.includes('PRODUCE')) return /produce|grocery|야채/i.test(r.name+id);
+  if (dept.includes('CASHIER') || dept.includes('STOCKER')) return /need|overstock|supply|expired|grocery/i.test(r.name+id);
+  if (me?.isManager) return /manager|supervisor|payroll|closing|급여/i.test(r.name+id);
+  return false;
+}
 function renderRooms(){
   const list = document.getElementById('roomsList');
   const items = Object.entries(ROOMS)
@@ -446,7 +489,14 @@ function renderRooms(){
       // payroll 방은 더 엄격: OWNER/MANAGER/ASSISTANT MANAGER만
       if (id === 'payroll' || (r.managersOnly && /payroll|급여/i.test(r.name||''))) return canAccessPayrollRoom();
       const restricted = r.managersOnly || id === 'managers';
-      return !restricted || me?.isManager;
+      if (restricted && !me?.isManager) return false;
+      if (ROOM_QUERY) {
+        const hay = (r.name + ' ' + (r.desc||'') + ' ' + (r.lastMsg||'')).toLowerCase();
+        if (!hay.includes(ROOM_QUERY)) return false;
+      }
+      if (ROOM_FILTER === 'unread' && !(r.unread > 0)) return false;
+      if (ROOM_FILTER === 'mine' && !roomMatchesMyDept(id, r)) return false;
+      return true;
     })
     .sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
   if (items.length === 0) {
@@ -456,12 +506,14 @@ function renderRooms(){
   list.innerHTML = items.map(([id, r]) => {
     const active = id === ACTIVE_ROOM ? ' active' : '';
     const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
+    const unread = r.unread > 0 ? `<span class="un">${r.unread > 99 ? '99+' : r.unread}</span>` : '';
     return `<div class="room-item${active}" onclick="openRoom('${id}')">
       <div class="icon">${roomIconFor(id, r.name)}</div>
       <div class="info">
         <div class="nm">${escapeHtml(r.name)}</div>
         <div class="last">${escapeHtml(r.lastMsg || r.desc || '')} ${lastTime ? '· '+lastTime : ''}</div>
       </div>
+      ${unread}
     </div>`;
   }).join('');
 }
