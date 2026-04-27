@@ -652,13 +652,35 @@ function openDoneModal(id, branchId){
 }
 document.getElementById('donePhoto').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
+  const btn = document.getElementById('doneBtn');
   for (const f of files) {
-    const url = await readDataUrl(f);
-    DONE_PHOTOS.push({ file: f, dataUrl: url });
+    if (btn) { btn.disabled = true; btn.textContent = '사진 처리 중…'; }
+    const compressed = await compressImage(f);
+    const url = await readDataUrl(compressed);
+    DONE_PHOTOS.push({ file: compressed, dataUrl: url });
   }
+  if (btn) { btn.disabled = false; btn.textContent = '✅ 완료 보고'; }
   renderDonePreviews();
 });
 function readDataUrl(f){ return new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); }); }
+async function compressImage(file, maxSide = 1280, quality = 0.82) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+    URL.revokeObjectURL(url);
+    let { width, height } = img;
+    if (width <= maxSide && height <= maxSide && file.size < 400 * 1024) return file; // small enough — skip
+    const r = Math.min(maxSide / width, maxSide / height, 1);
+    const w = Math.round(width * r), h = Math.round(height * r);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(res => canvas.toBlob(b => res(b), 'image/jpeg', quality));
+    if (!blob || blob.size > file.size) return file;
+    return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+  } catch(e) { console.warn('compress fail', e); return file; }
+}
 function renderDonePreviews(){
   document.getElementById('donePreviews').innerHTML = DONE_PHOTOS.map((p,i) =>
     `<div style="position:relative"><img src="${p.dataUrl}" style="width:60px;height:60px;border-radius:8px;object-fit:cover"><button onclick="DONE_PHOTOS.splice(${i},1);renderDonePreviews()" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:.7em;cursor:pointer">×</button></div>`
