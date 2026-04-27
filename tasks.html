@@ -32,6 +32,10 @@ button{font-family:inherit;cursor:pointer}
 .me-pill{background:#f0fdf4;color:#1a5c3a;border:1px solid #bbf7d0;border-radius:20px;padding:6px 12px;font-size:.82em;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer}
 .me-pill .av{width:22px;height:22px;border-radius:50%;background:#1a5c3a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:.7em;font-weight:700}
 
+.lang-toggle{display:inline-flex;background:#f3f4f6;border-radius:14px;padding:2px;gap:0;margin-right:6px}
+.lang-toggle button{background:transparent;border:0;padding:4px 10px;border-radius:12px;font-size:.74em;font-weight:700;color:#6b7280;cursor:pointer}
+.lang-toggle button.active{background:#1a5c3a;color:#fff}
+
 .tabs{display:flex;background:#fff;border-bottom:1px solid #e5e7eb;padding:0 16px;gap:4px;position:sticky;top:51px;z-index:49}
 .tabs button{background:transparent;border:0;padding:12px 16px;font-size:.92em;font-weight:600;color:#6b7280;border-bottom:3px solid transparent;cursor:pointer}
 .tabs button.active{color:#1a5c3a;border-bottom-color:#1a5c3a}
@@ -167,6 +171,11 @@ button{font-family:inherit;cursor:pointer}
   <div class="logo">K</div>
   <h1>업무 지시</h1>
   <div class="spacer"></div>
+  <div class="lang-toggle" id="langToggle">
+    <button data-l="ko" onclick="setLang('ko')">KO</button>
+    <button data-l="en" onclick="setLang('en')">EN</button>
+    <button data-l="es" onclick="setLang('es')">ES</button>
+  </div>
   <div class="me-pill" id="mePill" onclick="goSetName()">
     <div class="av" id="meAv">?</div>
     <span id="meName">이름 등록</span>
@@ -292,6 +301,67 @@ button{font-family:inherit;cursor:pointer}
 const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
 const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
+
+// ================= LANGUAGE / TRANSLATION =================
+const LANG_KEY = 'tasks.lang';
+function detectLang(){
+  const saved = localStorage.getItem(LANG_KEY);
+  if (saved && ['ko','en','es'].includes(saved)) return saved;
+  const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+  if (['ko','en','es'].includes(nav)) return nav;
+  return 'ko';
+}
+let LANG = detectLang();
+function setLang(l){
+  if (!['ko','en','es'].includes(l)) return;
+  LANG = l;
+  localStorage.setItem(LANG_KEY, l);
+  refreshLangToggle();
+  if (typeof renderAll === 'function') renderAll();
+}
+function refreshLangToggle(){
+  document.querySelectorAll('#langToggle button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+}
+// In-memory translation cache so we don't refetch the same string
+const TR_CACHE = new Map();
+async function translate(text, target) {
+  if (!text) return '';
+  if (!target || target === 'auto') return text;
+  const key = target + '|' + text;
+  if (TR_CACHE.has(key)) return TR_CACHE.get(key);
+  try {
+    const u = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
+    const r = await fetch(u);
+    if (!r.ok) throw 0;
+    const j = await r.json();
+    const out = (j && j[0]) ? j[0].map(seg => seg[0]).join('') : text;
+    TR_CACHE.set(key, out);
+    return out;
+  } catch(e) { return text; }
+}
+async function translateMulti(text) {
+  if (!text) return null;
+  const [en, es, ko] = await Promise.all([
+    translate(text, 'en'),
+    translate(text, 'es'),
+    translate(text, 'ko'),
+  ]);
+  return { ko, en, es };
+}
+// pick the right language out of a translations object, falling back gracefully
+function pickLang(tr, fallback){
+  if (!tr) return fallback || '';
+  return tr[LANG] || tr.ko || tr.en || tr.es || fallback || '';
+}
+// Translate an existing task on the fly if it has no translations bundle yet
+async function backfillTranslate(t) {
+  if (t.nameTr || !t.name) return;
+  const tr = await translateMulti(t.name);
+  if (tr) t.nameTr = tr;
+  if (t.memo && !t.memoTr) t.memoTr = await translateMulti(t.memo);
+  if (t.note && !t.noteTr) t.noteTr = await translateMulti(t.note);
+  renderAll && renderAll();
+}
 const BRANCHES = [
   { id:'MIAMI', ko:'마이애미' },
   { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈' },
@@ -613,23 +683,40 @@ function isAssignedToMe(t){
 function renderTaskCard(t){
   const status = computeStatus(t);
   const elapsed = (t.startedAt && !t.completedAt) ? Math.floor((Date.now()-t.startedAt)/60000) : null;
+  // Backfill translations in background for tasks that were created before translation existed
+  if (t.name && !t.nameTr) backfillTranslate(t);
+  const dispName = pickLang(t.nameTr, t.name);
+  const dispMemo = t.memo ? pickLang(t.memoTr, t.memo) : '';
+  const dispNote = t.note ? pickLang(t.noteTr, t.note) : '';
+  const labels = {
+    deadline: { ko:'데드라인', en:'Due', es:'Plazo' },
+    photoReq: { ko:'사진 필수', en:'Photo required', es:'Foto requerida' },
+    start:    { ko:'▶ 시작', en:'▶ Start', es:'▶ Iniciar' },
+    quick:    { ko:'⚡ 바로 완료', en:'⚡ Quick done', es:'⚡ Listo rápido' },
+    report:   { ko:'✅ 완료 보고', en:'✅ Report done', es:'✅ Reportar' },
+    done:     { ko:'✓ 완료', en:'✓ Done', es:'✓ Hecho' },
+    inProg:   { ko:'분 진행', en:' min', es:' min' },
+    memo:     { ko:'📝 메모', en:'📝 Note', es:'📝 Nota' },
+  };
   let actions = '';
-  if (status === 'completed') actions = `<span class="btn gray">✓ 완료 ${fmtTime(t.completedAt)}</span>`;
-  else if (status === 'in_progress' || (t.startedAt && !t.completedAt)) actions = `<button class="btn" onclick="openDoneModal('${t.id}','${t.branchId}')">✅ 완료 보고</button>`;
-  else actions = `<button class="btn warn" onclick="startTask('${t.id}','${t.branchId}')">▶ 시작</button> <button class="btn sec" onclick="openDoneModal('${t.id}','${t.branchId}')">⚡ 바로 완료</button>`;
+  if (status === 'completed') actions = `<span class="btn gray">${labels.done[LANG]} ${fmtTime(t.completedAt)}</span>`;
+  else if (status === 'in_progress' || (t.startedAt && !t.completedAt)) actions = `<button class="btn" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.report[LANG]}</button>`;
+  else actions = `<button class="btn warn" onclick="startTask('${t.id}','${t.branchId}')">${labels.start[LANG]}</button> <button class="btn sec" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.quick[LANG]}</button>`;
   const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
-  const memoHtml = t.memo ? `<div class="task-memo"><b>📝 메모:</b> ${escHtml(t.memo)}</div>` : '';
+  const memoHtml = dispMemo ? `<div class="task-memo"><b>${labels.memo[LANG]}:</b> ${escHtml(dispMemo)}</div>` : '';
+  const noteHtml = dispNote ? `<div class="task-memo" style="background:#fef3c7;color:#92400e">${escHtml(dispNote)}</div>` : '';
   return `<div class="task-card ${status}">
-    ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}분 진행</div>`:''}
+    ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}${labels.inProg[LANG]}</div>`:''}
     <div class="task-row">
-      <div class="task-name">${escHtml(t.name)}</div>
+      <div class="task-name">${escHtml(dispName)}</div>
     </div>
     <div class="task-meta">
-      ${t.deadline?`<span class="deadline">⏰ 데드라인 ${t.deadline}</span>`:''}
-      ${t.requirePhoto?`<span class="photo-req">📷 사진 필수</span>`:''}
+      ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}</span>`:''}
+      ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
       ${t.from?`<span class="from">👤 ${escHtml(t.from)}</span>`:''}
       ${t.category?`<span>· ${escHtml(t.category)}</span>`:''}
     </div>
+    ${noteHtml}
     ${memoHtml}
     ${photosHtml}
     <div class="task-actions">${actions}</div>
@@ -719,8 +806,10 @@ async function finishTask(){
       }
       photoUrls.push(url);
     }
+    const memoText = document.getElementById('doneMemo').value.trim();
+    const memoTr = memoText ? await translateMulti(memoText) : null;
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
-    const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: document.getElementById('doneMemo').value.trim() };
+    const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: memoText, memoTr: memoTr };
     if (!CURRENT_TASK.startedAt) upd.startedAt = Date.now();
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
     closeOv('doneOv');
@@ -744,19 +833,29 @@ function renderMgr(){
   const order = { delayed:0, in_progress:1, pending:2, completed:3 };
   rows.sort((a,b) => (order[a._status]-order[b._status]) || (a.deadline||'99').localeCompare(b.deadline||'99'));
   if (rows.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#9ca3af">조건에 맞는 업무 없음</td></tr>'; return; }
+  const stLabels = {
+    pending:    { ko:'대기',   en:'Pending',     es:'Pendiente' },
+    in_progress:{ ko:'진행중', en:'In progress', es:'En curso' },
+    completed:  { ko:'완료',   en:'Done',        es:'Hecho' },
+    delayed:    { ko:'지연',   en:'Delayed',     es:'Retrasado' },
+  };
+  const startLabel = { ko:'시작 ', en:'Started ', es:'Iniciado ' };
   tbody.innerHTML = rows.map(t => {
+    if (t.name && !t.nameTr) backfillTranslate(t);
+    const dispName = pickLang(t.nameTr, t.name);
+    const dispMemo = t.memo ? pickLang(t.memoTr, t.memo) : '';
     const who = t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : '전체');
     const av = `<span class="av" style="background:${colorFor(who)}">${initials(who)}</span>`;
     const branch = isOwner() && t.branchName ? ` <span style="font-size:.72em;color:#9ca3af">(${t.branchName})</span>` : '';
-    const stLabel = {pending:'대기', in_progress:'진행중', completed:'완료', delayed:'지연'}[t._status];
-    const memo = t.memo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(t.memo)}</div>` : '';
+    const stLabel = stLabels[t._status][LANG];
+    const memo = dispMemo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(dispMemo)}</div>` : '';
     const photos = (t.photos||[]).slice(0,3).map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')">`).join('');
     return `<tr class="${t._status}">
       <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
-      <td><div style="font-weight:600">${escHtml(t.name)}</div>${memo}</td>
+      <td><div style="font-weight:600">${escHtml(dispName)}</div>${memo}</td>
       <td><span style="font-size:.85em;${t._status==='delayed'?'color:#dc2626;font-weight:700':''}">${t.deadline||'-'}</span></td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
-      <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? '시작 '+fmtTime(t.startedAt) : '-')}</span></td>
+      <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
       <td>${photos || '<span style="color:#d1d5db">-</span>'}</td>
     </tr>`;
   }).join('');
@@ -834,17 +933,27 @@ async function sendAssign(){
   const note = document.getElementById('aNote').value.trim();
   if (!name) { alert('업무명을 입력하세요.'); return; }
   if (!to) { alert('담당자를 선택하세요.'); return; }
+  const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
+  // Translate name + note into ko/en/es so any employee sees it in their language
+  const [nameTr, noteTr] = await Promise.all([
+    translateMulti(name),
+    note ? translateMulti(note) : Promise.resolve(null),
+  ]);
   const path = 'tasks/'+me.branch+'/'+todayStr();
   const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
   await window.__fb.set(r, {
-    name, deadline, category: cat, requirePhoto: photo,
+    name, nameTr,
+    deadline, category: cat, requirePhoto: photo,
     assignedTo: to === '*' ? '*' : to,
     from: me.name, fromRole: me.role,
     createdAt: Date.now(),
     note: note || null,
+    noteTr: noteTr || null,
   });
+  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   closeOv('assignOv');
-  alert('✅ 업무 지시 전송 완료\n· 담당자 화면에 즉시 표시됩니다');
+  alert('✅ 업무 지시 전송 완료\n· 담당자 화면에 즉시 표시됩니다 (KO/EN/ES 자동 번역)');
 }
 
 // ================= UTIL =================
@@ -870,9 +979,11 @@ window.dismissNotifyBanner = dismissNotifyBanner;
 window.tickLocation = tickLocation;
 window.clockIn = clockIn;
 window.registerBranchGeo = registerBranchGeo;
+window.setLang = setLang;
 
 // Init
 refreshMe();
+refreshLangToggle();
 refreshNotifyBanner();
 function bootFb(){
   subscribeTasks();
