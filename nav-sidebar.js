@@ -4,12 +4,22 @@
   if (window.__navSideInjected) return;
   window.__navSideInjected = true;
 
+  // Manager-or-above tokens (mirrors payroll.html access gate)
+  const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER'];
+  function isManager(){
+    let me = null;
+    try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+    if (!me || !me.role) return false;
+    const r = String(me.role).toUpperCase();
+    return MGR_TOKENS.some(t => r.includes(t.toUpperCase()));
+  }
+
   const LINKS = [
     { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
     { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
     { ic: '📅', lbl: { ko:'스케줄',       en:'Schedule',    es:'Horario' },     href: './shifts.html' },
-    { ic: '💵', lbl: { ko:'급여 (현금)', en:'Payroll (Cash)', es:'Nómina (Efectivo)' }, href: './payroll.html?type=cash' },
-    { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa' },
+    { ic: '💵', lbl: { ko:'급여 (현금)', en:'Payroll (Cash)', es:'Nómina (Efectivo)' }, href: './payroll.html?type=cash', mgr: true },
+    { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa',  mgr: true },
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html' },
@@ -81,9 +91,19 @@
   aside.className = 'km-navside';
 
   function renderInner(){
+    const mgr = isManager();
+    // Pre-filter so sections with no visible items don't render an orphan header
+    const visible = LINKS.filter(it => it.sec || !it.mgr || mgr);
     let html = `<div class="km-brand"><div class="logo">K</div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></div>`;
-    for (const it of LINKS) {
-      if (it.sec) { html += `<div class="km-sec">${pickLbl(it.sec)}</div>`; continue; }
+    for (let i = 0; i < visible.length; i++) {
+      const it = visible[i];
+      if (it.sec) {
+        // Skip a section header if the next thing is another section or end-of-list
+        const next = visible[i+1];
+        if (!next || next.sec) continue;
+        html += `<div class="km-sec">${pickLbl(it.sec)}</div>`;
+        continue;
+      }
       const hrefFile = (it.href || '').split('/').pop().split('?')[0].toLowerCase();
       const isActive = hrefFile && here === hrefFile;
       const tgt = it.target ? ` target="${it.target}"` : '';
@@ -105,9 +125,10 @@
     if (e.target.closest('a') && window.innerWidth <= 760) aside.classList.remove('open');
   });
 
-  // Re-render when language changes — listen to all known keys + a custom event
-  window.addEventListener('storage', e => { if (LANG_KEYS.includes(e.key)) renderInner(); });
+  // Re-render when language OR identity changes
+  window.addEventListener('storage', e => { if (LANG_KEYS.includes(e.key) || e.key === 'chat.me') renderInner(); });
   window.addEventListener('km-lang-changed', renderInner);
+  window.addEventListener('km-identity-changed', renderInner);
 
   function mount(){
     document.body.appendChild(aside);
