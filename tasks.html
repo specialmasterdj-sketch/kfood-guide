@@ -1093,6 +1093,26 @@ refreshMe();
 refreshLangToggle();
 refreshStaticI18n();
 refreshNotifyBanner();
+// Auto-request notification permission on first load while permission is still 'default'.
+// Browsers ignore this if the user already chose (granted/denied), so it's a one-shot ask.
+// We also remember we tried (localStorage) to avoid hammering on every refresh.
+(function autoAskNotify(){
+  if (!notifySupported()) return;
+  if (Notification.permission !== 'default') return;
+  if (localStorage.getItem('tasks.notifyAutoAsked') === '1') return;
+  localStorage.setItem('tasks.notifyAutoAsked', '1');
+  // Defer slightly so the page paints first (better UX than prompting on a blank screen)
+  setTimeout(() => {
+    try {
+      Notification.requestPermission().then(p => {
+        refreshNotifyBanner();
+        if (p === 'granted') {
+          try { new Notification('🔔 알림 활성화 완료', { body: '새 업무 지시 도착 시 즉시 알려 드립니다.' }); } catch(e){}
+        }
+      }).catch(()=>{});
+    } catch(e){}
+  }, 600);
+})();
 // React to language changes from another tab/page (apps.html toggle, etc.)
 window.addEventListener('storage', e => {
   if (['tasks.lang','kimchi_lang','hub.lang'].includes(e.key) && e.newValue && ['ko','en','es'].includes(e.newValue) && e.newValue !== LANG) {
