@@ -181,6 +181,7 @@ body.readonly .shift-cell { cursor:default !important; }
   <div class="spacer"></div>
   <button class="btn secondary editor-only" id="batchEditBtn" onclick="toggleBatchEdit()" data-t="btn_batch_edit" title="ON: 변경 사항을 모아 [확정]까지 저장하지 않음">📝 일괄 편집 OFF</button>
   <button class="btn secondary editor-only" onclick="copyFromLastWeek()" data-t="btn_copy_last" title="지난 주 시프트를 이번 주로 복사">📋 지난 주 복사</button>
+  <button class="btn secondary editor-only" onclick="clearCurrentWeek()" data-t="btn_clear_week" title="현재 주의 모든 시프트 삭제" style="color:#dc2626">🗑 이번 주 비우기</button>
   <button class="btn secondary editor-only" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
   <button class="btn secondary editor-only" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
   <button class="btn secondary editor-only" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
@@ -435,6 +436,7 @@ const T = {
   btn_today:       {ko:'오늘',                  en:'Today',              es:'Hoy'},
   btn_copy_last:   {ko:'📋 지난 주 복사',        en:'📋 Copy last week',  es:'📋 Copiar semana anterior'},
   btn_batch_edit:  {ko:'📝 일괄 편집',          en:'📝 Batch edit',       es:'📝 Edición por lotes'},
+  btn_clear_week:  {ko:'🗑 이번 주 비우기',     en:'🗑 Clear this week',  es:'🗑 Vaciar esta semana'},
   btn_role:        {ko:'＋ 역할',               en:'＋ Role',            es:'＋ Rol'},
   btn_emp:         {ko:'＋ 직원',               en:'＋ Employee',        es:'＋ Empleado'},
   btn_save:        {ko:'저장',                  en:'Save',               es:'Guardar'},
@@ -882,6 +884,39 @@ function copyFromLastWeek(skipConfirm){
     }
   });
   // Note: NO saveBranchData here — drafts stay local until user commits
+  render();
+}
+
+// ===== CLEAR CURRENT WEEK =====
+function clearCurrentWeek(){
+  if (typeof requireEdit === 'function' && !requireEdit()) return;
+  // Collect every shift key that falls in the visible week
+  const weekKeys = [];
+  for (let i = 0; i < 7; i++) {
+    const dKey = fmtKey(addDays(weekStart, i));
+    Object.keys(DATA.shifts).forEach(k => {
+      if (k.endsWith('@'+dKey)) weekKeys.push(k);
+    });
+  }
+  if (weekKeys.length === 0) {
+    alert(LANG==='en'?'This week is already empty.':LANG==='es'?'Esta semana ya está vacía.':'이번 주에 시프트가 없습니다.');
+    return;
+  }
+  const wkLabel = `${fmtKey(weekStart)} ~ ${fmtKey(addDays(weekStart, 6))}`;
+  const msg = LANG==='en'
+    ? `Delete all ${weekKeys.length} shifts for the week of ${wkLabel}?\n\nThis cannot be undone${isBatchEdit()?' (until cancel/commit)':''}.`
+    : LANG==='es'
+    ? `¿Eliminar los ${weekKeys.length} turnos de la semana ${wkLabel}?\n\nNo se puede deshacer${isBatchEdit()?' (hasta cancelar/confirmar)':''}.`
+    : `${wkLabel} 주의 시프트 ${weekKeys.length}개를 모두 삭제할까요?\n\n${isBatchEdit()?'(취소/확정으로 되돌릴 수 있습니다)':'되돌릴 수 없습니다.'}`;
+  if (!confirm(msg)) return;
+  // Determine if any of the cleared shifts are committed (not draft) — that decides whether we persist now
+  let hadCommitted = false;
+  weekKeys.forEach(k => {
+    if (DATA.shifts[k] && !DATA.shifts[k]._draft) hadCommitted = true;
+    delete DATA.shifts[k];
+  });
+  // In batch-edit mode we keep changes pending until commit; otherwise persist immediately if any committed shift was removed
+  if (!isBatchEdit() && hadCommitted) saveBranchData(DATA);
   render();
 }
 
