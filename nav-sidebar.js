@@ -5,30 +5,30 @@
   window.__navSideInjected = true;
 
   const LINKS = [
-    { sec: '대시보드' },
-    { ic: '🏠', lbl: 'HUB',           href: './hub.html' },
-    { ic: '📅', lbl: '스케줄',         href: './shifts.html' },
-    { ic: '💵', lbl: '급여',           href: './payroll.html?type=cpa' },
+    { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
+    { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
+    { ic: '📅', lbl: { ko:'스케줄',       en:'Schedule',    es:'Horario' },     href: './shifts.html' },
+    { ic: '💵', lbl: { ko:'급여',         en:'Payroll',     es:'Nómina' },      href: './payroll.html?type=cpa' },
 
-    { sec: '커뮤니케이션' },
-    { ic: '💬', lbl: '채팅',           href: './chat.html' },
-    { ic: '📢', lbl: '공지 / Updates', href: './updates.html' },
-    { ic: '📨', lbl: '업무 지시',      href: './tasks.html' },
+    { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
+    { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html' },
+    { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html' },
+    { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html' },
 
-    { sec: '매장 운영' },
-    { ic: '🏪', lbl: '주문 센터',      href: './vendor-order-center.html' },
-    { ic: '🔎', lbl: '상품 조회',      href: 'https://specialmasterdj-sketch.github.io/kfood-guide/lookup.html', target: '_blank' },
-    { ic: '📋', lbl: '일일 평가',      href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/', target: '_blank' },
-    { ic: '📄', lbl: '인보이스',       href: './invoice-to-excel.html' },
+    { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
+    { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
+    { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: 'https://specialmasterdj-sketch.github.io/kfood-guide/lookup.html', target: '_blank' },
+    { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/', target: '_blank' },
+    { ic: '📄', lbl: { ko:'인보이스',       en:'Invoices',       es:'Facturas' },         href: './invoice-to-excel.html' },
 
-    { sec: '트레이닝' },
-    { ic: '🥩', lbl: '정육 트레이닝',  href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/', target: '_blank' },
-    { ic: '🍱', lbl: 'K-Food 가이드',  href: 'https://specialmasterdj-sketch.github.io/kfood-guide/', target: '_blank' },
+    { sec: { ko:'트레이닝', en:'Training', es:'Capacitación' } },
+    { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/', target: '_blank' },
+    { ic: '🍱', lbl: { ko:'K-Food 가이드',  en:'K-Food Guide',     es:'Guía K-Food' },          href: 'https://specialmasterdj-sketch.github.io/kfood-guide/', target: '_blank' },
 
-    { sec: '기타' },
-    { ic: '🚚', lbl: '물류',           href: 'https://specialmasterdj-sketch.github.io/kimchi-logistics/', target: '_blank' },
-    { ic: '🛒', lbl: '쇼핑',           href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/', target: '_blank' },
-    { ic: '⊞',  lbl: '모든 앱',        href: './apps.html' },
+    { sec: { ko:'기타', en:'Other', es:'Otros' } },
+    { ic: '🚚', lbl: { ko:'물류',          en:'Logistics', es:'Logística' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-logistics/', target: '_blank' },
+    { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/', target: '_blank' },
+    { ic: '⊞',  lbl: { ko:'모든 앱',       en:'All Apps',  es:'Todas Apps' }, href: './apps.html' },
   ];
 
   const W = 200;
@@ -58,20 +58,36 @@
   style.textContent = css;
   document.head.appendChild(style);
 
-  // Determine active link from current path
+  // Pick the active language: same key tasks.html uses, falls back to nav language
+  function currentLang(){
+    const ls = localStorage.getItem('tasks.lang');
+    if (ls && ['ko','en','es'].includes(ls)) return ls;
+    const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+    return ['ko','en','es'].includes(nav) ? nav : 'ko';
+  }
+  function pickLbl(v){
+    if (!v) return '';
+    if (typeof v === 'string') return v;       // legacy single-string label
+    return v[currentLang()] || v.ko || v.en || v.es || '';
+  }
+
   const here = location.pathname.split('/').pop().toLowerCase() || 'index.html';
 
   const aside = document.createElement('aside');
   aside.className = 'km-navside';
-  let html = `<div class="km-brand"><div class="logo">K</div><div class="nm">김치마트</div></div>`;
-  for (const it of LINKS) {
-    if (it.sec) { html += `<div class="km-sec">${it.sec}</div>`; continue; }
-    const hrefFile = (it.href || '').split('/').pop().split('?')[0].toLowerCase();
-    const isActive = hrefFile && here === hrefFile;
-    const tgt = it.target ? ` target="${it.target}"` : '';
-    html += `<a href="${it.href}"${tgt}${isActive ? ' class="active"' : ''}><span class="ic">${it.ic}</span><span class="lbl">${it.lbl}</span></a>`;
+
+  function renderInner(){
+    let html = `<div class="km-brand"><div class="logo">K</div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></div>`;
+    for (const it of LINKS) {
+      if (it.sec) { html += `<div class="km-sec">${pickLbl(it.sec)}</div>`; continue; }
+      const hrefFile = (it.href || '').split('/').pop().split('?')[0].toLowerCase();
+      const isActive = hrefFile && here === hrefFile;
+      const tgt = it.target ? ` target="${it.target}"` : '';
+      html += `<a href="${it.href}"${tgt}${isActive ? ' class="active"' : ''}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
+    }
+    aside.innerHTML = html;
   }
-  aside.innerHTML = html;
+  renderInner();
 
   const toggle = document.createElement('button');
   toggle.className = 'km-navtoggle';
@@ -83,6 +99,10 @@
   aside.addEventListener('click', e => {
     if (e.target.closest('a') && window.innerWidth <= 760) aside.classList.remove('open');
   });
+
+  // Re-render when language changes — listen to localStorage and a custom event
+  window.addEventListener('storage', e => { if (e.key === 'tasks.lang') renderInner(); });
+  window.addEventListener('km-lang-changed', renderInner);
 
   function mount(){
     document.body.appendChild(aside);
