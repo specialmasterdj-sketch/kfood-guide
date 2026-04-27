@@ -169,6 +169,7 @@ body.readonly .shift-cell { cursor:default !important; }
     <button class="btn secondary" onclick="shiftWeek(1)">›</button>
   </div>
   <div class="spacer"></div>
+  <button class="btn secondary editor-only" onclick="copyFromLastWeek()" data-t="btn_copy_last" title="지난 주 시프트를 이번 주로 복사">📋 지난 주 복사</button>
   <button class="btn secondary editor-only" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
   <button class="btn secondary editor-only" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
   <button class="btn secondary editor-only" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
@@ -421,6 +422,7 @@ let editingShift = null;
 const T = {
   title:           {ko:'스케줄',                en:'Schedule',           es:'Horarios'},
   btn_today:       {ko:'오늘',                  en:'Today',              es:'Hoy'},
+  btn_copy_last:   {ko:'📋 지난 주 복사',        en:'📋 Copy last week',  es:'📋 Copiar semana anterior'},
   btn_role:        {ko:'＋ 역할',               en:'＋ Role',            es:'＋ Rol'},
   btn_emp:         {ko:'＋ 직원',               en:'＋ Employee',        es:'＋ Empleado'},
   btn_save:        {ko:'저장',                  en:'Save',               es:'Guardar'},
@@ -797,7 +799,78 @@ function dayName(d, lang){
   const ko=['일','월','화','수','목','금','토'], en=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], es=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
   return (lang==='ko'?ko:lang==='es'?es:en)[d.getDay()];
 }
-function shiftWeek(n){ weekStart = addDays(weekStart, 7*n); render(); }
+function shiftWeek(n){ weekStart = addDays(weekStart, 7*n); render(); maybeOfferCloneFromLastWeek(); }
+
+// Offer to clone last week's shifts when navigating to an empty week (next-week scheduling).
+let __cloneOfferShownFor = '';
+function maybeOfferCloneFromLastWeek(){
+  if (typeof requireEdit === 'function' && !canEditNow()) return;
+  const wk = fmtKey(weekStart);
+  if (__cloneOfferShownFor === wk) return;
+  // count current week shifts
+  let curCount = 0, lastCount = 0;
+  const lastWeekStart = addDays(weekStart, -7);
+  (DATA.employees || []).forEach(emp => {
+    for (let i = 0; i < 7; i++) {
+      if (DATA.shifts[shiftKey(emp.id, fmtKey(addDays(weekStart, i)))]) curCount++;
+      if (DATA.shifts[shiftKey(emp.id, fmtKey(addDays(lastWeekStart, i)))]) lastCount++;
+    }
+  });
+  // Only offer if current is empty and last week has shifts
+  if (curCount > 0 || lastCount === 0) return;
+  __cloneOfferShownFor = wk;
+  setTimeout(() => {
+    const msg = (LANG === 'en')
+      ? `This week is empty. Copy ${lastCount} shifts from last week so you can edit just the differences?`
+      : (LANG === 'es')
+      ? `Esta semana está vacía. ¿Copiar ${lastCount} turnos de la semana pasada para que solo edites lo diferente?`
+      : `이번 주가 비어있습니다.\n지난 주 ${lastCount}개 시프트를 그대로 가져와서 차이점만 수정할까요?`;
+    if (confirm(msg)) copyFromLastWeek(true);
+  }, 200);
+}
+function canEditNow(){ // mirrors requireEdit() logic but without the alert side-effect
+  try { return !!(typeof ROLE !== 'undefined' && /OWNER|MANAGER|매니저|점장|GERENTE/i.test(ROLE||'')); } catch(e){ return true; }
+}
+function copyFromLastWeek(skipConfirm){
+  if (typeof requireEdit === 'function' && !requireEdit()) return;
+  const lastWeekStart = addDays(weekStart, -7);
+  // Pre-count for the confirm prompt
+  let toCopy = 0, willSkip = 0;
+  (DATA.employees || []).forEach(emp => {
+    for (let i = 0; i < 7; i++) {
+      const lastK = shiftKey(emp.id, fmtKey(addDays(lastWeekStart, i)));
+      if (!DATA.shifts[lastK]) continue;
+      const newK = shiftKey(emp.id, fmtKey(addDays(weekStart, i)));
+      if (DATA.shifts[newK]) willSkip++; else toCopy++;
+    }
+  });
+  if (toCopy === 0 && willSkip === 0) {
+    alert(LANG==='en'?'No shifts last week to copy.':LANG==='es'?'No hay turnos la semana pasada.':'지난 주에 복사할 시프트가 없습니다.');
+    return;
+  }
+  if (!skipConfirm) {
+    const msg = (LANG === 'en')
+      ? `Copy ${toCopy} shifts from last week? ${willSkip?`(${willSkip} cells already filled — kept as-is)`:''}`
+      : (LANG === 'es')
+      ? `¿Copiar ${toCopy} turnos de la semana pasada? ${willSkip?`(${willSkip} ya tienen datos — se conservan)`:''}`
+      : `지난 주 ${toCopy}개 시프트를 이번 주로 복사할까요?\n${willSkip?`기존 입력된 ${willSkip}개 셀은 보존됩니다.`:''}`;
+    if (!confirm(msg)) return;
+  }
+  let copied = 0;
+  (DATA.employees || []).forEach(emp => {
+    for (let i = 0; i < 7; i++) {
+      const lastK = shiftKey(emp.id, fmtKey(addDays(lastWeekStart, i)));
+      const lastShift = DATA.shifts[lastK];
+      if (!lastShift) continue;
+      const newK = shiftKey(emp.id, fmtKey(addDays(weekStart, i)));
+      if (DATA.shifts[newK]) continue; // never overwrite
+      DATA.shifts[newK] = JSON.parse(JSON.stringify(lastShift));
+      copied++;
+    }
+  });
+  if (copied > 0) saveBranchData(DATA);
+  render();
+}
 function goToday(){ weekStart = mondayOf(new Date()); render(); }
 
 // ========= HOURS =========
