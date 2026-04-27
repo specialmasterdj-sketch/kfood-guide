@@ -13,7 +13,7 @@
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html' },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html' },
-    { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html' },
+    { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
 
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
     { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
@@ -86,7 +86,8 @@
       const hrefFile = (it.href || '').split('/').pop().split('?')[0].toLowerCase();
       const isActive = hrefFile && here === hrefFile;
       const tgt = it.target ? ` target="${it.target}"` : '';
-      html += `<a href="${it.href}"${tgt}${isActive ? ' class="active"' : ''}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
+      const hl = it.highlight ? ' style="font-weight:800;color:#1a5c3a"' : '';
+      html += `<a href="${it.href}"${tgt}${hl}${isActive ? ' class="active"' : ''}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
     }
     aside.innerHTML = html;
   }
