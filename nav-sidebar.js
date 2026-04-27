@@ -13,6 +13,7 @@
     { sec: '커뮤니케이션' },
     { ic: '💬', lbl: '채팅',           href: './chat.html' },
     { ic: '📢', lbl: '공지 / Updates', href: './updates.html' },
+    { ic: '📨', lbl: '업무 지시',      href: './tasks.html' },
 
     { sec: '매장 운영' },
     { ic: '🏪', lbl: '주문 센터',      href: './vendor-order-center.html' },
