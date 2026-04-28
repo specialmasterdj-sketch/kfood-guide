@@ -1252,9 +1252,10 @@ function renderChecklistInline(task){
         const cls = c && c.done ? 'cl-item done' : 'cl-item';
         const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
         const dispName = c._displayName || c.name || '';
-        const photoCtl = c.photo
-          ? `<img class="cl-photo-thumb" src="${c.photo}" onclick="event.preventDefault();openLb('${c.photo}')" title="첨부됨 — 클릭하여 보기">`
-          : `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 첨부">📷</button>`;
+        const photoList = Array.isArray(c.photos) ? c.photos : (c.photo ? [c.photo] : []);
+        const thumbs = photoList.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기">`).join('');
+        const addBtn = `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 추가 (여러 장 가능)">📷${photoList.length?'+':''}</button>`;
+        const photoCtl = `<span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${thumbs}${addBtn}</span>`;
         return `<label class="${cls}">
           <input type="checkbox" ${checked} onchange="toggleChecklistItem('${task.id}','${task.branchId}',${i},this.checked)">
           <span class="cl-name">${escHtml(dispName)}</span>
@@ -1270,9 +1271,10 @@ function renderChecklistInline(task){
       const cls = c && c.done ? 'cl-item done' : 'cl-item';
       const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
       const dispName = c._displayName || c.name || '';
-      const photoCtl = c.photo
-        ? `<img class="cl-photo-thumb" src="${c.photo}" onclick="event.preventDefault();openLb('${c.photo}')" title="첨부됨 — 클릭하여 보기">`
-        : `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 첨부">📷</button>`;
+      const photoList = Array.isArray(c.photos) ? c.photos : (c.photo ? [c.photo] : []);
+      const thumbs = photoList.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기">`).join('');
+      const addBtn = `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 추가 (여러 장 가능)">📷${photoList.length?'+':''}</button>`;
+      const photoCtl = `<span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${thumbs}${addBtn}</span>`;
       return `<label class="${cls}">
         <input type="checkbox" ${checked} onchange="toggleChecklistItem('${task.id}','${task.branchId}',${i},this.checked)">
         <span class="cl-name">${escHtml(dispName)}</span>
@@ -1290,8 +1292,24 @@ function renderChecklistInline(task){
     ${body}
   </div>`;
 }
-// Per-item photo attachment — opens a hidden file picker, compresses, uploads
-// to Storage (REST) with base64 fallback, then writes the URL onto the item.
+// Per-item photo attachment — multi-select. Each pick gets compressed,
+// uploaded to Storage (REST) or saved as base64 fallback, then APPENDED to
+// item.photos[] so a checklist row can carry several proof shots.
+async function uploadOnePhoto(file, basePath){
+  const compressed = await compressImage(file);
+  const path = basePath + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '.jpg';
+  try {
+    const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
+      method:'POST', headers:{'Content-Type':'image/jpeg'}, body: compressed
+    });
+    if (r.ok) {
+      const meta = await r.json();
+      return FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+    }
+  } catch(e){}
+  const small = await compressImage(compressed, 720, 0.55);
+  return await readDataUrl(small);
+}
 function pickChecklistPhoto(taskId, branchId, idx){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   let input = document.getElementById('__clPhotoPicker');
@@ -1300,36 +1318,33 @@ function pickChecklistPhoto(taskId, branchId, idx){
     input.type = 'file';
     input.accept = 'image/*';
     input.capture = 'environment';
+    input.multiple = true;            // allow many photos at once
     input.id = '__clPhotoPicker';
     input.style.display = 'none';
     document.body.appendChild(input);
   }
   input.value = '';
   input.onchange = async () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
     try {
-      const compressed = await compressImage(file);
-      const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'_'+Date.now()+'.jpg';
-      let url = null;
-      try {
-        const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
-          method:'POST', headers:{'Content-Type':'image/jpeg'}, body: compressed
-        });
-        if (r.ok) {
-          const meta = await r.json();
-          url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
-        }
-      } catch(e){}
-      if (!url) {
-        const small = await compressImage(compressed, 720, 0.55);
-        url = await readDataUrl(small);
+      const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx;
+      const urls = [];
+      for (const f of files) {
+        const u = await uploadOnePhoto(f, basePath);
+        urls.push(u);
       }
+      // Read current photos array, append new urls, write back
       const itemPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
+      const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+      const existing = (task && task.checklist && task.checklist[idx] && Array.isArray(task.checklist[idx].photos))
+        ? task.checklist[idx].photos
+        : (task && task.checklist && task.checklist[idx] && task.checklist[idx].photo ? [task.checklist[idx].photo] : []);
       await window.__fb.update(window.__fb.ref(window.__fb.db, itemPath), {
-        photo: url,
+        photos: [...existing, ...urls],
         photoBy: me.name,
         photoAt: Date.now(),
+        photo: null,   // legacy single field cleared in favor of photos[]
       });
     } catch(e) { alert('사진 업로드 실패: '+e.message); }
   };
@@ -1488,7 +1503,13 @@ function renderMgr(){
     const branch = isOwner() && t.branchName ? ` <span style="font-size:.72em;color:#9ca3af">(${t.branchName})</span>` : '';
     const stLabel = stLabels[t._status][LANG];
     const memo = dispMemo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(dispMemo)}</div>` : '';
-    const photos = (t.photos||[]).slice(0,3).map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')">`).join('');
+    // Combine task-level photos + every checklist item's photos for the proof column
+    const clPhotos = Array.isArray(t.checklist)
+      ? t.checklist.flatMap(c => Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []))
+      : [];
+    const allProof = [...(t.photos||[]), ...clPhotos];
+    const photos = allProof.slice(0,5).map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')">`).join('')
+      + (allProof.length > 5 ? `<span style="font-size:.74em;color:#6b7280;font-weight:700;margin-left:4px">+${allProof.length-5}</span>` : '');
     return `<tr class="${t._status}">
       <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
       <td><div style="font-weight:600">${escHtml(dispName)}</div>${memo}</td>
