@@ -245,6 +245,7 @@ button{font-family:inherit;cursor:pointer}
       <button class="chip" data-f="delayed" onclick="setMgrFilter('delayed',this)">⚠️ 지연</button>
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
+    <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
     <select id="mgrPersonFilter" onchange="MGR_PERSON=this.value;renderMgr()" style="border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em;background:#fff">
@@ -1788,6 +1789,64 @@ function populateMgrFilters(){
     if (cur && Array.from(cats).includes(cur)) cSel.value = cur;
   }
 }
+// Apply the same 4 filters renderMgr does, return the rows it would print.
+function getFilteredMgrRows(){
+  let rows = TASKS.slice();
+  rows.forEach(t => t._status = computeStatus(t));
+  if (MGR_FILTER !== 'all') rows = rows.filter(t => t._status === MGR_FILTER);
+  if (MGR_PERSON) rows = rows.filter(t => t.assignedTo === MGR_PERSON);
+  if (MGR_CAT)    rows = rows.filter(t => t.category === MGR_CAT);
+  if (MGR_QUERY) {
+    const q = MGR_QUERY.toLowerCase();
+    rows = rows.filter(t => (t.name || '').toLowerCase().includes(q));
+  }
+  const order = { delayed:0, in_progress:1, pending:2, completed:3 };
+  rows.sort((a,b) => (order[a._status]-order[b._status]) || (a.deadline||'99').localeCompare(b.deadline||'99'));
+  return rows;
+}
+function csvEscape(v){
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function exportMgrCSV(){
+  const rows = getFilteredMgrRows();
+  if (!rows.length) { alert('내보낼 항목이 없습니다.'); return; }
+  const stLabels = { pending:'대기', in_progress:'진행중', completed:'완료', delayed:'지연' };
+  const header = ['담당자','업무명','카테고리','데드라인','상태','시작시간','완료시간','체크진행','체크리스트','사진수','메모','보낸이'];
+  const lines = [header.join(',')];
+  rows.forEach(t => {
+    const cl = Array.isArray(t.checklist) ? t.checklist : [];
+    const clTotal = cl.length;
+    const clDone = cl.filter(c => c && c.done).length;
+    const clNames = cl.map(c => (c.name||'') + (c.done?' ✓':'')).join('; ');
+    const clPhotos = cl.flatMap(c => Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : [])).length;
+    const totalPhotos = (t.photos||[]).length + clPhotos;
+    const startTime = t.startedAt ? new Date(t.startedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+    const doneTime  = t.completedAt ? new Date(t.completedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+    const status = stLabels[t._status] || t._status || '';
+    const progress = clTotal ? `${clDone}/${clTotal}` : '';
+    const who = t.assignedTo === '*' ? '본 지점 전체' : (t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : ''));
+    lines.push([
+      who, t.name||'', t.category||'', t.deadline||'', status,
+      startTime, doneTime, progress, clNames, totalPhotos,
+      t.memo||'', t.from||''
+    ].map(csvEscape).join(','));
+  });
+  // BOM so Excel reads UTF-8 (Korean) correctly
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const branchTag = (me && me.branch) || 'tasks';
+  a.href = url;
+  a.download = `tasks_${branchTag}_${todayStr()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+window.exportMgrCSV = exportMgrCSV;
+
 function resetMgrFilters(){
   MGR_FILTER = 'all'; MGR_PERSON = ''; MGR_CAT = ''; MGR_QUERY = '';
   document.querySelectorAll('.mgr-toolbar .chip').forEach(c => c.classList.toggle('active', c.dataset.f === 'all'));
