@@ -318,7 +318,9 @@ button{font-family:inherit;cursor:pointer}
   <div class="modal" style="max-width:520px">
     <h3>📝 업무 템플릿 편집 — <span id="tplBranchLabel" style="color:#1a5c3a"></span></h3>
     <p style="font-size:.84em;color:#6b7280;margin-bottom:10px">우리 지점 전용 업무 템플릿. 다른 지점은 영향 없음.</p>
-    <div id="tplList" style="max-height:280px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;margin-bottom:14px"></div>
+    <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin-bottom:4px">📂 우리 지점 카테고리</div>
+    <div id="tplCatList" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:6px;margin-bottom:14px;max-height:120px;overflow:auto"></div>
+    <div id="tplList" style="max-height:240px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;margin-bottom:14px"></div>
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:8px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="font-size:.82em;font-weight:700;color:#15803d">+ 새 템플릿 추가</div>
@@ -494,6 +496,41 @@ async function deleteBranchCategory(branchId, name){
       if (v === name) await fetch(`${FB_DB_URL}/taskCategories/${branchId}/${id}.json`, { method:'DELETE' });
     }
   }
+}
+async function renameBranchCategory(branchId, oldName, newName){
+  // Replace the value in taskCategories
+  const r = await fetch(`${FB_DB_URL}/taskCategories/${branchId}.json`);
+  const d = await r.json();
+  if (!d) return;
+  if (Array.isArray(d)) {
+    const next = d.map(v => v === oldName ? newName : v);
+    await fetch(`${FB_DB_URL}/taskCategories/${branchId}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(next)
+    });
+  } else {
+    for (const [id, v] of Object.entries(d)) {
+      if (v === oldName) {
+        await fetch(`${FB_DB_URL}/taskCategories/${branchId}/${id}.json`, {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(newName)
+        });
+      }
+    }
+  }
+  // Also rewrite any branch templates that referenced the old category name
+  try {
+    const tplR = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}.json`);
+    const tplD = await tplR.json();
+    if (tplD) {
+      for (const [id, v] of Object.entries(tplD)) {
+        if (v && v.category === oldName) {
+          await fetch(`${FB_DB_URL}/taskTemplates/${branchId}/${id}.json`, {
+            method:'PATCH', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ category: newName })
+          });
+        }
+      }
+    }
+  } catch(e){}
 }
 function allCategories(){
   // dedup default + branch-added
@@ -727,7 +764,10 @@ async function openTplEditor(){
   const list = await loadBranchTemplates(me.branch);
   __BRANCH_TPLS = list;
   __HIDDEN_TPLS = await loadHiddenTemplates(me.branch);
+  __BRANCH_CATS = await loadBranchCategories(me.branch);
   const hidden = new Set(__HIDDEN_TPLS);
+  refreshCategorySelects();
+  renderTplCatList();
   const ov = document.getElementById('tplOv');
   document.getElementById('tplBranchLabel').textContent = me.branch;
   const ul = document.getElementById('tplList');
@@ -765,6 +805,40 @@ async function openTplEditor(){
   document.getElementById('tplNewCat').value = '온도 체크';
   ov.classList.add('show');
 }
+function renderTplCatList(){
+  const wrap = document.getElementById('tplCatList');
+  if (!wrap) return;
+  if (!__BRANCH_CATS || __BRANCH_CATS.length === 0) {
+    wrap.innerHTML = `<div style="color:#9ca3af;font-size:.82em;text-align:center;padding:8px">우리 지점 추가 카테고리 없음</div>`;
+    return;
+  }
+  wrap.innerHTML = __BRANCH_CATS.map(c => `
+    <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:4px">
+      <span style="flex:1;font-size:.88em;font-weight:600">${escHtml(c)}</span>
+      <button class="btn sec" style="padding:3px 8px;font-size:.74em" onclick="renameCat('${c.replace(/'/g, "\\'")}')" title="이름 변경">✏</button>
+      <button class="btn danger" style="padding:3px 8px;font-size:.74em" onclick="rmCat('${c.replace(/'/g, "\\'")}')" title="삭제">×</button>
+    </div>`).join('');
+}
+async function renameCat(oldName){
+  const newName = (prompt(`"${oldName}" → 새 이름`, oldName) || '').trim();
+  if (!newName || newName === oldName) return;
+  if (allCategories().includes(newName)) { alert('이미 있는 이름입니다.'); return; }
+  await renameBranchCategory(me.branch, oldName, newName);
+  __BRANCH_CATS = await loadBranchCategories(me.branch);
+  __BRANCH_TPLS = await loadBranchTemplates(me.branch);
+  refreshCategorySelects();
+  renderTplCatList();
+  await openTplEditor();
+}
+async function rmCat(name){
+  if (!confirm(`"${name}" 카테고리를 삭제할까요?\n그 카테고리에 속한 우리 지점 템플릿은 그대로 남지만 카테고리는 '기타'로 보입니다.`)) return;
+  await deleteBranchCategory(me.branch, name);
+  __BRANCH_CATS = await loadBranchCategories(me.branch);
+  refreshCategorySelects();
+  renderTplCatList();
+}
+window.renameCat = renameCat;
+window.rmCat = rmCat;
 async function addNewCategory(){
   const name = (prompt('새 카테고리 이름 (예: 외부 매대)') || '').trim();
   if (!name) return;
