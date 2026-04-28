@@ -583,14 +583,26 @@ function onBranchChange(){
 
 // ============== Firebase subscribe ==============
 let unsub = null;
+let unsubSettings = null;
 function subscribe(){
   if (!window.__fb) { setTimeout(subscribe, 500); return; }
   if (unsub) { try{unsub();}catch(e){} unsub=null; }
+  if (unsubSettings) { try{unsubSettings();}catch(e){} unsubSettings=null; }
   const path = 'expiry/' + BRANCH + '/products';
   unsub = window.__fb.onValue(window.__fb.ref(window.__fb.db, path), snap => {
     const v = snap.val() || {};
     PRODUCTS = Object.entries(v).map(([id, p]) => Object.assign({ id }, p));
     renderAll();
+  });
+  // Per-branch settings — sync across all devices for the same store
+  const sPath = 'expiry/' + BRANCH + '/settings';
+  unsubSettings = window.__fb.onValue(window.__fb.ref(window.__fb.db, sPath), snap => {
+    const v = snap.val();
+    if (v && typeof v === 'object') {
+      SETTINGS = Object.assign({ danger:1, warn:3, alertTime:'09:00' }, v);
+      localStorage.setItem('expiry.settings', JSON.stringify(SETTINGS));
+      renderAll();
+    }
   });
 }
 window.addEventListener('fb-ready', subscribe);
@@ -978,7 +990,7 @@ function openSettingsSheet(){
   $('setAlertTime').value = SETTINGS.alertTime;
   $('settingsOv').classList.add('show');
 }
-function saveSettings(){
+async function saveSettings(){
   SETTINGS = {
     danger: parseInt($('setDanger').value, 10) || 1,
     warn: parseInt($('setWarn').value, 10) || 3,
@@ -987,6 +999,13 @@ function saveSettings(){
   localStorage.setItem('expiry.settings', JSON.stringify(SETTINGS));
   closeOv('settingsOv');
   renderAll();
+  // Push to Firebase so other devices for the same branch pick it up
+  try {
+    if (window.__fb) {
+      const sPath = 'expiry/' + BRANCH + '/settings';
+      await window.__fb.set(window.__fb.ref(window.__fb.db, sPath), SETTINGS);
+    }
+  } catch (e) { console.warn('settings sync failed', e); }
   showToast(t('saved'));
 }
 function closeOv(id){ $(id).classList.remove('show'); }
@@ -994,6 +1013,8 @@ function closeOv(id){ $(id).classList.remove('show'); }
 // ============== Render ==============
 function renderHome(){
   $('todayDate').textContent = fmtDate(new Date());
+  // KPI label reflects current SETTINGS.warn (so it updates when settings sync from RTDB)
+  $('kpiD3Lbl').textContent = t('kpiD3Lbl', { n: SETTINGS.warn });
   // KPI
   let over = 0, d3 = 0, lossEst = 0;
   PRODUCTS.forEach(p => {
