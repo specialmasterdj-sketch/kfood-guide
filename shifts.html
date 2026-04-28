@@ -190,8 +190,8 @@ body.readonly .shift-cell { cursor:default !important; }
   </div>
   <div class="spacer"></div>
   <button class="btn secondary editor-only" id="batchEditBtn" onclick="toggleBatchEdit()" data-t="btn_batch_edit" title="ON: 변경 사항을 모아 [확정]까지 저장하지 않음">📝 일괄 편집 OFF</button>
-  <button class="btn secondary editor-only" onclick="copyFromLastWeek()" data-t="btn_copy_last" title="지난 주 시프트를 이번 주로 복사">📋 지난 주 복사</button>
-  <button class="btn secondary editor-only" onclick="clearCurrentWeek()" data-t="btn_clear_week" title="현재 주의 모든 시프트 삭제" style="color:#dc2626">🗑 이번 주 비우기</button>
+  <button class="btn secondary editor-only future-only" id="copyLastWeekBtn" onclick="copyFromLastWeek()" data-t="btn_copy_last" title="지난 주 시프트를 이번 주로 복사">📋 지난 주 복사</button>
+  <button class="btn secondary editor-only future-only" id="clearWeekBtn" onclick="clearCurrentWeek()" data-t="btn_clear_week" title="현재 주의 모든 시프트 삭제" style="color:#dc2626">🗑 이번 주 비우기</button>
   <button class="btn secondary editor-only" onclick="openRoleModal()" data-t="btn_role">＋ 역할</button>
   <button class="btn secondary editor-only" onclick="openImportModal()" data-t="btn_import">📥 가져오기</button>
   <button class="btn secondary editor-only" onclick="openPublishModal()" data-t="btn_publish">📤 배포</button>
@@ -823,12 +823,24 @@ function dayName(d, lang){
   const ko=['일','월','화','수','목','금','토'], en=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], es=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
   return (lang==='ko'?ko:lang==='es'?es:en)[d.getDay()];
 }
-function shiftWeek(n){ weekStart = addDays(weekStart, 7*n); render(); maybeOfferCloneFromLastWeek(); }
+function shiftWeek(n){ weekStart = addDays(weekStart, 7*n); render(); maybeOfferCloneFromLastWeek(); refreshFutureOnlyButtons(); }
+
+// Show 'copy last week' / 'clear this week' only when viewing a FUTURE week
+// — past + current week stay protected from accidental wipes / overwrites.
+function isFutureWeek(){
+  const todayMonday = mondayOf(new Date());
+  return weekStart.getTime() > todayMonday.getTime();
+}
+function refreshFutureOnlyButtons(){
+  const show = isFutureWeek();
+  document.querySelectorAll('.future-only').forEach(b => { b.style.display = show ? '' : 'none'; });
+}
 
 // Offer to clone last week's shifts when navigating to an empty week (next-week scheduling).
 let __cloneOfferShownFor = '';
 function maybeOfferCloneFromLastWeek(){
   if (typeof requireEdit === 'function' && !canEditNow()) return;
+  if (!isFutureWeek()) return;   // never auto-prompt on past or current week
   const wk = fmtKey(weekStart);
   if (__cloneOfferShownFor === wk) return;
   // count current week shifts
@@ -857,6 +869,10 @@ function canEditNow(){
 }
 function copyFromLastWeek(skipConfirm){
   if (typeof requireEdit === 'function' && !requireEdit()) return;
+  if (!isFutureWeek()) {
+    alert(LANG==='en'?'Only future weeks accept Copy-from-last-week — current/past weeks are protected.':LANG==='es'?'Solo semanas futuras permiten copiar — semanas actuales/pasadas están protegidas.':'다음 주부터만 [지난 주 복사]가 가능합니다. (이번 주/지난 주는 안전 보호)');
+    return;
+  }
   const lastWeekStart = addDays(weekStart, -7);
   let toCopy = 0, willSkip = 0;
   (DATA.employees || []).forEach(emp => {
@@ -900,6 +916,10 @@ function copyFromLastWeek(skipConfirm){
 // ===== CLEAR CURRENT WEEK =====
 function clearCurrentWeek(){
   if (typeof requireEdit === 'function' && !requireEdit()) return;
+  if (!isFutureWeek()) {
+    alert(LANG==='en'?'Only future weeks can be cleared — current/past weeks are protected.':LANG==='es'?'Solo semanas futuras pueden vaciarse — protegido el actual/pasado.':'다음 주부터만 비우기 가능합니다. (이번 주/지난 주는 안전 보호)');
+    return;
+  }
   // Collect every shift key that falls in the visible week
   const weekKeys = [];
   for (let i = 0; i < 7; i++) {
@@ -1297,6 +1317,7 @@ function render(){
   `;
   renderDraftBar();
   refreshBatchEditBtn();
+  refreshFutureOnlyButtons();
 }
 function renderDraftBar(){
   let bar = document.getElementById('draftBar');
