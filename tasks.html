@@ -703,6 +703,15 @@ const I18N = {
                   en:'📋 No tasks assigned today.<br>New tasks from your manager will appear here.',
                   es:'📋 Sin tareas hoy.<br>Las nuevas tareas aparecerán aquí.' },
   emptyMgr:     { ko:'조건에 맞는 업무 없음', en:'No matching tasks',   es:'Sin tareas que coincidan' },
+  // Checklist + categories
+  cl_header:    { ko:'📋 체크리스트', en:'📋 Checklist', es:'📋 Lista de verificación' },
+  cat_temp:     { ko:'온도 체크',  en:'Temperature',     es:'Temperatura' },
+  cat_exp:      { ko:'유통기한',   en:'Expiration',      es:'Caducidad' },
+  cat_disp:     { ko:'진열',       en:'Display',         es:'Exhibición' },
+  cat_clean:    { ko:'청소',       en:'Cleaning',        es:'Limpieza' },
+  cat_cash:     { ko:'현금',       en:'Cash',            es:'Efectivo' },
+  cat_cashier:  { ko:'캐셔',       en:'Cashier',         es:'Cajero' },
+  cat_other:    { ko:'기타',       en:'Other',           es:'Otros' },
   // Filter chips
   fAll:         { ko:'전체',     en:'All',         es:'Todas' },
   fPending:     { ko:'대기',     en:'Pending',     es:'Pendiente' },
@@ -752,6 +761,13 @@ function t(key, vars) {
   let s = obj[LANG] || obj.ko || obj.en || key;
   if (vars) for (const k in vars) s = s.replace('{'+k+'}', vars[k]);
   return s;
+}
+// Category Korean → i18n key map; falls back to original if unknown
+const CAT_I18N = { '온도 체크':'cat_temp', '유통기한':'cat_exp', '진열':'cat_disp', '진열/보충':'cat_disp', '청소':'cat_clean', '현금':'cat_cash', '현금/카운트':'cat_cash', '캐셔':'cat_cashier', '기타':'cat_other' };
+function localizeCat(name){
+  if (!name) return '';
+  const k = CAT_I18N[name];
+  return k ? t(k) : name;
 }
 function refreshStaticI18n(){
   const set = (sel, txt) => { const e = document.querySelector(sel); if (e) e.textContent = txt; };
@@ -1183,7 +1199,7 @@ function renderTaskCard(t){
       ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
       ${t.from?`<span class="from">👤 ${escHtml(t.from)}</span>`:''}
-      ${t.category?`<span>· ${escHtml(t.category)}</span>`:''}
+      ${t.category?`<span>· ${escHtml(localizeCat(t.category))}</span>`:''}
     </div>
     ${noteHtml}
     ${memoHtml}
@@ -1192,17 +1208,29 @@ function renderTaskCard(t){
     <div class="task-actions">${actions}</div>
   </div>`;
 }
-function renderChecklistInline(t){
-  if (!t.checklist || !Array.isArray(t.checklist) || t.checklist.length === 0) return '';
-  const total = t.checklist.length;
-  const done = t.checklist.filter(c => c && c.done).length;
+function renderChecklistInline(task){
+  if (!task.checklist || !Array.isArray(task.checklist) || task.checklist.length === 0) return '';
+  if (LANG !== 'ko') {
+    let needRerender = false;
+    Promise.all(task.checklist.map(async (c) => {
+      if (!c || !c.name) return;
+      const cached = TR_CACHE.get(LANG + '|' + c.name);
+      if (cached) { c._displayName = cached; }
+      else {
+        const tr = await translate(c.name, LANG);
+        c._displayName = tr;
+        if (tr && tr !== c.name) needRerender = true;
+      }
+    })).then(() => { if (needRerender && typeof renderEmp === 'function') renderEmp(); });
+  }
+  const total = task.checklist.length;
+  const done = task.checklist.filter(c => c && c.done).length;
   const pct = total ? Math.round(done/total*100) : 0;
-  // Group by stage when present (캐셔 mode); otherwise flat list
-  const hasStages = t.checklist.some(c => c && c.stage !== undefined && c.stageLabel);
+  const hasStages = task.checklist.some(c => c && c.stage !== undefined && c.stageLabel);
   let body = '';
   if (hasStages) {
     const groups = {};
-    t.checklist.forEach((c, i) => {
+    task.checklist.forEach((c, i) => {
       const k = (c && c.stage !== undefined) ? c.stage : 99;
       (groups[k] = groups[k] || []).push({c, i});
     });
@@ -1220,29 +1248,31 @@ function renderChecklistInline(t){
         const checked = c && c.done ? 'checked' : '';
         const cls = c && c.done ? 'cl-item done' : 'cl-item';
         const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
+        const dispName = c._displayName || c.name || '';
         return `<label class="${cls}">
-          <input type="checkbox" ${checked} onchange="toggleChecklistItem('${t.id}','${t.branchId}',${i},this.checked)">
-          <span class="cl-name">${escHtml(c.name||'')}</span>
+          <input type="checkbox" ${checked} onchange="toggleChecklistItem('${task.id}','${task.branchId}',${i},this.checked)">
+          <span class="cl-name">${escHtml(dispName)}</span>
           ${by}
         </label>`;
       }).join('');
       return stageHeader + rows;
     }).join('');
   } else {
-    body = t.checklist.map((c, i) => {
+    body = task.checklist.map((c, i) => {
       const checked = c && c.done ? 'checked' : '';
       const cls = c && c.done ? 'cl-item done' : 'cl-item';
       const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
+      const dispName = c._displayName || c.name || '';
       return `<label class="${cls}">
-        <input type="checkbox" ${checked} onchange="toggleChecklistItem('${t.id}','${t.branchId}',${i},this.checked)">
-        <span class="cl-name">${escHtml(c.name||'')}</span>
+        <input type="checkbox" ${checked} onchange="toggleChecklistItem('${task.id}','${task.branchId}',${i},this.checked)">
+        <span class="cl-name">${escHtml(dispName)}</span>
         ${by}
       </label>`;
     }).join('');
   }
   return `<div class="checklist">
     <div class="cl-head">
-      <b>📋 체크리스트</b>
+      <b>${t('cl_header')}</b>
       <div class="cl-bar"><div class="f" style="width:${pct}%"></div></div>
       <span class="cl-progress">${done}/${total}</span>
     </div>
@@ -1592,7 +1622,7 @@ async function sendAssign(){
 // ================= UTIL =================
 function closeOv(id){ document.getElementById(id).classList.remove('show'); }
 function openLb(url){ document.getElementById('lbImg').src = url; document.getElementById('lbOv').classList.add('show'); }
-function renderAll(){ renderEmp(); renderMgr(); if (document.getElementById('page-rep').classList.contains('active')) renderReport(); }
+function renderAll(){ renderEmp(); renderMgr(); renderClockIn(); if (document.getElementById('page-rep').classList.contains('active')) renderReport(); }
 window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); subscribeMyAttendance(); tickLocation(); } });
 window.addEventListener('fb-ready', () => subscribeTasks());
 
