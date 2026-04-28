@@ -434,6 +434,38 @@ async function loadBranchTemplates(branchId){
     return Object.entries(d).map(([id, v]) => Object.assign({}, v, { _id: id }));
   } catch(e) { return []; }
 }
+let __HIDDEN_TPLS = [];
+async function loadHiddenTemplates(branchId){
+  if (!branchId) return [];
+  try {
+    const r = await fetch(`${FB_DB_URL}/taskTemplatesHidden/${branchId}.json?t=`+Date.now(), { cache:'no-store' });
+    const d = await r.json();
+    if (!d) return [];
+    if (Array.isArray(d)) return d;
+    return Object.values(d);
+  } catch(e) { return []; }
+}
+async function hideDefaultTemplate(branchId, name){
+  await fetch(`${FB_DB_URL}/taskTemplatesHidden/${branchId}.json`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(name)
+  });
+}
+async function unhideDefaultTemplate(branchId, name){
+  // delete every entry that matches this name
+  const r = await fetch(`${FB_DB_URL}/taskTemplatesHidden/${branchId}.json`);
+  const d = await r.json();
+  if (!d) return;
+  if (Array.isArray(d)) {
+    const next = d.filter(v => v !== name);
+    await fetch(`${FB_DB_URL}/taskTemplatesHidden/${branchId}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(next)
+    });
+  } else {
+    for (const [id, v] of Object.entries(d)) {
+      if (v === name) await fetch(`${FB_DB_URL}/taskTemplatesHidden/${branchId}/${id}.json`, { method:'DELETE' });
+    }
+  }
+}
 async function saveBranchTemplate(branchId, tpl){
   const r = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}.json`, {
     method:'POST',
@@ -449,7 +481,7 @@ async function deleteBranchTemplate(branchId, id){
 }
 async function populateTaskTemplates(){
   __BRANCH_TPLS = me?.branch ? await loadBranchTemplates(me.branch) : [];
-  // Render the multi-select checkbox list (replacing the legacy <select>)
+  __HIDDEN_TPLS = me?.branch ? await loadHiddenTemplates(me.branch) : [];
   populateTaskCheckList();
   const sel = document.getElementById('aNameTpl');
   if (!sel) return;
@@ -489,10 +521,12 @@ function onTaskTplPick(sel){
 function populateTaskCheckList(){
   const el = document.getElementById('aTaskCheckList');
   if (!el) return;
+  const hidden = new Set(__HIDDEN_TPLS || []);
   const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
   const seen = new Set();
   const uniq = merged.filter(t => {
     if (!t || !t.name) return false;
+    if (hidden.has(t.name)) return false;
     if (seen.has(t.name)) return false;
     seen.add(t.name);
     return true;
@@ -617,10 +651,11 @@ function renderCashierItemChecks(){
   `).join('');
 }
 function checklistItemsFor(cat){
+  const hidden = new Set(__HIDDEN_TPLS || []);
   const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
   const seen = new Set();
   return merged
-    .filter(t => t && t.category === cat && t.name && !seen.has(t.name) && (seen.add(t.name), true));
+    .filter(t => t && t.category === cat && t.name && !hidden.has(t.name) && !seen.has(t.name) && (seen.add(t.name), true));
 }
 
 // ===== TEMPLATE EDITOR MODAL =====
@@ -628,25 +663,56 @@ async function openTplEditor(){
   if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
   const list = await loadBranchTemplates(me.branch);
   __BRANCH_TPLS = list;
+  __HIDDEN_TPLS = await loadHiddenTemplates(me.branch);
+  const hidden = new Set(__HIDDEN_TPLS);
   const ov = document.getElementById('tplOv');
   document.getElementById('tplBranchLabel').textContent = me.branch;
   const ul = document.getElementById('tplList');
-  if (list.length === 0) {
-    ul.innerHTML = `<div style="color:#9ca3af;text-align:center;padding:24px;font-size:.9em">아직 우리 지점 템플릿이 없습니다.<br>아래에서 추가하세요.</div>`;
-  } else {
-    ul.innerHTML = list.map(t => `
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #f3f4f6">
+
+  // Branch-added templates (deletable directly)
+  const branchRows = list.map(t => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #f3f4f6">
+      <div style="flex:1">
+        <div style="font-weight:600">${escHtml(t.name)}</div>
+        <div style="font-size:.78em;color:#9ca3af">${escHtml(t.category||'기타')} · 우리 지점</div>
+      </div>
+      <button class="btn danger" style="padding:4px 10px;font-size:.78em" onclick="rmTpl('${t._id}')" title="우리 지점에서 삭제">×</button>
+    </div>`).join('');
+
+  // Default templates (toggle hide/unhide for this branch)
+  const defaultRows = TASK_TEMPLATES.map(t => {
+    const isHidden = hidden.has(t.name);
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #f3f4f6;${isHidden?'opacity:.5;background:#fafafa':''}">
         <div style="flex:1">
-          <div style="font-weight:600">${escHtml(t.name)}</div>
-          <div style="font-size:.78em;color:#9ca3af">${escHtml(t.category||'기타')}</div>
+          <div style="font-weight:600;${isHidden?'text-decoration:line-through':''}">${escHtml(t.name)}</div>
+          <div style="font-size:.78em;color:#9ca3af">${escHtml(t.category||'기타')} · 기본</div>
         </div>
-        <button class="btn danger" style="padding:4px 10px;font-size:.78em" onclick="rmTpl('${t._id}')">×</button>
-      </div>`).join('');
-  }
+        ${isHidden
+          ? `<button class="btn sec" style="padding:4px 10px;font-size:.78em" onclick="restoreDefault('${t.name.replace(/'/g, "\\'")}')" title="다시 사용">↩</button>`
+          : `<button class="btn danger" style="padding:4px 10px;font-size:.78em" onclick="hideDefault('${t.name.replace(/'/g, "\\'")}')" title="우리 지점에서 숨김">×</button>`}
+      </div>`;
+  }).join('');
+
+  const branchHeader = list.length ? `<div style="font-size:.78em;font-weight:700;color:#1a5c3a;padding:6px 10px;background:#f0fdf4">우리 지점 추가 (${list.length})</div>` + branchRows : '';
+  const defaultHeader = `<div style="font-size:.78em;font-weight:700;color:#6b7280;padding:6px 10px;background:#f9fafb">기본 템플릿 (${TASK_TEMPLATES.length} · 숨긴 ${hidden.size})</div>`;
+  ul.innerHTML = branchHeader + defaultHeader + defaultRows;
+
   document.getElementById('tplNewName').value = '';
   document.getElementById('tplNewCat').value = '온도 체크';
   ov.classList.add('show');
 }
+async function hideDefault(name){
+  if (!confirm(`"${name}"을(를) 우리 지점에서 숨길까요?\n다른 지점은 영향 없음, 언제든 ↩로 복구.`)) return;
+  await hideDefaultTemplate(me.branch, name);
+  await openTplEditor();
+}
+async function restoreDefault(name){
+  await unhideDefaultTemplate(me.branch, name);
+  await openTplEditor();
+}
+window.hideDefault = hideDefault;
+window.restoreDefault = restoreDefault;
 async function addTpl(){
   const name = document.getElementById('tplNewName').value.trim();
   const cat = document.getElementById('tplNewCat').value;
