@@ -295,7 +295,13 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label>데드라인</label><input type="time" id="aDeadline" value="11:00"></div>
-      <div><label>카테고리</label><select id="aCat" onchange="onChecklistToggle()"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select></div>
+      <div><label>카테고리</label>
+        <div style="display:flex;gap:4px;align-items:stretch">
+          <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select>
+          <button type="button" id="aCatEdit" onclick="renameCatFromSelect()" title="이 카테고리 이름 수정" style="display:none;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">✏</button>
+          <button type="button" id="aCatDelete" onclick="rmCatFromSelect()" title="이 카테고리 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">×</button>
+        </div>
+      </div>
     </div>
     <div class="field" id="cashierStagesField" style="display:none">
       <label>🛒 캐셔 4교대 시간</label>
@@ -541,6 +547,49 @@ function allCategories(){
     return true;
   });
 }
+function updateCatEditButtons(){
+  const sel = document.getElementById('aCat');
+  const editBtn = document.getElementById('aCatEdit');
+  const delBtn = document.getElementById('aCatDelete');
+  if (!sel || !editBtn || !delBtn) return;
+  const cur = sel.value;
+  const isBranchCat = (__BRANCH_CATS||[]).includes(cur);
+  editBtn.style.display = isBranchCat ? '' : 'none';
+  delBtn.style.display = isBranchCat ? '' : 'none';
+}
+async function renameCatFromSelect(){
+  const sel = document.getElementById('aCat');
+  if (!sel) return;
+  const oldName = sel.value;
+  if (!(__BRANCH_CATS||[]).includes(oldName)) { alert('기본 카테고리는 수정할 수 없습니다.'); return; }
+  const newName = (prompt(`"${oldName}" → 새 이름`, oldName) || '').trim();
+  if (!newName || newName === oldName) return;
+  if (allCategories().includes(newName)) { alert('이미 있는 이름입니다.'); return; }
+  await renameBranchCategory(me.branch, oldName, newName);
+  __BRANCH_CATS = await loadBranchCategories(me.branch);
+  __BRANCH_TPLS = await loadBranchTemplates(me.branch);
+  refreshCategorySelects();
+  sel.value = newName;
+  updateCatEditButtons();
+  showTplToast('✏ ' + oldName + ' → ' + newName);
+}
+async function rmCatFromSelect(){
+  const sel = document.getElementById('aCat');
+  if (!sel) return;
+  const name = sel.value;
+  if (!(__BRANCH_CATS||[]).includes(name)) { alert('기본 카테고리는 삭제할 수 없습니다.'); return; }
+  if (!confirm(`"${name}" 카테고리를 삭제할까요?\n그 카테고리에 속한 우리 지점 템플릿은 그대로 남지만 카테고리는 '기타'로 보입니다.`)) return;
+  await deleteBranchCategory(me.branch, name);
+  __BRANCH_CATS = await loadBranchCategories(me.branch);
+  refreshCategorySelects();
+  sel.value = '온도 체크';
+  updateCatEditButtons();
+  showTplToast('× ' + name + ' 삭제');
+}
+window.updateCatEditButtons = updateCatEditButtons;
+window.renameCatFromSelect = renameCatFromSelect;
+window.rmCatFromSelect = rmCatFromSelect;
+
 function refreshCategorySelects(){
   const cats = allCategories();
   ['aCat','tplNewCat'].forEach(id => {
@@ -552,17 +601,17 @@ function refreshCategorySelects(){
     const addOpt = `<option value="__add__" style="color:#15803d;font-weight:700">＋ 새 카테고리…</option>`;
     sel.innerHTML = opts + addOpt;
     if (cats.includes(cur)) sel.value = cur;
-    // Wire the add-from-select handler once
     if (!sel.dataset.addBound) {
       sel.dataset.addBound = '1';
       sel.addEventListener('change', async function(){
         if (this.value !== '__add__') return;
         const prev = cur || cats[0];
-        this.value = prev;   // revert immediately so the prompt doesn't leave the select on the placeholder
+        this.value = prev;
         await addNewCategory();
       });
     }
   });
+  updateCatEditButtons();
 }
 async function saveBranchTemplate(branchId, tpl){
   const r = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}.json`, {
