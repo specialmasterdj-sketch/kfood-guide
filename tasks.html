@@ -274,19 +274,17 @@ button{font-family:inherit;cursor:pointer}
     <h3>📨 새 업무 지시</h3>
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between">
-        <span>업무명</span>
+        <span>업무명 — 체크해서 한 번에 보내기</span>
         <button type="button" onclick="openTplEditor()" style="background:transparent;border:0;color:#1a5c3a;font-size:.78em;font-weight:700;cursor:pointer;padding:0">📝 템플릿 편집</button>
       </label>
-      <select id="aNameTpl" onchange="onTaskTplPick(this)" style="margin-bottom:6px">
-        <option value="">— 자주 쓰는 업무 선택 또는 직접 입력 —</option>
-      </select>
-      <input type="text" id="aName" placeholder="예: 신선식품 코너 온도 체크">
+      <div id="aTaskCheckList" style="max-height:240px;overflow-y:auto;border:1px solid #d1d5db;border-radius:8px;padding:8px;background:#fff;margin-bottom:6px"></div>
+      <input type="text" id="aName" placeholder="또는 직접 입력 (예: 8번 통로 보충)">
       <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.82em;color:#6b7280;cursor:pointer">
-        <input type="checkbox" id="aSaveTpl"> 💾 이 업무를 우리 지점 템플릿에 저장
+        <input type="checkbox" id="aSaveTpl"> 💾 직접 입력한 업무를 우리 지점 템플릿에 저장
       </label>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.82em;color:#92400e;cursor:pointer;background:#fef3c7;padding:6px 10px;border-radius:6px">
-        <input type="checkbox" id="aChecklist" onchange="onChecklistToggle()"> ✅ 카테고리 전체를 체크리스트로 묶기 <span id="aChecklistCount" style="color:#9ca3af;font-size:.92em"></span>
-      </label>
+      <input type="hidden" id="aChecklist" checked>
+      <span id="aChecklistCount" style="display:none"></span>
+      <select id="aNameTpl" style="display:none"></select>
     </div>
     <div class="field"><label>담당자</label>
       <select id="aTo"><option value="">— 직원 선택 —</option></select>
@@ -447,10 +445,12 @@ async function deleteBranchTemplate(branchId, id){
   return r.ok;
 }
 async function populateTaskTemplates(){
+  __BRANCH_TPLS = me?.branch ? await loadBranchTemplates(me.branch) : [];
+  // Render the multi-select checkbox list (replacing the legacy <select>)
+  populateTaskCheckList();
   const sel = document.getElementById('aNameTpl');
   if (!sel) return;
   sel.innerHTML = '<option value="">— 자주 쓰는 업무 선택 또는 직접 입력 —</option>';
-  __BRANCH_TPLS = me?.branch ? await loadBranchTemplates(me.branch) : [];
   const merged = [...TASK_TEMPLATES, ...__BRANCH_TPLS];
   const seen = new Set();
   const uniq = merged.filter(t => {
@@ -480,8 +480,31 @@ function onTaskTplPick(sel){
   document.getElementById('aName').value = opt.value;
   if (opt.dataset.cat) {
     document.getElementById('aCat').value = opt.dataset.cat;
-    onChecklistToggle();    // refresh count if checklist mode is on
+    onChecklistToggle();
   }
+}
+function populateTaskCheckList(){
+  const el = document.getElementById('aTaskCheckList');
+  if (!el) return;
+  const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
+  const seen = new Set();
+  const uniq = merged.filter(t => {
+    if (!t || !t.name) return false;
+    if (seen.has(t.name)) return false;
+    seen.add(t.name);
+    return true;
+  });
+  const grouped = {};
+  uniq.forEach(t => { (grouped[t.category||'기타'] = grouped[t.category||'기타'] || []).push(t); });
+  el.innerHTML = Object.entries(grouped).map(([cat, list], gi) => `
+    <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin:${gi===0?'0':'10px 0 0'};padding-bottom:3px;border-bottom:1px solid #e5e7eb;text-transform:uppercase;letter-spacing:.04em">${escHtml(cat)}</div>
+    ${list.map(t => `
+      <label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:.88em">
+        <input type="checkbox" class="task-pick" data-name="${escHtml(t.name)}" data-cat="${escHtml(t.category||'기타')}" style="width:16px;height:16px">
+        <span>${escHtml(t.name)}</span>
+      </label>
+    `).join('')}
+  `).join('');
 }
 // Categories that always go out as a single bundled checklist (the manager
 // only picks deadline + assignee; every item in the category becomes a
@@ -1459,14 +1482,23 @@ async function openAssignModal(){
   document.getElementById('assignOv').classList.add('show');
 }
 async function sendAssign(){
-  const name = document.getElementById('aName').value.trim();
+  let name = document.getElementById('aName').value.trim();
   const to = document.getElementById('aTo').value;
   const deadline = document.getElementById('aDeadline').value;
   const cat = document.getElementById('aCat').value;
   const photo = document.getElementById('aPhoto').checked;
   const note = document.getElementById('aNote').value.trim();
-  if (!name) { alert('업무명을 입력하세요.'); return; }
-  if (!to) { alert('담당자를 선택하세요.'); return; }
+  // Picked items from the new multi-check list (any category)
+  const pickedItems = Array.from(document.querySelectorAll('.task-pick:checked')).map(cb => ({ name: cb.dataset.name, cat: cb.dataset.cat }));
+  // For 캐셔 4교대 mode, the dedicated stage UI handles its own checklist below.
+  // For everything else, picked items become a single task's bundled checklist.
+  if (cat !== '캐셔') {
+    if (!name && pickedItems.length) {
+      name = pickedItems.length === 1 ? pickedItems[0].name : (pickedItems[0].cat + ' 체크리스트');
+    }
+  }
+  if (!name && cat !== '캐셔') { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
+  if (!to && cat !== '캐셔') { alert('담당자를 선택하세요.'); return; }
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
   // Translate name + note into ko/en/es so any employee sees it in their language
@@ -1523,10 +1555,15 @@ async function sendAssign(){
       closeOv('assignOv');
       alert(`✅ ${sentCount}개 단계 발송 완료\n· 각 단계가 단계별 담당자에게 별도 카드로 표시됩니다`);
       return;   // skip the default single-task post below
+    } else if (pickedItems.length) {
+      checklist = pickedItems.map(it => ({ name: it.name, done: false }));
     } else {
       const items = checklistItemsFor(cat);
       if (items.length) checklist = items.map(it => ({ name: it.name, done: false }));
     }
+  } else if (pickedItems.length > 1 && cat !== '캐셔') {
+    // No checklist mode but multiple items picked — auto-bundle into a checklist
+    checklist = pickedItems.map(it => ({ name: it.name, done: false }));
   }
   const path = 'tasks/'+me.branch+'/'+todayStr();
   const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
