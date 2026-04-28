@@ -246,6 +246,16 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
   </div>
+  <div class="mgr-toolbar" style="margin-top:-6px">
+    <select id="mgrPersonFilter" onchange="MGR_PERSON=this.value;renderMgr()" style="border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em;background:#fff">
+      <option value="">👤 담당자: 전체</option>
+    </select>
+    <select id="mgrCatFilter" onchange="MGR_CAT=this.value;renderMgr()" style="border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em;background:#fff">
+      <option value="">📂 카테고리: 전체</option>
+    </select>
+    <input type="text" id="mgrSearch" placeholder="🔎 업무명 검색" oninput="MGR_QUERY=this.value;renderMgr()" style="flex:1;min-width:140px;border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em">
+    <button class="btn sec" onclick="resetMgrFilters()" style="padding:6px 10px;font-size:.84em">초기화</button>
+  </div>
   <div class="mgr-table">
     <table><thead><tr>
       <th>담당자</th><th>업무명</th><th>데드라인</th><th>상태</th><th>완료 시간</th><th>증빙</th>
@@ -1134,6 +1144,9 @@ const BRANCHES = [
 let me = null;
 let TASKS = []; // current branch + today
 let MGR_FILTER = 'all';
+let MGR_PERSON = '';
+let MGR_CAT = '';
+let MGR_QUERY = '';
 let CURRENT_TASK = null;
 let DONE_PHOTOS = [];
 
@@ -1755,11 +1768,47 @@ function setMgrFilter(f, btn){
   if (btn) btn.classList.add('active');
   renderMgr();
 }
+function populateMgrFilters(){
+  const persons = new Set();
+  const cats = new Set();
+  TASKS.forEach(t => {
+    if (t.assignedTo && t.assignedTo !== '*') persons.add(t.assignedTo);
+    if (t.category) cats.add(t.category);
+  });
+  const pSel = document.getElementById('mgrPersonFilter');
+  if (pSel) {
+    const cur = pSel.value;
+    pSel.innerHTML = '<option value="">👤 담당자: 전체</option>' + Array.from(persons).sort().map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+    if (cur && Array.from(persons).includes(cur)) pSel.value = cur;
+  }
+  const cSel = document.getElementById('mgrCatFilter');
+  if (cSel) {
+    const cur = cSel.value;
+    cSel.innerHTML = '<option value="">📂 카테고리: 전체</option>' + Array.from(cats).sort().map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+    if (cur && Array.from(cats).includes(cur)) cSel.value = cur;
+  }
+}
+function resetMgrFilters(){
+  MGR_FILTER = 'all'; MGR_PERSON = ''; MGR_CAT = ''; MGR_QUERY = '';
+  document.querySelectorAll('.mgr-toolbar .chip').forEach(c => c.classList.toggle('active', c.dataset.f === 'all'));
+  const pSel = document.getElementById('mgrPersonFilter'); if (pSel) pSel.value = '';
+  const cSel = document.getElementById('mgrCatFilter'); if (cSel) cSel.value = '';
+  const sInp = document.getElementById('mgrSearch'); if (sInp) sInp.value = '';
+  renderMgr();
+}
+window.resetMgrFilters = resetMgrFilters;
 function renderMgr(){
   const tbody = document.getElementById('mgrRows');
+  populateMgrFilters();
   let rows = TASKS.slice();
   rows.forEach(t => t._status = computeStatus(t));
   if (MGR_FILTER !== 'all') rows = rows.filter(t => t._status === MGR_FILTER);
+  if (MGR_PERSON) rows = rows.filter(t => t.assignedTo === MGR_PERSON);
+  if (MGR_CAT)    rows = rows.filter(t => t.category === MGR_CAT);
+  if (MGR_QUERY) {
+    const q = MGR_QUERY.toLowerCase();
+    rows = rows.filter(t => (t.name || '').toLowerCase().includes(q));
+  }
   // Sort: delayed first, then in_progress, then pending, then completed
   const order = { delayed:0, in_progress:1, pending:2, completed:3 };
   rows.sort((a,b) => (order[a._status]-order[b._status]) || (a.deadline||'99').localeCompare(b.deadline||'99'));
