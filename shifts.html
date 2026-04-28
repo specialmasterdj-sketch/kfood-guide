@@ -54,7 +54,7 @@ button{font-family:inherit;cursor:pointer}
      but a generous default keeps the day row visible from the start. */
   body { padding-top: 0; }
   .page{padding:8px}
-  .grid{min-width:760px}  /* tighter so horizontal scroll is shorter */
+  .grid, .day-header-bar{min-width:760px}  /* tighter so horizontal scroll is shorter */
 }
 .summary-bar{background:#fff;border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;gap:24px;flex-wrap:wrap;font-size:.9em}
 .summary-bar b{color:#1a5c3a;margin-right:5px}
@@ -67,9 +67,12 @@ button{font-family:inherit;cursor:pointer}
 .grid-wrap{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 /* position:relative is a known stabilizer for position:sticky inside CSS Grid; some engines drop sticky if no positioned ancestor exists. */
 .grid{display:grid;grid-template-columns:200px repeat(7,minmax(125px,1fr));min-width:900px;position:relative}
-/* top offset matches .topbar height; .topbar wraps on narrow widths so we
-   give a little extra. */
-.gh{position:sticky;top:60px;background:#f9fafb;border-bottom:2px solid #1f2937;padding:10px 8px;font-weight:800;font-size:.92em;text-align:center;z-index:5;color:#0f172a}
+/* Day header bar lives OUTSIDE the .grid so position:sticky behaves
+   reliably across browsers (CSS Grid + sticky child is unreliable on some
+   mobile engines). Same column template + min-width keeps it aligned
+   pixel-perfect with .grid below. */
+.day-header-bar{display:grid;grid-template-columns:200px repeat(7,minmax(125px,1fr));min-width:900px;position:sticky;top:60px;z-index:6;background:#f9fafb}
+.gh{background:#f9fafb;border-bottom:2px solid #1f2937;padding:10px 8px;font-weight:800;font-size:.92em;text-align:center;color:#0f172a}
 .gh.emp{text-align:left;padding-left:14px}
 .gh.today{background:#dbeafe;color:#1e3a8a;border-bottom-color:#1e3a8a}
 .gh .date{color:#0f172a;font-weight:700;font-size:.92em;margin-top:2px;letter-spacing:.01em}
@@ -220,6 +223,7 @@ body.readonly .shift-cell { cursor:default !important; }
   <div class="summary-bar" id="summaryBar"></div>
 
   <div class="grid-wrap">
+    <div class="day-header-bar" id="dayHeaderBar"></div>
     <div class="grid" id="grid"></div>
   </div>
 
@@ -849,7 +853,10 @@ function syncStickyDayHeaderTop(){
   const tb = document.querySelector('.topbar');
   if (!tb) return;
   const h = Math.ceil(tb.getBoundingClientRect().height);
-  document.querySelectorAll('.gh').forEach(g => { g.style.top = h + 'px'; });
+  const bar = document.getElementById('dayHeaderBar');
+  if (bar) bar.style.top = h + 'px';
+  // legacy .gh inline top (kept for safety if dayHeaderBar is absent)
+  document.querySelectorAll('.grid > .gh').forEach(g => { g.style.top = h + 'px'; });
 }
 window.addEventListener('resize', syncStickyDayHeaderTop);
 window.addEventListener('orientationchange', syncStickyDayHeaderTop);
@@ -1158,12 +1165,14 @@ function render(){
 
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
+  const dayBar = document.getElementById('dayHeaderBar');
+  if (dayBar) dayBar.innerHTML = '';
 
-  // header row
+  // header row — lives in dayBar (sticky), not inside .grid
   const hEmp = document.createElement('div');
   hEmp.className = 'gh emp';
   hEmp.textContent = lt('lbl_name');
-  grid.appendChild(hEmp);
+  (dayBar || grid).appendChild(hEmp);
 
   let totalHours = 0, totalShifts = 0;
   const dayHours = [0,0,0,0,0,0,0];
@@ -1176,7 +1185,7 @@ function render(){
     const h = document.createElement('div');
     h.className = 'gh' + (isToday(d) ? ' today' : '');
     h.innerHTML = `${dayName(d, LANG)} <div class="date">${fmtMD(d)}</div><div class="day-stats" data-i="${i}">·</div>`;
-    grid.appendChild(h);
+    (dayBar || grid).appendChild(h);
     dayHeaders.push(h);
   }
 
