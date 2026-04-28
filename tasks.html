@@ -255,11 +255,17 @@ button{font-family:inherit;cursor:pointer}
   <div class="modal">
     <h3>📨 새 업무 지시</h3>
     <div class="field">
-      <label>업무명</label>
+      <label style="display:flex;align-items:center;justify-content:space-between">
+        <span>업무명</span>
+        <button type="button" onclick="openTplEditor()" style="background:transparent;border:0;color:#1a5c3a;font-size:.78em;font-weight:700;cursor:pointer;padding:0">📝 템플릿 편집</button>
+      </label>
       <select id="aNameTpl" onchange="onTaskTplPick(this)" style="margin-bottom:6px">
         <option value="">— 자주 쓰는 업무 선택 또는 직접 입력 —</option>
       </select>
       <input type="text" id="aName" placeholder="예: 신선식품 코너 온도 체크">
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.82em;color:#6b7280;cursor:pointer">
+        <input type="checkbox" id="aSaveTpl"> 💾 이 업무를 우리 지점 템플릿에 저장
+      </label>
     </div>
     <div class="field"><label>담당자</label>
       <select id="aTo"><option value="">— 직원 선택 —</option></select>
@@ -274,6 +280,33 @@ button{font-family:inherit;cursor:pointer}
     <div class="modal-actions">
       <button class="btn sec" onclick="closeOv('assignOv')">취소</button>
       <button class="btn" onclick="sendAssign()">📨 보내기</button>
+    </div>
+  </div>
+</div>
+
+<!-- TEMPLATE EDITOR MODAL -->
+<div class="overlay" id="tplOv">
+  <div class="modal" style="max-width:520px">
+    <h3>📝 업무 템플릿 편집 — <span id="tplBranchLabel" style="color:#1a5c3a"></span></h3>
+    <p style="font-size:.84em;color:#6b7280;margin-bottom:10px">우리 지점 전용 업무 템플릿. 다른 지점은 영향 없음.</p>
+    <div id="tplList" style="max-height:280px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;margin-bottom:14px"></div>
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="font-size:.82em;font-weight:700;color:#15803d;margin-bottom:6px">+ 새 템플릿 추가</div>
+      <input type="text" id="tplNewName" placeholder="업무명 (예: 8번 통로 보충)" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em;margin-bottom:6px">
+      <div style="display:flex;gap:6px">
+        <select id="tplNewCat" style="flex:1;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em">
+          <option value="온도 체크">온도 체크</option>
+          <option value="유통기한">유통기한</option>
+          <option value="진열">진열</option>
+          <option value="청소">청소</option>
+          <option value="현금">현금</option>
+          <option value="기타">기타</option>
+        </select>
+        <button class="btn" onclick="addTpl()">＋ 추가</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn sec" onclick="closeOv('tplOv');populateTaskTemplates()">닫기</button>
     </div>
   </div>
 </div>
@@ -342,13 +375,48 @@ const TASK_TEMPLATES = [
   { name: '매장 오픈 준비',         category: '기타' },
   { name: '매장 마감 정리',         category: '기타' },
 ];
-function populateTaskTemplates(){
+// Per-branch templates: stored at taskTemplates/{branchId} as a map of
+// auto-keys -> { name, category }. Defaults from TASK_TEMPLATES are merged
+// in for first-time branches.
+let __BRANCH_TPLS = []; // most recent fetch
+async function loadBranchTemplates(branchId){
+  if (!branchId) return [];
+  try {
+    const r = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}.json?t=`+Date.now(), { cache:'no-store' });
+    const d = await r.json();
+    if (!d) return [];
+    if (Array.isArray(d)) return d.map((v,i) => Object.assign({}, v, { _id: '__a'+i }));
+    return Object.entries(d).map(([id, v]) => Object.assign({}, v, { _id: id }));
+  } catch(e) { return []; }
+}
+async function saveBranchTemplate(branchId, tpl){
+  const r = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}.json`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name: tpl.name, category: tpl.category || '기타' })
+  });
+  return r.ok;
+}
+async function deleteBranchTemplate(branchId, id){
+  if (!id || id.startsWith('__a')) return false; // can't delete legacy array entries
+  const r = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}/${id}.json`, { method:'DELETE' });
+  return r.ok;
+}
+async function populateTaskTemplates(){
   const sel = document.getElementById('aNameTpl');
   if (!sel) return;
   sel.innerHTML = '<option value="">— 자주 쓰는 업무 선택 또는 직접 입력 —</option>';
-  // group by category
+  __BRANCH_TPLS = me?.branch ? await loadBranchTemplates(me.branch) : [];
+  const merged = [...TASK_TEMPLATES, ...__BRANCH_TPLS];
+  const seen = new Set();
+  const uniq = merged.filter(t => {
+    if (!t || !t.name) return false;
+    if (seen.has(t.name)) return false;
+    seen.add(t.name);
+    return true;
+  });
   const grouped = {};
-  TASK_TEMPLATES.forEach(t => { (grouped[t.category] = grouped[t.category] || []).push(t); });
+  uniq.forEach(t => { (grouped[t.category || '기타'] = grouped[t.category || '기타'] || []).push(t); });
   Object.entries(grouped).forEach(([cat, list]) => {
     const og = document.createElement('optgroup');
     og.label = cat;
@@ -368,7 +436,47 @@ function onTaskTplPick(sel){
   document.getElementById('aName').value = opt.value;
   if (opt.dataset.cat) document.getElementById('aCat').value = opt.dataset.cat;
 }
+
+// ===== TEMPLATE EDITOR MODAL =====
+async function openTplEditor(){
+  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
+  const list = await loadBranchTemplates(me.branch);
+  __BRANCH_TPLS = list;
+  const ov = document.getElementById('tplOv');
+  document.getElementById('tplBranchLabel').textContent = me.branch;
+  const ul = document.getElementById('tplList');
+  if (list.length === 0) {
+    ul.innerHTML = `<div style="color:#9ca3af;text-align:center;padding:24px;font-size:.9em">아직 우리 지점 템플릿이 없습니다.<br>아래에서 추가하세요.</div>`;
+  } else {
+    ul.innerHTML = list.map(t => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #f3f4f6">
+        <div style="flex:1">
+          <div style="font-weight:600">${escHtml(t.name)}</div>
+          <div style="font-size:.78em;color:#9ca3af">${escHtml(t.category||'기타')}</div>
+        </div>
+        <button class="btn danger" style="padding:4px 10px;font-size:.78em" onclick="rmTpl('${t._id}')">×</button>
+      </div>`).join('');
+  }
+  document.getElementById('tplNewName').value = '';
+  document.getElementById('tplNewCat').value = '온도 체크';
+  ov.classList.add('show');
+}
+async function addTpl(){
+  const name = document.getElementById('tplNewName').value.trim();
+  const cat = document.getElementById('tplNewCat').value;
+  if (!name) { alert('업무명을 입력하세요'); return; }
+  await saveBranchTemplate(me.branch, { name, category: cat });
+  await openTplEditor();   // refresh list
+}
+async function rmTpl(id){
+  if (!confirm('이 템플릿을 삭제할까요?')) return;
+  await deleteBranchTemplate(me.branch, id);
+  await openTplEditor();
+}
 window.onTaskTplPick = onTaskTplPick;
+window.openTplEditor = openTplEditor;
+window.addTpl = addTpl;
+window.rmTpl = rmTpl;
 const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
 const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
 
@@ -1081,12 +1189,13 @@ function renderReport(){
 async function openAssignModal(){
   if (!me || !(isManager(me.role) || isOwner())) { alert('매니저만 사용 가능합니다.'); return; }
   document.getElementById('aName').value = '';
-  populateTaskTemplates();
+  await populateTaskTemplates();
   const tpl = document.getElementById('aNameTpl'); if (tpl) tpl.value = '';
   document.getElementById('aDeadline').value = '11:00';
   document.getElementById('aCat').value = '온도 체크';
   document.getElementById('aPhoto').checked = true;
   document.getElementById('aNote').value = '';
+  const saveTpl = document.getElementById('aSaveTpl'); if (saveTpl) saveTpl.checked = false;
   // Load branch employees into select
   const sel = document.getElementById('aTo');
   sel.innerHTML = '<option value="">— 직원 선택 —</option><option value="*">📢 본 지점 전체</option>';
@@ -1131,6 +1240,12 @@ async function sendAssign(){
     noteTr: noteTr || null,
   });
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
+  // Optionally save this task name as a reusable template for the user's branch
+  const saveTpl = document.getElementById('aSaveTpl');
+  if (saveTpl && saveTpl.checked && me && me.branch) {
+    const exists = (__BRANCH_TPLS||[]).some(t => t.name === name) || TASK_TEMPLATES.some(t => t.name === name);
+    if (!exists) { try { await saveBranchTemplate(me.branch, { name, category: cat }); } catch(e){} }
+  }
   closeOv('assignOv');
   alert('✅ 업무 지시 전송 완료\n· 담당자 화면에 즉시 표시됩니다 (KO/EN/ES 자동 번역)');
 }
