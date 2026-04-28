@@ -578,14 +578,26 @@ function isManagerVerified(){
   // Currently logged-in me must be MANAGER+ AND have used a PIN (i.e. pin hash exists in Firebase)
   return !!(me && me.name && me.branch && isManagerRole(me.role));
 }
-// 전 지점 통합 관리 권한자 — OWNER 역할 또는 이름 화이트리스트 (역할 표시는 매니저 유지)
+// 전 지점 통합 관리 권한자 — 실제 OWNER (DJ 등 OWNER 역할) 또는 임원 이름 화이트리스트 (B.H.K 전무).
+// 임원은 OWNER 라벨로 표시되지 않음 — 본인 역할 (전무 등) 그대로 표시.
 const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이'];
-function isOwnerVerified(){
+function isOwnerByRole(){
+  if (!me || !me.role) return false;
+  const r = me.role.toUpperCase();
+  return /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(r);
+}
+function isExecutiveName(){
   if (!me || !me.name) return false;
   const nm = me.name.replace(/\s+/g,'').toUpperCase();
-  if (EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === nm)) return true;
-  const r = (me.role || '').toUpperCase();
-  return /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(r);
+  return EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === nm);
+}
+// 통합 관리 권한 (전 지점 보기·리셋 등) — 둘 중 하나라도 만족하면 부여
+function isOwnerVerified(){ return isOwnerByRole() || isExecutiveName(); }
+// 화면에 표시할 권한 라벨: 실제 오너만 'OWNER', 임원은 본인 역할 (전무 등) 그대로
+function execScopeLabel(){
+  if (isOwnerByRole()) return '👑 OWNER';
+  if (isExecutiveName()) return '⭐ ' + ((me && me.role) ? me.role : '전무');
+  return '';
 }
 async function openPinAdmin(){
   if (!isManagerVerified()) { alert('매니저 본인 등록 후 사용 가능합니다.'); return; }
@@ -595,7 +607,7 @@ async function openPinAdmin(){
   document.getElementById('pinAdminOverlay').classList.add('show');
 
   const owner = isOwnerVerified();
-  const scopeLabel = owner ? '👑 OWNER · 전 지점 통합 관리' : '📍 ' + ((BRANCHES.find(b => b.id === me.branch)?.ko) || me.branch);
+  const scopeLabel = owner ? (execScopeLabel() + ' · 전 지점 통합 관리') : '📍 ' + ((BRANCHES.find(b => b.id === me.branch)?.ko) || me.branch);
   document.getElementById('pinAdminBranch').textContent = scopeLabel + ' (관리자: ' + me.name + ')';
 
   const targetBranches = owner ? BRANCHES.map(b => b.id) : [me.branch];
