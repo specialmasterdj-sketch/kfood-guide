@@ -273,12 +273,25 @@ button{cursor:pointer}
   </div>
 </div>
 
+<!-- ============= RECEIVE (입고 체크) ============= -->
+<div class="page" id="page-receive">
+  <div class="report-head">
+    <div>
+      <div class="total" id="receiveDateLbl">오늘 입고</div>
+      <b id="receiveCountVal">0개</b>
+      <div style="font-size:.78em;color:#9ca3af;margin-top:4px"><span id="receiveWarnVal">0</span><span id="receiveWarnSuffix"> ⚠️ 유통기한 짧음</span></div>
+    </div>
+    <button onclick="openReceiveSheet()" style="background:#1a5c3a;color:#fff;border:0;border-radius:12px;padding:12px 18px;font-size:.95em;font-weight:800;cursor:pointer;box-shadow:0 3px 10px rgba(26,92,58,.3);align-self:center" id="btnReceiveAdd">📦 입고 등록</button>
+  </div>
+  <div id="receiveList"></div>
+</div>
+
 <!-- ============= MORE ============= -->
 <div class="page" id="page-more">
   <div class="big-actions">
-    <button class="big-btn" onclick="alert('입고 체크 — 다음 단계 구현')">
+    <button class="big-btn" onclick="switchPage('receive')">
       <div class="ic">📦</div>
-      <div class="body"><b>입고 체크</b><span class="sub">새 입고 상품 유통기한 검수</span></div>
+      <div class="body"><b id="moreReceiveTitle">입고 체크</b><span class="sub" id="moreReceiveSub">새 입고 상품 유통기한 검수</span></div>
       <div class="arrow">›</div>
     </button>
     <button class="big-btn" onclick="alert('직원 관리 — 다음 단계 구현')">
@@ -469,6 +482,18 @@ const I18N = {
   emptyList:{ko:'상품이 없습니다 — ➕로 등록',en:'No products — tap ➕ to add',es:'Sin artículos — toque ➕'},
   saved:{ko:'✅ 저장됨',en:'✅ Saved',es:'✅ Guardado'},
   marked:{ko:'✅ 기록됨',en:'✅ Recorded',es:'✅ Registrado'},
+  receiveAdd:{ko:'📦 입고 등록',en:'📦 Receive item',es:'📦 Registrar entrada'},
+  receiveSaved:{ko:'✅ 입고 등록됨',en:'✅ Received',es:'✅ Recibido'},
+  receiveWarn:{ko:'⚠️ 유통기한 D-{n} 짧음 — 반품 검토',en:'⚠️ Only D-{n} left — review return',es:'⚠️ Solo D-{n} — revisar devolución'},
+  receiveTitleLbl:{ko:'📦 오늘 입고',en:'📦 Received today',es:'📦 Recibidos hoy'},
+  receiveCountUnit:{ko:'개',en:' items',es:' art.'},
+  receiveWarnSuffix:{ko:'개 ⚠️ 유통기한 짧음',en:' near expiry',es:' caducidad cercana'},
+  receiveAddBtn:{ko:'📦 입고 등록',en:'📦 Receive',es:'📦 Recibir'},
+  moreReceiveTitle:{ko:'입고 체크',en:'Receive check',es:'Recepción'},
+  moreReceiveSub:{ko:'새 입고 상품 유통기한 검수',en:'Inspect expiry on new arrivals',es:'Revisar caducidad de nuevos'},
+  emptyReceive:{ko:'오늘 입고된 상품이 없습니다',en:'No items received today',es:'Sin artículos recibidos hoy'},
+  receiveBy:{ko:'입고: {n}',en:'By: {n}',es:'Por: {n}'},
+  navReceive:{ko:'입고',en:'Receive',es:'Entrada'},
 };
 function t(key,vars){
   const o = I18N[key]; if(!o) return key;
@@ -566,6 +591,10 @@ function applyLang(){
   $('lblDangerDays').textContent = t('lblDangerDays');
   $('lblWarnDays').textContent = t('lblWarnDays');
   $('lblAlertTime').textContent = t('lblAlertTime');
+  $('moreReceiveTitle').textContent = t('moreReceiveTitle');
+  $('moreReceiveSub').textContent = t('moreReceiveSub');
+  $('btnReceiveAdd').textContent = t('receiveAddBtn');
+  $('receiveDateLbl').textContent = t('receiveTitleLbl');
   // Re-render dynamic content too
   renderBranches();
   renderAll();
@@ -763,7 +792,17 @@ window.syncCatChip = syncCatChip;
 
 // ============== Add product ==============
 let __ADD_PHOTO_DATA = null;   // { dataUrl, blob } pending upload
+let __RECEIVE_MODE = false;
+function openReceiveSheet(){
+  _openAddSheetInternal(true);
+}
+window.openReceiveSheet = openReceiveSheet;
 function openAddSheet(){
+  _openAddSheetInternal(false);
+}
+function _openAddSheetInternal(receive){
+  __RECEIVE_MODE = !!receive;
+  $('addTitle').textContent = t(receive ? 'receiveAdd' : 'addTitle');
   $('addName').value = '';
   $('addBarcode').value = '';
   $('addExpiry').valueAsDate = new Date(Date.now() + 7*86400000);
@@ -949,18 +988,34 @@ async function saveProduct(){
   } catch(e) {}
   const ref = window.__fb.push(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/products'));
   const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
-  await window.__fb.set(ref, {
+  const now = Date.now();
+  const payload = {
     name, barcode: barcode || null, expiry, qty, price, cost, category: cat,
     photo: photo || null,
-    addedAt: Date.now(),
+    addedAt: now,
     addedBy: me?.name || '미등록',
     status: 'active',
     lastCheckedAt: null,
     lastCheckedBy: null,
-  });
+  };
+  if (__RECEIVE_MODE) {
+    payload.receivedAt = now;
+    payload.receivedBy = me?.name || '미등록';
+  }
+  await window.__fb.set(ref, payload);
   btn.disabled = false; btn.textContent = '저장';
   closeOv('addOv');
-  showToast(t('saved'));
+  if (__RECEIVE_MODE) {
+    const d = dayDiff(expiry);
+    if (d <= SETTINGS.warn) {
+      showToast(t('receiveWarn', { n: d }), true);
+    } else {
+      showToast(t('receiveSaved'));
+    }
+    __RECEIVE_MODE = false;
+  } else {
+    showToast(t('saved'));
+  }
 }
 window.onAddPhotoPick = onAddPhotoPick;
 window.scanBarcode = scanBarcode;
@@ -1201,6 +1256,47 @@ function renderAll(){
   if (PAGE === 'check') renderCheckList();
   else if (PAGE === 'list') renderAlertList();
   else if (PAGE === 'report') renderReport();
+  else if (PAGE === 'receive') renderReceive();
+}
+function renderReceive(){
+  const todayStr = new Date().toDateString();
+  const todays = PRODUCTS.filter(p => {
+    const t = p.receivedAt || p.addedAt;
+    return t && new Date(t).toDateString() === todayStr;
+  }).sort((a,b) => (b.receivedAt||b.addedAt||0) - (a.receivedAt||a.addedAt||0));
+  let warnCount = 0;
+  todays.forEach(p => { if (dayDiff(p.expiry) <= SETTINGS.warn) warnCount += (p.qty||1); });
+  $('receiveCountVal').textContent = todays.reduce((s,p) => s+(p.qty||1),0) + t('receiveCountUnit');
+  $('receiveWarnVal').textContent = warnCount;
+  $('receiveWarnSuffix').textContent = t('receiveWarnSuffix');
+  const list = $('receiveList');
+  if (todays.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="ic">📦</div><div class="msg">${t('emptyReceive')}</div></div>`;
+    return;
+  }
+  list.innerHTML = todays.map(p => {
+    const d = dayDiff(p.expiry);
+    const kind = ddayKind(d);
+    const lbl = ddayLabel(d);
+    const cls = kind==='d0'?'danger':(kind==='d1'?'warn':(kind==='d3'?'warn':'normal'));
+    const initials = (p.name||'').slice(0,2).toUpperCase();
+    const thumbContent = p.photo ? `<img src="${p.photo}">` : initials;
+    const ts = new Date(p.receivedAt || p.addedAt);
+    const timeStr = ts.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    return `<div class="item ${cls}">
+      <div class="thumb" onclick="${p.photo?`openPhoto('${p.photo}')`:''}">${thumbContent}</div>
+      <div class="info">
+        <div class="nm">${escHtml(p.name)}</div>
+        <div class="meta">
+          <span class="dday ${kind}">${lbl}</span>
+          <span>${escHtml(p.expiry||'')}</span>
+          <span>${p.qty||1}${t('unitItem')}</span>
+          <span style="font-size:.7em;color:#9ca3af">⏱ ${timeStr}</span>
+          ${p.receivedBy?`<span style="font-size:.7em;color:#9ca3af">${escHtml(t('receiveBy', { n: p.receivedBy }))}</span>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ============== Page nav ==============
