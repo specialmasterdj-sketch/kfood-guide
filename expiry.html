@@ -344,27 +344,31 @@ button{cursor:pointer}
     </div>
     <div class="row2">
       <div class="field">
-        <label id="lblPrice">단가 ($)</label>
+        <label id="lblPrice">판매가 ($)</label>
         <input type="number" id="addPrice" value="0" min="0" step="0.01">
       </div>
       <div class="field">
-        <label id="lblCat">카테고리</label>
-        <div id="catChip" onclick="toggleCatEdit()" style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;display:flex;align-items:center;justify-content:space-between;cursor:pointer">
-          <span id="catChipText" style="color:#1a5c3a;font-weight:700">📂 기타</span>
-          <span style="font-size:.78em;color:#9ca3af;font-weight:600">변경 ▾</span>
-        </div>
-        <select id="addCat" style="display:none;margin-top:4px">
-          <option value="스넥(캔디)">스넥(캔디)</option>
-          <option value="라면(누들)">라면(누들)</option>
-          <option value="소스">소스</option>
-          <option value="캔류">캔류</option>
-          <option value="냉동">냉동</option>
-          <option value="냉장">냉장</option>
-          <option value="음료수">음료수</option>
-          <option value="드라이제품">드라이제품</option>
-          <option value="기타">기타</option>
-        </select>
+        <label id="lblCost">원가 ($)</label>
+        <input type="number" id="addCost" value="0" min="0" step="0.01">
       </div>
+    </div>
+    <div class="field">
+      <label id="lblCat">카테고리</label>
+      <div id="catChip" onclick="toggleCatEdit()" style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;display:flex;align-items:center;justify-content:space-between;cursor:pointer">
+        <span id="catChipText" style="color:#1a5c3a;font-weight:700">📂 기타</span>
+        <span style="font-size:.78em;color:#9ca3af;font-weight:600">변경 ▾</span>
+      </div>
+      <select id="addCat" style="display:none;margin-top:4px">
+        <option value="스넥(캔디)">스넥(캔디)</option>
+        <option value="라면(누들)">라면(누들)</option>
+        <option value="소스">소스</option>
+        <option value="캔류">캔류</option>
+        <option value="냉동">냉동</option>
+        <option value="냉장">냉장</option>
+        <option value="음료수">음료수</option>
+        <option value="드라이제품">드라이제품</option>
+        <option value="기타">기타</option>
+      </select>
     </div>
     <div class="actions">
       <button class="cancel" onclick="closeOv('addOv')" id="btnCancel">취소</button>
@@ -441,7 +445,8 @@ const I18N = {
   lblName:{ko:'상품명',en:'Product name',es:'Nombre'},
   lblExpiry:{ko:'유통기한',en:'Expiry date',es:'Fecha caducidad'},
   lblQty:{ko:'수량',en:'Qty',es:'Cant.'},
-  lblPrice:{ko:'단가 ($)',en:'Unit price ($)',es:'Precio ($)'},
+  lblPrice:{ko:'판매가 ($)',en:'Sell price ($)',es:'Precio venta ($)'},
+  lblCost:{ko:'원가 ($)',en:'Cost ($)',es:'Costo ($)'},
   lblCat:{ko:'카테고리',en:'Category',es:'Categoría'},
   cancel:{ko:'취소',en:'Cancel',es:'Cancelar'},
   save:{ko:'저장',en:'Save',es:'Guardar'},
@@ -547,6 +552,7 @@ function applyLang(){
   $('lblExpiry').textContent = t('lblExpiry');
   $('lblQty').textContent = t('lblQty');
   $('lblPrice').textContent = t('lblPrice');
+  $('lblCost').textContent = t('lblCost');
   $('lblCat').textContent = t('lblCat');
   $('btnCancel').textContent = t('cancel');
   $('btnSave').textContent = t('save');
@@ -680,8 +686,12 @@ async function autofillFromBarcode(){
   // Only overwrite empty fields so a manager can keep their custom name if they typed one
   if (!$('addName').value.trim()) $('addName').value = hit.NAME || '';
   if (!parseFloat($('addPrice').value)) {
-    const p = hit.PRICE || hit.COST || 0;
+    const p = hit.PRICE || 0;
     if (p) $('addPrice').value = p;
+  }
+  if (!parseFloat($('addCost').value)) {
+    const c2 = hit.COST || 0;
+    if (c2) $('addCost').value = c2;
   }
   $('addCat').value = mapPosCategory(hit.CATEGORY);
   syncCatChip();
@@ -738,6 +748,7 @@ function openAddSheet(){
   $('addExpiry').valueAsDate = new Date(Date.now() + 7*86400000);
   $('addQty').value = 1;
   $('addPrice').value = '';
+  $('addCost').value = '';
   $('addCat').value = '기타';
   syncCatChip();
   __ADD_PHOTO_DATA = null;
@@ -905,6 +916,7 @@ async function saveProduct(){
   const expiry = $('addExpiry').value;
   const qty = parseInt($('addQty').value, 10) || 1;
   const price = parseFloat($('addPrice').value) || 0;
+  const cost = parseFloat($('addCost').value) || 0;
   const cat = $('addCat').value;
   if (!name) { alert('이름을 입력하세요'); return; }
   if (!expiry) { alert('유통기한을 입력하세요'); return; }
@@ -917,7 +929,7 @@ async function saveProduct(){
   const ref = window.__fb.push(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/products'));
   const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
   await window.__fb.set(ref, {
-    name, barcode: barcode || null, expiry, qty, price, category: cat,
+    name, barcode: barcode || null, expiry, qty, price, cost, category: cat,
     photo: photo || null,
     addedAt: Date.now(),
     addedBy: me?.name || '미등록',
@@ -987,7 +999,7 @@ function renderHome(){
   PRODUCTS.forEach(p => {
     if (p.status === 'discarded') return;
     const d = dayDiff(p.expiry);
-    if (d <= 0) { over += p.qty; lossEst += (p.price||0) * p.qty; }
+    if (d <= 0) { over += p.qty; lossEst += (p.cost || p.price || 0) * p.qty; }
     else if (d <= SETTINGS.warn) d3 += p.qty;
   });
   $('kpiToday').textContent = over;
@@ -1080,7 +1092,7 @@ function renderAlertList(){
   else rows = rows.filter(p => dayDiff(p.expiry) <= SETTINGS.warn);
   rows.sort((a,b) => dayDiff(a.expiry) - dayDiff(b.expiry));
   let total = 0;
-  rows.forEach(p => total += (p.price||0) * (p.qty||1));
+  rows.forEach(p => total += (p.cost || p.price || 0) * (p.qty||1));
   $('totalLossVal').textContent = '$' + Math.round(total);
   const list = $('alertList');
   if (rows.length === 0) {
@@ -1092,7 +1104,7 @@ function renderAlertList(){
     const kind = ddayKind(d);
     const lbl = ddayLabel(d);
     const cls = kind==='d0'?'danger':'warn';
-    const lossOne = (p.price||0) * (p.qty||1);
+    const lossOne = (p.cost || p.price || 0) * (p.qty||1);
     return `<div class="item ${cls}">
       <div class="thumb">${(p.name||'').slice(0,2).toUpperCase()}</div>
       <div class="info">
@@ -1120,13 +1132,13 @@ function renderReport(){
   else { from = new Date(now); from.setMonth(now.getMonth()-1); }
   const fromMs = from.getTime();
   const discarded = PRODUCTS.filter(p => p.status === 'discarded' && p.discardedAt && p.discardedAt >= fromMs);
-  const total = discarded.reduce((s,p) => s + (p.price||0)*(p.qty||1), 0);
+  const total = discarded.reduce((s,p) => s + (p.cost || p.price || 0)*(p.qty||1), 0);
   $('reportTotalVal').textContent = '$' + Math.round(total);
   // Category breakdown
   const byCat = {};
   discarded.forEach(p => {
     const c = p.category || '기타';
-    byCat[c] = (byCat[c] || 0) + (p.price||0)*(p.qty||1);
+    byCat[c] = (byCat[c] || 0) + (p.cost || p.price || 0)*(p.qty||1);
   });
   const catRows = Object.entries(byCat).sort((a,b) => b[1] - a[1]);
   const max = catRows.length ? catRows[0][1] : 1;
@@ -1136,7 +1148,7 @@ function renderReport(){
   // TOP 10
   const byProd = {};
   discarded.forEach(p => {
-    byProd[p.name] = (byProd[p.name] || 0) + (p.price||0)*(p.qty||1);
+    byProd[p.name] = (byProd[p.name] || 0) + (p.cost || p.price || 0)*(p.qty||1);
   });
   const topRows = Object.entries(byProd).sort((a,b) => b[1] - a[1]).slice(0,10);
   const maxP = topRows.length ? topRows[0][1] : 1;
