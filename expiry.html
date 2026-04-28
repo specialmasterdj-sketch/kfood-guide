@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>김치마트 — 유통기한 관리</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<script src="./nav-sidebar.js?v=2" defer></script>
+
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, set, update, push, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyDGZc-qPqtX6KxqxzC0n7iE0X_eOhLpqrM", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = initializeApp(cfg);
+  const db = getDatabase(app);
+  window.__fb = { db, ref, onValue, set, update, push, remove };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px;padding-bottom:80px}
+button,input,select,textarea{font-family:inherit}
+button{cursor:pointer}
+
+/* === TOPBAR === */
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:50}
+.topbar h1{font-size:1.1em;font-weight:800;display:flex;align-items:center;gap:8px}
+.topbar .row{display:flex;align-items:center;gap:10px;margin-top:8px}
+.topbar select{flex:1;background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:8px 12px;font-size:.92em;font-weight:600;outline:none;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><polyline points='1,1 5,5 9,1' fill='none' stroke='white' stroke-width='1.5'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+.topbar select option{background:#1a5c3a;color:#fff}
+.topbar .lang-toggle{display:inline-flex;background:rgba(255,255,255,.15);border-radius:14px;padding:2px;gap:0}
+.topbar .lang-toggle button{background:transparent;border:0;color:#fff;padding:4px 10px;border-radius:12px;font-size:.74em;font-weight:700;opacity:.7}
+.topbar .lang-toggle button.active{background:#fff;color:#1a5c3a;opacity:1}
+.topbar .bell{background:rgba(255,255,255,.15);border:0;color:#fff;width:36px;height:36px;border-radius:50%;font-size:1.1em;position:relative}
+.topbar .bell .dot{position:absolute;top:6px;right:8px;background:#dc2626;color:#fff;font-size:.6em;font-weight:700;padding:1px 4px;border-radius:8px;min-width:14px;text-align:center}
+
+/* === PAGES === */
+.page{display:none;padding:14px;max-width:600px;margin:0 auto}
+.page.active{display:block}
+
+/* === KPI CARDS === */
+.kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.kpi-card{border-radius:14px;padding:14px 10px;text-align:center;color:#fff;position:relative;overflow:hidden}
+.kpi-card.danger{background:linear-gradient(135deg,#fecaca,#fee2e2);color:#7f1d1d}
+.kpi-card.warn{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#78350f}
+.kpi-card.money{background:linear-gradient(135deg,#bbf7d0,#dcfce7);color:#14532d}
+.kpi-card .lbl{font-size:.74em;font-weight:700;opacity:.85;margin-bottom:4px}
+.kpi-card .val{font-size:1.9em;font-weight:900;line-height:1}
+.kpi-card .unit{font-size:.7em;font-weight:700;opacity:.85;margin-top:3px}
+.kpi-card .ic{position:absolute;bottom:6px;right:8px;font-size:1.4em;opacity:.5}
+
+/* === GREETING === */
+.greeting{background:#fff;border-radius:14px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.greeting .date{font-size:.8em;color:#6b7280;font-weight:600}
+.greeting .hello{font-size:1.05em;font-weight:800;color:#1a5c3a;margin-top:2px}
+.greeting .progress{margin-top:12px}
+.greeting .progress .lbl{display:flex;justify-content:space-between;font-size:.82em;font-weight:700;color:#374151;margin-bottom:4px}
+.greeting .progress .lbl b{color:#1a5c3a}
+.greeting .progress .bar{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden}
+.greeting .progress .bar .f{height:100%;background:linear-gradient(90deg,#22c55e,#1a5c3a);transition:width .3s}
+
+/* === BIG ACTION BUTTONS === */
+.big-actions{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.big-btn{background:#fff;border:0;border-radius:14px;padding:18px 18px;display:flex;align-items:center;gap:14px;text-align:left;box-shadow:0 1px 3px rgba(0,0,0,.04);cursor:pointer;transition:.15s;font-family:inherit}
+.big-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.big-btn.primary{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff}
+.big-btn .ic{font-size:1.6em;width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:rgba(0,0,0,.06)}
+.big-btn.primary .ic{background:rgba(255,255,255,.2)}
+.big-btn .body{flex:1;min-width:0}
+.big-btn .body b{display:block;font-size:1em;font-weight:800;margin-bottom:2px}
+.big-btn .body .sub{font-size:.78em;opacity:.7;line-height:1.3}
+.big-btn .arrow{font-size:1.2em;opacity:.6}
+
+/* === ITEM LIST === */
+.list-toolbar{display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+.chip{flex-shrink:0;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:6px 12px;font-size:.84em;font-weight:600;color:#6b7280;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.chip.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+.chip .count{background:rgba(0,0,0,.1);border-radius:10px;padding:0 7px;font-size:.85em;font-weight:700}
+.chip.active .count{background:rgba(255,255,255,.25)}
+
+.search-bar{position:relative;margin-bottom:10px}
+.search-bar input{width:100%;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px 12px 40px;font-size:.95em;background:#fff;outline:none}
+.search-bar input:focus{border-color:#1a5c3a}
+.search-bar::before{content:'🔎';position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:.95em;opacity:.5}
+
+.item{background:#fff;border-radius:14px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,.04);position:relative}
+.item.danger{border-left:5px solid #dc2626;background:#fef2f2}
+.item.warn{border-left:5px solid #f59e0b;background:#fffbeb}
+.item.normal{border-left:5px solid #22c55e}
+.item .thumb{width:48px;height:48px;border-radius:10px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:1.4em;flex-shrink:0;overflow:hidden;color:#9ca3af;font-weight:700;font-size:.78em;text-align:center;line-height:1.1;padding:2px}
+.item .thumb img{width:100%;height:100%;object-fit:cover}
+.item .info{flex:1;min-width:0}
+.item .info .nm{font-weight:700;font-size:.95em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .info .meta{font-size:.78em;color:#6b7280;margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.item .dday{font-size:.72em;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:.04em}
+.item .dday.over{background:#dc2626;color:#fff}
+.item .dday.d0{background:#dc2626;color:#fff}
+.item .dday.d1{background:#f59e0b;color:#fff}
+.item .dday.d3{background:#fbbf24;color:#7c2d12}
+.item .dday.normal{background:#22c55e;color:#fff}
+.item .actions{display:flex;gap:4px}
+.item .actions button{background:#fff;border:1.5px solid #e5e7eb;border-radius:8px;padding:6px 8px;font-size:.78em;font-weight:700;color:#6b7280;cursor:pointer;display:flex;align-items:center;justify-content:center;min-width:36px;height:36px}
+.item .actions button.normal{border-color:#22c55e;color:#16a34a}
+.item .actions button.warn{border-color:#f59e0b;color:#d97706}
+.item .actions button.danger{border-color:#dc2626;color:#dc2626}
+.item .actions button.normal.active{background:#22c55e;color:#fff}
+.item .actions button.warn.active{background:#f59e0b;color:#fff}
+.item .actions button.danger.active{background:#dc2626;color:#fff}
+
+.empty-state{text-align:center;padding:50px 20px;color:#9ca3af}
+.empty-state .ic{font-size:3em;margin-bottom:8px;opacity:.4}
+.empty-state .msg{font-size:.92em}
+
+/* === FAB === */
+.fab{position:fixed;bottom:80px;right:16px;width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;border:0;font-size:1.6em;box-shadow:0 4px 14px rgba(26,92,58,.4);cursor:pointer;z-index:40}
+
+/* === BOTTOM NAV === */
+.botnav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:space-around;padding:6px 0 calc(6px + env(safe-area-inset-bottom));z-index:45}
+.botnav button{background:transparent;border:0;flex:1;padding:8px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;color:#9ca3af;font-size:.7em;font-weight:600;cursor:pointer}
+.botnav button.active{color:#1a5c3a}
+.botnav button .ic{font-size:1.3em}
+
+/* === MODAL === */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:flex-end;justify-content:center}
+.overlay.show{display:flex}
+.sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:600px;max-height:92vh;overflow:auto;padding:18px;animation:slideUp .25s}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:none}}
+.sheet h3{font-size:1.15em;font-weight:800;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.sheet .field{margin-bottom:14px}
+.sheet .field label{display:block;font-size:.84em;font-weight:700;color:#374151;margin-bottom:5px}
+.sheet .field input,.sheet .field select{width:100%;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;outline:none}
+.sheet .field input:focus,.sheet .field select:focus{border-color:#1a5c3a}
+.sheet .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sheet .actions{display:flex;gap:8px;margin-top:6px}
+.sheet .actions button{flex:1;padding:13px;border-radius:10px;font-size:1em;font-weight:700;cursor:pointer;border:0}
+.sheet .actions .save{background:#1a5c3a;color:#fff}
+.sheet .actions .cancel{background:#f3f4f6;color:#374151}
+.scan-area{background:#000;border-radius:14px;height:200px;display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:12px;position:relative;overflow:hidden}
+.scan-area .hint{font-size:.85em;opacity:.7}
+.scan-area video{width:100%;height:100%;object-fit:cover}
+
+/* === REPORT === */
+.report-head{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px}
+.report-head .total{font-size:.78em;color:#6b7280;font-weight:600}
+.report-head .total b{color:#dc2626;font-size:2em;display:block;font-weight:900;margin-top:2px}
+.report-tabs{display:flex;background:#f3f4f6;border-radius:10px;padding:3px;margin-bottom:14px}
+.report-tabs button{flex:1;background:transparent;border:0;padding:8px;font-size:.85em;font-weight:700;color:#6b7280;border-radius:8px;cursor:pointer}
+.report-tabs button.active{background:#fff;color:#1a5c3a;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.bar-chart{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px}
+.bar-chart h4{font-size:.92em;font-weight:800;margin-bottom:10px}
+.bar-row{display:flex;align-items:center;gap:8px;padding:5px 0}
+.bar-row .lbl{flex:0 0 90px;font-size:.82em;color:#374151;font-weight:600}
+.bar-row .bar{flex:1;height:18px;background:#f3f4f6;border-radius:5px;overflow:hidden;position:relative}
+.bar-row .bar .f{height:100%;background:linear-gradient(90deg,#fee2e2,#dc2626);border-radius:5px}
+.bar-row .val{flex:0 0 70px;text-align:right;font-size:.82em;font-weight:700;color:#dc2626}
+
+/* === TOAST === */
+.toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:12px 20px;border-radius:24px;font-size:.92em;font-weight:600;z-index:300;box-shadow:0 4px 18px rgba(0,0,0,.18);display:none;max-width:90vw}
+.toast.show{display:block;animation:slideUp .25s}
+.toast.danger{background:#dc2626}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>📅 <span id="pageTitle">유통기한 관리</span></h1>
+  <div class="row">
+    <select id="branchSel" onchange="onBranchChange()"></select>
+    <div class="lang-toggle">
+      <button data-l="ko" onclick="setLang('ko')">KO</button>
+      <button data-l="en" onclick="setLang('en')">EN</button>
+      <button data-l="es" onclick="setLang('es')">ES</button>
+    </div>
+    <button class="bell" onclick="switchPage('list')">🔔<span class="dot" id="alertDot" style="display:none">0</span></button>
+  </div>
+</div>
+
+<!-- ============= HOME ============= -->
+<div class="page active" id="page-home">
+  <div class="greeting">
+    <div class="date" id="todayDate"></div>
+    <div class="hello" id="helloUser">안녕하세요</div>
+    <div class="progress">
+      <div class="lbl"><span id="progressLbl">오늘 체크 진행률</span><b id="progressNum">0%</b></div>
+      <div class="bar"><div class="f" id="progressFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card danger" onclick="filterAndGo('over')">
+      <div class="lbl" id="kpiTodayLbl">🔴 오늘 폐기</div>
+      <div class="val" id="kpiToday">0</div>
+      <div class="unit" id="kpiUnit1">개</div>
+      <div class="ic">🗑</div>
+    </div>
+    <div class="kpi-card warn" onclick="filterAndGo('d3')">
+      <div class="lbl" id="kpiD3Lbl">🟡 D-3 상품</div>
+      <div class="val" id="kpiD3">0</div>
+      <div class="unit" id="kpiUnit2">개</div>
+      <div class="ic">⏰</div>
+    </div>
+    <div class="kpi-card money" onclick="switchPage('report')">
+      <div class="lbl" id="kpiLossLbl">💸 손실 예상</div>
+      <div class="val" id="kpiLoss" style="font-size:1.5em">$0</div>
+      <div class="ic">💵</div>
+    </div>
+  </div>
+
+  <div class="big-actions">
+    <button class="big-btn primary" onclick="switchPage('check')">
+      <div class="ic">📋</div>
+      <div class="body"><b id="btnCheck">오늘 체크 시작</b><span class="sub" id="btnCheckSub">유통기한 상품 확인하기</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="openAddSheet()">
+      <div class="ic">➕</div>
+      <div class="body"><b id="btnAdd">상품 등록</b><span class="sub" id="btnAddSub">새로운 상품 추가하기</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="switchPage('list')">
+      <div class="ic">🔔</div>
+      <div class="body"><b id="btnList">폐기/임박 리스트</b><span class="sub" id="btnListSub">유통기한 임박 상품 보기</span></div>
+      <div class="arrow">›</div>
+    </button>
+  </div>
+</div>
+
+<!-- ============= CHECK (유통기한 체크) ============= -->
+<div class="page" id="page-check">
+  <div class="search-bar">
+    <input type="text" id="searchInput" placeholder="상품명으로 검색…" oninput="renderCheckList()">
+  </div>
+  <div class="list-toolbar" id="checkChips"></div>
+  <div id="checkList"></div>
+</div>
+
+<!-- ============= LIST (폐기/임박) ============= -->
+<div class="page" id="page-list">
+  <div class="report-head">
+    <div class="total" id="totalLossLbl">오늘 폐기 손실 예상 금액</div>
+    <b id="totalLossVal">$0</b>
+  </div>
+  <div class="list-toolbar" id="listChips"></div>
+  <div id="alertList"></div>
+</div>
+
+<!-- ============= REPORT ============= -->
+<div class="page" id="page-report">
+  <div class="report-head">
+    <div class="total" id="reportTotalLbl">총 손실 금액</div>
+    <b id="reportTotalVal">$0</b>
+  </div>
+  <div class="report-tabs" id="reportTabs">
+    <button class="active" data-r="day" onclick="setReportRange('day',this)">일간</button>
+    <button data-r="week" onclick="setReportRange('week',this)">주간</button>
+    <button data-r="month" onclick="setReportRange('month',this)">월간</button>
+  </div>
+  <div class="bar-chart">
+    <h4 id="reportByCatTitle">카테고리별 손실</h4>
+    <div id="reportByCat"></div>
+  </div>
+  <div class="bar-chart">
+    <h4 id="reportTopTitle">상품 TOP 10 손실</h4>
+    <div id="reportTop"></div>
+  </div>
+</div>
+
+<!-- ============= MORE ============= -->
+<div class="page" id="page-more">
+  <div class="big-actions">
+    <button class="big-btn" onclick="alert('입고 체크 — 다음 단계 구현')">
+      <div class="ic">📦</div>
+      <div class="body"><b>입고 체크</b><span class="sub">새 입고 상품 유통기한 검수</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="alert('직원 관리 — 다음 단계 구현')">
+      <div class="ic">👥</div>
+      <div class="body"><b>직원 관리</b><span class="sub">체크율 / 책임자별 통계</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="openSettingsSheet()">
+      <div class="ic">⚙️</div>
+      <div class="body"><b>설정</b><span class="sub">기준일 / 알림 / 매장</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="location.href='./apps.html'">
+      <div class="ic">⊞</div>
+      <div class="body"><b>다른 앱</b><span class="sub">김치마트 앱 모음</span></div>
+      <div class="arrow">›</div>
+    </button>
+  </div>
+</div>
+
+<!-- FAB: quick add -->
+<button class="fab" onclick="openAddSheet()" title="상품 등록">➕</button>
+
+<!-- BOTTOM NAV -->
+<div class="botnav">
+  <button class="active" data-p="home" onclick="switchPage('home')"><span class="ic">🏠</span><span id="navHome">홈</span></button>
+  <button data-p="check" onclick="switchPage('check')"><span class="ic">✅</span><span id="navCheck">체크</span></button>
+  <button data-p="list" onclick="switchPage('list')"><span class="ic">🔔</span><span id="navList">알림</span></button>
+  <button data-p="report" onclick="switchPage('report')"><span class="ic">📊</span><span id="navReport">리포트</span></button>
+  <button data-p="more" onclick="switchPage('more')"><span class="ic">⋯</span><span id="navMore">더보기</span></button>
+</div>
+
+<!-- ADD MODAL -->
+<div class="overlay" id="addOv">
+  <div class="sheet">
+    <h3>➕ <span id="addTitle">상품 등록</span></h3>
+    <div class="field">
+      <label id="lblName">상품명</label>
+      <input type="text" id="addName" placeholder="예: 종가집 포기김치 2.5kg" autocomplete="off" list="prodList">
+      <datalist id="prodList"></datalist>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label id="lblExpiry">유통기한</label>
+        <input type="date" id="addExpiry">
+      </div>
+      <div class="field">
+        <label id="lblQty">수량</label>
+        <input type="number" id="addQty" value="1" min="1">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label id="lblPrice">단가 ($)</label>
+        <input type="number" id="addPrice" value="0" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label id="lblCat">카테고리</label>
+        <select id="addCat">
+          <option value="냉장/유제품">냉장/유제품</option>
+          <option value="즉석/반찬">즉석/반찬</option>
+          <option value="채소/과일">채소/과일</option>
+          <option value="정육">정육</option>
+          <option value="음료">음료</option>
+          <option value="기타">기타</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('addOv')" id="btnCancel">취소</button>
+      <button class="save" onclick="saveProduct()" id="btnSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="overlay" id="settingsOv">
+  <div class="sheet">
+    <h3>⚙️ <span id="settingsTitle">설정</span></h3>
+    <div class="field">
+      <label id="lblDangerDays">⚠️ 위험 기준 (D-?)</label>
+      <input type="number" id="setDanger" value="1" min="0" max="14">
+    </div>
+    <div class="field">
+      <label id="lblWarnDays">🟡 주의 기준 (D-?)</label>
+      <input type="number" id="setWarn" value="3" min="0" max="14">
+    </div>
+    <div class="field">
+      <label id="lblAlertTime">🔔 알림 시간</label>
+      <input type="time" id="setAlertTime" value="09:00">
+    </div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('settingsOv')">취소</button>
+      <button class="save" onclick="saveSettings()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ================= STATE =================
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BRANCHES = [
+  { id:'MIAMI', ko:'마이애미', en:'Miami', es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD', ko:'할리우드', en:'Hollywood', es:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs', es:'Coral Springs' },
+  { id:'LASOLAS', ko:'라스올라스', en:'LASOLAS', es:'LASOLAS' },
+  { id:'WEST_PALM', ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+];
+const I18N = {
+  pageTitle:{ko:'유통기한 관리',en:'Expiry Tracker',es:'Caducidad'},
+  hello:{ko:'안녕하세요, {n}님!',en:'Hi, {n}!',es:'¡Hola, {n}!'},
+  progressLbl:{ko:'오늘 체크 진행률',en:"Today's check progress",es:'Progreso de hoy'},
+  kpiTodayLbl:{ko:'🔴 오늘 폐기',en:'🔴 Discard today',es:'🔴 Descartar hoy'},
+  kpiD3Lbl:{ko:'🟡 D-3 상품',en:'🟡 D-3 items',es:'🟡 D-3'},
+  kpiLossLbl:{ko:'💸 손실 예상',en:'💸 Est. loss',es:'💸 Pérdida est.'},
+  unitItem:{ko:'개',en:'items',es:'art.'},
+  btnCheck:{ko:'오늘 체크 시작',en:'Start today check',es:'Comenzar revisión'},
+  btnCheckSub:{ko:'유통기한 상품 확인하기',en:'Check expiring items',es:'Revisar artículos'},
+  btnAdd:{ko:'상품 등록',en:'Add product',es:'Agregar producto'},
+  btnAddSub:{ko:'새로운 상품 추가하기',en:'Add a new item',es:'Agregar un nuevo artículo'},
+  btnList:{ko:'폐기/임박 리스트',en:'Discard / near list',es:'Lista de caducidad'},
+  btnListSub:{ko:'유통기한 임박 상품 보기',en:'See near-expiry items',es:'Ver próximos a vencer'},
+  searchPh:{ko:'상품명으로 검색…',en:'Search by name…',es:'Buscar por nombre…'},
+  totalLossLbl:{ko:'오늘 폐기 손실 예상 금액',en:'Estimated loss today',es:'Pérdida estimada hoy'},
+  reportTotalLbl:{ko:'총 손실 금액',en:'Total loss',es:'Pérdida total'},
+  rangeDay:{ko:'일간',en:'Day',es:'Día'},
+  rangeWeek:{ko:'주간',en:'Week',es:'Semana'},
+  rangeMonth:{ko:'월간',en:'Month',es:'Mes'},
+  reportByCatTitle:{ko:'카테고리별 손실',en:'Loss by category',es:'Pérdida por categoría'},
+  reportTopTitle:{ko:'상품 TOP 10 손실',en:'Top 10 loss items',es:'Top 10 artículos'},
+  navHome:{ko:'홈',en:'Home',es:'Inicio'},
+  navCheck:{ko:'체크',en:'Check',es:'Revisar'},
+  navList:{ko:'알림',en:'Alerts',es:'Alertas'},
+  navReport:{ko:'리포트',en:'Report',es:'Informe'},
+  navMore:{ko:'더보기',en:'More',es:'Más'},
+  addTitle:{ko:'상품 등록',en:'Add product',es:'Agregar producto'},
+  lblName:{ko:'상품명',en:'Product name',es:'Nombre'},
+  lblExpiry:{ko:'유통기한',en:'Expiry date',es:'Fecha caducidad'},
+  lblQty:{ko:'수량',en:'Qty',es:'Cant.'},
+  lblPrice:{ko:'단가 ($)',en:'Unit price ($)',es:'Precio ($)'},
+  lblCat:{ko:'카테고리',en:'Category',es:'Categoría'},
+  cancel:{ko:'취소',en:'Cancel',es:'Cancelar'},
+  save:{ko:'저장',en:'Save',es:'Guardar'},
+  settingsTitle:{ko:'설정',en:'Settings',es:'Ajustes'},
+  lblDangerDays:{ko:'⚠️ 위험 기준 (D-?)',en:'⚠️ Danger threshold (D-?)',es:'⚠️ Peligro (D-?)'},
+  lblWarnDays:{ko:'🟡 주의 기준 (D-?)',en:'🟡 Warning threshold',es:'🟡 Atención (D-?)'},
+  lblAlertTime:{ko:'🔔 알림 시간',en:'🔔 Alert time',es:'🔔 Hora de alerta'},
+  chipAll:{ko:'전체',en:'All',es:'Todo'},
+  chipUnchecked:{ko:'미체크',en:'Unchecked',es:'Sin revisar'},
+  chipDone:{ko:'완료',en:'Done',es:'Listo'},
+  chipOver:{ko:'오늘 폐기',en:'Today',es:'Hoy'},
+  chipD1:{ko:'D-1',en:'D-1',es:'D-1'},
+  chipD3:{ko:'D-3',en:'D-3',es:'D-3'},
+  emptyList:{ko:'상품이 없습니다 — ➕로 등록',en:'No products — tap ➕ to add',es:'Sin artículos — toque ➕'},
+  saved:{ko:'✅ 저장됨',en:'✅ Saved',es:'✅ Guardado'},
+  marked:{ko:'✅ 기록됨',en:'✅ Recorded',es:'✅ Registrado'},
+};
+function t(key,vars){
+  const o = I18N[key]; if(!o) return key;
+  let s = o[LANG] || o.ko;
+  if (vars) for (const k in vars) s = s.replace('{'+k+'}', vars[k]);
+  return s;
+}
+function detectLang(){
+  for (const k of ['tasks.lang','kimchi_lang','hub.lang']) {
+    const v = localStorage.getItem(k);
+    if (v && ['ko','en','es'].includes(v)) return v;
+  }
+  const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+  return ['ko','en','es'].includes(nav) ? nav : 'ko';
+}
+let LANG = detectLang();
+let BRANCH = localStorage.getItem('expiry.branch') || 'MIAMI';
+let PAGE = 'home';
+let PRODUCTS = []; // current branch
+let CHECK_FILTER = 'unchecked';   // unchecked | done | all
+let LIST_FILTER = 'over';          // over | d1 | d3 | all
+let REPORT_RANGE = 'day';
+let SETTINGS = JSON.parse(localStorage.getItem('expiry.settings') || '{"danger":1,"warn":3,"alertTime":"09:00"}');
+
+function $(id){ return document.getElementById(id); }
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function todayKey(){ const d=new Date(); return d.toISOString().slice(0,10); }
+function fmtDate(d){
+  const localeMap = { ko:'ko-KR', en:'en-US', es:'es-ES' };
+  return new Date(d).toLocaleDateString(localeMap[LANG]||'ko-KR', { year:'numeric', month:'long', day:'numeric', weekday:'short' });
+}
+function dayDiff(expiry){
+  const t = new Date(); t.setHours(0,0,0,0);
+  const e = new Date(expiry); e.setHours(0,0,0,0);
+  return Math.round((e - t) / (1000*60*60*24));
+}
+function ddayKind(d){
+  if (d < 0 || d === 0) return 'd0';
+  if (d <= SETTINGS.danger) return 'd1';
+  if (d <= SETTINGS.warn) return 'd3';
+  return 'normal';
+}
+function ddayLabel(d){
+  if (d < 0) return 'OVER';
+  if (d === 0) return 'D-0';
+  return 'D-' + d;
+}
+function showToast(msg, danger){
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = 'toast' + (danger?' danger':'') + ' show';
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(()=> el.classList.remove('show'), 2400);
+}
+
+// ============== I18N apply ==============
+function setLang(l){
+  if (!['ko','en','es'].includes(l)) return;
+  LANG = l;
+  ['tasks.lang','kimchi_lang','hub.lang'].forEach(k => localStorage.setItem(k, l));
+  applyLang();
+  window.dispatchEvent(new CustomEvent('km-lang-changed',{detail:l}));
+}
+function applyLang(){
+  document.querySelectorAll('.lang-toggle button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+  $('pageTitle').textContent = t('pageTitle');
+  $('progressLbl').textContent = t('progressLbl');
+  $('kpiTodayLbl').textContent = t('kpiTodayLbl');
+  $('kpiD3Lbl').textContent = t('kpiD3Lbl');
+  $('kpiLossLbl').textContent = t('kpiLossLbl');
+  $('kpiUnit1').textContent = t('unitItem');
+  $('kpiUnit2').textContent = t('unitItem');
+  $('btnCheck').textContent = t('btnCheck');
+  $('btnCheckSub').textContent = t('btnCheckSub');
+  $('btnAdd').textContent = t('btnAdd');
+  $('btnAddSub').textContent = t('btnAddSub');
+  $('btnList').textContent = t('btnList');
+  $('btnListSub').textContent = t('btnListSub');
+  $('searchInput').placeholder = t('searchPh');
+  $('totalLossLbl').textContent = t('totalLossLbl');
+  $('reportTotalLbl').textContent = t('reportTotalLbl');
+  $('reportByCatTitle').textContent = t('reportByCatTitle');
+  $('reportTopTitle').textContent = t('reportTopTitle');
+  ['navHome','navCheck','navList','navReport','navMore'].forEach(k => $(k).textContent = t(k));
+  $('addTitle').textContent = t('addTitle');
+  $('lblName').textContent = t('lblName');
+  $('lblExpiry').textContent = t('lblExpiry');
+  $('lblQty').textContent = t('lblQty');
+  $('lblPrice').textContent = t('lblPrice');
+  $('lblCat').textContent = t('lblCat');
+  $('btnCancel').textContent = t('cancel');
+  $('btnSave').textContent = t('save');
+  $('settingsTitle').textContent = t('settingsTitle');
+  $('lblDangerDays').textContent = t('lblDangerDays');
+  $('lblWarnDays').textContent = t('lblWarnDays');
+  $('lblAlertTime').textContent = t('lblAlertTime');
+  // Re-render dynamic content too
+  renderAll();
+}
+window.addEventListener('storage', e => {
+  if (['tasks.lang','kimchi_lang','hub.lang'].includes(e.key) && ['ko','en','es'].includes(e.newValue)) {
+    LANG = e.newValue; applyLang();
+  }
+});
+
+// ============== Branch ==============
+function renderBranches(){
+  const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
+  if (me && me.name) $('helloUser').textContent = t('hello', { n: me.name });
+  $('branchSel').innerHTML = BRANCHES.map(b => `<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b[LANG]||b.ko}</option>`).join('');
+}
+function onBranchChange(){
+  BRANCH = $('branchSel').value;
+  localStorage.setItem('expiry.branch', BRANCH);
+  subscribe();
+}
+
+// ============== Firebase subscribe ==============
+let unsub = null;
+function subscribe(){
+  if (!window.__fb) { setTimeout(subscribe, 500); return; }
+  if (unsub) { try{unsub();}catch(e){} unsub=null; }
+  const path = 'expiry/' + BRANCH + '/products';
+  unsub = window.__fb.onValue(window.__fb.ref(window.__fb.db, path), snap => {
+    const v = snap.val() || {};
+    PRODUCTS = Object.entries(v).map(([id, p]) => Object.assign({ id }, p));
+    renderAll();
+  });
+}
+window.addEventListener('fb-ready', subscribe);
+setTimeout(() => { if (!unsub) subscribe(); }, 1500);
+
+// ============== Add product ==============
+function openAddSheet(){
+  $('addName').value = '';
+  $('addExpiry').valueAsDate = new Date(Date.now() + 7*86400000);
+  $('addQty').value = 1;
+  $('addPrice').value = '';
+  $('addCat').value = '냉장/유제품';
+  // datalist autocomplete from existing products
+  const list = $('prodList');
+  const seen = new Set();
+  list.innerHTML = PRODUCTS.filter(p => p.name && !seen.has(p.name) && (seen.add(p.name), true))
+    .map(p => `<option value="${escHtml(p.name)}">`).join('');
+  $('addOv').classList.add('show');
+  setTimeout(() => $('addName').focus(), 100);
+}
+async function saveProduct(){
+  const name = $('addName').value.trim();
+  const expiry = $('addExpiry').value;
+  const qty = parseInt($('addQty').value, 10) || 1;
+  const price = parseFloat($('addPrice').value) || 0;
+  const cat = $('addCat').value;
+  if (!name) { alert('이름을 입력하세요'); return; }
+  if (!expiry) { alert('유통기한을 입력하세요'); return; }
+  const ref = window.__fb.push(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/products'));
+  const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
+  await window.__fb.set(ref, {
+    name, expiry, qty, price, category: cat,
+    addedAt: Date.now(),
+    addedBy: me?.name || '미등록',
+    status: 'active',  // active | discounted | discarded
+    lastCheckedAt: null,
+    lastCheckedBy: null,
+  });
+  closeOv('addOv');
+  showToast(t('saved'));
+}
+
+// ============== Mark item ==============
+async function markStatus(id, kind){
+  const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
+  const path = 'expiry/'+BRANCH+'/products/'+id;
+  const upd = {
+    status: kind === 'normal' ? 'active' : kind === 'warn' ? 'discounted' : 'discarded',
+    lastCheckedAt: Date.now(),
+    lastCheckedBy: me?.name || '미등록',
+  };
+  if (kind === 'danger') upd.discardedAt = Date.now();
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+  showToast(t('marked'));
+}
+
+// ============== Settings ==============
+function openSettingsSheet(){
+  $('setDanger').value = SETTINGS.danger;
+  $('setWarn').value = SETTINGS.warn;
+  $('setAlertTime').value = SETTINGS.alertTime;
+  $('settingsOv').classList.add('show');
+}
+function saveSettings(){
+  SETTINGS = {
+    danger: parseInt($('setDanger').value, 10) || 1,
+    warn: parseInt($('setWarn').value, 10) || 3,
+    alertTime: $('setAlertTime').value || '09:00',
+  };
+  localStorage.setItem('expiry.settings', JSON.stringify(SETTINGS));
+  closeOv('settingsOv');
+  renderAll();
+  showToast(t('saved'));
+}
+function closeOv(id){ $(id).classList.remove('show'); }
+
+// ============== Render ==============
+function renderHome(){
+  $('todayDate').textContent = fmtDate(new Date());
+  // KPI
+  let over = 0, d3 = 0, lossEst = 0;
+  PRODUCTS.forEach(p => {
+    if (p.status === 'discarded') return;
+    const d = dayDiff(p.expiry);
+    if (d <= 0) { over += p.qty; lossEst += (p.price||0) * p.qty; }
+    else if (d <= SETTINGS.warn) d3 += p.qty;
+  });
+  $('kpiToday').textContent = over;
+  $('kpiD3').textContent = d3;
+  $('kpiLoss').textContent = '$' + Math.round(lossEst);
+  // Progress
+  const checkedToday = PRODUCTS.filter(p => p.lastCheckedAt && new Date(p.lastCheckedAt).toDateString() === new Date().toDateString()).length;
+  const total = PRODUCTS.filter(p => p.status !== 'discarded').length;
+  const pct = total ? Math.round(checkedToday/total*100) : 0;
+  $('progressNum').textContent = pct + '% (' + checkedToday + '/' + total + ')';
+  $('progressFill').style.width = pct + '%';
+  // Alert dot
+  if (over > 0) { $('alertDot').textContent = over; $('alertDot').style.display = ''; }
+  else $('alertDot').style.display = 'none';
+}
+function renderCheckList(){
+  const chips = $('checkChips');
+  const counts = { all: PRODUCTS.length, unchecked: 0, done: 0 };
+  const todayStr = new Date().toDateString();
+  PRODUCTS.forEach(p => {
+    if (p.lastCheckedAt && new Date(p.lastCheckedAt).toDateString() === todayStr) counts.done++;
+    else counts.unchecked++;
+  });
+  chips.innerHTML = `
+    <button class="chip ${CHECK_FILTER==='unchecked'?'active':''}" onclick="setCheckFilter('unchecked')">${t('chipUnchecked')} <span class="count">${counts.unchecked}</span></button>
+    <button class="chip ${CHECK_FILTER==='done'?'active':''}" onclick="setCheckFilter('done')">${t('chipDone')} <span class="count">${counts.done}</span></button>
+    <button class="chip ${CHECK_FILTER==='all'?'active':''}" onclick="setCheckFilter('all')">${t('chipAll')} <span class="count">${counts.all}</span></button>`;
+  const q = ($('searchInput').value || '').trim().toLowerCase();
+  let rows = PRODUCTS.slice();
+  if (CHECK_FILTER === 'unchecked') rows = rows.filter(p => !p.lastCheckedAt || new Date(p.lastCheckedAt).toDateString() !== todayStr);
+  if (CHECK_FILTER === 'done') rows = rows.filter(p => p.lastCheckedAt && new Date(p.lastCheckedAt).toDateString() === todayStr);
+  if (q) rows = rows.filter(p => (p.name||'').toLowerCase().includes(q));
+  // sort by D-Day asc
+  rows.sort((a,b) => dayDiff(a.expiry) - dayDiff(b.expiry));
+  const list = $('checkList');
+  if (rows.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="ic">📋</div><div class="msg">${t('emptyList')}</div></div>`;
+    return;
+  }
+  list.innerHTML = rows.map(p => {
+    const d = dayDiff(p.expiry);
+    const kind = ddayKind(d);
+    const lbl = ddayLabel(d);
+    const cls = kind==='d0'?'danger':(kind==='d1'?'warn':(kind==='d3'?'warn':'normal'));
+    const initials = (p.name||'').slice(0,2).toUpperCase();
+    const activeNorm = p.status==='active'?'active':'';
+    const activeWarn = p.status==='discounted'?'active':'';
+    const activeDanger = p.status==='discarded'?'active':'';
+    return `<div class="item ${cls}">
+      <div class="thumb">${initials}</div>
+      <div class="info">
+        <div class="nm">${escHtml(p.name)}</div>
+        <div class="meta">
+          <span class="dday ${kind}">${lbl}</span>
+          <span>${escHtml(p.expiry||'')}</span>
+          <span>${p.qty||1}${t('unitItem')}</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="normal ${activeNorm}" onclick="markStatus('${p.id}','normal')" title="정상">✅</button>
+        <button class="warn ${activeWarn}" onclick="markStatus('${p.id}','warn')" title="할인 필요">⚠️</button>
+        <button class="danger ${activeDanger}" onclick="markStatus('${p.id}','danger')" title="폐기">❌</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function setCheckFilter(f){ CHECK_FILTER = f; renderCheckList(); }
+window.setCheckFilter = setCheckFilter;
+
+function renderAlertList(){
+  const counts = { over:0, d1:0, d3:0 };
+  PRODUCTS.forEach(p => {
+    if (p.status === 'discarded') return;
+    const d = dayDiff(p.expiry);
+    if (d <= 0) counts.over++;
+    else if (d <= SETTINGS.danger) counts.d1++;
+    else if (d <= SETTINGS.warn) counts.d3++;
+  });
+  $('listChips').innerHTML = `
+    <button class="chip ${LIST_FILTER==='over'?'active':''}" onclick="setListFilter('over')">${t('chipOver')} <span class="count">${counts.over}</span></button>
+    <button class="chip ${LIST_FILTER==='d1'?'active':''}" onclick="setListFilter('d1')">${t('chipD1')} <span class="count">${counts.d1}</span></button>
+    <button class="chip ${LIST_FILTER==='d3'?'active':''}" onclick="setListFilter('d3')">${t('chipD3')} <span class="count">${counts.d3}</span></button>
+    <button class="chip ${LIST_FILTER==='all'?'active':''}" onclick="setListFilter('all')">${t('chipAll')} <span class="count">${counts.over+counts.d1+counts.d3}</span></button>`;
+  let rows = PRODUCTS.filter(p => p.status !== 'discarded');
+  if (LIST_FILTER === 'over') rows = rows.filter(p => dayDiff(p.expiry) <= 0);
+  else if (LIST_FILTER === 'd1') rows = rows.filter(p => { const d=dayDiff(p.expiry); return d>0 && d<=SETTINGS.danger; });
+  else if (LIST_FILTER === 'd3') rows = rows.filter(p => { const d=dayDiff(p.expiry); return d>SETTINGS.danger && d<=SETTINGS.warn; });
+  else rows = rows.filter(p => dayDiff(p.expiry) <= SETTINGS.warn);
+  rows.sort((a,b) => dayDiff(a.expiry) - dayDiff(b.expiry));
+  let total = 0;
+  rows.forEach(p => total += (p.price||0) * (p.qty||1));
+  $('totalLossVal').textContent = '$' + Math.round(total);
+  const list = $('alertList');
+  if (rows.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="ic">✅</div><div class="msg">No items</div></div>`;
+    return;
+  }
+  list.innerHTML = rows.map(p => {
+    const d = dayDiff(p.expiry);
+    const kind = ddayKind(d);
+    const lbl = ddayLabel(d);
+    const cls = kind==='d0'?'danger':'warn';
+    const lossOne = (p.price||0) * (p.qty||1);
+    return `<div class="item ${cls}">
+      <div class="thumb">${(p.name||'').slice(0,2).toUpperCase()}</div>
+      <div class="info">
+        <div class="nm">${escHtml(p.name)}</div>
+        <div class="meta">
+          <span class="dday ${kind}">${lbl}</span>
+          <span>${p.qty||1}${t('unitItem')}</span>
+          <span style="color:#dc2626;font-weight:700">$${lossOne.toFixed(0)}</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="danger" onclick="markStatus('${p.id}','danger')" title="폐기">❌</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function setListFilter(f){ LIST_FILTER = f; renderAlertList(); }
+window.setListFilter = setListFilter;
+
+function renderReport(){
+  const now = new Date();
+  let from;
+  if (REPORT_RANGE === 'day') { from = new Date(now); from.setHours(0,0,0,0); }
+  else if (REPORT_RANGE === 'week') { from = new Date(now); from.setDate(now.getDate()-7); }
+  else { from = new Date(now); from.setMonth(now.getMonth()-1); }
+  const fromMs = from.getTime();
+  const discarded = PRODUCTS.filter(p => p.status === 'discarded' && p.discardedAt && p.discardedAt >= fromMs);
+  const total = discarded.reduce((s,p) => s + (p.price||0)*(p.qty||1), 0);
+  $('reportTotalVal').textContent = '$' + Math.round(total);
+  // Category breakdown
+  const byCat = {};
+  discarded.forEach(p => {
+    const c = p.category || '기타';
+    byCat[c] = (byCat[c] || 0) + (p.price||0)*(p.qty||1);
+  });
+  const catRows = Object.entries(byCat).sort((a,b) => b[1] - a[1]);
+  const max = catRows.length ? catRows[0][1] : 1;
+  $('reportByCat').innerHTML = catRows.length === 0
+    ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">데이터 없음</div>`
+    : catRows.map(([c, v]) => `<div class="bar-row"><div class="lbl">${escHtml(c)}</div><div class="bar"><div class="f" style="width:${v/max*100}%"></div></div><div class="val">$${Math.round(v)}</div></div>`).join('');
+  // TOP 10
+  const byProd = {};
+  discarded.forEach(p => {
+    byProd[p.name] = (byProd[p.name] || 0) + (p.price||0)*(p.qty||1);
+  });
+  const topRows = Object.entries(byProd).sort((a,b) => b[1] - a[1]).slice(0,10);
+  const maxP = topRows.length ? topRows[0][1] : 1;
+  $('reportTop').innerHTML = topRows.length === 0
+    ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">데이터 없음</div>`
+    : topRows.map(([n, v]) => `<div class="bar-row"><div class="lbl">${escHtml(n).slice(0,12)}</div><div class="bar"><div class="f" style="width:${v/maxP*100}%"></div></div><div class="val">$${Math.round(v)}</div></div>`).join('');
+}
+function setReportRange(r, btn){
+  REPORT_RANGE = r;
+  document.querySelectorAll('#reportTabs button').forEach(b => b.classList.remove('active'));
+  btn && btn.classList.add('active');
+  renderReport();
+}
+window.setReportRange = setReportRange;
+
+function renderAll(){
+  renderHome();
+  if (PAGE === 'check') renderCheckList();
+  else if (PAGE === 'list') renderAlertList();
+  else if (PAGE === 'report') renderReport();
+}
+
+// ============== Page nav ==============
+function switchPage(p){
+  PAGE = p;
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  $('page-' + p).classList.add('active');
+  document.querySelectorAll('.botnav button').forEach(b => b.classList.toggle('active', b.dataset.p === p));
+  window.scrollTo({top:0,behavior:'smooth'});
+  renderAll();
+}
+window.switchPage = switchPage;
+window.openAddSheet = openAddSheet;
+window.saveProduct = saveProduct;
+window.markStatus = markStatus;
+window.openSettingsSheet = openSettingsSheet;
+window.saveSettings = saveSettings;
+window.closeOv = closeOv;
+window.onBranchChange = onBranchChange;
+window.setLang = setLang;
+function filterAndGo(f){ LIST_FILTER = f; switchPage('list'); }
+window.filterAndGo = filterAndGo;
+
+// ============== Init ==============
+renderBranches();
+applyLang();
+renderAll();
+
+// Service worker for PWA / offline
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body>
+</html>
