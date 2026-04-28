@@ -323,7 +323,7 @@ button{cursor:pointer}
     <div class="field">
       <label id="lblBarcode">🏷 바코드 번호</label>
       <div style="display:flex;gap:6px">
-        <input type="text" id="addBarcode" placeholder="예: 8801234567890" inputmode="numeric" style="flex:1">
+        <input type="text" id="addBarcode" placeholder="예: 8801234567890" inputmode="numeric" style="flex:1" onchange="autofillFromBarcode()" onblur="autofillFromBarcode()">
         <button type="button" onclick="scanBarcode()" style="background:#fff;border:1.5px solid #1a5c3a;color:#1a5c3a;border-radius:8px;padding:0 14px;font-size:.88em;font-weight:700;cursor:pointer;flex-shrink:0">📷 스캔</button>
       </div>
     </div>
@@ -583,6 +583,56 @@ function subscribe(){
 window.addEventListener('fb-ready', subscribe);
 setTimeout(() => { if (!unsub) subscribe(); }, 1500);
 
+// ============== Lookup from POS products ==============
+// pos-cost-filter pushes the branch's POS catalog to products/{BRANCH}.rows;
+// we read it once per branch and look up by FULL_BARCODE / CODE so scanning
+// a barcode auto-fills name + category + price during 상품 등록.
+const __LOOKUP_CACHE = {};
+async function loadBranchLookup(branch){
+  if (__LOOKUP_CACHE[branch]) return __LOOKUP_CACHE[branch];
+  try {
+    const r = await fetch(`${FB_DB_URL}/products/${branch}.json`);
+    const d = await r.json();
+    if (!d || !Array.isArray(d.rows)) { __LOOKUP_CACHE[branch] = {}; return {}; }
+    const idx = {};
+    d.rows.forEach(row => {
+      if (row.FULL_BARCODE) idx[String(row.FULL_BARCODE).trim()] = row;
+      if (row.CODE) idx[String(row.CODE).trim()] = row;
+    });
+    __LOOKUP_CACHE[branch] = idx;
+    return idx;
+  } catch(e) { __LOOKUP_CACHE[branch] = {}; return {}; }
+}
+function mapPosCategory(posCat){
+  // POS categories include things like "PASTE,MARINADE,SAUCE (F)" — map to our 6 buckets.
+  const c = (posCat || '').toUpperCase();
+  if (/REFRIGERAT|MILK|YOGURT|CHEESE|DAIRY/.test(c)) return '냉장/유제품';
+  if (/MEAT|FISH|SEAFOOD|BEEF|PORK|CHICKEN/.test(c)) return '정육';
+  if (/VEGETAB|FRUIT|PRODUCE/.test(c)) return '채소/과일';
+  if (/DRINK|BEVERAGE|JUICE|SODA|WATER/.test(c)) return '음료';
+  if (/BANCHAN|반찬|MEAL|KIMBAP|RICE BALL|RICE CAKE/.test(c)) return '즉석/반찬';
+  return '기타';
+}
+async function autofillFromBarcode(){
+  const code = ($('addBarcode').value || '').trim();
+  if (!code) return;
+  const idx = await loadBranchLookup(BRANCH);
+  const hit = idx[code];
+  if (!hit) {
+    showToast('🔍 POS 카탈로그에 없는 바코드 — 직접 입력하세요', true);
+    return;
+  }
+  // Only overwrite empty fields so a manager can keep their custom name if they typed one
+  if (!$('addName').value.trim()) $('addName').value = hit.NAME || '';
+  if (!parseFloat($('addPrice').value)) {
+    const p = hit.PRICE || hit.COST || 0;
+    if (p) $('addPrice').value = p;
+  }
+  $('addCat').value = mapPosCategory(hit.CATEGORY);
+  showToast('✅ ' + (hit.NAME || code) + ' (POS 자동 채움)');
+}
+window.autofillFromBarcode = autofillFromBarcode;
+
 // ============== Add product ==============
 let __ADD_PHOTO_DATA = null;   // { dataUrl, blob } pending upload
 function openAddSheet(){
@@ -695,6 +745,7 @@ async function scanBarcode(){
           $('addBarcode').value = codes[0].rawValue;
           showToast('🏷 ' + codes[0].rawValue);
           closeBcModal();
+          autofillFromBarcode();
           return;
         }
       } catch(e) {}
@@ -723,6 +774,7 @@ async function scanBarcode(){
         $('addBarcode').value = result.text;
         showToast('🏷 ' + result.text);
         closeBcModal();
+        autofillFromBarcode();
       }
     });
   } catch(e) {
