@@ -254,7 +254,13 @@ button{font-family:inherit;cursor:pointer}
 <div class="overlay" id="assignOv">
   <div class="modal">
     <h3>📨 새 업무 지시</h3>
-    <div class="field"><label>업무명</label><input type="text" id="aName" placeholder="예: 신선식품 코너 온도 체크"></div>
+    <div class="field">
+      <label>업무명</label>
+      <select id="aNameTpl" onchange="onTaskTplPick(this)" style="margin-bottom:6px">
+        <option value="">— 자주 쓰는 업무 선택 또는 직접 입력 —</option>
+      </select>
+      <input type="text" id="aName" placeholder="예: 신선식품 코너 온도 체크">
+    </div>
     <div class="field"><label>담당자</label>
       <select id="aTo"><option value="">— 직원 선택 —</option></select>
       <div class="hint">또는 본 지점 전체에 배정 가능</div>
@@ -299,6 +305,70 @@ button{font-family:inherit;cursor:pointer}
 <script>
 // ================= STATE =================
 const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+
+// Common task templates — picked from the [+ 새 지시] modal so managers
+// don't retype the same instruction every day. Each template carries the
+// matching category so it can auto-fill the 카테고리 select too.
+const TASK_TEMPLATES = [
+  // 온도 체크
+  { name: '신선식품 코너 온도 체크', category: '온도 체크' },
+  { name: '냉장고 온도 체크',       category: '온도 체크' },
+  { name: '냉동고 온도 체크',       category: '온도 체크' },
+  { name: '쇼케이스 온도 체크',     category: '온도 체크' },
+  // 유통기한
+  { name: '우유 매대 유통기한 점검',     category: '유통기한' },
+  { name: '음료 매대 유통기한 점검',     category: '유통기한' },
+  { name: '신선식품 유통기한 점검',      category: '유통기한' },
+  { name: '정육 유통기한 점검',          category: '유통기한' },
+  { name: '냉동식품 유통기한 점검',      category: '유통기한' },
+  // 진열
+  { name: '매대 보충 진열',         category: '진열' },
+  { name: '정육 매대 가격표 출력',  category: '진열' },
+  { name: '신라면 메가딜 라벨 출력', category: '진열' },
+  { name: '진열대 정리',           category: '진열' },
+  { name: '재고 진열',             category: '진열' },
+  // 청소
+  { name: '매장 바닥 청소',         category: '청소' },
+  { name: '화장실 청소',            category: '청소' },
+  { name: '카운터 청소',            category: '청소' },
+  { name: '냉장고 청소',            category: '청소' },
+  // 현금
+  { name: '현금 카운트',            category: '현금' },
+  { name: '거스름돈 준비',          category: '현금' },
+  { name: '금고 시재 점검',         category: '현금' },
+  // 오프닝/클로징
+  { name: '오프닝 체크리스트',      category: '기타' },
+  { name: '클로징 체크리스트',      category: '기타' },
+  { name: '매장 오픈 준비',         category: '기타' },
+  { name: '매장 마감 정리',         category: '기타' },
+];
+function populateTaskTemplates(){
+  const sel = document.getElementById('aNameTpl');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— 자주 쓰는 업무 선택 또는 직접 입력 —</option>';
+  // group by category
+  const grouped = {};
+  TASK_TEMPLATES.forEach(t => { (grouped[t.category] = grouped[t.category] || []).push(t); });
+  Object.entries(grouped).forEach(([cat, list]) => {
+    const og = document.createElement('optgroup');
+    og.label = cat;
+    list.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.name;
+      opt.dataset.cat = t.category;
+      opt.textContent = t.name;
+      og.appendChild(opt);
+    });
+    sel.appendChild(og);
+  });
+}
+function onTaskTplPick(sel){
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) return;
+  document.getElementById('aName').value = opt.value;
+  if (opt.dataset.cat) document.getElementById('aCat').value = opt.dataset.cat;
+}
+window.onTaskTplPick = onTaskTplPick;
 const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
 const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
 
@@ -1011,6 +1081,8 @@ function renderReport(){
 async function openAssignModal(){
   if (!me || !(isManager(me.role) || isOwner())) { alert('매니저만 사용 가능합니다.'); return; }
   document.getElementById('aName').value = '';
+  populateTaskTemplates();
+  const tpl = document.getElementById('aNameTpl'); if (tpl) tpl.value = '';
   document.getElementById('aDeadline').value = '11:00';
   document.getElementById('aCat').value = '온도 체크';
   document.getElementById('aPhoto').checked = true;
