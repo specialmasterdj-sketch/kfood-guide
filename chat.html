@@ -181,7 +181,7 @@ a{color:inherit;text-decoration:none}
   <button class="back" onclick="if(history.length>1)history.back();else location.href='./apps.html'">←</button>
   <button onclick="location.href='./apps.html'" title="홈" style="background:transparent;border:0;font-size:1.2em;cursor:pointer;color:#6b7280">🏠</button>
   <button class="menu" onclick="document.querySelector('.rooms').classList.add('show')">☰</button>
-  <div class="brand"><div class="logo">K</div><span>채팅</span></div>
+  <div class="brand"><div class="logo">K</div><span data-t="brand_chat">채팅</span></div>
   <div class="spacer"></div>
   <div class="lang-toggle">
     <button class="lang-btn" data-lang="ko" onclick="setLang('ko')">KO</button>
@@ -265,7 +265,7 @@ a{color:inherit;text-decoration:none}
       <input type="file" id="fileInput" accept="image/*" multiple onchange="handleFiles(event)">
       <div class="field">
         <div class="previews" id="previews"></div>
-        <textarea id="msgInput" rows="1" placeholder="메시지 입력…" oninput="autoGrow(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+        <textarea id="msgInput" rows="1" placeholder="메시지 입력…" data-t-ph="msg_ph" oninput="autoGrow(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
       </div>
       <button class="send" id="sendBtn" onclick="sendMessage()">➤</button>
     </div>
@@ -423,6 +423,8 @@ const CHAT_T = {
   tab_mine:         { ko:'내 부서',          en:'My Dept',           es:'Mi Dpto' },
   me_select:        { ko:'이름 선택',        en:'Select name',       es:'Seleccionar nombre' },
   brand_chat:       { ko:'채팅',             en:'Chat',              es:'Chat' },
+  no_rooms:         { ko:'방이 없습니다.\n＋ 버튼으로 만드세요.', en:'No rooms yet.\nUse ＋ to create one.', es:'Sin salas.\nUsa ＋ para crear una.' },
+  msg_ph:           { ko:'메시지 입력…',    en:'Type a message…',   es:'Escribe un mensaje…' },
 };
 let LANG = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || 'ko';
 function setLang(l) {
@@ -444,6 +446,7 @@ function applyLang() {
     b.classList.toggle('active', b.dataset.lang === LANG)
   );
   document.documentElement.lang = LANG;
+  if (typeof renderRooms === 'function') renderRooms();
 }
 document.addEventListener('DOMContentLoaded', applyLang);
 </script>
@@ -509,19 +512,29 @@ let __unsubMsgs = null;
 
 // ============ DEFAULT ROOMS ============
 const DEFAULT_ROOMS = [
-  { id:'general', name:'전체 공지', desc:'모든 지점 공통', icon:'📢' },
-  { id:'need_overstock', name:'Need and over stock', desc:'재고 부족/과다 보고', icon:'📦' },
-  { id:'managers', name:'Supervisors and Managers', desc:'매니저 / 슈퍼바이저', icon:'👔' },
-  { id:'payroll', name:'💵 현금 급여지급 Report방', desc:'매니저 전용 · 주간 급여 리포트', icon:'💵', managersOnly:true },
-  { id:'closing', name:'CLOSING ROOM', desc:'마감 사진/리포트', icon:'🌙' },
-  { id:'kfood_eval', name:'K-FOOD EVALUATION', desc:'한식 진열/품질 평가', icon:'🍚' },
-  { id:'produce', name:'PRODUCE EVALUATION', desc:'야채 진열 사진 평가', icon:'🥬' },
-  { id:'grocery_eval', name:'GROCERY EVALUATION', desc:'그로서리 진열 평가', icon:'🛒' },
-  { id:'meat', name:'MEAT DEPT', desc:'정육 부서', icon:'🥩' },
-  { id:'sushi', name:'SUSHI KING', desc:'스시 / 키친', icon:'🍱' },
-  { id:'expired', name:'Expired-Damaged', desc:'유통기한/파손 보고', icon:'⚠️' },
-  { id:'supply_req', name:'Supply request / 비품 요청', desc:'비품·소모품 요청', icon:'🧺' },
+  { id:'general',       name:{ko:'전체 공지',              en:'General Announcement',       es:'Anuncio General'},           desc:{ko:'모든 지점 공통',            en:'All branches',               es:'Todas las sucursales'}, icon:'📢' },
+  { id:'need_overstock',name:{ko:'재고 부족/과다',          en:'Need and over stock',         es:'Exceso/Falta de stock'},      desc:{ko:'재고 부족/과다 보고',        en:'Stock shortage / overstock',  es:'Reporte de inventario'}, icon:'📦' },
+  { id:'managers',      name:{ko:'매니저 룸',               en:'Supervisors & Managers',      es:'Supervisores y Gerentes'},    desc:{ko:'매니저 / 슈퍼바이저',        en:'Managers / Supervisors',      es:'Gerentes / Supervisores'}, icon:'👔' },
+  { id:'payroll',       name:{ko:'현금 급여 보고',          en:'Cash Payroll Report',         es:'Reporte de Nómina'},          desc:{ko:'매니저 전용 · 주간 급여',    en:'Managers only · Weekly pay',  es:'Solo gerentes · Nómina semanal'}, icon:'💵', managersOnly:true },
+  { id:'closing',       name:{ko:'마감 룸',                 en:'Closing Room',                es:'Sala de Cierre'},             desc:{ko:'마감 사진/리포트',           en:'Closing photos / report',     es:'Fotos y reporte de cierre'}, icon:'🌙' },
+  { id:'kfood_eval',    name:{ko:'K-FOOD 평가',             en:'K-Food Evaluation',           es:'Evaluación K-Food'},          desc:{ko:'한식 진열/품질 평가',        en:'Korean food display & quality',es:'Evaluación de productos K-Food'}, icon:'🍚' },
+  { id:'produce',       name:{ko:'농산 평가',               en:'Produce Evaluation',          es:'Evaluación de Producidos'},   desc:{ko:'야채 진열 사진 평가',        en:'Produce display photo review', es:'Fotos de exhibición de verduras'}, icon:'🥬' },
+  { id:'grocery_eval',  name:{ko:'그로서리 평가',           en:'Grocery Evaluation',          es:'Evaluación de Abarrotes'},    desc:{ko:'그로서리 진열 평가',         en:'Grocery display review',      es:'Revisión de abarrotes'}, icon:'🛒' },
+  { id:'meat',          name:{ko:'정육 부서',               en:'Meat Dept',                   es:'Departamento de Carnes'},     desc:{ko:'정육 부서',                  en:'Meat department',             es:'Depto. de carnicería'}, icon:'🥩' },
+  { id:'sushi',         name:{ko:'스시 킹',                 en:'Sushi King',                  es:'Sushi King'},                 desc:{ko:'스시 / 키친',               en:'Sushi / Kitchen',             es:'Sushi / Cocina'}, icon:'🍱' },
+  { id:'expired',       name:{ko:'유통기한/파손',           en:'Expired-Damaged',             es:'Vencidos y Dañados'},         desc:{ko:'유통기한/파손 보고',         en:'Expiry & damage report',      es:'Reporte de vencidos/dañados'}, icon:'⚠️' },
+  { id:'supply_req',    name:{ko:'비품 요청',               en:'Supply Request',              es:'Solicitud de Insumos'},       desc:{ko:'비품·소모품 요청',           en:'Supply & consumable requests', es:'Solicitud de suministros'}, icon:'🧺' },
 ];
+function roomLocalName(id, r){
+  const dr = DEFAULT_ROOMS.find(x => x.id === id);
+  if (dr && typeof dr.name === 'object') return dr.name[LANG] || dr.name.ko;
+  return r.name || '';
+}
+function roomLocalDesc(id, r){
+  const dr = DEFAULT_ROOMS.find(x => x.id === id);
+  if (dr && typeof dr.desc === 'object') return dr.desc[LANG] || dr.desc.ko;
+  return r.desc || '';
+}
 const ROOM_ICONS = {general:'📢', need_overstock:'📦', managers:'👔', payroll:'💵', closing:'🌙', kfood_eval:'🍚', produce:'🥬', grocery_eval:'🛒', meat:'🥩', sushi:'🍱', expired:'⚠️', supply_req:'🧺'};
 function roomIconFor(id, name){
   if (ROOM_ICONS[id]) return ROOM_ICONS[id];
@@ -843,11 +856,13 @@ function renderRooms(){
     const active = id === ACTIVE_ROOM ? ' active' : '';
     const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
     const unread = r.unread > 0 ? `<span class="un">${r.unread > 99 ? '99+' : r.unread}</span>` : '';
+    const nm = roomLocalName(id, r);
+    const ds = r.lastMsg || roomLocalDesc(id, r);
     return `<div class="room-item${active}" onclick="openRoom('${id}')">
-      <div class="icon">${roomIconFor(id, r.name)}</div>
+      <div class="icon">${roomIconFor(id, nm)}</div>
       <div class="info">
-        <div class="nm">${escapeHtml(r.name)}</div>
-        <div class="last">${escapeHtml(r.lastMsg || r.desc || '')} ${lastTime ? '· '+lastTime : ''}</div>
+        <div class="nm">${escapeHtml(nm)}</div>
+        <div class="last">${escapeHtml(ds)} ${lastTime ? '· '+lastTime : ''}</div>
       </div>
       ${unread}
     </div>`;
@@ -858,8 +873,10 @@ function ensureDefaultRooms(){
   const { db, ref, set, update } = window.__fb;
   for (const r of DEFAULT_ROOMS) {
     if (!ROOMS[r.id]) {
-      ROOMS[r.id] = { name: r.name, desc: r.desc, managersOnly: !!r.managersOnly };
-      const payload = { name:r.name, desc:r.desc, created: Date.now() };
+      const koName = typeof r.name === 'object' ? r.name.ko : r.name;
+      const koDesc = typeof r.desc === 'object' ? r.desc.ko : r.desc;
+      ROOMS[r.id] = { name: koName, desc: koDesc, managersOnly: !!r.managersOnly };
+      const payload = { name: koName, desc: koDesc, created: Date.now() };
       if (r.managersOnly) payload.managersOnly = true;
       set(ref(db, 'chat/rooms/' + r.id), payload).catch(()=>{});
     } else if (r.managersOnly && !ROOMS[r.id].managersOnly) {
@@ -918,8 +935,9 @@ function openRoom(id){
   // the input prompts the user to pick a name (instead of vanishing).
   document.getElementById('composer').style.display = '';
   const input = document.getElementById('msgInput');
-  if (!me) input.placeholder = '메시지 보내려면 우측 상단 "이름 선택"을 먼저 눌러주세요';
-  else input.placeholder = '메시지 입력…';
+  const phNoMe = {ko:'메시지 보내려면 우측 상단 "이름 선택"을 먼저 눌러주세요', en:'Select your name (top right) to send messages', es:'Selecciona tu nombre (arriba a la derecha) para enviar'};
+  if (!me) input.placeholder = phNoMe[LANG] || phNoMe.ko;
+  else input.placeholder = (CHAT_T.msg_ph && CHAT_T.msg_ph[LANG]) || '메시지 입력…';
   document.querySelector('.rooms').classList.remove('show');
   subscribeMessages(id);
   renderRooms();
@@ -1389,7 +1407,7 @@ function loadRoomsRest(){
     if (shouldAutoRestoreRoom()) openRoom(ACTIVE_ROOM);
   }).catch(() => {
     // load just defaults
-    DEFAULT_ROOMS.forEach(r => { ROOMS[r.id] = { name: r.name, desc: r.desc }; });
+    DEFAULT_ROOMS.forEach(r => { ROOMS[r.id] = { name: typeof r.name==='object'?r.name.ko:r.name, desc: typeof r.desc==='object'?r.desc.ko:r.desc }; });
     renderRooms();
     if (shouldAutoRestoreRoom()) openRoom(ACTIVE_ROOM);
   });
