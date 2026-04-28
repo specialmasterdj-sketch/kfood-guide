@@ -320,18 +320,13 @@ button{font-family:inherit;cursor:pointer}
     <p style="font-size:.84em;color:#6b7280;margin-bottom:10px">우리 지점 전용 업무 템플릿. 다른 지점은 영향 없음.</p>
     <div id="tplList" style="max-height:280px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;margin-bottom:14px"></div>
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="font-size:.82em;font-weight:700;color:#15803d;margin-bottom:6px">+ 새 템플릿 추가</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:.82em;font-weight:700;color:#15803d">+ 새 템플릿 추가</div>
+        <button type="button" onclick="addNewCategory()" style="background:transparent;border:1px dashed #15803d;color:#15803d;border-radius:6px;padding:3px 8px;font-size:.74em;font-weight:700;cursor:pointer">+ 새 카테고리</button>
+      </div>
       <input type="text" id="tplNewName" placeholder="업무명 (예: 8번 통로 보충)" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em;margin-bottom:6px">
       <div style="display:flex;gap:6px">
-        <select id="tplNewCat" style="flex:1;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em">
-          <option value="온도 체크">온도 체크</option>
-          <option value="유통기한">유통기한</option>
-          <option value="진열">진열</option>
-          <option value="청소">청소</option>
-          <option value="현금">현금</option>
-          <option value="캐셔">🛒 캐셔 (POS)</option>
-          <option value="기타">기타</option>
-        </select>
+        <select id="tplNewCat" style="flex:1;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.9em"></select>
         <button class="btn" onclick="addTpl()">＋ 추가</button>
       </div>
     </div>
@@ -466,6 +461,60 @@ async function unhideDefaultTemplate(branchId, name){
     }
   }
 }
+// Branch-specific custom categories — appended to the default 7 (온도 체크 / 유통기한 / 진열 / 청소 / 현금 / 캐셔 / 기타)
+let __BRANCH_CATS = [];
+const DEFAULT_CATS = ['온도 체크','유통기한','진열','청소','현금','캐셔','기타'];
+async function loadBranchCategories(branchId){
+  if (!branchId) return [];
+  try {
+    const r = await fetch(`${FB_DB_URL}/taskCategories/${branchId}.json?t=`+Date.now(), { cache:'no-store' });
+    const d = await r.json();
+    if (!d) return [];
+    if (Array.isArray(d)) return d.filter(Boolean);
+    return Object.values(d).filter(Boolean);
+  } catch(e) { return []; }
+}
+async function addBranchCategory(branchId, name){
+  if (!name) return;
+  await fetch(`${FB_DB_URL}/taskCategories/${branchId}.json`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(name)
+  });
+}
+async function deleteBranchCategory(branchId, name){
+  const r = await fetch(`${FB_DB_URL}/taskCategories/${branchId}.json`);
+  const d = await r.json();
+  if (!d) return;
+  if (Array.isArray(d)) {
+    const next = d.filter(v => v !== name);
+    await fetch(`${FB_DB_URL}/taskCategories/${branchId}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(next)
+    });
+  } else {
+    for (const [id, v] of Object.entries(d)) {
+      if (v === name) await fetch(`${FB_DB_URL}/taskCategories/${branchId}/${id}.json`, { method:'DELETE' });
+    }
+  }
+}
+function allCategories(){
+  // dedup default + branch-added
+  const seen = new Set();
+  return [...DEFAULT_CATS, ...(__BRANCH_CATS||[])].filter(c => {
+    if (!c || seen.has(c)) return false;
+    seen.add(c);
+    return true;
+  });
+}
+function refreshCategorySelects(){
+  const cats = allCategories();
+  // Helper: refill any <select> we use for category, preserving current value if still present
+  ['aCat','tplNewCat'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = cats.map(c => `<option value="${escHtml(c)}">${c==='캐셔'?'🛒 ':''}${escHtml(c)}${c==='캐셔'?' (POS)':''}</option>`).join('');
+    if (cats.includes(cur)) sel.value = cur;
+  });
+}
 async function saveBranchTemplate(branchId, tpl){
   const r = await fetch(`${FB_DB_URL}/taskTemplates/${branchId}.json`, {
     method:'POST',
@@ -482,6 +531,8 @@ async function deleteBranchTemplate(branchId, id){
 async function populateTaskTemplates(){
   __BRANCH_TPLS = me?.branch ? await loadBranchTemplates(me.branch) : [];
   __HIDDEN_TPLS = me?.branch ? await loadHiddenTemplates(me.branch) : [];
+  __BRANCH_CATS = me?.branch ? await loadBranchCategories(me.branch) : [];
+  refreshCategorySelects();
   populateTaskCheckList();
   const sel = document.getElementById('aNameTpl');
   if (!sel) return;
@@ -702,6 +753,32 @@ async function openTplEditor(){
   document.getElementById('tplNewCat').value = '온도 체크';
   ov.classList.add('show');
 }
+async function addNewCategory(){
+  const name = (prompt('새 카테고리 이름 (예: 외부 매대)') || '').trim();
+  if (!name) return;
+  if (allCategories().includes(name)) { alert('이미 있는 카테고리입니다.'); return; }
+  await addBranchCategory(me.branch, name);
+  __BRANCH_CATS = await loadBranchCategories(me.branch);
+  refreshCategorySelects();
+  // pre-select the new category in the template-add form
+  const tplCat = document.getElementById('tplNewCat');
+  if (tplCat) tplCat.value = name;
+  showTplToast('+ ' + name);
+}
+function showTplToast(msg){
+  let t = document.getElementById('__tplToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '__tplToast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:8px 14px;border-radius:8px;font-size:.85em;z-index:9999;box-shadow:0 4px 14px rgba(0,0,0,.2)';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.display = '';
+  clearTimeout(showTplToast._h);
+  showTplToast._h = setTimeout(() => { t.style.display='none'; }, 2500);
+}
+window.addNewCategory = addNewCategory;
 async function hideDefault(name){
   if (!confirm(`"${name}"을(를) 우리 지점에서 숨길까요?\n다른 지점은 영향 없음, 언제든 ↩로 복구.`)) return;
   await hideDefaultTemplate(me.branch, name);
