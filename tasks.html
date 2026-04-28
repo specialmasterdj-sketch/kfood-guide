@@ -709,33 +709,42 @@ function populateTaskCheckList(){
 const STAGE_MODE_CATS = ['캐셔', 'BOBA'];
 const ALWAYS_CHECKLIST_CATS = ['캐셔', 'BOBA'];
 
-// 4 shifts across an 8am–10pm day. Each shift gets a from–to time the
-// manager fills in every morning, plus an assignee. Used for both 캐셔 and BOBA.
-const CASHIER_STAGES = [
-  { label: '① 오프닝',    from: '08:00', to: '12:00', size: 4 },
-  { label: '② 오전 교대', from: '12:00', to: '15:00', size: 4 },
-  { label: '③ 오후 교대', from: '15:00', to: '19:00', size: 3 },
-  { label: '④ 마감',     from: '19:00', to: '22:00', size: 3 },
-];
+// 캐셔: 4 shifts across 8am–10pm. BOBA: 3 shifts across 10am–7pm (shorter day).
+// Each shift gets a from–to time the manager confirms every morning + assignee.
+const STAGES_BY_CAT = {
+  '캐셔': [
+    { label: '① 오프닝',    from: '08:00', to: '12:00', size: 4 },
+    { label: '② 오전 교대', from: '12:00', to: '15:00', size: 4 },
+    { label: '③ 오후 교대', from: '15:00', to: '19:00', size: 3 },
+    { label: '④ 마감',     from: '19:00', to: '22:00', size: 3 },
+  ],
+  'BOBA': [
+    { label: '① 오프닝',    from: '10:00', to: '13:00' },
+    { label: '② 미드',      from: '13:00', to: '16:00' },
+    { label: '③ 마감',     from: '16:00', to: '19:00' },
+  ],
+};
+function stagesFor(cat){ return STAGES_BY_CAT[cat] || STAGES_BY_CAT['캐셔']; }
+// Backwards-compat alias
+const CASHIER_STAGES = STAGES_BY_CAT['캐셔'];
 function getCashierItemsByStage(cat){
   cat = cat || '캐셔';
+  const stages = stagesFor(cat);
   const all = checklistItemsFor(cat);
   const out = [];
-  // For 캐셔: use predefined sizes (4/4/3/3 = 14 items)
-  // For other STAGE_MODE_CATS (BOBA): split items proportionally across 4 stages
+  // For 캐셔: use predefined sizes per stage. For others: split items evenly.
   let sizes;
   if (cat === '캐셔') {
-    sizes = CASHIER_STAGES.map(s => s.size);
+    sizes = stages.map(s => s.size);
   } else {
-    const per = Math.ceil(all.length / 4) || 1;
-    sizes = [per, per, per, all.length - per*3].map(s => Math.max(0, s));
+    const per = Math.ceil(all.length / stages.length) || 1;
+    sizes = stages.map((_, i) => i === stages.length-1 ? Math.max(0, all.length - per*(stages.length-1)) : per);
   }
   let cursor = 0;
-  for (let i = 0; i < CASHIER_STAGES.length; i++) {
-    const stage = CASHIER_STAGES[i];
+  for (let i = 0; i < stages.length; i++) {
     const slice = all.slice(cursor, cursor + sizes[i]);
     cursor += sizes[i];
-    out.push({ stage: stage.label, items: slice });
+    out.push({ stage: stages[i].label, items: slice });
   }
   if (cursor < all.length) out[out.length - 1].items.push(...all.slice(cursor));
   return out;
@@ -773,6 +782,8 @@ function onChecklistToggle(){
 async function renderCashierStageInputs(){
   const grid = document.getElementById('cashierStagesGrid');
   if (!grid) return;
+  const cat = document.getElementById('aCat').value;
+  const stages = stagesFor(cat);
   // Pull branch employees once for the per-stage assignee selects
   let employees = [];
   try {
@@ -781,9 +792,9 @@ async function renderCashierStageInputs(){
   } catch(e){}
   const empOptions = '<option value="">— 담당자 —</option><option value="*">📢 본 지점 전체</option>'
     + employees.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}${e.role?` (${escHtml(e.role)})`:''}</option>`).join('');
-  // Two columns x two rows; each cell = stage card with ☑ + time + assignee
-  grid.style.gridTemplateColumns = '1fr 1fr';
-  grid.innerHTML = CASHIER_STAGES.map((s, i) => `
+  // 캐셔(4단계)=2x2 그리드, BOBA(3단계)=3컬럼
+  grid.style.gridTemplateColumns = stages.length === 4 ? '1fr 1fr' : 'repeat(' + stages.length + ', 1fr)';
+  grid.innerHTML = stages.map((s, i) => `
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff">
       <label style="display:flex;align-items:center;gap:6px;font-size:.82em;font-weight:700;color:#1a5c3a;margin-bottom:6px;cursor:pointer">
         <input type="checkbox" class="cashier-stage-cb" id="aStageOn${i}" data-stage="${i}" style="width:16px;height:16px">
@@ -2068,9 +2079,10 @@ async function sendAssign(){
       if (!allChecked.length) { alert('지시할 업무를 1개 이상 체크하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
       // Build one task per ticked stage and POST them all
       const path = 'tasks/'+me.branch+'/'+todayStr();
+      const stagesForCat = stagesFor(cat);
       let sentCount = 0;
       for (const sIdx of stagesOn) {
-        const stageMeta = CASHIER_STAGES[sIdx];
+        const stageMeta = stagesForCat[sIdx];
         const stageFrom = document.getElementById('aStageFrom'+sIdx)?.value || stageMeta.from;
         const stageTo   = document.getElementById('aStageTo'+sIdx)?.value   || stageMeta.to;
         const stageAssignee = document.getElementById('aStageAssignee'+sIdx)?.value || to;
