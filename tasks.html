@@ -292,15 +292,11 @@ button{font-family:inherit;cursor:pointer}
       <div><label>카테고리</label><select id="aCat" onchange="onChecklistToggle()"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select></div>
     </div>
     <div class="field" id="cashierStagesField" style="display:none">
-      <label>🛒 캐셔 단계 선택</label>
-      <div id="cashierStagePicker" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
-      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;margin-bottom:8px">
-        <span style="font-size:.78em;color:#374151;font-weight:600">⏰ 데드라인</span>
-        <input type="time" id="aStageTime" value="08:00" style="border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.92em">
-      </div>
+      <label>🛒 캐셔 4교대 시간</label>
+      <div id="cashierStagesGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px"></div>
       <div style="font-size:.78em;color:#374151;font-weight:600;margin-bottom:4px">지시할 업무 (체크 → 보냄)</div>
-      <div id="cashierItemsCheck" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px;max-height:200px;overflow:auto"></div>
-      <div class="hint" style="margin-top:6px">단계와 시간 선택 후 보낼 업무만 체크하세요. 직원 카드에 그 항목들만 체크리스트로 뜸.</div>
+      <div id="cashierItemsCheck" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px;max-height:280px;overflow:auto"></div>
+      <div class="hint" style="margin-top:6px">단계별 시간 4개를 설정하세요. 14개 항목 중 보낼 것만 체크. 각 항목은 자기 단계 시간으로 직원에게 표시됩니다.</div>
     </div>
     <div class="field check"><input type="checkbox" id="aPhoto" checked><label for="aPhoto">📷 완료 사진 필수 (원격 검수)</label></div>
     <div class="field"><label>추가 메모 (선택)</label><textarea id="aNote" placeholder="예: 우유 코너 우선 점검"></textarea></div>
@@ -539,39 +535,34 @@ function onChecklistToggle(){
     if (stagesField) stagesField.style.display = 'none';
   }
 }
-let __SELECTED_STAGE = 0;
 function renderCashierStageInputs(){
-  const picker = document.getElementById('cashierStagePicker');
-  if (!picker) return;
-  picker.innerHTML = CASHIER_STAGES.map((s, i) => `
-    <button type="button" onclick="pickCashierStage(${i})" data-stage="${i}"
-      style="background:${i===__SELECTED_STAGE?'#1a5c3a':'#fff'};color:${i===__SELECTED_STAGE?'#fff':'#1a5c3a'};border:1px solid #1a5c3a;border-radius:8px;padding:6px 12px;font-size:.82em;font-weight:700;cursor:pointer">
-      ${escHtml(s.label)}
-    </button>
+  const grid = document.getElementById('cashierStagesGrid');
+  if (!grid) return;
+  grid.innerHTML = CASHIER_STAGES.map((s, i) => `
+    <label style="display:flex;flex-direction:column;gap:3px;font-size:.78em;color:#374151;font-weight:600">
+      <span>${escHtml(s.label)}</span>
+      <input type="time" id="aStage${i}" value="${s.default}" style="border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.92em">
+    </label>
   `).join('');
-  // Set time input to the chosen stage's default
-  const tInp = document.getElementById('aStageTime');
-  if (tInp) tInp.value = CASHIER_STAGES[__SELECTED_STAGE].default;
   renderCashierItemChecks();
-}
-function pickCashierStage(idx){
-  __SELECTED_STAGE = idx;
-  renderCashierStageInputs();
 }
 function renderCashierItemChecks(){
   const wrap = document.getElementById('cashierItemsCheck');
   if (!wrap) return;
+  // ALL 14 items grouped by stage — manager freely picks any subset across stages
   const grouped = getCashierItemsByStage();
-  const list = grouped[__SELECTED_STAGE] ? grouped[__SELECTED_STAGE].items : [];
-  if (!list.length) { wrap.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:14px;font-size:.85em">이 단계에 항목 없음</div>'; return; }
-  wrap.innerHTML = list.map((it, i) => `
-    <label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:.88em">
-      <input type="checkbox" class="cashier-item-cb" data-name="${escHtml(it.name)}" checked style="width:16px;height:16px">
-      <span>${escHtml(it.name)}</span>
-    </label>
+  wrap.innerHTML = grouped.map((g, sIdx) => `
+    <div style="margin-top:${sIdx===0?'0':'8px'};padding-top:${sIdx===0?'0':'6px'};border-top:${sIdx===0?'0':'1px dashed #e5e7eb'}">
+      <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin-bottom:3px">${escHtml(g.stage)}</div>
+      ${g.items.map(it => `
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 6px;cursor:pointer;font-size:.88em">
+          <input type="checkbox" class="cashier-item-cb" data-name="${escHtml(it.name)}" data-stage="${sIdx}" style="width:16px;height:16px">
+          <span>${escHtml(it.name)}</span>
+        </label>
+      `).join('')}
+    </div>
   `).join('');
 }
-window.pickCashierStage = pickCashierStage;
 function checklistItemsFor(cat){
   const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
   const seen = new Set();
@@ -1461,16 +1452,17 @@ async function sendAssign(){
   let stageDeadlines = null;
   if (useChecklist) {
     if (cat === '캐셔') {
-      // Single stage + only the items the manager checked in the modal
-      const sIdx = __SELECTED_STAGE;
-      const stageMeta = CASHIER_STAGES[sIdx];
-      const stageTime = document.getElementById('aStageTime')?.value || stageMeta.default;
-      const checked = Array.from(document.querySelectorAll('.cashier-item-cb:checked')).map(cb => cb.dataset.name);
-      if (!checked.length) { alert('지시할 업무를 1개 이상 체크하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
-      checklist = checked.map(n => ({ name: n, done: false, stage: sIdx, stageLabel: stageMeta.label, stageTime }));
-      stageDeadlines = [stageTime];
-      // Override deadline + name to reflect the chosen stage so card sort/display is consistent
-      // (manager can still leave the top deadline as-is; we use stageTime for the assignment timing)
+      // 4-stage shifts: each stage keeps its own time; manager picks any
+      // subset of the 14 items across stages — each item carries its stage
+      // metadata so the employee card can group them.
+      stageDeadlines = CASHIER_STAGES.map((s, i) => document.getElementById('aStage'+i)?.value || s.default);
+      const checkedBoxes = Array.from(document.querySelectorAll('.cashier-item-cb:checked'));
+      if (!checkedBoxes.length) { alert('지시할 업무를 1개 이상 체크하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
+      checklist = checkedBoxes.map(cb => {
+        const sIdx = parseInt(cb.dataset.stage, 10) || 0;
+        const stageMeta = CASHIER_STAGES[sIdx];
+        return { name: cb.dataset.name, done: false, stage: sIdx, stageLabel: stageMeta.label, stageTime: stageDeadlines[sIdx] };
+      });
     } else {
       const items = checklistItemsFor(cat);
       if (items.length) checklist = items.map(it => ({ name: it.name, done: false }));
