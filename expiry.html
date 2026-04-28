@@ -594,14 +594,57 @@ async function loadBranchLookup(branch){
     const r = await fetch(`${FB_DB_URL}/products/${branch}.json`);
     const d = await r.json();
     if (!d || !Array.isArray(d.rows)) { __LOOKUP_CACHE[branch] = {}; return {}; }
+    // Build a multi-key index: each row registered under FULL_BARCODE, CODE,
+    // and digit-only variants so EAN-13 (13 chars from camera) matches POS
+    // catalogs that store the 12-char no-checkdigit form (and vice versa).
     const idx = {};
+    function addKey(k, row){ if (k && !idx[k]) idx[k] = row; }
     d.rows.forEach(row => {
-      if (row.FULL_BARCODE) idx[String(row.FULL_BARCODE).trim()] = row;
-      if (row.CODE) idx[String(row.CODE).trim()] = row;
+      const raw = [row.FULL_BARCODE, row.CODE, row.PID].map(v => v ? String(v).trim() : '');
+      raw.forEach(k => {
+        if (!k) return;
+        addKey(k, row);
+        const digits = k.replace(/\D/g, '');
+        if (digits) {
+          addKey(digits, row);
+          addKey(digits.replace(/^0+/, '') || digits, row);
+        }
+      });
     });
     __LOOKUP_CACHE[branch] = idx;
     return idx;
   } catch(e) { __LOOKUP_CACHE[branch] = {}; return {}; }
+}
+// Match a scanned/typed barcode against the lookup index by trying every
+// realistic variant: pad to common lengths (8/11/12/13), strip leading
+// zeros, drop the last (check) digit, and the same with the check digit
+// removed. Same logic lookup.html uses.
+function lookupBarcodeVariants(idx, query){
+  const q = String(query || '').trim();
+  if (!q) return null;
+  const variants = new Set();
+  variants.add(q);
+  const qDigits = q.replace(/\D/g, '');
+  if (qDigits) {
+    variants.add(qDigits);
+    variants.add(qDigits.replace(/^0+/, '') || qDigits);
+    for (const len of [8, 11, 12, 13]) {
+      if (qDigits.length <= len) variants.add(qDigits.padStart(len, '0'));
+    }
+    // last digit dropped (POS catalog without check digit)
+    if (qDigits.length > 1) {
+      const noCheck = qDigits.slice(0, -1);
+      variants.add(noCheck);
+      variants.add(noCheck.replace(/^0+/, '') || noCheck);
+      for (const len of [8, 11, 12]) {
+        if (noCheck.length <= len) variants.add(noCheck.padStart(len, '0'));
+      }
+    }
+  }
+  for (const v of variants) {
+    if (idx[v]) return idx[v];
+  }
+  return null;
 }
 function mapPosCategory(posCat){
   // POS categories include things like "PASTE,MARINADE,SAUCE (F)" — map to our 6 buckets.
@@ -617,7 +660,7 @@ async function autofillFromBarcode(){
   const code = ($('addBarcode').value || '').trim();
   if (!code) return;
   const idx = await loadBranchLookup(BRANCH);
-  const hit = idx[code];
+  const hit = lookupBarcodeVariants(idx, code);
   if (!hit) {
     showToast('🔍 POS 카탈로그에 없는 바코드 — 직접 입력하세요', true);
     return;
@@ -632,6 +675,15 @@ async function autofillFromBarcode(){
   showToast('✅ ' + (hit.NAME || code) + ' (POS 자동 채움)');
 }
 window.autofillFromBarcode = autofillFromBarcode;
+// Strip the trailing check digit so what we store matches the POS catalog
+// format. EAN-13 → 12, EAN-8 stays 8 (we keep short codes intact).
+function normalizeBarcodeForStorage(raw){
+  const d = String(raw||'').replace(/\D/g, '');
+  if (d.length >= 13) return d.slice(0, -1);    // drop check digit on EAN-13/UPC-A check
+  if (d.length === 12) return d;                 // already POS-form
+  return d;                                      // shorter codes kept
+}
+window.normalizeBarcodeForStorage = normalizeBarcodeForStorage;
 
 // ============== Add product ==============
 let __ADD_PHOTO_DATA = null;   // { dataUrl, blob } pending upload
@@ -742,8 +794,9 @@ async function scanBarcode(){
       try {
         const codes = await detector.detect(video);
         if (codes && codes.length) {
-          $('addBarcode').value = codes[0].rawValue;
-          showToast('🏷 ' + codes[0].rawValue);
+          const norm = normalizeBarcodeForStorage(codes[0].rawValue);
+          $('addBarcode').value = norm;
+          showToast('🏷 ' + norm);
           closeBcModal();
           autofillFromBarcode();
           return;
@@ -771,8 +824,9 @@ async function scanBarcode(){
     __bcReader = reader;
     reader.decodeFromVideoElementContinuously(video, (result) => {
       if (result && __bcActive) {
-        $('addBarcode').value = result.text;
-        showToast('🏷 ' + result.text);
+        const norm = normalizeBarcodeForStorage(result.text);
+        $('addBarcode').value = norm;
+        showToast('🏷 ' + norm);
         closeBcModal();
         autofillFromBarcode();
       }
@@ -801,7 +855,7 @@ function closeBcModal(){
 window.closeBcModal = closeBcModal;
 async function saveProduct(){
   const name = $('addName').value.trim();
-  const barcode = $('addBarcode').value.trim();
+  const barcode = normalizeBarcodeForStorage($('addBarcode').value.trim());
   const expiry = $('addExpiry').value;
   const qty = parseInt($('addQty').value, 10) || 1;
   const price = parseFloat($('addPrice').value) || 0;
