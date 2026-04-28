@@ -145,6 +145,9 @@ button{font-family:inherit;cursor:pointer}
 .cl-item .cl-name{flex:1}
 .cl-item.done .cl-name{color:#9ca3af;text-decoration:line-through}
 .cl-item .by{font-size:.7em;color:#9ca3af}
+.cl-item .cl-photo-btn{background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:3px 7px;font-size:.78em;color:#1a5c3a;cursor:pointer;flex-shrink:0;font-weight:600}
+.cl-item .cl-photo-btn:hover{background:#f0fdf4;border-color:#1a5c3a}
+.cl-item .cl-photo-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:pointer;flex-shrink:0;border:2px solid #22c55e}
 
 /* === CLOCK-IN CARD === */
 .clockin-card{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;margin-bottom:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04)}
@@ -1249,10 +1252,14 @@ function renderChecklistInline(task){
         const cls = c && c.done ? 'cl-item done' : 'cl-item';
         const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
         const dispName = c._displayName || c.name || '';
+        const photoCtl = c.photo
+          ? `<img class="cl-photo-thumb" src="${c.photo}" onclick="event.preventDefault();openLb('${c.photo}')" title="첨부됨 — 클릭하여 보기">`
+          : `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 첨부">📷</button>`;
         return `<label class="${cls}">
           <input type="checkbox" ${checked} onchange="toggleChecklistItem('${task.id}','${task.branchId}',${i},this.checked)">
           <span class="cl-name">${escHtml(dispName)}</span>
           ${by}
+          ${photoCtl}
         </label>`;
       }).join('');
       return stageHeader + rows;
@@ -1263,10 +1270,14 @@ function renderChecklistInline(task){
       const cls = c && c.done ? 'cl-item done' : 'cl-item';
       const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
       const dispName = c._displayName || c.name || '';
+      const photoCtl = c.photo
+        ? `<img class="cl-photo-thumb" src="${c.photo}" onclick="event.preventDefault();openLb('${c.photo}')" title="첨부됨 — 클릭하여 보기">`
+        : `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 첨부">📷</button>`;
       return `<label class="${cls}">
         <input type="checkbox" ${checked} onchange="toggleChecklistItem('${task.id}','${task.branchId}',${i},this.checked)">
         <span class="cl-name">${escHtml(dispName)}</span>
         ${by}
+        ${photoCtl}
       </label>`;
     }).join('');
   }
@@ -1279,6 +1290,52 @@ function renderChecklistInline(task){
     ${body}
   </div>`;
 }
+// Per-item photo attachment — opens a hidden file picker, compresses, uploads
+// to Storage (REST) with base64 fallback, then writes the URL onto the item.
+function pickChecklistPhoto(taskId, branchId, idx){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  let input = document.getElementById('__clPhotoPicker');
+  if (!input) {
+    input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.id = '__clPhotoPicker';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+  }
+  input.value = '';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImage(file);
+      const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'_'+Date.now()+'.jpg';
+      let url = null;
+      try {
+        const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
+          method:'POST', headers:{'Content-Type':'image/jpeg'}, body: compressed
+        });
+        if (r.ok) {
+          const meta = await r.json();
+          url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+        }
+      } catch(e){}
+      if (!url) {
+        const small = await compressImage(compressed, 720, 0.55);
+        url = await readDataUrl(small);
+      }
+      const itemPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
+      await window.__fb.update(window.__fb.ref(window.__fb.db, itemPath), {
+        photo: url,
+        photoBy: me.name,
+        photoAt: Date.now(),
+      });
+    } catch(e) { alert('사진 업로드 실패: '+e.message); }
+  };
+  input.click();
+}
+window.pickChecklistPhoto = pickChecklistPhoto;
 async function toggleChecklistItem(taskId, branchId, idx, isChecked){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
