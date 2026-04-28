@@ -310,6 +310,24 @@ button{cursor:pointer}
   <div class="sheet">
     <h3>➕ <span id="addTitle">상품 등록</span></h3>
     <div class="field">
+      <label id="lblPhoto">📷 상품 사진</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div id="addPhotoPreview" style="width:80px;height:80px;border-radius:12px;border:2px dashed #d1d5db;display:flex;align-items:center;justify-content:center;font-size:1.8em;color:#9ca3af;background:#f9fafb;flex-shrink:0;overflow:hidden">📷</div>
+        <div style="flex:1">
+          <input type="file" id="addPhoto" accept="image/*" capture="environment" style="display:none" onchange="onAddPhotoPick(event)">
+          <button type="button" onclick="document.getElementById('addPhoto').click()" style="background:#fff;border:1.5px solid #1a5c3a;color:#1a5c3a;border-radius:8px;padding:8px 14px;font-size:.88em;font-weight:700;cursor:pointer;width:100%">📸 사진 찍기 / 선택</button>
+          <div style="font-size:.74em;color:#9ca3af;margin-top:4px">나중에 빠르게 찾을 수 있도록</div>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label id="lblBarcode">🏷 바코드 번호</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="addBarcode" placeholder="예: 8801234567890" inputmode="numeric" style="flex:1">
+        <button type="button" onclick="scanBarcode()" style="background:#fff;border:1.5px solid #1a5c3a;color:#1a5c3a;border-radius:8px;padding:0 14px;font-size:.88em;font-weight:700;cursor:pointer;flex-shrink:0">📷 스캔</button>
+      </div>
+    </div>
+    <div class="field">
       <label id="lblName">상품명</label>
       <input type="text" id="addName" placeholder="예: 종가집 포기김치 2.5kg" autocomplete="off" list="prodList">
       <datalist id="prodList"></datalist>
@@ -566,12 +584,17 @@ window.addEventListener('fb-ready', subscribe);
 setTimeout(() => { if (!unsub) subscribe(); }, 1500);
 
 // ============== Add product ==============
+let __ADD_PHOTO_DATA = null;   // { dataUrl, blob } pending upload
 function openAddSheet(){
   $('addName').value = '';
+  $('addBarcode').value = '';
   $('addExpiry').valueAsDate = new Date(Date.now() + 7*86400000);
   $('addQty').value = 1;
   $('addPrice').value = '';
   $('addCat').value = '냉장/유제품';
+  __ADD_PHOTO_DATA = null;
+  $('addPhotoPreview').innerHTML = '📷';
+  $('addPhotoPreview').style.background = '#f9fafb';
   // datalist autocomplete from existing products
   const list = $('prodList');
   const seen = new Set();
@@ -580,27 +603,106 @@ function openAddSheet(){
   $('addOv').classList.add('show');
   setTimeout(() => $('addName').focus(), 100);
 }
+async function compressImg(file, maxSide=1024, quality=0.8){
+  if (!file || !file.type.startsWith('image/')) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=url; });
+    URL.revokeObjectURL(url);
+    let { width, height } = img;
+    if (width <= maxSide && height <= maxSide && file.size < 300*1024) return file;
+    const r = Math.min(maxSide/width, maxSide/height, 1);
+    const w = Math.round(width*r), h = Math.round(height*r);
+    const c = document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    return await new Promise(res => c.toBlob(b => res(b||file), 'image/jpeg', quality));
+  } catch(e){ return file; }
+}
+async function onAddPhotoPick(ev){
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const compressed = await compressImg(file);
+  const reader = new FileReader();
+  reader.onload = () => {
+    __ADD_PHOTO_DATA = { blob: compressed, dataUrl: reader.result };
+    const prev = $('addPhotoPreview');
+    prev.innerHTML = `<img src="${reader.result}" style="width:100%;height:100%;object-fit:cover">`;
+    prev.style.background = 'transparent';
+  };
+  reader.readAsDataURL(compressed);
+}
+async function uploadAddPhoto(){
+  if (!__ADD_PHOTO_DATA) return null;
+  const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+  const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/'+FB_STORAGE_BUCKET+'/o';
+  const path = 'expiry/'+BRANCH+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
+  try {
+    const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
+      method:'POST', headers:{'Content-Type':'image/jpeg'}, body: __ADD_PHOTO_DATA.blob
+    });
+    if (r.ok) {
+      const meta = await r.json();
+      return FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+    }
+  } catch(e){}
+  // base64 fallback (storage CORS)
+  return __ADD_PHOTO_DATA.dataUrl;
+}
+function scanBarcode(){
+  // Best-effort: most modern phones autofill barcodes via the OS keyboard / camera input.
+  // We expose a fallback "type number" prompt; full BarcodeDetector integration ships next.
+  if ('BarcodeDetector' in window) {
+    alert('카메라 바코드 스캔: 다음 단계에서 추가됩니다. 우선 직접 입력하세요.');
+  } else {
+    alert('이 기기는 자동 스캔 미지원. 바코드 번호를 직접 입력하세요.');
+  }
+  $('addBarcode').focus();
+}
 async function saveProduct(){
   const name = $('addName').value.trim();
+  const barcode = $('addBarcode').value.trim();
   const expiry = $('addExpiry').value;
   const qty = parseInt($('addQty').value, 10) || 1;
   const price = parseFloat($('addPrice').value) || 0;
   const cat = $('addCat').value;
   if (!name) { alert('이름을 입력하세요'); return; }
   if (!expiry) { alert('유통기한을 입력하세요'); return; }
+  const btn = $('btnSave');
+  btn.disabled = true; btn.textContent = '저장 중…';
+  let photo = null;
+  try {
+    photo = await uploadAddPhoto();
+  } catch(e) {}
   const ref = window.__fb.push(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/products'));
   const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
   await window.__fb.set(ref, {
-    name, expiry, qty, price, category: cat,
+    name, barcode: barcode || null, expiry, qty, price, category: cat,
+    photo: photo || null,
     addedAt: Date.now(),
     addedBy: me?.name || '미등록',
-    status: 'active',  // active | discounted | discarded
+    status: 'active',
     lastCheckedAt: null,
     lastCheckedBy: null,
   });
+  btn.disabled = false; btn.textContent = '저장';
   closeOv('addOv');
   showToast(t('saved'));
 }
+window.onAddPhotoPick = onAddPhotoPick;
+window.scanBarcode = scanBarcode;
+function openPhoto(url){
+  let lb = document.getElementById('__photoLb');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = '__photoLb';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px';
+    lb.onclick = () => lb.style.display = 'none';
+    document.body.appendChild(lb);
+  }
+  lb.innerHTML = `<img src="${url}" style="max-width:96vw;max-height:92vh;border-radius:10px">`;
+  lb.style.display = 'flex';
+}
+window.openPhoto = openPhoto;
 
 // ============== Mark item ==============
 async function markStatus(id, kind){
@@ -676,7 +778,7 @@ function renderCheckList(){
   let rows = PRODUCTS.slice();
   if (CHECK_FILTER === 'unchecked') rows = rows.filter(p => !p.lastCheckedAt || new Date(p.lastCheckedAt).toDateString() !== todayStr);
   if (CHECK_FILTER === 'done') rows = rows.filter(p => p.lastCheckedAt && new Date(p.lastCheckedAt).toDateString() === todayStr);
-  if (q) rows = rows.filter(p => (p.name||'').toLowerCase().includes(q));
+  if (q) rows = rows.filter(p => (p.name||'').toLowerCase().includes(q) || (p.barcode||'').includes(q));
   // sort by D-Day asc
   rows.sort((a,b) => dayDiff(a.expiry) - dayDiff(b.expiry));
   const list = $('checkList');
@@ -690,17 +792,19 @@ function renderCheckList(){
     const lbl = ddayLabel(d);
     const cls = kind==='d0'?'danger':(kind==='d1'?'warn':(kind==='d3'?'warn':'normal'));
     const initials = (p.name||'').slice(0,2).toUpperCase();
+    const thumbContent = p.photo ? `<img src="${p.photo}">` : initials;
     const activeNorm = p.status==='active'?'active':'';
     const activeWarn = p.status==='discounted'?'active':'';
     const activeDanger = p.status==='discarded'?'active':'';
     return `<div class="item ${cls}">
-      <div class="thumb">${initials}</div>
+      <div class="thumb" onclick="${p.photo?`openPhoto('${p.photo}')`:''}">${thumbContent}</div>
       <div class="info">
         <div class="nm">${escHtml(p.name)}</div>
         <div class="meta">
           <span class="dday ${kind}">${lbl}</span>
           <span>${escHtml(p.expiry||'')}</span>
           <span>${p.qty||1}${t('unitItem')}</span>
+          ${p.barcode?`<span style="font-size:.7em;color:#9ca3af">🏷 ${escHtml(p.barcode)}</span>`:''}
         </div>
       </div>
       <div class="actions">
