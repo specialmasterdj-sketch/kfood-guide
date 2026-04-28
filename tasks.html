@@ -1576,16 +1576,47 @@ function renderMgr(){
     const allProof = [...(t.photos||[]), ...clPhotos];
     const photos = allProof.slice(0,5).map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')">`).join('')
       + (allProof.length > 5 ? `<span style="font-size:.74em;color:#6b7280;font-weight:700;margin-left:4px">+${allProof.length-5}</span>` : '');
-    return `<tr class="${t._status}">
+    // Checklist progress (if this task carries a checklist)
+    const cl = Array.isArray(t.checklist) ? t.checklist : [];
+    const clTotal = cl.length;
+    const clDone  = cl.filter(c => c && c.done).length;
+    const clPct   = clTotal ? Math.round(clDone/clTotal*100) : 0;
+    const clBadge = clTotal
+      ? `<div style="margin-top:4px"><div style="display:inline-flex;align-items:center;gap:6px;font-size:.74em;color:#374151"><span style="font-weight:700;color:#1a5c3a">${clDone}/${clTotal}</span><span style="display:inline-block;width:60px;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;background:linear-gradient(90deg,#22c55e,#1a5c3a);width:${clPct}%"></span></span></div></div>`
+      : '';
+    // Per-item details (collapsed by default; toggled by clicking the row)
+    const detailRows = clTotal
+      ? `<tr class="cl-detail" data-task="${t.id}-${t.branchId}" style="display:none"><td colspan="6" style="background:#fafafa;padding:10px 14px">
+        <div style="font-size:.78em;color:#374151;font-weight:700;margin-bottom:6px">📋 항목별 진행</div>
+        ${cl.map((c) => {
+          const stage = c.stageLabel || '';
+          const time = c.stageRange || c.stageTime || '';
+          const photoCount = (Array.isArray(c.photos) ? c.photos.length : (c.photo ? 1 : 0));
+          return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.85em;${c.done?'opacity:.7':''}">
+            <span style="flex:0 0 18px;text-align:center">${c.done ? '✅' : '☐'}</span>
+            <span style="flex:1;${c.done?'text-decoration:line-through':''}">${escHtml(c.name||'')}${stage?` <span style="color:#1e40af;font-size:.85em">· ${escHtml(stage)}${time?' '+escHtml(time):''}</span>`:''}</span>
+            ${c.done && c.doneBy ? `<span style="font-size:.74em;color:#6b7280">${escHtml(c.doneBy)}${c.doneAt?' · '+fmtTime(c.doneAt):''}</span>` : ''}
+            ${photoCount ? `<span style="font-size:.74em;color:#1a5c3a;font-weight:700">📷 ${photoCount}</span>` : ''}
+          </div>`;
+        }).join('')}
+      </td></tr>`
+      : '';
+    return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
       <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
-      <td><div style="font-weight:600">${escHtml(dispName)}</div>${memo}</td>
+      <td><div style="font-weight:600">${escHtml(dispName)}</div>${memo}${clBadge}</td>
       <td><span style="font-size:.85em;${t._status==='delayed'?'color:#dc2626;font-weight:700':''}">${t.deadline||'-'}</span></td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
       <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
       <td>${photos || '<span style="color:#d1d5db">-</span>'}</td>
-    </tr>`;
+    </tr>${detailRows}`;
   }).join('');
 }
+function toggleMgrRowDetail(key){
+  const row = document.querySelector(`tr.cl-detail[data-task="${key}"]`);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+window.toggleMgrRowDetail = toggleMgrRowDetail;
 
 // ================= REPORT =================
 function renderReport(){
