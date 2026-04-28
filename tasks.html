@@ -506,13 +506,25 @@ function allCategories(){
 }
 function refreshCategorySelects(){
   const cats = allCategories();
-  // Helper: refill any <select> we use for category, preserving current value if still present
   ['aCat','tplNewCat'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const cur = sel.value;
-    sel.innerHTML = cats.map(c => `<option value="${escHtml(c)}">${c==='캐셔'?'🛒 ':''}${escHtml(c)}${c==='캐셔'?' (POS)':''}</option>`).join('');
+    const opts = cats.map(c => `<option value="${escHtml(c)}">${c==='캐셔'?'🛒 ':''}${escHtml(c)}${c==='캐셔'?' (POS)':''}</option>`).join('');
+    // Last option lets the user add a new category right from the dropdown
+    const addOpt = `<option value="__add__" style="color:#15803d;font-weight:700">＋ 새 카테고리…</option>`;
+    sel.innerHTML = opts + addOpt;
     if (cats.includes(cur)) sel.value = cur;
+    // Wire the add-from-select handler once
+    if (!sel.dataset.addBound) {
+      sel.dataset.addBound = '1';
+      sel.addEventListener('change', async function(){
+        if (this.value !== '__add__') return;
+        const prev = cur || cats[0];
+        this.value = prev;   // revert immediately so the prompt doesn't leave the select on the placeholder
+        await addNewCategory();
+      });
+    }
   });
 }
 async function saveBranchTemplate(branchId, tpl){
@@ -760,9 +772,8 @@ async function addNewCategory(){
   await addBranchCategory(me.branch, name);
   __BRANCH_CATS = await loadBranchCategories(me.branch);
   refreshCategorySelects();
-  // pre-select the new category in the template-add form
-  const tplCat = document.getElementById('tplNewCat');
-  if (tplCat) tplCat.value = name;
+  // Pre-select the new category in BOTH the assign modal and the template-editor form
+  ['aCat','tplNewCat'].forEach(id => { const s = document.getElementById(id); if (s) s.value = name; });
   showTplToast('+ ' + name);
 }
 function showTplToast(msg){
