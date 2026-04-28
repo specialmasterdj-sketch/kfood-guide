@@ -704,27 +704,39 @@ function populateTaskCheckList(){
 // Categories that always go out as a single bundled checklist (the manager
 // only picks deadline + assignee; every item in the category becomes a
 // checklist row on the employee's card).
-const ALWAYS_CHECKLIST_CATS = ['캐셔'];
+// Categories that always go out as a single bundled checklist AND use the
+// 4-shift mode (per-stage time + assignee + items per stage).
+const STAGE_MODE_CATS = ['캐셔', 'BOBA'];
+const ALWAYS_CHECKLIST_CATS = ['캐셔', 'BOBA'];
 
-// 캐셔: 4 shifts across an 8am–10pm day. Each shift gets a from–to time the
-// manager fills in every morning, plus an assignee.
+// 4 shifts across an 8am–10pm day. Each shift gets a from–to time the
+// manager fills in every morning, plus an assignee. Used for both 캐셔 and BOBA.
 const CASHIER_STAGES = [
   { label: '① 오프닝',    from: '08:00', to: '12:00', size: 4 },
   { label: '② 오전 교대', from: '12:00', to: '15:00', size: 4 },
   { label: '③ 오후 교대', from: '15:00', to: '19:00', size: 3 },
   { label: '④ 마감',     from: '19:00', to: '22:00', size: 3 },
 ];
-function getCashierItemsByStage(){
-  // pull cashier-category items in their declared order, then chunk by stage size
-  const all = checklistItemsFor('캐셔');
+function getCashierItemsByStage(cat){
+  cat = cat || '캐셔';
+  const all = checklistItemsFor(cat);
   const out = [];
+  // For 캐셔: use predefined sizes (4/4/3/3 = 14 items)
+  // For other STAGE_MODE_CATS (BOBA): split items proportionally across 4 stages
+  let sizes;
+  if (cat === '캐셔') {
+    sizes = CASHIER_STAGES.map(s => s.size);
+  } else {
+    const per = Math.ceil(all.length / 4) || 1;
+    sizes = [per, per, per, all.length - per*3].map(s => Math.max(0, s));
+  }
   let cursor = 0;
-  for (const stage of CASHIER_STAGES) {
-    const slice = all.slice(cursor, cursor + stage.size);
-    cursor += stage.size;
+  for (let i = 0; i < CASHIER_STAGES.length; i++) {
+    const stage = CASHIER_STAGES[i];
+    const slice = all.slice(cursor, cursor + sizes[i]);
+    cursor += sizes[i];
     out.push({ stage: stage.label, items: slice });
   }
-  // remainder (in case templates added beyond 14) goes into the last stage
   if (cursor < all.length) out[out.length - 1].items.push(...all.slice(cursor));
   return out;
 }
@@ -744,7 +756,7 @@ function onChecklistToggle(){
     const nameInput = document.getElementById('aName');
     if (nameInput) nameInput.readOnly = ALWAYS_CHECKLIST_CATS.includes(cat);
     // Render 4-stage time inputs only for 캐셔
-    if (cat === '캐셔' && stagesField) {
+    if (STAGE_MODE_CATS.includes(cat) && stagesField) {
       stagesField.style.display = '';
       renderCashierStageInputs();
     } else if (stagesField) {
@@ -794,8 +806,9 @@ async function renderCashierStageInputs(){
 function renderCashierItemChecks(){
   const wrap = document.getElementById('cashierItemsCheck');
   if (!wrap) return;
-  // ALL 14 items grouped by stage — manager freely picks any subset across stages
-  const grouped = getCashierItemsByStage();
+  // Items grouped by stage — manager freely picks any subset across stages
+  const cat = document.getElementById('aCat').value;
+  const grouped = getCashierItemsByStage(cat);
   wrap.innerHTML = grouped.map((g, sIdx) => `
     <div style="margin-top:${sIdx===0?'0':'8px'};padding-top:${sIdx===0?'0':'6px'};border-top:${sIdx===0?'0':'1px dashed #e5e7eb'}">
       <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin-bottom:3px">${escHtml(g.stage)}</div>
@@ -2028,13 +2041,13 @@ async function sendAssign(){
   const pickedItems = Array.from(document.querySelectorAll('.task-pick:checked')).map(cb => ({ name: cb.dataset.name, cat: cb.dataset.cat }));
   // For 캐셔 4교대 mode, the dedicated stage UI handles its own checklist below.
   // For everything else, picked items become a single task's bundled checklist.
-  if (cat !== '캐셔') {
+  if (!STAGE_MODE_CATS.includes(cat)) {
     if (!name && pickedItems.length) {
       name = pickedItems.length === 1 ? pickedItems[0].name : (pickedItems[0].cat + ' 체크리스트');
     }
   }
-  if (!name && cat !== '캐셔') { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
-  if (!to && cat !== '캐셔') { alert('담당자를 선택하세요.'); return; }
+  if (!name && !STAGE_MODE_CATS.includes(cat)) { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
+  if (!to && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
   // Translate name + note into ko/en/es so any employee sees it in their language
@@ -2046,7 +2059,7 @@ async function sendAssign(){
   let checklist = null;
   let stageDeadlines = null;
   if (useChecklist) {
-    if (cat === '캐셔') {
+    if (STAGE_MODE_CATS.includes(cat)) {
       // 4교대 mode: each ticked stage becomes its OWN task with its own
       // time + assignee + the items the manager checked in that stage.
       const stagesOn = Array.from(document.querySelectorAll('.cashier-stage-cb:checked')).map(cb => parseInt(cb.dataset.stage, 10));
@@ -2066,7 +2079,7 @@ async function sendAssign(){
         if (!stageAssignee) { alert(stageMeta.label + ' 담당자를 선택하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
         const stageRange = stageFrom + ' ~ ' + stageTo;
         const stageChecklist = itemsForStage.map(n => ({ name: n, done: false, stage: sIdx, stageLabel: stageMeta.label, stageFrom, stageTo, stageRange }));
-        const stageName = stageMeta.label + ' 캐셔 체크리스트 (' + stageRange + ')';
+        const stageName = stageMeta.label + ' ' + cat + ' 체크리스트 (' + stageRange + ')';
         const stageNameTr = await translateMulti(stageName);
         const ref2 = window.__fb.push(window.__fb.ref(window.__fb.db, path));
         await window.__fb.set(ref2, {
@@ -2097,7 +2110,7 @@ async function sendAssign(){
       const items = checklistItemsFor(cat);
       if (items.length) checklist = items.map(it => ({ name: it.name, done: false }));
     }
-  } else if (pickedItems.length > 1 && cat !== '캐셔') {
+  } else if (pickedItems.length > 1 && !STAGE_MODE_CATS.includes(cat)) {
     // No checklist mode but multiple items picked — auto-bundle into a checklist
     checklist = pickedItems.map(it => ({ name: it.name, done: false }));
   }
