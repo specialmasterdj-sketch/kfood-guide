@@ -291,6 +291,11 @@ button{font-family:inherit;cursor:pointer}
       <div><label>데드라인</label><input type="time" id="aDeadline" value="11:00"></div>
       <div><label>카테고리</label><select id="aCat" onchange="onChecklistToggle()"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select></div>
     </div>
+    <div class="field" id="cashierStagesField" style="display:none">
+      <label>🛒 캐셔 4단계 데드라인 (각 단계별)</label>
+      <div id="cashierStagesGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+      <div class="hint" style="margin-top:6px">8am ~ 10pm 시간을 4단계로 나눠 단계별 시간을 입력하세요. 직원 카드에 단계별로 항목이 묶여 표시됩니다.</div>
+    </div>
     <div class="field check"><input type="checkbox" id="aPhoto" checked><label for="aPhoto">📷 완료 사진 필수 (원격 검수)</label></div>
     <div class="field"><label>추가 메모 (선택)</label><textarea id="aNote" placeholder="예: 우유 코너 우선 점검"></textarea></div>
     <div class="modal-actions">
@@ -475,30 +480,68 @@ function onTaskTplPick(sel){
 // only picks deadline + assignee; every item in the category becomes a
 // checklist row on the employee's card).
 const ALWAYS_CHECKLIST_CATS = ['캐셔'];
+
+// 캐셔: 4 stages across an 8am–10pm shift. Each stage gets its own deadline
+// time and bundles a slice of the 14 cashier templates.
+const CASHIER_STAGES = [
+  { label: '① 오프닝',    default: '08:00', size: 4 },
+  { label: '② 오전 점검', default: '12:00', size: 4 },
+  { label: '③ 오후 점검', default: '17:00', size: 3 },
+  { label: '④ 마감',     default: '22:00', size: 3 },
+];
+function getCashierItemsByStage(){
+  // pull cashier-category items in their declared order, then chunk by stage size
+  const all = checklistItemsFor('캐셔');
+  const out = [];
+  let cursor = 0;
+  for (const stage of CASHIER_STAGES) {
+    const slice = all.slice(cursor, cursor + stage.size);
+    cursor += stage.size;
+    out.push({ stage: stage.label, items: slice });
+  }
+  // remainder (in case templates added beyond 14) goes into the last stage
+  if (cursor < all.length) out[out.length - 1].items.push(...all.slice(cursor));
+  return out;
+}
 function onChecklistToggle(){
   const cb = document.getElementById('aChecklist');
   const cat = document.getElementById('aCat').value;
-  // Auto-flip the toggle ON for sticky checklist categories
-  if (cb && ALWAYS_CHECKLIST_CATS.includes(cat) && !cb.checked) {
-    cb.checked = true;
-  }
+  if (cb && ALWAYS_CHECKLIST_CATS.includes(cat) && !cb.checked) cb.checked = true;
   const items = checklistItemsFor(cat);
   const cntEl = document.getElementById('aChecklistCount');
   if (cntEl) cntEl.textContent = items.length ? `(${items.length}개 항목)` : '';
+  const stagesField = document.getElementById('cashierStagesField');
   if (cb && cb.checked) {
     const name = (cat==='기타' ? '일일 체크리스트' : cat + ' 일일 체크리스트');
     document.getElementById('aName').value = name;
-    // Hide the template/free-name dropdown when the manager only needs to set time + assignee
     const tpl = document.getElementById('aNameTpl');
     if (tpl) tpl.style.display = ALWAYS_CHECKLIST_CATS.includes(cat) ? 'none' : '';
     const nameInput = document.getElementById('aName');
     if (nameInput) nameInput.readOnly = ALWAYS_CHECKLIST_CATS.includes(cat);
+    // Render 4-stage time inputs only for 캐셔
+    if (cat === '캐셔' && stagesField) {
+      stagesField.style.display = '';
+      renderCashierStageInputs();
+    } else if (stagesField) {
+      stagesField.style.display = 'none';
+    }
   } else {
     const tpl = document.getElementById('aNameTpl');
     if (tpl) tpl.style.display = '';
     const nameInput = document.getElementById('aName');
     if (nameInput) nameInput.readOnly = false;
+    if (stagesField) stagesField.style.display = 'none';
   }
+}
+function renderCashierStageInputs(){
+  const grid = document.getElementById('cashierStagesGrid');
+  if (!grid) return;
+  grid.innerHTML = CASHIER_STAGES.map((s, i) => `
+    <label style="display:flex;flex-direction:column;gap:3px;font-size:.78em;color:#374151;font-weight:600">
+      <span>${escHtml(s.label)} (${s.size}개)</span>
+      <input type="time" id="aStage${i}" value="${s.default}" style="border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:.92em">
+    </label>
+  `).join('');
 }
 function checklistItemsFor(cat){
   const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
@@ -1084,23 +1127,56 @@ function renderChecklistInline(t){
   const total = t.checklist.length;
   const done = t.checklist.filter(c => c && c.done).length;
   const pct = total ? Math.round(done/total*100) : 0;
-  const rows = t.checklist.map((c, i) => {
-    const checked = c && c.done ? 'checked' : '';
-    const cls = c && c.done ? 'cl-item done' : 'cl-item';
-    const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
-    return `<label class="${cls}">
-      <input type="checkbox" ${checked} onchange="toggleChecklistItem('${t.id}','${t.branchId}',${i},this.checked)">
-      <span class="cl-name">${escHtml(c.name||'')}</span>
-      ${by}
-    </label>`;
-  }).join('');
+  // Group by stage when present (캐셔 mode); otherwise flat list
+  const hasStages = t.checklist.some(c => c && c.stage !== undefined && c.stageLabel);
+  let body = '';
+  if (hasStages) {
+    const groups = {};
+    t.checklist.forEach((c, i) => {
+      const k = (c && c.stage !== undefined) ? c.stage : 99;
+      (groups[k] = groups[k] || []).push({c, i});
+    });
+    body = Object.keys(groups).sort((a,b) => +a - +b).map(k => {
+      const list = groups[k];
+      const stageLabel = list[0].c.stageLabel || '';
+      const stageTime = list[0].c.stageTime || '';
+      const stageDone = list.filter(x => x.c.done).length;
+      const stageHeader = `<div style="display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:.82em;font-weight:700;color:#1a5c3a;border-top:1px dashed #e5e7eb;padding-top:6px">
+        <span>${escHtml(stageLabel)}</span>
+        ${stageTime?`<span style="color:#1e40af;font-weight:600">⏰ ${escHtml(stageTime)}</span>`:''}
+        <span style="margin-left:auto;color:#6b7280;font-weight:600">${stageDone}/${list.length}</span>
+      </div>`;
+      const rows = list.map(({c, i}) => {
+        const checked = c && c.done ? 'checked' : '';
+        const cls = c && c.done ? 'cl-item done' : 'cl-item';
+        const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
+        return `<label class="${cls}">
+          <input type="checkbox" ${checked} onchange="toggleChecklistItem('${t.id}','${t.branchId}',${i},this.checked)">
+          <span class="cl-name">${escHtml(c.name||'')}</span>
+          ${by}
+        </label>`;
+      }).join('');
+      return stageHeader + rows;
+    }).join('');
+  } else {
+    body = t.checklist.map((c, i) => {
+      const checked = c && c.done ? 'checked' : '';
+      const cls = c && c.done ? 'cl-item done' : 'cl-item';
+      const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
+      return `<label class="${cls}">
+        <input type="checkbox" ${checked} onchange="toggleChecklistItem('${t.id}','${t.branchId}',${i},this.checked)">
+        <span class="cl-name">${escHtml(c.name||'')}</span>
+        ${by}
+      </label>`;
+    }).join('');
+  }
   return `<div class="checklist">
     <div class="cl-head">
       <b>📋 체크리스트</b>
       <div class="cl-bar"><div class="f" style="width:${pct}%"></div></div>
       <span class="cl-progress">${done}/${total}</span>
     </div>
-    ${rows}
+    ${body}
   </div>`;
 }
 async function toggleChecklistItem(taskId, branchId, idx, isChecked){
@@ -1353,10 +1429,20 @@ async function sendAssign(){
   ]);
   const useChecklist = document.getElementById('aChecklist').checked;
   let checklist = null;
+  let stageDeadlines = null;
   if (useChecklist) {
-    const items = checklistItemsFor(cat);
-    if (items.length) {
-      checklist = items.map(it => ({ name: it.name, done: false }));
+    if (cat === '캐셔') {
+      stageDeadlines = CASHIER_STAGES.map((_s, i) => document.getElementById('aStage'+i)?.value || _s.default);
+      const grouped = getCashierItemsByStage();
+      checklist = [];
+      grouped.forEach((g, sIdx) => {
+        g.items.forEach(it => {
+          checklist.push({ name: it.name, done: false, stage: sIdx, stageLabel: g.stage, stageTime: stageDeadlines[sIdx] });
+        });
+      });
+    } else {
+      const items = checklistItemsFor(cat);
+      if (items.length) checklist = items.map(it => ({ name: it.name, done: false }));
     }
   }
   const path = 'tasks/'+me.branch+'/'+todayStr();
@@ -1370,6 +1456,7 @@ async function sendAssign(){
     note: note || null,
     noteTr: noteTr || null,
     checklist: checklist,
+    stageDeadlines: stageDeadlines || null,
   });
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   // Optionally save this task name as a reusable template for the user's branch
