@@ -483,13 +483,13 @@ function onTaskTplPick(sel){
 // checklist row on the employee's card).
 const ALWAYS_CHECKLIST_CATS = ['캐셔'];
 
-// 캐셔: 4 stages across an 8am–10pm shift. Each stage gets its own deadline
-// time and bundles a slice of the 14 cashier templates.
+// 캐셔: 4 shifts across an 8am–10pm day. Each shift gets a from–to time the
+// manager fills in every morning, plus an assignee.
 const CASHIER_STAGES = [
-  { label: '① 오프닝',    default: '08:00', size: 4 },
-  { label: '② 오전 점검', default: '12:00', size: 4 },
-  { label: '③ 오후 점검', default: '17:00', size: 3 },
-  { label: '④ 마감',     default: '22:00', size: 3 },
+  { label: '① 오프닝',    from: '08:00', to: '12:00', size: 4 },
+  { label: '② 오전 교대', from: '12:00', to: '15:00', size: 4 },
+  { label: '③ 오후 교대', from: '15:00', to: '19:00', size: 3 },
+  { label: '④ 마감',     from: '19:00', to: '22:00', size: 3 },
 ];
 function getCashierItemsByStage(){
   // pull cashier-category items in their declared order, then chunk by stage size
@@ -556,7 +556,9 @@ async function renderCashierStageInputs(){
       </label>
       <div style="display:flex;align-items:center;gap:4px;font-size:.74em;color:#374151;margin-bottom:4px">
         <span style="flex:0 0 28px">⏰</span>
-        <input type="time" id="aStage${i}" value="${s.default}" style="flex:1;border:1px solid #d1d5db;border-radius:6px;padding:5px 8px;font-size:.9em">
+        <input type="time" id="aStageFrom${i}" value="${s.from}" style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:5px 6px;font-size:.85em">
+        <span style="font-size:.78em;color:#9ca3af">~</span>
+        <input type="time" id="aStageTo${i}"   value="${s.to}"   style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:5px 6px;font-size:.85em">
       </div>
       <div style="display:flex;align-items:center;gap:4px;font-size:.74em;color:#374151">
         <span style="flex:0 0 28px">👤</span>
@@ -1179,11 +1181,11 @@ function renderChecklistInline(t){
     body = Object.keys(groups).sort((a,b) => +a - +b).map(k => {
       const list = groups[k];
       const stageLabel = list[0].c.stageLabel || '';
-      const stageTime = list[0].c.stageTime || '';
+      const stageRange = list[0].c.stageRange || (list[0].c.stageFrom && list[0].c.stageTo ? (list[0].c.stageFrom+' ~ '+list[0].c.stageTo) : (list[0].c.stageTime || ''));
       const stageDone = list.filter(x => x.c.done).length;
       const stageHeader = `<div style="display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:.82em;font-weight:700;color:#1a5c3a;border-top:1px dashed #e5e7eb;padding-top:6px">
         <span>${escHtml(stageLabel)}</span>
-        ${stageTime?`<span style="color:#1e40af;font-weight:600">⏰ ${escHtml(stageTime)}</span>`:''}
+        ${stageRange?`<span style="color:#1e40af;font-weight:600">⏰ ${escHtml(stageRange)}</span>`:''}
         <span style="margin-left:auto;color:#6b7280;font-weight:600">${stageDone}/${list.length}</span>
       </div>`;
       const rows = list.map(({c, i}) => {
@@ -1483,19 +1485,21 @@ async function sendAssign(){
       let sentCount = 0;
       for (const sIdx of stagesOn) {
         const stageMeta = CASHIER_STAGES[sIdx];
-        const stageTime = document.getElementById('aStage'+sIdx)?.value || stageMeta.default;
+        const stageFrom = document.getElementById('aStageFrom'+sIdx)?.value || stageMeta.from;
+        const stageTo   = document.getElementById('aStageTo'+sIdx)?.value   || stageMeta.to;
         const stageAssignee = document.getElementById('aStageAssignee'+sIdx)?.value || to;
         const itemsForStage = allChecked.filter(cb => parseInt(cb.dataset.stage, 10) === sIdx).map(cb => cb.dataset.name);
         if (!itemsForStage.length) continue;
         if (!stageAssignee) { alert(stageMeta.label + ' 담당자를 선택하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
-        const stageChecklist = itemsForStage.map(n => ({ name: n, done: false, stage: sIdx, stageLabel: stageMeta.label, stageTime }));
-        const stageName = stageMeta.label + ' 캐셔 체크리스트';
+        const stageRange = stageFrom + ' ~ ' + stageTo;
+        const stageChecklist = itemsForStage.map(n => ({ name: n, done: false, stage: sIdx, stageLabel: stageMeta.label, stageFrom, stageTo, stageRange }));
+        const stageName = stageMeta.label + ' 캐셔 체크리스트 (' + stageRange + ')';
         const stageNameTr = await translateMulti(stageName);
         const ref2 = window.__fb.push(window.__fb.ref(window.__fb.db, path));
         await window.__fb.set(ref2, {
           name: stageName,
           nameTr: stageNameTr,
-          deadline: stageTime,
+          deadline: stageTo,        // due by end-of-shift
           category: cat,
           requirePhoto: photo,
           assignedTo: stageAssignee,
@@ -1506,6 +1510,7 @@ async function sendAssign(){
           checklist: stageChecklist,
           stage: sIdx,
           stageLabel: stageMeta.label,
+          stageFrom, stageTo,
         });
         sentCount++;
       }
