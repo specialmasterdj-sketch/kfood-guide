@@ -128,6 +128,19 @@ button{font-family:inherit;cursor:pointer}
 
 .empty{text-align:center;padding:40px 20px;color:#9ca3af;font-size:.9em;background:#fff;border-radius:14px}
 
+/* === CHECKLIST inside task card === */
+.checklist{margin-top:10px;background:#f9fafb;border-radius:10px;padding:10px 12px;border:1px solid #e5e7eb}
+.checklist .cl-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.checklist .cl-head b{font-size:.86em;color:#1a5c3a}
+.checklist .cl-bar{flex:1;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin:0 10px}
+.checklist .cl-bar .f{height:100%;background:linear-gradient(90deg,#22c55e,#1a5c3a);border-radius:3px;transition:width .25s}
+.checklist .cl-progress{font-size:.78em;font-weight:700;color:#1a5c3a}
+.cl-item{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:.88em;cursor:pointer;line-height:1.3}
+.cl-item input{cursor:pointer;width:16px;height:16px;flex-shrink:0}
+.cl-item .cl-name{flex:1}
+.cl-item.done .cl-name{color:#9ca3af;text-decoration:line-through}
+.cl-item .by{font-size:.7em;color:#9ca3af}
+
 /* === CLOCK-IN CARD === */
 .clockin-card{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;margin-bottom:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .clockin-card .ic{font-size:1.4em;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f3f4f6;flex-shrink:0}
@@ -266,6 +279,9 @@ button{font-family:inherit;cursor:pointer}
       <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.82em;color:#6b7280;cursor:pointer">
         <input type="checkbox" id="aSaveTpl"> 💾 이 업무를 우리 지점 템플릿에 저장
       </label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.82em;color:#92400e;cursor:pointer;background:#fef3c7;padding:6px 10px;border-radius:6px">
+        <input type="checkbox" id="aChecklist" onchange="onChecklistToggle()"> ✅ 카테고리 전체를 체크리스트로 묶기 <span id="aChecklistCount" style="color:#9ca3af;font-size:.92em"></span>
+      </label>
     </div>
     <div class="field"><label>담당자</label>
       <select id="aTo"><option value="">— 직원 선택 —</option></select>
@@ -273,7 +289,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label>데드라인</label><input type="time" id="aDeadline" value="11:00"></div>
-      <div><label>카테고리</label><select id="aCat"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select></div>
+      <div><label>카테고리</label><select id="aCat" onchange="onChecklistToggle()"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select></div>
     </div>
     <div class="field check"><input type="checkbox" id="aPhoto" checked><label for="aPhoto">📷 완료 사진 필수 (원격 검수)</label></div>
     <div class="field"><label>추가 메모 (선택)</label><textarea id="aNote" placeholder="예: 우유 코너 우선 점검"></textarea></div>
@@ -450,7 +466,29 @@ function onTaskTplPick(sel){
   const opt = sel.options[sel.selectedIndex];
   if (!opt || !opt.value) return;
   document.getElementById('aName').value = opt.value;
-  if (opt.dataset.cat) document.getElementById('aCat').value = opt.dataset.cat;
+  if (opt.dataset.cat) {
+    document.getElementById('aCat').value = opt.dataset.cat;
+    onChecklistToggle();    // refresh count if checklist mode is on
+  }
+}
+// When ON: name auto-becomes the category 일일 체크 + checklist will bundle
+// every template in that category at send-time.
+function onChecklistToggle(){
+  const cb = document.getElementById('aChecklist');
+  const cat = document.getElementById('aCat').value;
+  const items = checklistItemsFor(cat);
+  const cntEl = document.getElementById('aChecklistCount');
+  if (cntEl) cntEl.textContent = items.length ? `(${items.length}개 항목)` : '';
+  if (cb && cb.checked) {
+    const name = (cat==='기타' ? '일일 체크리스트' : cat + ' 일일 체크리스트');
+    document.getElementById('aName').value = name;
+  }
+}
+function checklistItemsFor(cat){
+  const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
+  const seen = new Set();
+  return merged
+    .filter(t => t && t.category === cat && t.name && !seen.has(t.name) && (seen.add(t.name), true));
 }
 
 // ===== TEMPLATE EDITOR MODAL =====
@@ -1006,6 +1044,7 @@ function renderTaskCard(t){
   const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
   const memoHtml = dispMemo ? `<div class="task-memo"><b>${labels.memo[LANG]}:</b> ${escHtml(dispMemo)}</div>` : '';
   const noteHtml = dispNote ? `<div class="task-memo" style="background:#fef3c7;color:#92400e">${escHtml(dispNote)}</div>` : '';
+  const clHtml = renderChecklistInline(t);
   return `<div class="task-card ${status}">
     ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}${labels.inProg[LANG]}</div>`:''}
     <div class="task-row">
@@ -1019,10 +1058,60 @@ function renderTaskCard(t){
     </div>
     ${noteHtml}
     ${memoHtml}
+    ${clHtml}
     ${photosHtml}
     <div class="task-actions">${actions}</div>
   </div>`;
 }
+function renderChecklistInline(t){
+  if (!t.checklist || !Array.isArray(t.checklist) || t.checklist.length === 0) return '';
+  const total = t.checklist.length;
+  const done = t.checklist.filter(c => c && c.done).length;
+  const pct = total ? Math.round(done/total*100) : 0;
+  const rows = t.checklist.map((c, i) => {
+    const checked = c && c.done ? 'checked' : '';
+    const cls = c && c.done ? 'cl-item done' : 'cl-item';
+    const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
+    return `<label class="${cls}">
+      <input type="checkbox" ${checked} onchange="toggleChecklistItem('${t.id}','${t.branchId}',${i},this.checked)">
+      <span class="cl-name">${escHtml(c.name||'')}</span>
+      ${by}
+    </label>`;
+  }).join('');
+  return `<div class="checklist">
+    <div class="cl-head">
+      <b>📋 체크리스트</b>
+      <div class="cl-bar"><div class="f" style="width:${pct}%"></div></div>
+      <span class="cl-progress">${done}/${total}</span>
+    </div>
+    ${rows}
+  </div>`;
+}
+async function toggleChecklistItem(taskId, branchId, idx, isChecked){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
+  const upd = isChecked
+    ? { done: true,  doneAt: Date.now(), doneBy: me.name }
+    : { done: false, doneAt: null,       doneBy: null };
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+  // Auto-complete the whole task when every item is checked
+  const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+  if (task && Array.isArray(task.checklist)) {
+    const localCopy = task.checklist.slice();
+    localCopy[idx] = Object.assign({}, localCopy[idx], upd);
+    const allDone = localCopy.length > 0 && localCopy.every(c => c && c.done);
+    if (allDone && !task.completedAt) {
+      const taskPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId;
+      await window.__fb.update(window.__fb.ref(window.__fb.db, taskPath), {
+        completedAt: Date.now(),
+        completedBy: me.name,
+        startedAt: task.startedAt || Date.now(),
+      });
+    }
+  }
+}
+window.toggleChecklistItem = toggleChecklistItem;
+window.onChecklistToggle = onChecklistToggle;
 
 async function startTask(id, branchId){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
@@ -1212,6 +1301,8 @@ async function openAssignModal(){
   document.getElementById('aPhoto').checked = true;
   document.getElementById('aNote').value = '';
   const saveTpl = document.getElementById('aSaveTpl'); if (saveTpl) saveTpl.checked = false;
+  const cl = document.getElementById('aChecklist'); if (cl) cl.checked = false;
+  onChecklistToggle();
   // Load branch employees into select
   const sel = document.getElementById('aTo');
   sel.innerHTML = '<option value="">— 직원 선택 —</option><option value="*">📢 본 지점 전체</option>';
@@ -1244,6 +1335,14 @@ async function sendAssign(){
     translateMulti(name),
     note ? translateMulti(note) : Promise.resolve(null),
   ]);
+  const useChecklist = document.getElementById('aChecklist').checked;
+  let checklist = null;
+  if (useChecklist) {
+    const items = checklistItemsFor(cat);
+    if (items.length) {
+      checklist = items.map(it => ({ name: it.name, done: false }));
+    }
+  }
   const path = 'tasks/'+me.branch+'/'+todayStr();
   const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
   await window.__fb.set(r, {
@@ -1254,6 +1353,7 @@ async function sendAssign(){
     createdAt: Date.now(),
     note: note || null,
     noteTr: noteTr || null,
+    checklist: checklist,
   });
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   // Optionally save this task name as a reusable template for the user's branch
