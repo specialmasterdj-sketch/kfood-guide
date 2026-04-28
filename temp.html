@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>김치마트 — 온도 관리</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<script src="./nav-sidebar.js?v=2" defer></script>
+
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, set, update, push, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyDGZc-qPqtX6KxqxzC0n7iE0X_eOhLpqrM", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = initializeApp(cfg);
+  const db = getDatabase(app);
+  window.__fb = { db, ref, onValue, set, update, push, remove };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px;padding-bottom:80px}
+button,input,select,textarea{font-family:inherit}
+button{cursor:pointer}
+img{max-width:100%}
+.topbar{background:linear-gradient(135deg,#0c4a6e,#0369a1);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:50}
+.topbar h1{font-size:1.1em;font-weight:800;display:flex;align-items:center;gap:8px}
+.topbar .home-btn{background:rgba(255,255,255,.18);border:0;color:#fff;width:34px;height:34px;border-radius:50%;font-size:1em;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.topbar .home-btn:hover{background:rgba(255,255,255,.28)}
+.topbar .row{display:flex;align-items:center;gap:10px;margin-top:8px}
+.topbar select{flex:1;background:rgba(255,255,255,.15);color:#fff;border:0;padding:8px 12px;border-radius:10px;font-size:.9em;font-weight:600}
+.topbar select option{background:#0c4a6e;color:#fff}
+.topbar .lang-toggle{display:inline-flex;background:rgba(255,255,255,.15);border-radius:14px;padding:2px;gap:0}
+.topbar .lang-toggle button{background:transparent;border:0;color:#fff;padding:4px 10px;border-radius:12px;font-size:.74em;font-weight:700;opacity:.7}
+.topbar .lang-toggle button.active{background:#fff;color:#0369a1;opacity:1}
+.topbar .bell{background:rgba(255,255,255,.15);border:0;color:#fff;width:36px;height:36px;border-radius:50%;font-size:1.1em;position:relative}
+.topbar .bell .dot{position:absolute;top:6px;right:8px;background:#dc2626;color:#fff;font-size:.6em;font-weight:700;padding:1px 4px;border-radius:8px;min-width:14px;text-align:center}
+.page{display:none;padding:14px;max-width:760px;margin:0 auto}
+.page.active{display:block}
+
+.greeting{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px}
+.greeting .date{font-size:.78em;color:#9ca3af;font-weight:600}
+.greeting .hello{font-size:1.05em;font-weight:800;color:#0369a1;margin-top:4px}
+.greeting .resp{font-size:.82em;color:#6b7280;margin-top:6px}
+.greeting .resp b{color:#0369a1}
+
+/* Slot status cards */
+.slot-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.slot-card{background:#fff;border-radius:12px;padding:12px 8px;text-align:center;border:2px solid transparent;cursor:pointer;position:relative}
+.slot-card .label{font-size:.74em;font-weight:700;color:#6b7280}
+.slot-card .time{font-size:.92em;font-weight:800;margin-top:2px}
+.slot-card .status{font-size:.7em;font-weight:700;margin-top:4px;padding:2px 6px;border-radius:6px;display:inline-block}
+.slot-card.done{border-color:#22c55e;background:#f0fdf4}
+.slot-card.done .status{background:#dcfce7;color:#16a34a}
+.slot-card.progress{border-color:#f59e0b;background:#fffbeb}
+.slot-card.progress .status{background:#fef3c7;color:#b45309}
+.slot-card.missed{border-color:#dc2626;background:#fef2f2}
+.slot-card.missed .status{background:#fee2e2;color:#dc2626}
+.slot-card.upcoming{border-color:#e5e7eb}
+.slot-card.upcoming .status{background:#f3f4f6;color:#6b7280}
+.slot-card.current{box-shadow:0 0 0 3px rgba(3,105,161,.2)}
+.slot-card .count{font-size:.68em;color:#9ca3af;margin-top:2px;font-weight:600}
+
+.kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.kpi-card{background:#fff;border-radius:14px;padding:12px;position:relative;cursor:pointer;border:1.5px solid transparent}
+.kpi-card .lbl{font-size:.72em;color:#6b7280;font-weight:600}
+.kpi-card .val{font-size:2em;font-weight:900;margin-top:2px;line-height:1}
+.kpi-card.danger{background:#fef2f2;border-color:#fecaca}.kpi-card.danger .val{color:#dc2626}
+.kpi-card.warn{background:#fffbeb;border-color:#fde68a}.kpi-card.warn .val{color:#d97706}
+.kpi-card.ok{background:#f0fdf4;border-color:#bbf7d0}.kpi-card.ok .val{color:#16a34a}
+
+.big-actions{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.big-btn{background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;padding:14px;display:flex;align-items:center;gap:14px;cursor:pointer;text-decoration:none;color:#1f2937}
+.big-btn .ic{width:42px;height:42px;border-radius:10px;background:#e0f2fe;color:#0369a1;display:flex;align-items:center;justify-content:center;font-size:1.4em;flex-shrink:0}
+.big-btn.primary{background:linear-gradient(135deg,#0c4a6e,#0369a1);border-color:transparent;color:#fff}
+.big-btn.primary .ic{background:rgba(255,255,255,.2);color:#fff}
+.big-btn .body{flex:1}
+.big-btn b{font-weight:800;font-size:.95em;display:block}
+.big-btn .sub{font-size:.78em;color:#9ca3af;display:block;margin-top:2px}
+.big-btn.primary .sub{color:rgba(255,255,255,.85)}
+.big-btn .arrow{font-size:1.2em;color:#9ca3af}
+
+/* Equipment cards */
+.eq-card{background:#fff;border-radius:14px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;border-left:4px solid transparent}
+.eq-card.normal{border-left-color:#22c55e}
+.eq-card.warn{border-left-color:#f59e0b}
+.eq-card.danger{border-left-color:#dc2626}
+.eq-card.missing{border-left-color:#9ca3af;background:#fafafa}
+.eq-card .icon{width:42px;height:42px;border-radius:10px;background:#e0f2fe;color:#0369a1;display:flex;align-items:center;justify-content:center;font-size:1.5em;flex-shrink:0}
+.eq-card .icon.freezer{background:#dbeafe;color:#1d4ed8}
+.eq-card .icon.hot{background:#fee2e2;color:#dc2626}
+.eq-card .icon.ambient{background:#f3f4f6;color:#6b7280}
+.eq-card .info{flex:1;min-width:0}
+.eq-card .nm{font-weight:700;font-size:.95em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eq-card .meta{font-size:.74em;color:#6b7280;margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.eq-card .last-temp{font-size:.78em;font-weight:700;padding:2px 6px;border-radius:5px}
+.eq-card .last-temp.normal{background:#dcfce7;color:#16a34a}
+.eq-card .last-temp.warn{background:#fef3c7;color:#b45309}
+.eq-card .last-temp.danger{background:#fee2e2;color:#dc2626}
+.eq-card .last-temp.missing{background:#f3f4f6;color:#9ca3af}
+.eq-card .actions{display:flex;gap:4px}
+.eq-card .actions button{background:#fff;border:1.5px solid #0369a1;color:#0369a1;border-radius:8px;padding:6px 10px;font-size:.78em;font-weight:700}
+.eq-card .actions button.del{border-color:#d1d5db;color:#9ca3af;font-size:.72em}
+.eq-card .actions button.del:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2}
+
+/* Empty state */
+.empty-state{text-align:center;padding:50px 20px;color:#9ca3af}
+.empty-state .ic{font-size:3em;margin-bottom:8px;opacity:.4}
+.empty-state .msg{font-size:.92em}
+
+/* FAB */
+.fab{position:fixed;bottom:80px;right:16px;width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#0c4a6e,#0369a1);color:#fff;border:0;font-size:1.4em;box-shadow:0 4px 14px rgba(3,105,161,.4);cursor:pointer;z-index:40;font-weight:800;line-height:1.1}
+
+/* Bottom nav */
+.botnav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:space-around;padding:6px 0 calc(6px + env(safe-area-inset-bottom));z-index:45}
+@media (min-width: 761px){
+  .botnav{left:216px}
+  .fab{right:24px}
+}
+.botnav button{background:transparent;border:0;flex:1;padding:8px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;color:#9ca3af;font-size:.7em;font-weight:600;cursor:pointer}
+.botnav button.active{color:#0369a1}
+.botnav button .ic{font-size:1.3em}
+
+/* Modal */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:flex-end;justify-content:center}
+.overlay.show{display:flex}
+.sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:600px;max-height:92vh;overflow:auto;padding:18px;animation:slideUp .25s}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:none}}
+.sheet h3{font-size:1.05em;font-weight:800;margin-bottom:14px;color:#0369a1}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:.82em;font-weight:600;color:#374151;margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%;border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:1em}
+.field input:focus,.field select:focus{border-color:#0369a1;outline:none}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.actions{display:flex;gap:8px;margin-top:16px}
+.actions button{flex:1;padding:12px;border-radius:10px;font-weight:700;font-size:.95em;border:0;cursor:pointer}
+.actions .cancel{background:#f3f4f6;color:#374151}
+.actions .save{background:#0369a1;color:#fff}
+.actions .save:hover{background:#0c4a6e}
+.actions .save:disabled{opacity:.5}
+
+/* Big temp display in input modal */
+.temp-display{background:linear-gradient(135deg,#0c4a6e,#0369a1);color:#fff;border-radius:16px;padding:24px;text-align:center;margin-bottom:14px}
+.temp-display .eq-name{font-size:.85em;opacity:.9;font-weight:600}
+.temp-display .eq-range{font-size:.74em;opacity:.7;margin-top:2px}
+.temp-display .input-temp{font-size:3em;font-weight:900;margin-top:8px;line-height:1}
+.temp-display .judge{font-size:.92em;font-weight:700;margin-top:8px;padding:6px 14px;border-radius:20px;display:inline-block;background:rgba(255,255,255,.2)}
+.temp-display .judge.normal{background:#22c55e}
+.temp-display .judge.warn{background:#f59e0b}
+.temp-display .judge.danger{background:#dc2626;animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.7}}
+
+.toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:#0369a1;color:#fff;padding:12px 20px;border-radius:24px;font-size:.92em;font-weight:600;z-index:300;box-shadow:0 4px 18px rgba(0,0,0,.18);display:none;max-width:90vw}
+.toast.show{display:block;animation:slideUp .25s}
+.toast.danger{background:#dc2626}
+
+/* Report bars */
+.report-tabs{display:flex;background:#f3f4f6;border-radius:10px;padding:3px;margin-bottom:14px}
+.report-tabs button{flex:1;background:transparent;border:0;padding:8px;font-size:.85em;font-weight:700;color:#6b7280;border-radius:8px;cursor:pointer}
+.report-tabs button.active{background:#fff;color:#0369a1;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
+/* QR sheet print */
+@media print {
+  body * { visibility: hidden; }
+  #qrPrintArea, #qrPrintArea * { visibility: visible; }
+  #qrPrintArea { position: absolute; left: 0; top: 0; width: 100%; }
+  .topbar, .botnav, .fab, .overlay { display: none !important; }
+}
+.qr-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:14px}
+.qr-cell{border:2px dashed #d1d5db;border-radius:10px;padding:10px;text-align:center;page-break-inside:avoid}
+.qr-cell .qr-img{width:100%;aspect-ratio:1;background:#fff;display:flex;align-items:center;justify-content:center}
+.qr-cell .qr-img img{max-width:100%;max-height:100%}
+.qr-cell .qr-id{font-size:.78em;font-weight:700;margin-top:6px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>
+    <button class="home-btn" onclick="goBack()" title="뒤로" aria-label="뒤로">←</button>
+    <button class="home-btn" onclick="location.href='./hub.html'" title="HUB" aria-label="HUB">🏠</button>
+    🌡 <span id="pageTitle">온도 관리</span>
+  </h1>
+  <div class="row">
+    <select id="branchSel" onchange="onBranchChange()"></select>
+    <div class="lang-toggle">
+      <button data-l="ko" onclick="setLang('ko')">KO</button>
+      <button data-l="en" onclick="setLang('en')">EN</button>
+      <button data-l="es" onclick="setLang('es')">ES</button>
+    </div>
+    <button class="bell" onclick="switchPage('alerts')">🔔<span class="dot" id="alertDot" style="display:none">0</span></button>
+  </div>
+</div>
+
+<!-- ============= HOME ============= -->
+<div class="page active" id="page-home">
+  <div class="greeting">
+    <div class="date" id="todayDate"></div>
+    <div class="hello" id="branchHello">📍 매장</div>
+    <div class="resp" id="respLine">오늘 책임자: <b id="respName">미지정</b></div>
+  </div>
+
+  <div class="slot-row" id="slotRow"></div>
+
+  <div class="kpi-row">
+    <div class="kpi-card danger" onclick="filterAndGo('danger')">
+      <div class="lbl" id="kpiDangerLbl">🔴 위험 장비</div>
+      <div class="val" id="kpiDanger">0</div>
+    </div>
+    <div class="kpi-card warn" onclick="filterAndGo('missing')">
+      <div class="lbl" id="kpiMissingLbl">🟡 미체크</div>
+      <div class="val" id="kpiMissing">0</div>
+    </div>
+    <div class="kpi-card ok" onclick="filterAndGo('normal')">
+      <div class="lbl" id="kpiOkLbl">🟢 정상</div>
+      <div class="val" id="kpiOk">0</div>
+    </div>
+  </div>
+
+  <div class="big-actions">
+    <button class="big-btn primary" onclick="openScanner()">
+      <div class="ic">📷</div>
+      <div class="body"><b id="btnScan">QR 스캔하여 체크</b><span class="sub" id="btnScanSub">냉장고에 부착된 QR 스캔 → 온도 입력</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="switchPage('check')">
+      <div class="ic">📋</div>
+      <div class="body"><b id="btnList">장비 전체 보기</b><span class="sub" id="btnListSub">매장 모든 장비 상태 확인</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="switchPage('alerts')">
+      <div class="ic">🚨</div>
+      <div class="body"><b id="btnAlertNav">위험·미체크 알림</b><span class="sub" id="btnAlertNavSub">즉시 조치 필요한 항목</span></div>
+      <div class="arrow">›</div>
+    </button>
+  </div>
+</div>
+
+<!-- ============= CHECK (장비 리스트) ============= -->
+<div class="page" id="page-check">
+  <div id="checkList"></div>
+</div>
+
+<!-- ============= ALERTS ============= -->
+<div class="page" id="page-alerts">
+  <div id="alertList"></div>
+</div>
+
+<!-- ============= REPORT ============= -->
+<div class="page" id="page-report">
+  <div class="report-tabs" id="repTabs">
+    <button class="active" data-r="day" onclick="setReportRange('day',this)" id="repTabDay">오늘</button>
+    <button data-r="week" onclick="setReportRange('week',this)" id="repTabWeek">주간</button>
+    <button data-r="month" onclick="setReportRange('month',this)" id="repTabMonth">월간</button>
+  </div>
+  <div id="reportBody"></div>
+</div>
+
+<!-- ============= MORE ============= -->
+<div class="page" id="page-more">
+  <div class="big-actions">
+    <button class="big-btn" onclick="openAssignSheet()">
+      <div class="ic">👤</div>
+      <div class="body"><b id="moreAssignTitle">오늘 책임자 지정</b><span class="sub" id="moreAssignSub">매니저+ 만 가능</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="openEquipMgr()">
+      <div class="ic">📦</div>
+      <div class="body"><b id="moreEqTitle">장비 관리</b><span class="sub" id="moreEqSub">이름·분류·기준 온도 수정</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="openQrPrintSheet()">
+      <div class="ic">🖨</div>
+      <div class="body"><b id="moreQrTitle">QR 스티커 출력</b><span class="sub" id="moreQrSub">A4 30개씩 인쇄용 시트</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="openSettingsSheet()">
+      <div class="ic">⚙️</div>
+      <div class="body"><b id="moreSetTitle">설정</b><span class="sub" id="moreSetSub">슬롯 시간·알림</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="forceRefresh()">
+      <div class="ic">🔄</div>
+      <div class="body"><b>캐시 새로고침</b><span class="sub">PC ↔ 폰 동기화 안될 때</span></div>
+      <div class="arrow">›</div>
+    </button>
+    <button class="big-btn" onclick="location.href='./apps.html'">
+      <div class="ic">⊞</div>
+      <div class="body"><b id="moreAppsTitle">다른 앱</b><span class="sub" id="moreAppsSub">김치마트 앱 모음</span></div>
+      <div class="arrow">›</div>
+    </button>
+  </div>
+</div>
+
+<!-- FAB -->
+<button class="fab" onclick="openScanner()" title="QR 체크" id="fabScan">📷<br><span style="font-size:.45em;font-weight:700">QR</span></button>
+
+<!-- BOTTOM NAV -->
+<div class="botnav">
+  <button class="active" data-p="home" onclick="switchPage('home')"><span class="ic">🏠</span><span id="navHome">홈</span></button>
+  <button data-p="check" onclick="switchPage('check')"><span class="ic">📋</span><span id="navCheck">장비</span></button>
+  <button data-p="alerts" onclick="switchPage('alerts')"><span class="ic">🚨</span><span id="navAlerts">알림</span></button>
+  <button data-p="report" onclick="switchPage('report')"><span class="ic">📊</span><span id="navReport">리포트</span></button>
+  <button data-p="more" onclick="switchPage('more')"><span class="ic">⋯</span><span id="navMore">더보기</span></button>
+</div>
+
+<!-- TEMP INPUT MODAL -->
+<div class="overlay" id="inputOv">
+  <div class="sheet">
+    <div class="temp-display">
+      <div class="eq-name" id="ipEqName">—</div>
+      <div class="eq-range" id="ipEqRange">기준 0~4°C</div>
+      <div class="input-temp"><span id="ipTempVal">--</span>°C</div>
+      <div class="judge" id="ipJudge">입력 대기</div>
+    </div>
+    <div class="field">
+      <label id="ipTempLbl">🌡 측정 온도 (°C)</label>
+      <input type="number" id="ipTemp" step="0.1" placeholder="예: 3.5" oninput="updateJudge()">
+    </div>
+    <div class="field">
+      <label id="ipPhotoLbl">📷 사진 (온도계 + 내부)</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div id="ipPhotoPrev" style="width:80px;height:80px;border-radius:12px;border:2px dashed #d1d5db;display:flex;align-items:center;justify-content:center;font-size:1.8em;color:#9ca3af;background:#f9fafb;flex-shrink:0;overflow:hidden">📷</div>
+        <div style="flex:1">
+          <input type="file" id="ipPhoto" accept="image/*" capture="environment" style="display:none" onchange="onIpPhoto(event)">
+          <button type="button" onclick="document.getElementById('ipPhoto').click()" style="background:#fff;border:1.5px solid #0369a1;color:#0369a1;border-radius:8px;padding:8px 14px;font-size:.88em;font-weight:700;cursor:pointer;width:100%">📸 사진 찍기</button>
+          <div style="font-size:.72em;color:#9ca3af;margin-top:4px">거짓 보고 방지·보건 검사 대비</div>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label id="ipNoteLbl">📝 메모 (선택)</label>
+      <input type="text" id="ipNote" placeholder="문 열림·서리 등 특이사항">
+    </div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('inputOv')" id="ipCancel">취소</button>
+      <button class="save" onclick="saveCheck()" id="ipSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW EQUIPMENT MODAL (auto-shown when scanning unknown QR) -->
+<div class="overlay" id="newEqOv">
+  <div class="sheet">
+    <h3>📦 <span id="newEqTitle">새 장비 등록</span></h3>
+    <div style="background:#e0f2fe;border-radius:10px;padding:10px 12px;font-size:.84em;color:#0369a1;margin-bottom:14px" id="newEqHint">스캔한 QR ID가 등록되지 않았습니다. 이 장비 정보를 입력해주세요.</div>
+    <div class="field">
+      <label id="neQrLbl">🏷 QR ID</label>
+      <input type="text" id="neQr" readonly style="background:#f3f4f6">
+    </div>
+    <div class="field">
+      <label id="neNameLbl">장비 이름</label>
+      <input type="text" id="neName" placeholder="예: 냉장고 1번">
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label id="neTypeLbl">분류</label>
+        <select id="neType" onchange="onTypeChange()">
+          <option value="fridge">❄️ 냉장 (0~4°C)</option>
+          <option value="freezer">🧊 냉동 (≤-18°C)</option>
+          <option value="hot">🔥 핫푸드 (≥60°C)</option>
+          <option value="ambient">🌡 상온 (15~25°C)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label id="neLocLbl">위치</label>
+        <input type="text" id="neLoc" placeholder="예: 정육 코너 뒤">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label id="neMinLbl">최소 °C</label>
+        <input type="number" id="neMin" step="0.1" value="0">
+      </div>
+      <div class="field">
+        <label id="neMaxLbl">최대 °C</label>
+        <input type="number" id="neMax" step="0.1" value="4">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('newEqOv')" id="neCancel">취소</button>
+      <button class="save" onclick="saveNewEq()" id="neSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ASSIGN MODAL -->
+<div class="overlay" id="assignOv">
+  <div class="sheet">
+    <h3>👤 <span id="assignTitle">오늘 책임자 지정</span></h3>
+    <div style="font-size:.82em;color:#6b7280;margin-bottom:14px" id="assignHint">슬롯 누락 시 이 사람에게 알림이 전송됩니다.</div>
+    <div class="field">
+      <label id="aDateLbl">날짜</label>
+      <input type="date" id="aDate">
+    </div>
+    <div class="field">
+      <label id="aPersonLbl">책임자</label>
+      <select id="aPerson"><option value="">— 직원 선택 —</option></select>
+    </div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('assignOv')" id="aCancel">취소</button>
+      <button class="save" onclick="saveAssign()" id="aSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- EQUIPMENT MGR MODAL -->
+<div class="overlay" id="eqMgrOv">
+  <div class="sheet">
+    <h3>📦 <span id="eqMgrTitle">장비 관리</span></h3>
+    <div id="eqMgrList" style="margin-bottom:14px;max-height:60vh;overflow:auto"></div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('eqMgrOv')" id="eqMgrClose">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="overlay" id="settingsOv">
+  <div class="sheet">
+    <h3>⚙️ <span id="settingsTitle">설정</span></h3>
+    <div class="field"><label id="lblSlot1">🌅 오전 슬롯</label><input type="time" id="setSlot1" value="08:00"></div>
+    <div class="field"><label id="lblSlot2">☀️ 오후 슬롯</label><input type="time" id="setSlot2" value="14:00"></div>
+    <div class="field"><label id="lblSlot3">🌙 마감 슬롯</label><input type="time" id="setSlot3" value="21:00"></div>
+    <div class="field"><label id="lblWindow">🪟 슬롯 창 (분)</label><input type="number" id="setWindow" value="60" min="15" max="180"></div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('settingsOv')" id="setCancel">취소</button>
+      <button class="save" onclick="saveSettings()" id="setSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- QR PRINT SHEET MODAL -->
+<div class="overlay" id="qrOv">
+  <div class="sheet" style="max-width:720px">
+    <h3>🖨 <span id="qrTitle">QR 스티커 출력</span></h3>
+    <div style="font-size:.82em;color:#6b7280;margin-bottom:10px" id="qrHint">A4에 인쇄 → 코팅 → 각 장비에 부착. 빈 QR을 직접 스캔하면 자동으로 새 장비 등록창이 열립니다.</div>
+    <div class="row2" style="margin-bottom:10px">
+      <div class="field"><label id="qrCntLbl">QR 개수</label><input type="number" id="qrCnt" value="30" min="1" max="100"></div>
+      <div class="field"><label id="qrPrefixLbl">접두어</label><input type="text" id="qrPrefix" value="EQ" maxlength="6"></div>
+    </div>
+    <button onclick="renderQrSheet()" style="background:#0369a1;color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;width:100%;margin-bottom:10px">미리보기 생성</button>
+    <div id="qrPrintArea"></div>
+    <div class="actions">
+      <button class="cancel" onclick="closeOv('qrOv')" id="qrCancel">닫기</button>
+      <button class="save" onclick="window.print()" id="qrPrint">🖨 인쇄</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ================= STATE =================
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BRANCHES = [
+  { id:'MIAMI', ko:'마이애미', en:'Miami', es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD', ko:'할리우드', en:'Hollywood', es:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs', es:'Coral Springs' },
+  { id:'LASOLAS', ko:'라스올라스', en:'LASOLAS', es:'LASOLAS' },
+  { id:'WEST_PALM', ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+];
+
+const TYPE_DEFAULTS = {
+  fridge:   { min: 0,   max: 4,   icon: '❄️', cls:'',        labelKo:'냉장',   labelEn:'Fridge',   labelEs:'Refri' },
+  freezer:  { min: -50, max: -18, icon: '🧊', cls:'freezer', labelKo:'냉동',   labelEn:'Freezer',  labelEs:'Congelador' },
+  hot:      { min: 60,  max: 100, icon: '🔥', cls:'hot',     labelKo:'핫푸드', labelEn:'Hot food', labelEs:'Caliente' },
+  ambient:  { min: 15,  max: 25,  icon: '🌡', cls:'ambient', labelKo:'상온',   labelEn:'Ambient',  labelEs:'Ambiente' },
+};
+
+const I18N = {
+  pageTitle:{ko:'온도 관리',en:'Temp Tracker',es:'Temperatura'},
+  hello:{ko:'📍 {n} 매장',en:'📍 {n} store',es:'📍 Tienda {n}'},
+  resp:{ko:'오늘 책임자: ',en:"Today's lead: ",es:'Resp. hoy: '},
+  unassigned:{ko:'미지정 — 매니저가 지정해야 알림 받음',en:'Unassigned',es:'Sin asignar'},
+  kpiDanger:{ko:'🔴 위험 장비',en:'🔴 Danger',es:'🔴 Peligro'},
+  kpiMissing:{ko:'🟡 미체크',en:'🟡 Pending',es:'🟡 Pendiente'},
+  kpiOk:{ko:'🟢 정상',en:'🟢 OK',es:'🟢 OK'},
+  btnScan:{ko:'QR 스캔하여 체크',en:'Scan QR to check',es:'Escanear QR'},
+  btnScanSub:{ko:'냉장고에 부착된 QR 스캔 → 온도 입력',en:'Scan QR sticker on fridge → enter temp',es:'Escanear QR del equipo → temp.'},
+  btnList:{ko:'장비 전체 보기',en:'All equipment',es:'Todo el equipo'},
+  btnListSub:{ko:'매장 모든 장비 상태 확인',en:'Check status of all equipment',es:'Estado de todo el equipo'},
+  btnAlertNav:{ko:'위험·미체크 알림',en:'Danger / pending alerts',es:'Alertas'},
+  btnAlertNavSub:{ko:'즉시 조치 필요한 항목',en:'Items needing action',es:'Atención inmediata'},
+  navHome:{ko:'홈',en:'Home',es:'Inicio'},
+  navCheck:{ko:'장비',en:'Equip.',es:'Equipo'},
+  navAlerts:{ko:'알림',en:'Alerts',es:'Alertas'},
+  navReport:{ko:'리포트',en:'Report',es:'Informe'},
+  navMore:{ko:'더보기',en:'More',es:'Más'},
+  slotMorning:{ko:'🌅 오전',en:'🌅 Morning',es:'🌅 Mañana'},
+  slotAfternoon:{ko:'☀️ 오후',en:'☀️ Afternoon',es:'☀️ Tarde'},
+  slotClosing:{ko:'🌙 마감',en:'🌙 Closing',es:'🌙 Cierre'},
+  stUpcoming:{ko:'대기',en:'Upcoming',es:'Próximo'},
+  stProgress:{ko:'진행 중',en:'In progress',es:'En curso'},
+  stDone:{ko:'완료',en:'Done',es:'Hecho'},
+  stMissed:{ko:'누락 ⚠️',en:'Missed ⚠️',es:'Omitido ⚠️'},
+  slotCount:{ko:'{n}/{m} 완료',en:'{n}/{m} done',es:'{n}/{m} hechos'},
+  judgeWaiting:{ko:'입력 대기',en:'Awaiting input',es:'Esperando'},
+  judgeNormal:{ko:'🟢 정상',en:'🟢 OK',es:'🟢 OK'},
+  judgeWarn:{ko:'🟡 경고',en:'🟡 Warning',es:'🟡 Atención'},
+  judgeDanger:{ko:'🔴 위험',en:'🔴 Danger',es:'🔴 Peligro'},
+  ipTempLbl:{ko:'🌡 측정 온도 (°C)',en:'🌡 Temperature (°C)',es:'🌡 Temperatura (°C)'},
+  ipPhotoLbl:{ko:'📷 사진 (온도계 + 내부)',en:'📷 Photo (thermometer + interior)',es:'📷 Foto'},
+  ipNoteLbl:{ko:'📝 메모 (선택)',en:'📝 Note (optional)',es:'📝 Nota'},
+  ipRange:{ko:'기준 {min}~{max}°C',en:'Range {min}~{max}°C',es:'Rango {min}~{max}°C'},
+  cancel:{ko:'취소',en:'Cancel',es:'Cancelar'},
+  save:{ko:'저장',en:'Save',es:'Guardar'},
+  saved:{ko:'✅ 저장됨',en:'✅ Saved',es:'✅ Guardado'},
+  emptyEq:{ko:'등록된 장비 없음 — QR 스캔으로 자동 등록 가능',en:'No equipment — scan QR to add',es:'Sin equipo — escanear QR'},
+  emptyAlerts:{ko:'알림 없음 ✅',en:'No alerts ✅',es:'Sin alertas ✅'},
+  newEqTitle:{ko:'새 장비 등록',en:'Register equipment',es:'Registrar equipo'},
+  newEqHint:{ko:'스캔한 QR이 등록되지 않았습니다. 이 장비 정보를 입력해주세요.',en:'This QR is unregistered. Enter equipment details.',es:'Este QR no está registrado.'},
+  neQrLbl:{ko:'🏷 QR ID',en:'🏷 QR ID',es:'🏷 ID QR'},
+  neNameLbl:{ko:'장비 이름',en:'Equipment name',es:'Nombre'},
+  neTypeLbl:{ko:'분류',en:'Type',es:'Tipo'},
+  neLocLbl:{ko:'위치',en:'Location',es:'Ubicación'},
+  neMinLbl:{ko:'최소 °C',en:'Min °C',es:'Mín °C'},
+  neMaxLbl:{ko:'최대 °C',en:'Max °C',es:'Máx °C'},
+  scanLost:{ko:'⚠️ QR이 인식되지 않았습니다',en:'⚠️ QR not detected',es:'⚠️ QR no detectado'},
+  saveTempPhoto:{ko:'사진 필수',en:'Photo required',es:'Foto requerida'},
+  saveTempNum:{ko:'온도를 입력하세요',en:'Enter temperature',es:'Ingrese temperatura'},
+  outOfWindow:{ko:'⏰ 슬롯 창 닫힘 — 다음 슬롯에 체크',en:'⏰ Slot closed — check next slot',es:'⏰ Cerrado — siguiente turno'},
+  qrTitle:{ko:'QR 스티커 출력',en:'Print QR stickers',es:'Imprimir QR'},
+  moreAssignTitle:{ko:'오늘 책임자 지정',en:'Assign today’s lead',es:'Asignar resp. hoy'},
+  moreAssignSub:{ko:'매니저+ 만 가능',en:'Manager+ only',es:'Solo gerente+'},
+  moreEqTitle:{ko:'장비 관리',en:'Equipment',es:'Equipos'},
+  moreEqSub:{ko:'이름·분류·기준 온도 수정',en:'Edit name / type / range',es:'Editar'},
+  moreQrTitle:{ko:'QR 스티커 출력',en:'Print QR stickers',es:'Imprimir QR'},
+  moreQrSub:{ko:'A4 30개씩 인쇄용 시트',en:'A4 print sheet',es:'Hoja A4'},
+  moreSetTitle:{ko:'설정',en:'Settings',es:'Ajustes'},
+  moreSetSub:{ko:'슬롯 시간·알림',en:'Slots / alerts',es:'Turnos / alertas'},
+  moreAppsTitle:{ko:'다른 앱',en:'Other apps',es:'Otras apps'},
+  moreAppsSub:{ko:'김치마트 앱 모음',en:'Kimchi Mart apps',es:'Apps Kimchi Mart'},
+  assignTitle:{ko:'책임자 지정',en:'Assign lead',es:'Asignar líder'},
+  assignHint:{ko:'슬롯 누락 시 이 사람에게 알림이 전송됩니다.',en:'Alerts go to this person when slots miss.',es:'Avisos van a esta persona.'},
+  aDateLbl:{ko:'날짜',en:'Date',es:'Fecha'},
+  aPersonLbl:{ko:'책임자',en:'Lead',es:'Líder'},
+  settingsTitle:{ko:'설정',en:'Settings',es:'Ajustes'},
+  lblSlot1:{ko:'🌅 오전 슬롯',en:'🌅 Morning slot',es:'🌅 Mañana'},
+  lblSlot2:{ko:'☀️ 오후 슬롯',en:'☀️ Afternoon slot',es:'☀️ Tarde'},
+  lblSlot3:{ko:'🌙 마감 슬롯',en:'🌙 Closing slot',es:'🌙 Cierre'},
+  lblWindow:{ko:'🪟 슬롯 창 (분)',en:'🪟 Window (min)',es:'🪟 Ventana'},
+  qrCntLbl:{ko:'QR 개수',en:'QR count',es:'Cantidad'},
+  qrPrefixLbl:{ko:'접두어',en:'Prefix',es:'Prefijo'},
+  print:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
+  close:{ko:'닫기',en:'Close',es:'Cerrar'},
+  emptyEqMgr:{ko:'장비 없음',en:'No equipment',es:'Sin equipo'},
+  rangeUnitC:{ko:'°C',en:'°C',es:'°C'},
+};
+function detectLang(){
+  for (const k of ['tasks.lang','kimchi_lang','hub.lang']) {
+    const v = localStorage.getItem(k);
+    if (v && ['ko','en','es'].includes(v)) return v;
+  }
+  const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+  return ['ko','en','es'].includes(nav) ? nav : 'ko';
+}
+function t(key, vars){
+  const o = I18N[key]; if(!o) return key;
+  let s = o[LANG] || o.ko;
+  if (vars) for (const k in vars) s = s.replace('{'+k+'}', vars[k]);
+  return s;
+}
+
+let LANG = detectLang();
+let BRANCH = localStorage.getItem('temp.branch') || 'MIAMI';
+let PAGE = 'home';
+let EQUIPMENT = []; // [{ id, qr, name, type, location, min, max, addedAt, addedBy }]
+let CHECKS = {};    // { 'YYYY-MM-DD': { 'morning': { eqId: { temp, photo, ts, by, status, note } } } }
+let ASSIGNS = {};   // { 'YYYY-MM-DD': { name, role } }
+let SETTINGS = JSON.parse(localStorage.getItem('temp.settings') || '{"slot1":"08:00","slot2":"14:00","slot3":"21:00","window":60}');
+let __pendingQr = null;       // QR ID waiting for new equipment registration
+let __activeEqId = null;      // equipment being measured in input modal
+let __ipPhotoData = null;     // pending photo for current input
+
+const REPORT_RANGE = { v: 'day' };
+
+function $(id){ return document.getElementById(id); }
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function todayKey(){ const d=new Date(); const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+da; }
+function fmtDate(d){
+  const map = { ko:'ko-KR', en:'en-US', es:'es-ES' };
+  return new Date(d).toLocaleDateString(map[LANG]||'ko-KR', { year:'numeric', month:'long', day:'numeric', weekday:'short' });
+}
+function fmtTime(ts){
+  return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+}
+function showToast(msg, danger){
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = 'toast' + (danger?' danger':'') + ' show';
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(()=> el.classList.remove('show'), 2400);
+}
+
+// =============== I18N apply ===============
+function setLang(l){
+  if (!['ko','en','es'].includes(l)) return;
+  LANG = l;
+  ['tasks.lang','kimchi_lang','hub.lang'].forEach(k => localStorage.setItem(k, l));
+  applyLang();
+  window.dispatchEvent(new CustomEvent('km-lang-changed',{detail:l}));
+}
+function applyLang(){
+  document.querySelectorAll('.lang-toggle button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+  $('pageTitle').textContent = t('pageTitle');
+  ['kpiDangerLbl','kpiMissingLbl','kpiOkLbl','btnScan','btnScanSub','btnList','btnListSub','btnAlertNav','btnAlertNavSub',
+   'navHome','navCheck','navAlerts','navReport','navMore',
+   'moreAssignTitle','moreAssignSub','moreEqTitle','moreEqSub','moreQrTitle','moreQrSub','moreSetTitle','moreSetSub','moreAppsTitle','moreAppsSub',
+   'ipTempLbl','ipPhotoLbl','ipNoteLbl','newEqTitle','newEqHint','neQrLbl','neNameLbl','neTypeLbl','neLocLbl','neMinLbl','neMaxLbl',
+   'assignTitle','assignHint','aDateLbl','aPersonLbl',
+   'settingsTitle','lblSlot1','lblSlot2','lblSlot3','lblWindow',
+   'qrTitle','qrCntLbl','qrPrefixLbl','eqMgrTitle'
+  ].forEach(id => { const el=$(id); if (el) {
+    const key = id === 'kpiDangerLbl' ? 'kpiDanger' : id === 'kpiMissingLbl' ? 'kpiMissing' : id === 'kpiOkLbl' ? 'kpiOk' : id;
+    el.textContent = t(key);
+  }});
+  $('repTabDay').textContent = t('navReport') === '리포트' ? '오늘' : (LANG==='en'?'Day':'Día');
+  $('repTabWeek').textContent = LANG==='ko'?'주간':LANG==='en'?'Week':'Semana';
+  $('repTabMonth').textContent = LANG==='ko'?'월간':LANG==='en'?'Month':'Mes';
+  ['ipCancel','neCancel','aCancel','setCancel','qrCancel','eqMgrClose'].forEach(id => { const el=$(id); if (el) el.textContent = id==='eqMgrClose' ? t('close') : t('cancel'); });
+  ['ipSave','neSave','aSave','setSave'].forEach(id => { const el=$(id); if (el) el.textContent = t('save'); });
+  $('qrPrint').textContent = t('print');
+  renderBranches();
+  renderAll();
+}
+
+// =============== Branch ===============
+function renderBranches(){
+  const cur = BRANCHES.find(b => b.id === BRANCH) || BRANCHES[0];
+  const branchName = cur[LANG] || cur.ko;
+  $('branchHello').textContent = t('hello', { n: branchName });
+  $('branchSel').innerHTML = BRANCHES.map(b => `<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b[LANG]||b.ko}</option>`).join('');
+}
+function onBranchChange(){
+  BRANCH = $('branchSel').value;
+  localStorage.setItem('temp.branch', BRANCH);
+  renderBranches();
+  subscribe();
+}
+
+// =============== Identity / role ===============
+function getMe(){ try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; } }
+const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저'];
+function isManagerOrAbove(){
+  const me = getMe();
+  if (!me || !me.role) return false;
+  const r = String(me.role).toUpperCase();
+  return MGR_TOKENS.some(tok => r.includes(tok.toUpperCase()));
+}
+
+// =============== Firebase subscribe ===============
+let unsubs = [];
+function subscribe(){
+  if (!window.__fb) { setTimeout(subscribe, 500); return; }
+  unsubs.forEach(u => { try{u();}catch(e){} });
+  unsubs = [];
+  // Equipment
+  unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment'), snap => {
+    const v = snap.val() || {};
+    EQUIPMENT = Object.entries(v).map(([id, eq]) => Object.assign({ id }, eq));
+    renderAll();
+  }));
+  // Today's checks (and yesterday for late views)
+  unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/checks/'+todayKey()), snap => {
+    CHECKS[todayKey()] = snap.val() || {};
+    renderAll();
+  }));
+  // Today's assigned lead
+  unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/assigns/'+todayKey()), snap => {
+    ASSIGNS[todayKey()] = snap.val() || null;
+    renderAll();
+  }));
+  // Settings (per branch)
+  unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/settings'), snap => {
+    const v = snap.val();
+    if (v && typeof v === 'object') {
+      SETTINGS = Object.assign({ slot1:'08:00', slot2:'14:00', slot3:'21:00', window:60 }, v);
+      localStorage.setItem('temp.settings', JSON.stringify(SETTINGS));
+      renderAll();
+    }
+  }));
+}
+window.addEventListener('fb-ready', subscribe);
+setTimeout(() => { if (!unsubs.length) subscribe(); }, 1500);
+
+// =============== Slots ===============
+function slotsForToday(){
+  const w = SETTINGS.window || 60;
+  const half = Math.round(w/2);
+  return [
+    { key:'morning',   labelKey:'slotMorning',   time: SETTINGS.slot1, openMin: -half, closeMin: w-half },
+    { key:'afternoon', labelKey:'slotAfternoon', time: SETTINGS.slot2, openMin: -half, closeMin: w-half },
+    { key:'closing',   labelKey:'slotClosing',   time: SETTINGS.slot3, openMin: -half, closeMin: w-half },
+  ];
+}
+function slotMinutes(s){
+  // returns [openTotalMin, closeTotalMin] in minutes from 00:00
+  const [hh,mm] = (s.time||'00:00').split(':').map(Number);
+  const center = hh*60 + mm;
+  return [center + s.openMin, center + s.closeMin];
+}
+function nowMinutes(){ const d = new Date(); return d.getHours()*60 + d.getMinutes(); }
+function slotStatus(slot){
+  // returns { state: 'upcoming'|'progress'|'done'|'missed', doneN, totalN }
+  const [openM, closeM] = slotMinutes(slot);
+  const now = nowMinutes();
+  const todayChecks = CHECKS[todayKey()] || {};
+  const slotChecks = todayChecks[slot.key] || {};
+  const total = EQUIPMENT.length;
+  const done = Object.keys(slotChecks).filter(eqId => EQUIPMENT.find(e => e.id === eqId)).length;
+  if (total === 0) return { state:'upcoming', doneN: 0, totalN: 0 };
+  if (done >= total) return { state:'done', doneN: done, totalN: total };
+  if (now < openM) return { state:'upcoming', doneN: done, totalN: total };
+  if (now <= closeM) return { state:'progress', doneN: done, totalN: total };
+  return { state:'missed', doneN: done, totalN: total };
+}
+function currentSlotKey(){
+  // The slot whose window currently includes "now". Returns null if none.
+  const slots = slotsForToday();
+  const now = nowMinutes();
+  for (const s of slots) {
+    const [openM, closeM] = slotMinutes(s);
+    if (now >= openM && now <= closeM) return s.key;
+  }
+  return null;
+}
+function isSlotOpen(slotKey){
+  const slot = slotsForToday().find(s => s.key === slotKey);
+  if (!slot) return false;
+  const [openM, closeM] = slotMinutes(slot);
+  const now = nowMinutes();
+  return now >= openM && now <= closeM;
+}
+
+// =============== Judge temp ===============
+function judgeTemp(temp, eq){
+  if (temp === null || temp === undefined || isNaN(temp)) return 'unknown';
+  const min = Number(eq.min ?? 0), max = Number(eq.max ?? 4);
+  // 5% tolerance band for "warn" before "danger"
+  const range = max - min;
+  const tolerance = Math.max(1, Math.abs(range) * 0.2);
+  if (temp >= min && temp <= max) return 'normal';
+  // warn band: just outside but within tolerance
+  if (temp > max && temp <= max + tolerance) return 'warn';
+  if (temp < min && temp >= min - tolerance) return 'warn';
+  return 'danger';
+}
+function lastCheckFor(eqId){
+  const today = CHECKS[todayKey()] || {};
+  let latest = null;
+  for (const slotKey of ['morning','afternoon','closing']) {
+    const c = today[slotKey] && today[slotKey][eqId];
+    if (c && (!latest || c.ts > latest.ts)) { latest = c; latest._slot = slotKey; }
+  }
+  return latest;
+}
+
+// =============== Render ===============
+function renderAll(){
+  $('todayDate').textContent = fmtDate(new Date());
+  renderResp();
+  renderSlots();
+  renderKpis();
+  if (PAGE === 'check') renderCheckList();
+  else if (PAGE === 'alerts') renderAlerts();
+  else if (PAGE === 'report') renderReport();
+}
+function renderResp(){
+  const a = ASSIGNS[todayKey()];
+  if (a && a.name) $('respName').textContent = a.name;
+  else $('respName').textContent = t('unassigned');
+}
+function renderSlots(){
+  const row = $('slotRow');
+  const cur = currentSlotKey();
+  const slots = slotsForToday();
+  row.innerHTML = slots.map(s => {
+    const st = slotStatus(s);
+    const isCur = cur === s.key;
+    return `<div class="slot-card ${st.state} ${isCur?'current':''}">
+      <div class="label">${t(s.labelKey)}</div>
+      <div class="time">${s.time}</div>
+      <div class="status">${t('st'+st.state.charAt(0).toUpperCase()+st.state.slice(1))}</div>
+      <div class="count">${t('slotCount',{n:st.doneN,m:st.totalN})}</div>
+    </div>`;
+  }).join('');
+}
+function renderKpis(){
+  let danger = 0, missing = 0, ok = 0;
+  EQUIPMENT.forEach(eq => {
+    const last = lastCheckFor(eq.id);
+    if (!last) { missing++; return; }
+    if (last.status === 'danger') danger++;
+    else if (last.status === 'normal') ok++;
+    else if (last.status === 'warn') ok++;
+  });
+  $('kpiDanger').textContent = danger;
+  $('kpiMissing').textContent = missing;
+  $('kpiOk').textContent = ok;
+  // alert dot
+  if (danger + missing > 0) { $('alertDot').textContent = danger+missing; $('alertDot').style.display = ''; }
+  else $('alertDot').style.display = 'none';
+}
+function eqIcon(eq){
+  const d = TYPE_DEFAULTS[eq.type] || TYPE_DEFAULTS.fridge;
+  return `<div class="icon ${d.cls}">${d.icon}</div>`;
+}
+function eqRangeText(eq){
+  const min = Number(eq.min ?? 0), max = Number(eq.max ?? 4);
+  return min + '~' + max + '°C';
+}
+function renderCheckList(){
+  const list = $('checkList');
+  if (EQUIPMENT.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="ic">📦</div><div class="msg">${t('emptyEq')}</div></div>`;
+    return;
+  }
+  list.innerHTML = EQUIPMENT.map(eq => {
+    const last = lastCheckFor(eq.id);
+    const cls = last ? last.status : 'missing';
+    const tempBadge = last
+      ? `<span class="last-temp ${last.status}">${last.temp}°C · ${fmtTime(last.ts)}</span>`
+      : `<span class="last-temp missing">${LANG==='ko'?'미체크':LANG==='en'?'Pending':'Pendiente'}</span>`;
+    return `<div class="eq-card ${cls}">
+      ${eqIcon(eq)}
+      <div class="info">
+        <div class="nm">${escHtml(eq.name||eq.qr||'?')}</div>
+        <div class="meta">
+          <span style="font-size:.72em;color:#9ca3af">${escHtml(eq.location||'')}</span>
+          <span style="font-size:.72em;color:#9ca3af">${eqRangeText(eq)}</span>
+          ${tempBadge}
+        </div>
+      </div>
+      <div class="actions">
+        <button onclick="openInputForEq('${eq.id}')">${LANG==='ko'?'입력':LANG==='en'?'Enter':'Ingresar'}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function renderAlerts(){
+  const list = $('alertList');
+  const items = [];
+  EQUIPMENT.forEach(eq => {
+    const last = lastCheckFor(eq.id);
+    if (!last) items.push({ eq, kind:'missing' });
+    else if (last.status === 'danger') items.push({ eq, kind:'danger', last });
+    else if (last.status === 'warn') items.push({ eq, kind:'warn', last });
+  });
+  // Also list missed slots
+  const slots = slotsForToday();
+  slots.forEach(s => {
+    const st = slotStatus(s);
+    if (st.state === 'missed' && st.doneN < st.totalN) {
+      items.push({ kind:'missedSlot', slot:s, st });
+    }
+  });
+  if (items.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="ic">✅</div><div class="msg">${t('emptyAlerts')}</div></div>`;
+    return;
+  }
+  list.innerHTML = items.map(it => {
+    if (it.kind === 'missedSlot') {
+      const a = ASSIGNS[todayKey()];
+      return `<div class="eq-card danger">
+        <div class="icon" style="background:#fee2e2;color:#dc2626">⏰</div>
+        <div class="info">
+          <div class="nm">${t(it.slot.labelKey)} ${t('stMissed')}</div>
+          <div class="meta">
+            <span style="font-size:.78em">${it.st.doneN}/${it.st.totalN}</span>
+            <span style="font-size:.74em;color:#9ca3af">${a?.name||t('unassigned')}</span>
+          </div>
+        </div>
+      </div>`;
+    }
+    const eq = it.eq;
+    const last = it.last;
+    const cls = it.kind === 'missing' ? 'missing' : it.kind;
+    return `<div class="eq-card ${cls}">
+      ${eqIcon(eq)}
+      <div class="info">
+        <div class="nm">${escHtml(eq.name||'?')}</div>
+        <div class="meta">
+          <span style="font-size:.72em">${escHtml(eq.location||'')}</span>
+          ${last ? `<span class="last-temp ${last.status}">${last.temp}°C</span>` : ''}
+          ${last ? `<span style="font-size:.72em;color:#9ca3af">${escHtml(last.by||'')} · ${fmtTime(last.ts)}</span>` : ''}
+        </div>
+      </div>
+      <div class="actions">
+        <button onclick="openInputForEq('${eq.id}')">${LANG==='ko'?'재체크':LANG==='en'?'Recheck':'Re-rev.'}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function setReportRange(r, btn){
+  REPORT_RANGE.v = r;
+  document.querySelectorAll('#repTabs button').forEach(b => b.classList.toggle('active', b === btn));
+  renderReport();
+}
+window.setReportRange = setReportRange;
+function renderReport(){
+  const body = $('reportBody');
+  const range = REPORT_RANGE.v;
+  // Day: today's compliance per slot + per person
+  const today = CHECKS[todayKey()] || {};
+  const slots = slotsForToday();
+  const totalChecks = slots.length * Math.max(1, EQUIPMENT.length);
+  let doneChecks = 0;
+  slots.forEach(s => { const sc = today[s.key] || {}; doneChecks += Object.keys(sc).filter(id => EQUIPMENT.find(e=>e.id===id)).length; });
+  const pct = totalChecks ? Math.round(doneChecks/totalChecks*100) : 0;
+  // Per-person counts
+  const byPerson = {};
+  Object.values(today).forEach(slot => Object.values(slot||{}).forEach(c => { byPerson[c.by||'미등록'] = (byPerson[c.by||'미등록']||0) + 1; }));
+  const persons = Object.entries(byPerson).sort((a,b) => b[1]-a[1]);
+  body.innerHTML = `
+    <div class="kpi-row" style="grid-template-columns:1fr">
+      <div class="kpi-card ${pct>=90?'ok':pct>=70?'warn':'danger'}">
+        <div class="lbl">${LANG==='ko'?'준수율':LANG==='en'?'Compliance':'Cumplimiento'} (${range==='day'?(LANG==='ko'?'오늘':LANG==='en'?'Today':'Hoy'):range==='week'?(LANG==='ko'?'주간':'Week'):'Month'})</div>
+        <div class="val">${pct}%</div>
+        <div style="font-size:.72em;color:#9ca3af;font-weight:600">${doneChecks}/${totalChecks}</div>
+      </div>
+    </div>
+    <div style="background:#fff;border-radius:14px;padding:14px;margin-bottom:10px">
+      <h4 style="font-size:.92em;font-weight:800;margin-bottom:10px">${LANG==='ko'?'슬롯별 진행':LANG==='en'?'By slot':'Por turno'}</h4>
+      ${slots.map(s => {
+        const st = slotStatus(s);
+        const p = st.totalN ? Math.round(st.doneN/st.totalN*100) : 0;
+        return `<div style="margin-bottom:6px"><div style="font-size:.84em;font-weight:600">${t(s.labelKey)} ${s.time} — ${st.doneN}/${st.totalN} (${p}%)</div><div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;background:${st.state==='done'?'#22c55e':st.state==='missed'?'#dc2626':'#f59e0b'};width:${p}%"></div></div></div>`;
+      }).join('')}
+    </div>
+    <div style="background:#fff;border-radius:14px;padding:14px">
+      <h4 style="font-size:.92em;font-weight:800;margin-bottom:10px">${LANG==='ko'?'직원별 체크':LANG==='en'?'By staff':'Por persona'}</h4>
+      ${persons.length ? persons.map(([nm, cnt]) => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f3f4f6"><span style="font-weight:600">${escHtml(nm)}</span><span style="color:#0369a1;font-weight:700">${cnt}건</span></div>`).join('') : '<div style="color:#9ca3af">— 데이터 없음 —</div>'}
+    </div>`;
+}
+function filterAndGo(kind){
+  switchPage(kind === 'normal' ? 'check' : 'alerts');
+}
+window.filterAndGo = filterAndGo;
+
+// =============== QR scan ===============
+// Encodes equipment QR ID prefix; we generate full IDs like 'TEMP-EQ001'.
+const QR_NS = 'TEMP-';
+function makeQrId(prefix, n){
+  return QR_NS + (prefix||'EQ') + String(n).padStart(3,'0');
+}
+
+let __scanActive = false;
+let __zxingReader = null;
+async function openScanner(){
+  let modal = $('__scModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = '__scModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:#000;z-index:600;display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML = `
+      <video id="__scVideo" style="width:100%;max-width:480px;max-height:60vh;border-radius:14px;object-fit:cover" autoplay playsinline muted></video>
+      <div style="color:#fff;margin-top:20px;font-size:1em;font-weight:600;text-align:center">QR을 화면 가운데에 맞추세요</div>
+      <div id="__scStatus" style="color:#22c55e;margin-top:8px;font-size:.9em;font-weight:600">📡 인식 중…</div>
+      <button onclick="closeScanner()" style="margin-top:18px;background:#fff;color:#0369a1;border:0;border-radius:24px;padding:10px 28px;font-weight:700;font-size:.95em;cursor:pointer">취소</button>
+    `;
+    document.body.appendChild(modal);
+  }
+  modal.style.display = 'flex';
+  const video = $('__scVideo');
+  const statusEl = $('__scStatus');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream; await video.play();
+  } catch(e){ statusEl.textContent = '⚠️ 카메라 접근 실패'; setTimeout(closeScanner, 1500); return; }
+  __scanActive = true;
+  const onCode = (raw) => {
+    if (!__scanActive) return;
+    const code = String(raw||'').trim();
+    if (!code.startsWith(QR_NS)) {
+      statusEl.textContent = '⚠️ ' + (LANG==='ko'?'우리 앱 QR 아님':'Not our QR');
+      return;
+    }
+    closeScanner();
+    handleScannedQr(code);
+  };
+  if ('BarcodeDetector' in window) {
+    let detector;
+    try { detector = new window.BarcodeDetector({ formats:['qr_code'] }); } catch(e){ detector = new window.BarcodeDetector(); }
+    statusEl.textContent = '📡 ' + (LANG==='ko'?'인식 중… (Native)':'Scanning…');
+    const tick = async () => {
+      if (!__scanActive) return;
+      try { const codes = await detector.detect(video); if (codes && codes.length) onCode(codes[0].rawValue); } catch(e){}
+      if (__scanActive) requestAnimationFrame(tick);
+    };
+    tick();
+  } else {
+    // ZXing fallback
+    try {
+      if (!window.ZXingBrowser) {
+        await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src='https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js'; sc.onload=res; sc.onerror=rej; document.head.appendChild(sc); });
+      }
+      __zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
+      __zxingReader.decodeFromVideoDevice(null, video, (result) => { if (result) onCode(result.getText()); });
+    } catch(e){ statusEl.textContent = '⚠️ ZXing 로드 실패'; }
+  }
+}
+function closeScanner(){
+  __scanActive = false;
+  const m = $('__scModal'); if (m) m.style.display='none';
+  const v = $('__scVideo'); if (v && v.srcObject) { v.srcObject.getTracks().forEach(t=>t.stop()); v.srcObject = null; }
+  if (__zxingReader) { try{__zxingReader.reset();}catch(e){} __zxingReader = null; }
+}
+window.closeScanner = closeScanner;
+window.openScanner = openScanner;
+
+function handleScannedQr(qr){
+  const eq = EQUIPMENT.find(e => e.qr === qr);
+  if (eq) { __activeEqId = eq.id; openInputModal(eq); return; }
+  // unknown — open new equipment registration
+  __pendingQr = qr;
+  $('neQr').value = qr;
+  $('neName').value = '';
+  $('neLoc').value = '';
+  $('neType').value = 'fridge';
+  onTypeChange();
+  $('newEqOv').classList.add('show');
+}
+
+// =============== New equipment ===============
+function onTypeChange(){
+  const type = $('neType').value;
+  const d = TYPE_DEFAULTS[type] || TYPE_DEFAULTS.fridge;
+  $('neMin').value = d.min;
+  $('neMax').value = d.max;
+}
+window.onTypeChange = onTypeChange;
+async function saveNewEq(){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만 등록 가능':'Manager only', true); return; }
+  const name = $('neName').value.trim();
+  const type = $('neType').value;
+  const loc = $('neLoc').value.trim();
+  const min = parseFloat($('neMin').value) || 0;
+  const max = parseFloat($('neMax').value) || 4;
+  if (!name) { showToast(LANG==='ko'?'장비 이름 필요':'Name required', true); return; }
+  if (!__pendingQr) return;
+  const me = getMe();
+  const r = window.__fb.push(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment'));
+  await window.__fb.set(r, {
+    qr: __pendingQr, name, type, location: loc, min, max,
+    addedAt: Date.now(), addedBy: me?.name || '미등록',
+  });
+  closeOv('newEqOv');
+  showToast(t('saved'));
+  // After registration, immediately open input modal for this new eq
+  setTimeout(() => {
+    const eq = EQUIPMENT.find(e => e.qr === __pendingQr);
+    if (eq) openInputModal(eq);
+    __pendingQr = null;
+  }, 600);
+}
+window.saveNewEq = saveNewEq;
+
+// =============== Input modal ===============
+function openInputForEq(eqId){
+  const eq = EQUIPMENT.find(e => e.id === eqId);
+  if (!eq) return;
+  // Strict mode would block this, but a fallback is OK if QR is missing/damaged
+  __activeEqId = eqId;
+  openInputModal(eq);
+}
+window.openInputForEq = openInputForEq;
+function openInputModal(eq){
+  __activeEqId = eq.id;
+  __ipPhotoData = null;
+  $('ipEqName').textContent = eq.name || eq.qr;
+  $('ipEqRange').textContent = t('ipRange', { min: eq.min ?? 0, max: eq.max ?? 4 });
+  $('ipTemp').value = '';
+  $('ipNote').value = '';
+  $('ipTempVal').textContent = '--';
+  $('ipJudge').textContent = t('judgeWaiting');
+  $('ipJudge').className = 'judge';
+  $('ipPhotoPrev').innerHTML = '📷';
+  $('ipPhotoPrev').style.background = '#f9fafb';
+  $('inputOv').classList.add('show');
+  setTimeout(() => $('ipTemp').focus(), 100);
+}
+function updateJudge(){
+  const eq = EQUIPMENT.find(e => e.id === __activeEqId);
+  if (!eq) return;
+  const v = parseFloat($('ipTemp').value);
+  if (isNaN(v)) { $('ipTempVal').textContent='--'; $('ipJudge').textContent=t('judgeWaiting'); $('ipJudge').className='judge'; return; }
+  $('ipTempVal').textContent = v;
+  const k = judgeTemp(v, eq);
+  $('ipJudge').textContent = k==='normal'?t('judgeNormal'):k==='warn'?t('judgeWarn'):k==='danger'?t('judgeDanger'):t('judgeWaiting');
+  $('ipJudge').className = 'judge ' + (k==='unknown'?'':k);
+}
+window.updateJudge = updateJudge;
+async function compressImg(file, maxSide=1024, quality=0.8){
+  if (!file || !file.type.startsWith('image/')) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=url; });
+    URL.revokeObjectURL(url);
+    let { width, height } = img;
+    if (width <= maxSide && height <= maxSide && file.size < 300*1024) return file;
+    const r = Math.min(maxSide/width, maxSide/height, 1);
+    const w = Math.round(width*r), h = Math.round(height*r);
+    const c = document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    return await new Promise(res => c.toBlob(b => res(b||file), 'image/jpeg', quality));
+  } catch(e){ return file; }
+}
+async function onIpPhoto(ev){
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const compressed = await compressImg(file);
+  const reader = new FileReader();
+  reader.onload = () => {
+    __ipPhotoData = { blob: compressed, dataUrl: reader.result };
+    const prev = $('ipPhotoPrev');
+    prev.innerHTML = `<img src="${reader.result}" style="width:100%;height:100%;object-fit:cover">`;
+    prev.style.background = 'transparent';
+  };
+  reader.readAsDataURL(compressed);
+}
+window.onIpPhoto = onIpPhoto;
+async function uploadPhoto(){
+  if (!__ipPhotoData) return null;
+  const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+  const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/'+FB_STORAGE_BUCKET+'/o';
+  const path = 'temp/'+BRANCH+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
+  try {
+    const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
+      method:'POST', headers:{'Content-Type':'image/jpeg'}, body: __ipPhotoData.blob
+    });
+    if (r.ok) {
+      const meta = await r.json();
+      return FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+    }
+  } catch(e){}
+  return __ipPhotoData.dataUrl;
+}
+async function saveCheck(){
+  const eq = EQUIPMENT.find(e => e.id === __activeEqId);
+  if (!eq) return;
+  const v = parseFloat($('ipTemp').value);
+  if (isNaN(v)) { showToast(t('saveTempNum'), true); return; }
+  if (!__ipPhotoData) { showToast(t('saveTempPhoto'), true); return; }
+  const slotKey = currentSlotKey();
+  if (!slotKey) { showToast(t('outOfWindow'), true); return; }
+  const me = getMe();
+  const status = judgeTemp(v, eq);
+  const btn = $('ipSave'); btn.disabled = true;
+  let photo = null;
+  try { photo = await uploadPhoto(); } catch(e){}
+  const path = 'temp/'+BRANCH+'/checks/'+todayKey()+'/'+slotKey+'/'+eq.id;
+  await window.__fb.set(window.__fb.ref(window.__fb.db, path), {
+    temp: v, photo: photo || null, status,
+    note: $('ipNote').value.trim() || null,
+    ts: Date.now(),
+    by: me?.name || '미등록',
+    byRole: me?.role || null,
+  });
+  btn.disabled = false;
+  closeOv('inputOv');
+  showToast(t('saved'));
+}
+window.saveCheck = saveCheck;
+
+// =============== Assign / settings / equip-mgr ===============
+async function openAssignSheet(){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만 가능':'Manager only', true); return; }
+  $('aDate').value = todayKey();
+  // Load branch employees
+  let employees = [];
+  try {
+    const data = await fetch(`${FB_DB_URL}/schedules/${BRANCH}.json`).then(r=>r.json());
+    if (data && Array.isArray(data.employees)) employees = data.employees;
+  } catch(e){}
+  $('aPerson').innerHTML = '<option value="">— '+t('aPersonLbl')+' —</option>' + employees.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}${e.role?' ('+escHtml(e.role)+')':''}</option>`).join('');
+  const cur = ASSIGNS[todayKey()];
+  if (cur) $('aPerson').value = cur.name || '';
+  $('assignOv').classList.add('show');
+}
+window.openAssignSheet = openAssignSheet;
+async function saveAssign(){
+  const name = $('aPerson').value;
+  const date = $('aDate').value;
+  if (!date) return;
+  const path = 'temp/'+BRANCH+'/assigns/'+date;
+  if (!name) {
+    await window.__fb.remove(window.__fb.ref(window.__fb.db, path));
+  } else {
+    await window.__fb.set(window.__fb.ref(window.__fb.db, path), { name, assignedAt: Date.now(), assignedBy: getMe()?.name || '미등록' });
+  }
+  closeOv('assignOv');
+  showToast(t('saved'));
+}
+window.saveAssign = saveAssign;
+
+function openSettingsSheet(){
+  $('setSlot1').value = SETTINGS.slot1;
+  $('setSlot2').value = SETTINGS.slot2;
+  $('setSlot3').value = SETTINGS.slot3;
+  $('setWindow').value = SETTINGS.window;
+  $('settingsOv').classList.add('show');
+}
+window.openSettingsSheet = openSettingsSheet;
+async function saveSettings(){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만 가능':'Manager only', true); return; }
+  SETTINGS = {
+    slot1: $('setSlot1').value || '08:00',
+    slot2: $('setSlot2').value || '14:00',
+    slot3: $('setSlot3').value || '21:00',
+    window: parseInt($('setWindow').value, 10) || 60,
+  };
+  localStorage.setItem('temp.settings', JSON.stringify(SETTINGS));
+  await window.__fb.set(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/settings'), SETTINGS);
+  closeOv('settingsOv');
+  showToast(t('saved'));
+  renderAll();
+}
+window.saveSettings = saveSettings;
+
+function openEquipMgr(){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만':'Manager only', true); return; }
+  const list = $('eqMgrList');
+  if (EQUIPMENT.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="ic">📦</div><div class="msg">${t('emptyEqMgr')}</div></div>`;
+  } else {
+    list.innerHTML = EQUIPMENT.map(eq => `
+      <div class="eq-card" style="border-left-color:#0369a1">
+        ${eqIcon(eq)}
+        <div class="info">
+          <div class="nm">${escHtml(eq.name||'?')}</div>
+          <div class="meta">
+            <span style="font-size:.72em;color:#9ca3af">${escHtml(eq.qr||'')}</span>
+            <span style="font-size:.72em;color:#9ca3af">${eqRangeText(eq)}</span>
+            <span style="font-size:.72em;color:#9ca3af">${escHtml(eq.location||'')}</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button onclick="editEq('${eq.id}')">✏</button>
+          <button class="del" onclick="deleteEq('${eq.id}', ${JSON.stringify(eq.name||'').replace(/"/g,'&quot;')})">🗑</button>
+        </div>
+      </div>`).join('');
+  }
+  $('eqMgrOv').classList.add('show');
+}
+window.openEquipMgr = openEquipMgr;
+async function deleteEq(id, name){
+  const msg = LANG==='ko' ? `이 장비를 삭제할까요?\n${name}\n(체크 기록은 남고 장비만 제거)` : `Delete "${name}"?`;
+  if (!confirm(msg)) return;
+  await window.__fb.remove(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment/'+id));
+  showToast('🗑 ' + t('saved'));
+  // refresh list
+  setTimeout(openEquipMgr, 300);
+}
+window.deleteEq = deleteEq;
+function editEq(id){
+  const eq = EQUIPMENT.find(e => e.id === id);
+  if (!eq) return;
+  // Reuse new-eq modal as edit form
+  __pendingQr = eq.qr;
+  $('neQr').value = eq.qr || '';
+  $('neName').value = eq.name || '';
+  $('neLoc').value = eq.location || '';
+  $('neType').value = eq.type || 'fridge';
+  $('neMin').value = eq.min ?? 0;
+  $('neMax').value = eq.max ?? 4;
+  $('newEqTitle').textContent = LANG==='ko'?'장비 수정':'Edit equipment';
+  $('newEqHint').textContent = LANG==='ko'?'정보를 수정하고 저장하세요.':'Update info';
+  // Mark as edit mode
+  $('newEqOv').dataset.editId = id;
+  $('newEqOv').classList.add('show');
+}
+window.editEq = editEq;
+
+// Override saveNewEq to handle edit mode
+const __saveNewEqOrig = saveNewEq;
+window.saveNewEq = async function(){
+  const editId = $('newEqOv').dataset.editId;
+  if (editId) {
+    const upd = {
+      name: $('neName').value.trim(),
+      type: $('neType').value,
+      location: $('neLoc').value.trim(),
+      min: parseFloat($('neMin').value) || 0,
+      max: parseFloat($('neMax').value) || 4,
+    };
+    await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment/'+editId), upd);
+    delete $('newEqOv').dataset.editId;
+    closeOv('newEqOv');
+    showToast(t('saved'));
+    setTimeout(openEquipMgr, 300);
+    return;
+  }
+  await __saveNewEqOrig();
+};
+
+// =============== QR sheet ===============
+function openQrPrintSheet(){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만':'Manager only', true); return; }
+  $('qrCnt').value = 30;
+  $('qrPrefix').value = 'EQ';
+  $('qrPrintArea').innerHTML = '';
+  $('qrOv').classList.add('show');
+}
+window.openQrPrintSheet = openQrPrintSheet;
+function renderQrSheet(){
+  const cnt = Math.min(100, Math.max(1, parseInt($('qrCnt').value, 10) || 30));
+  const prefix = ($('qrPrefix').value || 'EQ').toUpperCase().slice(0,6);
+  // Find next available number per branch
+  const taken = new Set(EQUIPMENT.map(e => (e.qr||'')));
+  let n = 1, codes = [];
+  while (codes.length < cnt && n < 1000) {
+    const id = makeQrId(prefix, n);
+    if (!taken.has(id)) codes.push(id);
+    n++;
+  }
+  // Use Google Charts QR API as image generator (no library)
+  const cells = codes.map(id => {
+    const url = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(id);
+    return `<div class="qr-cell">
+      <div class="qr-img"><img src="${url}" alt="${id}"></div>
+      <div class="qr-id">${id}</div>
+    </div>`;
+  }).join('');
+  $('qrPrintArea').innerHTML = `<div class="qr-grid">${cells}</div>`;
+}
+window.renderQrSheet = renderQrSheet;
+
+// =============== Force refresh ===============
+async function forceRefresh(){
+  const msg = LANG==='ko' ? '캐시 초기화 후 새로고침할까요?' : 'Clear cache and reload?';
+  if (!confirm(msg)) return;
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch(e){}
+  location.reload();
+}
+window.forceRefresh = forceRefresh;
+
+// =============== Page nav ===============
+function switchPage(p){
+  PAGE = p;
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  $('page-' + p)?.classList.add('active');
+  document.querySelectorAll('.botnav button').forEach(b => b.classList.toggle('active', b.dataset.p === p));
+  window.scrollTo({top:0,behavior:'smooth'});
+  renderAll();
+}
+window.switchPage = switchPage;
+function goBack(){
+  if (PAGE !== 'home') { switchPage('home'); return; }
+  if (history.length > 1 && document.referrer && document.referrer !== location.href) { history.back(); return; }
+  location.href = './hub.html';
+}
+window.goBack = goBack;
+function closeOv(id){ $(id).classList.remove('show'); if (id === 'newEqOv') delete $(id).dataset.editId; }
+window.closeOv = closeOv;
+
+// =============== Notification scheduling ===============
+async function ensureNotifPerm(){
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+  try { const p = await Notification.requestPermission(); return p === 'granted'; } catch(e){ return false; }
+}
+function scheduleSlotReminders(){
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const slots = slotsForToday();
+  const now = nowMinutes();
+  slots.forEach(s => {
+    const [hh,mm] = s.time.split(':').map(Number);
+    const slotMin = hh*60+mm;
+    const offsets = [-5, 0]; // 5 min before + at slot time
+    offsets.forEach(off => {
+      const fireMin = slotMin + off;
+      if (fireMin <= now) return;
+      const ms = (fireMin - now) * 60 * 1000;
+      setTimeout(() => {
+        const sLabel = t(s.labelKey);
+        const body = off === 0 ? (LANG==='ko'?'지금 체크하세요':LANG==='en'?'Check now':'Revisar ahora') : (LANG==='ko'?'5분 후 체크 시간':'5 min until check');
+        try { new Notification(`🌡 ${sLabel} ${s.time}`, { body, tag:'temp-'+s.key+'-'+off }); } catch(e){}
+      }, ms);
+    });
+  });
+}
+// Re-schedule daily at midnight
+function rescheduleAtMidnight(){
+  const now = new Date();
+  const next = new Date(now); next.setHours(24,0,5,0);
+  setTimeout(() => { scheduleSlotReminders(); rescheduleAtMidnight(); }, next-now);
+}
+
+// =============== INIT ===============
+applyLang();
+ensureNotifPerm().then(ok => { if (ok) scheduleSlotReminders(); });
+rescheduleAtMidnight();
+// Render-tick every minute so slot status updates as time passes
+setInterval(renderSlots, 60*1000);
+
+// SW
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
