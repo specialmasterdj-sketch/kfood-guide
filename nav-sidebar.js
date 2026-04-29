@@ -48,9 +48,11 @@
   const css = `
     body { margin-left: ${W}px !important; }
     .km-navside { position: fixed; top: 0; left: 0; bottom: 0; width: ${W}px; background: #fff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; z-index: 1000; font-family: 'Segoe UI','Malgun Gothic',Arial,sans-serif; }
-    .km-navside .km-brand { display:flex; align-items:center; gap:8px; padding: 10px 14px 14px; border-bottom: 1px solid #f3f4f6; margin-bottom: 4px; }
+    .km-navside .km-brand { display:flex; align-items:center; gap:8px; padding: 10px 14px 10px; border-bottom: 1px solid #f3f4f6; margin-bottom: 0; }
     .km-navside .km-brand .logo { width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.95em; }
     .km-navside .km-brand .nm { font-weight:800; color:#1a5c3a; font-size:.95em; }
+    .km-navside .km-backbtn { display:flex; align-items:center; gap:7px; padding:9px 14px; color:#1a5c3a; font-size:.85em; font-weight:700; cursor:pointer; border:none; background:none; width:100%; text-align:left; border-bottom:1px solid #f3f4f6; font-family:inherit; text-decoration:none; margin-bottom:4px; }
+    .km-navside .km-backbtn:hover { background:#f0fdf4; }
     .km-navside .km-sec { padding: 10px 14px 4px; font-size: .7em; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .05em; }
     .km-navside a { display: flex; align-items: center; gap: 10px; padding: 8px 14px; color: #374151; text-decoration: none; font-size: .88em; font-weight: 500; border-left: 3px solid transparent; transition: .1s; }
     .km-navside a:hover { background: #f4f6f9; color: #1a5c3a; }
@@ -95,7 +97,12 @@
     const mgr = isManager();
     // Pre-filter so sections with no visible items don't render an orphan header
     const visible = LINKS.filter(it => it.sec || !it.mgr || mgr);
-    let html = `<div class="km-brand"><div class="logo">K</div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></div>`;
+    const lang = currentLang();
+    const backLbl = lang==='ko' ? '← 뒤로' : lang==='es' ? '← Volver' : '← Back';
+    const backHtml = (here !== 'apps.html')
+      ? `<a class="km-backbtn" href="./apps.html" onclick="event.preventDefault();if(history.length>1)history.back();else location.href='./apps.html'">${backLbl}</a>`
+      : '';
+    let html = `<div class="km-brand"><div class="logo">K</div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></div>${backHtml}`;
     for (let i = 0; i < visible.length; i++) {
       const it = visible[i];
       if (it.sec) {
