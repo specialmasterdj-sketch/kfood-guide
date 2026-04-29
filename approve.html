@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>김치마트 — 직원 승인</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<script src="./nav-sidebar.js?v=3" defer></script>
+<script type="module" src="./auth-gate.js?v=1"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;padding-bottom:40px}
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:18px 22px;position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px}
+.topbar .home{background:rgba(255,255,255,.18);border:0;color:#fff;width:34px;height:34px;border-radius:50%;font-size:1em;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.topbar h1{font-size:1.1em;font-weight:800;flex:1}
+.topbar .lang{display:inline-flex;background:rgba(255,255,255,.15);border-radius:14px;padding:2px}
+.topbar .lang button{background:transparent;border:0;color:#fff;padding:4px 10px;border-radius:12px;font-size:.74em;font-weight:700;opacity:.7;cursor:pointer}
+.topbar .lang button.active{background:#fff;color:#1a5c3a;opacity:1}
+.wrap{max-width:760px;margin:18px auto;padding:0 14px}
+.tabs{display:flex;background:#fff;border-radius:12px;padding:4px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.tabs button{flex:1;background:transparent;border:0;padding:10px;font-size:.9em;font-weight:700;color:#6b7280;border-radius:8px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px}
+.tabs button.active{background:#1a5c3a;color:#fff}
+.tabs button .badge{background:#dc2626;color:#fff;border-radius:10px;font-size:.65em;padding:1px 6px;font-weight:800}
+.tabs button.active .badge{background:rgba(255,255,255,.25)}
+.user-card{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.user-card .head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.user-card .avatar{width:44px;height:44px;border-radius:50%;background:#e0f2fe;color:#0369a1;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1em;overflow:hidden}
+.user-card .avatar img{width:100%;height:100%;object-fit:cover}
+.user-card .info{flex:1;min-width:0}
+.user-card .nm{font-weight:700;font-size:1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-card .em{font-size:.78em;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-card .ts{font-size:.72em;color:#9ca3af;margin-top:2px}
+.user-card .badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.badge-chip{font-size:.7em;font-weight:700;padding:2px 8px;border-radius:8px;background:#f3f4f6;color:#374151}
+.badge-chip.role{background:#dbeafe;color:#1d4ed8}
+.badge-chip.branch{background:#dcfce7;color:#166534}
+.badge-chip.status-pending{background:#fef3c7;color:#92400e}
+.badge-chip.status-approved{background:#d1fae5;color:#065f46}
+.badge-chip.status-blocked{background:#fee2e2;color:#991b1b}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.field label{display:block;font-size:.74em;font-weight:600;color:#6b7280;margin-bottom:3px}
+.field select{width:100%;border:1.5px solid #e5e7eb;border-radius:8px;padding:8px 10px;font-size:.92em;background:#fff;font-family:inherit}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+.actions button{flex:1;min-width:90px;padding:9px 8px;border-radius:8px;font-weight:700;font-size:.82em;border:0;cursor:pointer;font-family:inherit}
+.actions .approve{background:#22c55e;color:#fff}
+.actions .approve:hover{background:#16a34a}
+.actions .approve:disabled{opacity:.5;cursor:wait}
+.actions .reject{background:#fff;color:#dc2626;border:1.5px solid #dc2626}
+.actions .reject:hover{background:#fef2f2}
+.actions .block{background:#fff;color:#dc2626;border:1.5px solid #fecaca}
+.actions .unblock{background:#fff;color:#15803d;border:1.5px solid #bbf7d0}
+.empty{text-align:center;padding:60px 20px;color:#9ca3af}
+.empty .ic{font-size:3.4em;opacity:.4;margin-bottom:10px}
+.empty .msg{font-size:.95em}
+.no-access{max-width:460px;margin:80px auto;padding:36px 28px;background:#fff;border-radius:18px;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:12px 22px;border-radius:24px;font-size:.92em;font-weight:600;z-index:300;display:none;box-shadow:0 4px 18px rgba(0,0,0,.18)}
+.toast.show{display:block}
+.toast.danger{background:#dc2626}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="home" onclick="location.href='./hub.html'" title="HUB">🏠</button>
+  <h1 id="pageTitle">👥 직원 승인</h1>
+  <div class="lang">
+    <button data-l="ko" onclick="setLang('ko')">KO</button>
+    <button data-l="en" onclick="setLang('en')">EN</button>
+    <button data-l="es" onclick="setLang('es')">ES</button>
+  </div>
+</div>
+
+<div class="wrap" id="mainWrap" style="display:none">
+  <div class="tabs">
+    <button id="tabPending" class="active" onclick="setTab('pending')">⏳ <span id="tabPendingLbl">대기</span> <span class="badge" id="cntPending">0</span></button>
+    <button id="tabApproved" onclick="setTab('approved')">✅ <span id="tabApprovedLbl">승인됨</span> <span class="badge" id="cntApproved">0</span></button>
+    <button id="tabBlocked" onclick="setTab('blocked')">🚫 <span id="tabBlockedLbl">차단</span> <span class="badge" id="cntBlocked">0</span></button>
+  </div>
+  <div id="userList"></div>
+</div>
+
+<div class="wrap" id="noAccess" style="display:none">
+  <div class="no-access">
+    <div style="font-size:3em;margin-bottom:10px">🔒</div>
+    <h1 style="font-size:1.2em;color:#dc2626;margin-bottom:10px;font-weight:800" id="noAccessTitle">접근 권한 없음</h1>
+    <p style="color:#6b7280;font-size:.95em;line-height:1.5;margin-bottom:18px" id="noAccessBody">매니저 이상만 직원 승인 페이지에 입장할 수 있습니다.</p>
+    <a href="./hub.html" style="display:inline-block;background:#1a5c3a;color:#fff;padding:10px 20px;border-radius:10px;text-decoration:none;font-weight:700">← HUB</a>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getDatabase, ref, onValue, update } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const cfg = { apiKey:"AIzaSyDGZc-qPqtX6KxqxzC0n7iE0X_eOhLpqrM", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const db = getDatabase(app);
+
+const BRANCHES = [
+  { id:'MIAMI',          ko:'마이애미',       en:'Miami',           es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines',  es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',      ko:'할리우드',       en:'Hollywood',       es:'Hollywood' },
+  { id:'CORAL_SPRINGS',  ko:'코럴 스프링스',   en:'Coral Springs',   es:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스올라스',     en:'Las Olas',        es:'Las Olas' },
+  { id:'WEST_PALM',      ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+];
+const ROLES = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR','CASHIER','STAFF','BOBA'];
+
+const I18N = {
+  ko:{ title:'👥 직원 승인', tabPending:'대기', tabApproved:'승인됨', tabBlocked:'차단', emptyPending:'승인 대기 중인 직원이 없습니다', emptyApproved:'승인된 직원이 없습니다', emptyBlocked:'차단된 직원이 없습니다', branch:'매장', role:'역할', selectBranch:'— 매장 선택 —', selectRole:'— 역할 선택 —', approve:'승인', reject:'거절', block:'차단', unblock:'복구', confirmReject:'이 가입 신청을 거절할까요?', confirmBlock:'이 직원을 차단할까요? 즉시 모든 데이터 접근 끊김.', confirmUnblock:'차단을 풀까요? 다시 정상 사용 가능.', needBranchRole:'매장과 역할 모두 선택하세요', saved:'✅ 처리됨', noAccessTitle:'접근 권한 없음', noAccessBody:'매니저 이상만 직원 승인 페이지에 입장할 수 있습니다.', joinedAt:'가입', approvedAt:'승인', by:'(승인:', branchAll:'전 지점' },
+  en:{ title:'👥 Staff Approvals', tabPending:'Pending', tabApproved:'Approved', tabBlocked:'Blocked', emptyPending:'No pending requests', emptyApproved:'No approved staff', emptyBlocked:'No blocked staff', branch:'Branch', role:'Role', selectBranch:'— Pick branch —', selectRole:'— Pick role —', approve:'Approve', reject:'Reject', block:'Block', unblock:'Restore', confirmReject:'Reject this signup?', confirmBlock:'Block this employee? Access ends immediately.', confirmUnblock:'Unblock this employee?', needBranchRole:'Pick both branch and role', saved:'✅ Done', noAccessTitle:'No access', noAccessBody:'Manager+ only can access the approvals page.', joinedAt:'Joined', approvedAt:'Approved', by:'(by', branchAll:'All stores' },
+  es:{ title:'👥 Aprobaciones', tabPending:'Pendiente', tabApproved:'Aprobado', tabBlocked:'Bloqueado', emptyPending:'No hay pendientes', emptyApproved:'Sin aprobados', emptyBlocked:'Sin bloqueados', branch:'Tienda', role:'Rol', selectBranch:'— Tienda —', selectRole:'— Rol —', approve:'Aprobar', reject:'Rechazar', block:'Bloquear', unblock:'Restaurar', confirmReject:'¿Rechazar esta solicitud?', confirmBlock:'¿Bloquear a este empleado? El acceso termina al instante.', confirmUnblock:'¿Desbloquear?', needBranchRole:'Selecciona tienda y rol', saved:'✅ Listo', noAccessTitle:'Sin acceso', noAccessBody:'Solo gerentes+ pueden acceder a esta página.', joinedAt:'Registrado', approvedAt:'Aprobado', by:'(por', branchAll:'Todas' },
+};
+let LANG = (function(){
+  for (const k of ['tasks.lang','kimchi_lang','hub.lang']) { const v = localStorage.getItem(k); if (v && I18N[v]) return v; }
+  const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+  return I18N[nav] ? nav : 'ko';
+})();
+function t(k){ return (I18N[LANG] && I18N[LANG][k]) || I18N.ko[k] || k; }
+function applyLang(){
+  document.querySelectorAll('.topbar .lang button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+  document.getElementById('pageTitle').textContent = t('title');
+  document.getElementById('tabPendingLbl').textContent = t('tabPending');
+  document.getElementById('tabApprovedLbl').textContent = t('tabApproved');
+  document.getElementById('tabBlockedLbl').textContent = t('tabBlocked');
+  document.getElementById('noAccessTitle').textContent = t('noAccessTitle');
+  document.getElementById('noAccessBody').textContent = t('noAccessBody');
+  render();
+}
+window.setLang = function(l){ if (!I18N[l]) return; LANG = l; ['tasks.lang','kimchi_lang','hub.lang'].forEach(k => localStorage.setItem(k, l)); applyLang(); };
+
+const MGR_ROLES = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
+function isMgr(profile){ return profile && profile.status === 'approved' && MGR_ROLES.includes(profile.role); }
+
+let TAB = 'pending';
+let USERS = {}; // { uid: profile }
+let SELF = null;
+
+window.setTab = function(tab){ TAB = tab; document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.id === 'tab' + tab.charAt(0).toUpperCase() + tab.slice(1))); render(); };
+
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function fmtTime(ts){ if (!ts) return '-'; const d = new Date(ts); return d.toLocaleString(LANG==='ko'?'ko-KR':LANG==='es'?'es-ES':'en-US', { dateStyle:'short', timeStyle:'short' }); }
+function branchName(id){ if (id === '*') return t('branchAll'); const b = BRANCHES.find(x => x.id === id); return b ? (b[LANG] || b.ko) : id; }
+function showToast(msg, danger){
+  const el = document.getElementById('toast'); el.textContent = msg;
+  el.className = 'toast' + (danger?' danger':'') + ' show';
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(() => el.classList.remove('show'), 2400);
+}
+function avatarHtml(profile){
+  if (profile.photoURL) return `<img src="${escHtml(profile.photoURL)}" alt="">`;
+  return escHtml((profile.name||'?').slice(0,1).toUpperCase());
+}
+
+function render(){
+  const list = document.getElementById('userList');
+  const all = Object.entries(USERS).map(([uid, p]) => Object.assign({ uid }, p));
+  // counts for tabs
+  const counts = { pending:0, approved:0, blocked:0 };
+  all.forEach(u => { if (counts[u.status] !== undefined) counts[u.status]++; });
+  document.getElementById('cntPending').textContent = counts.pending;
+  document.getElementById('cntApproved').textContent = counts.approved;
+  document.getElementById('cntBlocked').textContent = counts.blocked;
+
+  const rows = all.filter(u => u.status === TAB).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+  if (rows.length === 0) {
+    const k = TAB === 'pending' ? 'emptyPending' : TAB === 'approved' ? 'emptyApproved' : 'emptyBlocked';
+    list.innerHTML = `<div class="empty"><div class="ic">${TAB==='pending'?'⏳':TAB==='approved'?'✅':'🚫'}</div><div class="msg">${t(k)}</div></div>`;
+    return;
+  }
+
+  list.innerHTML = rows.map(u => {
+    const av = avatarHtml(u);
+    const branchSel = `<select id="br_${u.uid}">
+      <option value="">${t('selectBranch')}</option>
+      ${BRANCHES.map(b => `<option value="${b.id}" ${u.branch === b.id ? 'selected' : ''}>${b[LANG] || b.ko}</option>`).join('')}
+    </select>`;
+    const roleSel = `<select id="rl_${u.uid}">
+      <option value="">${t('selectRole')}</option>
+      ${ROLES.map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+    </select>`;
+    let actions;
+    if (u.status === 'pending') {
+      actions = `
+        <button class="approve" onclick="approveUser('${u.uid}')">${t('approve')}</button>
+        <button class="reject" onclick="rejectUser('${u.uid}')">${t('reject')}</button>`;
+    } else if (u.status === 'approved') {
+      actions = `
+        <button class="approve" onclick="approveUser('${u.uid}')" title="역할/매장 변경 후 저장">💾 ${t('approve')}</button>
+        <button class="block" onclick="blockUser('${u.uid}')">${t('block')}</button>`;
+    } else {
+      actions = `<button class="unblock" onclick="unblockUser('${u.uid}')">${t('unblock')}</button>`;
+    }
+    return `<div class="user-card">
+      <div class="head">
+        <div class="avatar">${av}</div>
+        <div class="info">
+          <div class="nm">${escHtml(u.name || u.email || '?')}</div>
+          <div class="em">${escHtml(u.email || '')}</div>
+          <div class="ts">${t('joinedAt')}: ${fmtTime(u.createdAt)}${u.approvedAt ? ' · ' + t('approvedAt') + ': ' + fmtTime(u.approvedAt) : ''}</div>
+          <div class="badges">
+            <span class="badge-chip status-${u.status}">${u.status}</span>
+            ${u.role ? `<span class="badge-chip role">${escHtml(u.role)}</span>` : ''}
+            ${u.branch ? `<span class="badge-chip branch">${escHtml(branchName(u.branch))}</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>${t('branch')}</label>${branchSel}</div>
+        <div class="field"><label>${t('role')}</label>${roleSel}</div>
+      </div>
+      <div class="actions">${actions}</div>
+    </div>`;
+  }).join('');
+}
+
+window.approveUser = async function(uid){
+  const branch = document.getElementById('br_' + uid).value;
+  const role = document.getElementById('rl_' + uid).value;
+  if (!branch || !role) { showToast(t('needBranchRole'), true); return; }
+  try {
+    await update(ref(db, 'users/' + uid), {
+      status:'approved', branch, role,
+      approvedAt: Date.now(),
+      approvedBy: SELF?.uid || 'manager',
+    });
+    showToast(t('saved'));
+  } catch(e){ showToast('Error: ' + e.message, true); }
+};
+window.rejectUser = async function(uid){
+  if (!confirm(t('confirmReject'))) return;
+  try {
+    await update(ref(db, 'users/' + uid), { status:'blocked', approvedBy: SELF?.uid || 'manager' });
+    showToast(t('saved'));
+  } catch(e){ showToast('Error: ' + e.message, true); }
+};
+window.blockUser = async function(uid){
+  if (!confirm(t('confirmBlock'))) return;
+  try {
+    await update(ref(db, 'users/' + uid), { status:'blocked' });
+    showToast(t('saved'));
+  } catch(e){ showToast('Error: ' + e.message, true); }
+};
+window.unblockUser = async function(uid){
+  if (!confirm(t('confirmUnblock'))) return;
+  try {
+    await update(ref(db, 'users/' + uid), { status:'pending' });
+    showToast(t('saved'));
+  } catch(e){ showToast('Error: ' + e.message, true); }
+};
+
+// Wait for auth-gate to populate window.__currentUser, then check role +
+// subscribe to /users for the live list of pending/approved/blocked.
+function onAuthReady(profile){
+  SELF = profile;
+  if (!isMgr(profile)) {
+    document.getElementById('mainWrap').style.display = 'none';
+    document.getElementById('noAccess').style.display = '';
+    return;
+  }
+  document.getElementById('mainWrap').style.display = '';
+  document.getElementById('noAccess').style.display = 'none';
+  onValue(ref(db, 'users'), (snap) => {
+    USERS = snap.val() || {};
+    render();
+  });
+}
+
+if (window.__currentUser) onAuthReady(window.__currentUser);
+window.addEventListener('km-auth-ready', (ev) => onAuthReady(ev.detail));
+applyLang();
+</script>
+</body>
+</html>

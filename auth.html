@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>김치마트 — 로그인</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:linear-gradient(135deg,#1a5c3a,#2e7d32);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:#1f2937}
+.card{background:#fff;border-radius:24px;max-width:420px;width:100%;padding:36px 32px;box-shadow:0 10px 40px rgba(0,0,0,.18)}
+.logo{width:74px;height:74px;border-radius:18px;background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;display:flex;align-items:center;justify-content:center;font-size:2em;font-weight:900;margin:0 auto 18px}
+h1{font-size:1.4em;font-weight:800;color:#1a5c3a;text-align:center;margin-bottom:6px}
+.sub{font-size:.92em;color:#6b7280;text-align:center;margin-bottom:30px}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:12px;background:#fff;border:1.5px solid #d1d5db;color:#1f2937;border-radius:14px;padding:14px 18px;font-size:1em;font-weight:600;cursor:pointer;width:100%;font-family:inherit;transition:.15s}
+.gbtn:hover{background:#f9fafb;border-color:#1a5c3a;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+.gbtn:disabled{opacity:.5;cursor:wait}
+.gbtn img{width:22px;height:22px}
+.divider{display:flex;align-items:center;gap:10px;color:#9ca3af;font-size:.78em;margin:18px 0}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:#e5e7eb}
+.note{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;font-size:.82em;color:#6b7280;line-height:1.5;margin-top:18px}
+.note b{color:#1a5c3a}
+.lang-toggle{display:flex;justify-content:center;gap:6px;margin-bottom:18px}
+.lang-toggle button{background:transparent;border:1px solid #e5e7eb;color:#6b7280;border-radius:8px;padding:4px 10px;font-size:.76em;font-weight:700;cursor:pointer}
+.lang-toggle button.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+.error{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:10px;padding:10px 14px;font-size:.86em;margin-top:14px;display:none}
+.error.show{display:block}
+.profile{display:flex;align-items:center;gap:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;margin-bottom:18px}
+.profile img{width:42px;height:42px;border-radius:50%}
+.profile .nm{font-weight:700;font-size:.92em}
+.profile .em{font-size:.76em;color:#9ca3af}
+.status-card{border-radius:14px;padding:18px;margin-top:14px;text-align:center}
+.status-card.pending{background:#fffbeb;border:2px solid #fde68a;color:#92400e}
+.status-card.blocked{background:#fef2f2;border:2px solid #fecaca;color:#991b1b}
+.status-card .ic{font-size:2.4em;margin-bottom:6px}
+.status-card .t{font-weight:800;font-size:1em;margin-bottom:4px}
+.status-card .d{font-size:.85em;line-height:1.5}
+.actions{display:flex;gap:8px;margin-top:14px}
+.actions button{flex:1;background:#fff;border:1.5px solid #e5e7eb;color:#374151;border-radius:10px;padding:10px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit}
+.actions button.primary{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="lang-toggle">
+    <button data-l="ko" onclick="setLang('ko')">한국어</button>
+    <button data-l="en" onclick="setLang('en')">English</button>
+    <button data-l="es" onclick="setLang('es')">Español</button>
+  </div>
+  <div class="logo">K</div>
+  <h1 id="title">김치마트</h1>
+  <div class="sub" id="subtitle">매니저 앱 · 직원 로그인</div>
+  <div id="signinView">
+    <button class="gbtn" id="googleBtn" onclick="doGoogleSignIn()">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="">
+      <span id="googleBtnText">Google 계정으로 로그인</span>
+    </button>
+    <div class="error" id="err"></div>
+    <div class="note" id="firstHint">
+      <b id="firstHintTitle">처음 사용?</b><br>
+      <span id="firstHintBody">구글 계정으로 로그인하면 매니저가 승인해드립니다. 본인 직장 이메일을 사용하세요.</span>
+    </div>
+  </div>
+  <div id="loadingView" style="display:none;text-align:center;padding:30px 0">
+    <div style="font-size:2em">⏳</div>
+    <div style="font-size:.95em;color:#6b7280;margin-top:6px" id="loadingText">로그인 중…</div>
+  </div>
+  <div id="statusView" style="display:none">
+    <div class="profile">
+      <img id="meImg" src="" alt="">
+      <div>
+        <div class="nm" id="meName"></div>
+        <div class="em" id="meEmail"></div>
+      </div>
+    </div>
+    <div id="statusCard"></div>
+    <div class="actions">
+      <button onclick="doSignOut()" id="btnLogout">로그아웃</button>
+      <button class="primary" onclick="goHome()" id="btnEnter" style="display:none">입장</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getDatabase, ref, get, set, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const cfg = { apiKey:"AIzaSyDGZc-qPqtX6KxqxzC0n7iE0X_eOhLpqrM", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const auth = getAuth(app);
+const db = getDatabase(app);
+const provider = new GoogleAuthProvider();
+
+const BOOTSTRAP_ADMINS = {
+  'specialmasterdj@gmail.com': { role: 'OWNER',     branch: '*', name: 'DJ' },
+  'byhoki64@gmail.com':        { role: 'EXECUTIVE', branch: '*', name: 'B.H.K' },
+};
+function bootstrapFor(email){ return email ? (BOOTSTRAP_ADMINS[email.toLowerCase()] || null) : null; }
+
+const I18N = {
+  ko:{ title:'김치마트', subtitle:'매니저 앱 · 직원 로그인', googleBtn:'Google 계정으로 로그인', firstHintTitle:'처음 사용?', firstHintBody:'구글 계정으로 로그인하면 매니저가 승인해드립니다. 본인 직장 이메일을 사용하세요.', loading:'로그인 중…', logout:'로그아웃', enter:'입장', pendingT:'매니저 승인 대기 중', pendingD:'가입 신청이 접수되었습니다. 매니저가 승인하면 자동으로 입장됩니다.', blockedT:'접근 차단됨', blockedD:'이 계정은 차단되었습니다. 매니저에게 문의하세요.', popupBlocked:'팝업이 차단되었습니다. 잠시 후 다시 시도합니다.', signinErr:'로그인 실패: ' },
+  en:{ title:'Kimchi Mart', subtitle:'Manager app · Staff login', googleBtn:'Sign in with Google', firstHintTitle:'First time?', firstHintBody:'Sign in with Google and a manager will approve you. Use your work email.', loading:'Signing in…', logout:'Sign out', enter:'Enter', pendingT:'Awaiting manager approval', pendingD:'Your request has been submitted. You will be admitted automatically when a manager approves.', blockedT:'Access blocked', blockedD:'This account has been blocked. Please contact a manager.', popupBlocked:'Popup blocked. Retrying…', signinErr:'Sign-in failed: ' },
+  es:{ title:'Kimchi Mart', subtitle:'App de gerente · Inicio de sesión', googleBtn:'Iniciar con Google', firstHintTitle:'¿Primera vez?', firstHintBody:'Inicia con Google y un gerente te aprobará. Usa tu correo de trabajo.', loading:'Iniciando…', logout:'Cerrar sesión', enter:'Entrar', pendingT:'Esperando aprobación', pendingD:'Tu solicitud fue enviada. Entrarás automáticamente al ser aprobado.', blockedT:'Acceso bloqueado', blockedD:'Esta cuenta fue bloqueada. Contacta a un gerente.', popupBlocked:'Popup bloqueado. Reintentando…', signinErr:'Error de inicio: ' },
+};
+let LANG = (function(){
+  for (const k of ['tasks.lang','kimchi_lang','hub.lang']) { const v = localStorage.getItem(k); if (v && I18N[v]) return v; }
+  const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+  return I18N[nav] ? nav : 'ko';
+})();
+function t(k){ return (I18N[LANG] && I18N[LANG][k]) || I18N.ko[k] || k; }
+function applyLang(){
+  document.querySelectorAll('.lang-toggle button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+  document.getElementById('title').textContent = t('title');
+  document.getElementById('subtitle').textContent = t('subtitle');
+  document.getElementById('googleBtnText').textContent = t('googleBtn');
+  document.getElementById('firstHintTitle').textContent = t('firstHintTitle');
+  document.getElementById('firstHintBody').textContent = t('firstHintBody');
+  document.getElementById('loadingText').textContent = t('loading');
+  document.getElementById('btnLogout').textContent = t('logout');
+  document.getElementById('btnEnter').textContent = t('enter');
+  document.documentElement.lang = LANG;
+}
+window.setLang = function(l){ if (!I18N[l]) return; LANG = l; ['tasks.lang','kimchi_lang','hub.lang'].forEach(k => localStorage.setItem(k, l)); applyLang(); renderProfile(); };
+applyLang();
+
+function show(viewId){ ['signinView','loadingView','statusView'].forEach(id => document.getElementById(id).style.display = id === viewId ? '' : 'none'); }
+function showError(msg){
+  const el = document.getElementById('err');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 5000);
+}
+
+let __currentProfile = null;
+function renderProfile(){
+  const u = auth.currentUser;
+  if (!u || !__currentProfile) return;
+  document.getElementById('meImg').src = u.photoURL || '';
+  document.getElementById('meName').textContent = __currentProfile.name || u.displayName || '';
+  document.getElementById('meEmail').textContent = u.email;
+  const card = document.getElementById('statusCard');
+  const enterBtn = document.getElementById('btnEnter');
+  if (__currentProfile.status === 'approved') {
+    card.className = 'status-card';
+    card.style.background = '#f0fdf4';
+    card.style.border = '2px solid #bbf7d0';
+    card.style.color = '#15803d';
+    card.innerHTML = `<div class="ic">✅</div><div class="t">${LANG==='ko'?'승인 완료':LANG==='en'?'Approved':'Aprobado'}</div><div class="d">${escapeHtml(__currentProfile.role||'')}${__currentProfile.branch && __currentProfile.branch!=='*' ? ' · '+escapeHtml(__currentProfile.branch) : ''}</div>`;
+    enterBtn.style.display = '';
+  } else if (__currentProfile.status === 'pending') {
+    card.className = 'status-card pending';
+    card.innerHTML = `<div class="ic">⏳</div><div class="t">${t('pendingT')}</div><div class="d">${t('pendingD')}</div>`;
+    enterBtn.style.display = 'none';
+  } else if (__currentProfile.status === 'blocked') {
+    card.className = 'status-card blocked';
+    card.innerHTML = `<div class="ic">🚫</div><div class="t">${t('blockedT')}</div><div class="d">${t('blockedD')}</div>`;
+    enterBtn.style.display = 'none';
+  }
+}
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+window.doGoogleSignIn = async function(){
+  const btn = document.getElementById('googleBtn');
+  btn.disabled = true;
+  show('loadingView');
+  try {
+    await signInWithPopup(auth, provider);
+    // onAuthStateChanged below will take it from here
+  } catch (e) {
+    btn.disabled = false;
+    show('signinView');
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
+      // Popup blocked — fall back to redirect flow
+      try { await signInWithRedirect(auth, provider); return; } catch(_){}
+    }
+    showError(t('signinErr') + (e.code || e.message || 'unknown'));
+  }
+};
+
+window.doSignOut = async function(){
+  try { await signOut(auth); } catch(e){}
+  __currentProfile = null;
+  show('signinView');
+};
+
+window.goHome = function(){
+  const params = new URLSearchParams(location.search);
+  const ret = params.get('return');
+  // Only allow same-origin relative returns
+  if (ret && ret.startsWith('/') && !ret.startsWith('//')) {
+    location.replace(ret);
+  } else {
+    location.replace('./hub.html');
+  }
+};
+
+let __unsub = null;
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    if (__unsub) { try{__unsub();}catch(e){} __unsub = null; }
+    show('signinView');
+    return;
+  }
+  show('loadingView');
+  const userRef = ref(db, 'users/' + user.uid);
+  // First-time login: create record and bootstrap admins
+  let snap;
+  try { snap = await get(userRef); } catch(e){ console.warn(e); }
+  if (!snap || !snap.exists()) {
+    const boot = bootstrapFor(user.email);
+    const profile = {
+      email: user.email,
+      name: boot?.name || user.displayName || user.email.split('@')[0],
+      photoURL: user.photoURL || null,
+      status: boot ? 'approved' : 'pending',
+      role: boot?.role || null,
+      branch: boot?.branch || null,
+      createdAt: Date.now(),
+      approvedAt: boot ? Date.now() : null,
+      approvedBy: boot ? 'bootstrap' : null,
+    };
+    try { await set(userRef, profile); } catch(e){ showError('계정 생성 실패: ' + e.message); }
+  }
+  // Subscribe so manager approval applies live
+  if (__unsub) { try{__unsub();}catch(e){} }
+  __unsub = onValue(userRef, (snap2) => {
+    __currentProfile = snap2.val();
+    if (!__currentProfile) return;
+    show('statusView');
+    renderProfile();
+    // Auto-enter as soon as approved (covers both initial bootstrap and live approval)
+    if (__currentProfile.status === 'approved') {
+      // Keep the user on the status screen for ~1 second so they see "approved",
+      // then take them where they were headed
+      setTimeout(() => {
+        const params = new URLSearchParams(location.search);
+        const ret = params.get('return');
+        if (ret && ret.startsWith('/') && !ret.startsWith('//')) location.replace(ret);
+        else location.replace('./hub.html');
+      }, 800);
+    }
+  });
+});
+
+// Handle redirect-flow result if signInWithPopup fell back
+getRedirectResult(auth).catch(()=>{});
+</script>
+</body>
+</html>
