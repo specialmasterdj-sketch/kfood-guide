@@ -30,17 +30,17 @@
 
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
     { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
-    { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: 'https://specialmasterdj-sketch.github.io/kfood-guide/lookup.html', target: '_blank' },
+    { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: './lookup.html' },
     { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/' },
     { ic: '📄', lbl: { ko:'인보이스',       en:'Invoices',       es:'Facturas' },         href: './invoice-to-excel.html' },
 
     { sec: { ko:'트레이닝', en:'Training', es:'Capacitación' } },
-    { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/', target: '_blank' },
-    { ic: '🍱', lbl: { ko:'K-Food 가이드',  en:'K-Food Guide',     es:'Guía K-Food' },          href: 'https://specialmasterdj-sketch.github.io/kfood-guide/', target: '_blank' },
+    { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/' },
+    { ic: '🍱', lbl: { ko:'K-Food 가이드',  en:'K-Food Guide',     es:'Guía K-Food' },          href: 'https://specialmasterdj-sketch.github.io/kfood-guide/' },
 
     { sec: { ko:'기타', en:'Other', es:'Otros' } },
-    { ic: '🚚', lbl: { ko:'물류',          en:'Logistics', es:'Logística' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-logistics/', target: '_blank' },
-    { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/', target: '_blank' },
+    { ic: '🚚', lbl: { ko:'물류',          en:'Logistics', es:'Logística' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-logistics/' },
+    { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/' },
     { ic: '⊞',  lbl: { ko:'모든 앱',       en:'All Apps',  es:'Todas Apps' }, href: './apps.html' },
   ];
 
