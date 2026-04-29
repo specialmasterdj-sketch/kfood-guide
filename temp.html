@@ -455,9 +455,11 @@ img{max-width:100%}
     <h3>🖨 <span id="qrTitle">QR 스티커 출력</span></h3>
     <div style="font-size:.82em;color:#6b7280;margin-bottom:10px" id="qrHint">A4에 인쇄 → 코팅 → 각 장비에 부착. 빈 QR을 직접 스캔하면 자동으로 새 장비 등록창이 열립니다.</div>
     <div class="row2" style="margin-bottom:10px">
+      <div class="field"><label id="qrStartLbl">시작 번호</label><input type="number" id="qrStart" value="1" min="1" max="999"></div>
       <div class="field"><label id="qrCntLbl">QR 개수</label><input type="number" id="qrCnt" value="60" min="1" max="300"></div>
-      <div class="field"><label id="qrPrefixLbl">접두어</label><input type="text" id="qrPrefix" value="EQ" maxlength="6"></div>
     </div>
+    <div class="field" style="margin-bottom:10px"><label id="qrPrefixLbl">접두어</label><input type="text" id="qrPrefix" value="EQ" maxlength="6" oninput="onQrPrefixChange()"></div>
+    <div style="font-size:.78em;color:#6b7280;margin-bottom:10px" id="qrStartHint">💡 이미 인쇄한 번호가 있으면 자동으로 다음 번호가 채워집니다 (수정 가능).</div>
     <button onclick="renderQrSheet()" style="background:#0369a1;color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;width:100%;margin-bottom:10px">미리보기 생성</button>
     <div id="qrPrintArea"></div>
     <div class="actions">
@@ -561,6 +563,8 @@ const I18N = {
   lblSlot2:{ko:'☀️ 오후 슬롯',en:'☀️ Afternoon slot',es:'☀️ Tarde'},
   lblSlot3:{ko:'🌙 마감 슬롯',en:'🌙 Closing slot',es:'🌙 Cierre'},
   lblWindow:{ko:'🪟 슬롯 창 (분)',en:'🪟 Window (min)',es:'🪟 Ventana'},
+  qrStartLbl:{ko:'시작 번호',en:'Start #',es:'Núm. inicio'},
+  qrStartHint:{ko:'💡 이미 인쇄한 번호가 있으면 자동으로 다음 번호가 채워집니다 (수정 가능).',en:'💡 Auto-filled with the next number after the last printed one (editable).',es:'💡 Se llena automáticamente con el siguiente número después del último impreso (editable).'},
   qrCntLbl:{ko:'QR 개수',en:'QR count',es:'Cantidad'},
   qrPrefixLbl:{ko:'접두어',en:'Prefix',es:'Prefijo'},
   print:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
@@ -631,7 +635,7 @@ function applyLang(){
    'ipTempLbl','ipPhotoLbl','ipNoteLbl','newEqTitle','newEqHint','neQrLbl','neNameLbl','neTypeLbl','neLocLbl','neMinLbl','neMaxLbl',
    'assignTitle','assignHint','aDateLbl','aPersonLbl',
    'settingsTitle','lblSlot1','lblSlot2','lblSlot3','lblWindow',
-   'qrTitle','qrCntLbl','qrPrefixLbl','eqMgrTitle'
+   'qrTitle','qrStartLbl','qrStartHint','qrCntLbl','qrPrefixLbl','eqMgrTitle'
   ].forEach(id => { const el=$(id); if (el) {
     const key = id === 'kpiDangerLbl' ? 'kpiDanger' : id === 'kpiMissingLbl' ? 'kpiMissing' : id === 'kpiOkLbl' ? 'kpiOk' : id;
     el.textContent = t(key);
@@ -1323,25 +1327,53 @@ window.saveNewEq = async function(){
 };
 
 // =============== QR sheet ===============
+// 이미 사용된 QR 중 (저장된 마지막 인쇄번호 + EQUIPMENT에 등록된 번호) 의 최댓값 반환.
+// 다음 시작 번호 = 이 값 + 1
+function nextQrStartFor(prefix){
+  const pf = (prefix || 'EQ').toUpperCase().slice(0,6);
+  let max = 0;
+  // localStorage에 저장된 직전 인쇄 끝번호
+  try {
+    const saved = parseInt(localStorage.getItem('temp.qrLastN.' + BRANCH + '.' + pf) || '0', 10);
+    if (saved > max) max = saved;
+  } catch(e){}
+  // EQUIPMENT에 등록된 QR 중 같은 접두어 매치
+  const re = new RegExp('^' + (typeof QR_NS === 'string' ? QR_NS : '') + pf + '(\\d+)$');
+  (EQUIPMENT || []).forEach(eq => {
+    const m = (eq.qr || '').match(re);
+    if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+  });
+  return max + 1;
+}
 function openQrPrintSheet(){
   if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만':'Manager only', true); return; }
-  $('qrCnt').value = 60;
   $('qrPrefix').value = 'EQ';
+  $('qrCnt').value = 60;
+  $('qrStart').value = nextQrStartFor('EQ');
   $('qrPrintArea').innerHTML = '';
   $('qrOv').classList.add('show');
 }
+// 접두어 바뀌면 시작번호도 자동 재계산
+function onQrPrefixChange(){
+  const pf = ($('qrPrefix').value || 'EQ').toUpperCase().slice(0,6);
+  $('qrStart').value = nextQrStartFor(pf);
+}
+window.onQrPrefixChange = onQrPrefixChange;
 window.openQrPrintSheet = openQrPrintSheet;
 function renderQrSheet(){
   const cnt = Math.min(300, Math.max(1, parseInt($('qrCnt').value, 10) || 60));
   const prefix = ($('qrPrefix').value || 'EQ').toUpperCase().slice(0,6);
-  // Find next available number per branch
+  const startN = Math.max(1, parseInt($('qrStart').value, 10) || 1);
+  // 시작 번호부터 cnt개 생성, 이미 등록된 QR은 건너뛰고 다음 번호 사용
   const taken = new Set(EQUIPMENT.map(e => (e.qr||'')));
-  let n = 1, codes = [];
+  let n = startN, codes = [], lastN = startN;
   while (codes.length < cnt && n < 1000) {
     const id = makeQrId(prefix, n);
-    if (!taken.has(id)) codes.push(id);
+    if (!taken.has(id)) { codes.push(id); lastN = n; }
     n++;
   }
+  // 다음에 열 때 lastN+1부터 자동 제안되도록 저장
+  try { localStorage.setItem('temp.qrLastN.' + BRANCH + '.' + prefix, String(lastN)); } catch(e){}
   // Use Google Charts QR API as image generator (no library)
   const cells = codes.map(id => {
     const url = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(id);
