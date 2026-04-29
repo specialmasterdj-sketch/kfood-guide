@@ -1868,19 +1868,21 @@ window.setBranch = function(id){
 // hasn't pushed yet are skipped.
 async function fetchAllBranchPrices(){
   if (typeof BRANCHES === 'undefined') return;
-  for (const b of BRANCHES){
-    if (b.id === CURRENT_BRANCH) continue; // already streamed via subscribeProducts
+  // Parallel fetch of all non-current branches — sequential await on
+  // 5 × ~3 MB payloads kept users staring at "자료 없음" for 30+ seconds.
+  const others = BRANCHES.filter(b => b.id !== CURRENT_BRANCH);
+  await Promise.all(others.map(async (b) => {
     try {
       const snap = await get(ref(db, prodPath(b.id)));
       const remoteRaw = snap.val();
-      if (!remoteRaw) continue;
+      if (!remoteRaw) return;
       const rowsArr = rowsAsArray(remoteRaw.rows);
-      if (!rowsArr.length) continue;
+      if (!rowsArr.length) return;
       const remote = Object.assign({}, remoteRaw, { rows: rowsArr });
       try { localStorage.setItem('kimchi-products-override-' + b.id, JSON.stringify(remote)); } catch(e){}
       window.dispatchEvent(new CustomEvent('products-override', { detail: { branchId: b.id, remote } }));
     } catch(e){ /* offline / no data — skip */ }
-  }
+  }));
   console.info('[Firebase] all-branch price snapshot loaded');
 }
 fetchAllBranchPrices();
