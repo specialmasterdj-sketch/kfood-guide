@@ -273,6 +273,11 @@ img{max-width:100%}
 <!-- ============= MORE ============= -->
 <div class="page" id="page-more">
   <div class="big-actions">
+    <button class="big-btn" id="moreAuthBtn" onclick="onMoreAuthClick()">
+      <div class="ic" id="moreAuthIc">🔐</div>
+      <div class="body"><b id="moreAuthTitle">로그인</b><span class="sub" id="moreAuthSub">Google 계정으로 로그인</span></div>
+      <div class="arrow">›</div>
+    </button>
     <button class="big-btn" onclick="openAssignSheet()">
       <div class="ic">👤</div>
       <div class="body"><b id="moreAssignTitle">오늘 책임자 지정</b><span class="sub" id="moreAssignSub">매니저+ 만 가능</span></div>
@@ -637,6 +642,7 @@ function applyLang(){
   ['ipCancel','neCancel','aCancel','setCancel','qrCancel','eqMgrClose'].forEach(id => { const el=$(id); if (el) el.textContent = id==='eqMgrClose' ? t('close') : t('cancel'); });
   ['ipSave','neSave','aSave','setSave'].forEach(id => { const el=$(id); if (el) el.textContent = t('save'); });
   $('qrPrint').textContent = t('print');
+  if (typeof refreshAuthMenuState === 'function') refreshAuthMenuState();
   renderBranches();
   renderAll();
 }
@@ -1366,6 +1372,55 @@ async function forceRefresh(){
 }
 window.forceRefresh = forceRefresh;
 
+// =============== Auth menu (더보기 → 로그인) ===============
+// 현재 로그인 상태를 chat.me localStorage에서 읽어 메뉴 라벨 갱신.
+// 클릭: 비로그인 → auth.html, 로그인 상태 → 확인 후 로그아웃.
+function getCurrentMe(){
+  try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
+}
+function refreshAuthMenuState(){
+  const me = getCurrentMe();
+  const titleEl = document.getElementById('moreAuthTitle');
+  const subEl = document.getElementById('moreAuthSub');
+  const icEl = document.getElementById('moreAuthIc');
+  if (!titleEl || !subEl) return;
+  if (me && me.email) {
+    icEl.textContent = '👤';
+    titleEl.textContent = LANG==='ko' ? '계정' : (LANG==='es' ? 'Cuenta' : 'Account');
+    subEl.textContent = `${me.name || me.email} · ${LANG==='ko' ? '눌러서 로그아웃' : (LANG==='es' ? 'Pulse para salir' : 'Tap to sign out')}`;
+  } else {
+    icEl.textContent = '🔐';
+    titleEl.textContent = LANG==='ko' ? '로그인' : (LANG==='es' ? 'Iniciar sesión' : 'Sign in');
+    subEl.textContent = LANG==='ko' ? 'Google 계정으로 로그인' : (LANG==='es' ? 'Entrar con Google' : 'Sign in with Google');
+  }
+}
+async function onMoreAuthClick(){
+  const me = getCurrentMe();
+  if (!me || !me.email) {
+    // 로그인 페이지로 이동 (로그인 후 다시 temp.html로 복귀)
+    const ret = encodeURIComponent('/temp.html');
+    location.href = './auth.html?return=' + ret;
+    return;
+  }
+  const msg = LANG==='ko' ? `${me.name || me.email} 계정에서 로그아웃할까요?`
+            : (LANG==='es' ? `¿Cerrar sesión de ${me.email}?` : `Sign out from ${me.email}?`);
+  if (!confirm(msg)) return;
+  // Firebase Auth signOut (동적 import — auth-gate.js를 안 쓰는 페이지에서도 작동)
+  try {
+    const cfg = { apiKey:"AIzaSyDGZc-qPqtX6KxqxzC0n7iE0X_eOhLpqrM", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+    const [{ initializeApp, getApps, getApp }, { getAuth, signOut }] = await Promise.all([
+      import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
+    ]);
+    const app = getApps().length ? getApp() : initializeApp(cfg);
+    await signOut(getAuth(app));
+  } catch(e){ console.warn('signOut failed', e); }
+  try { localStorage.removeItem('chat.me'); } catch(e){}
+  location.href = './auth.html';
+}
+window.onMoreAuthClick = onMoreAuthClick;
+window.refreshAuthMenuState = refreshAuthMenuState;
+
 // =============== Page nav ===============
 function switchPage(p){
   PAGE = p;
@@ -1374,6 +1429,7 @@ function switchPage(p){
   document.querySelectorAll('.botnav button').forEach(b => b.classList.toggle('active', b.dataset.p === p));
   window.scrollTo({top:0,behavior:'smooth'});
   renderAll();
+  if (p === 'more' && typeof refreshAuthMenuState === 'function') refreshAuthMenuState();
 }
 window.switchPage = switchPage;
 function goBack(){
