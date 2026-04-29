@@ -78,8 +78,7 @@
       const v = localStorage.getItem(k);
       if (v && ['ko','en','es'].includes(v)) return v;
     }
-    const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
-    return ['ko','en','es'].includes(nav) ? nav : 'ko';
+    return 'en';
   }
   function pickLbl(v){
     if (!v) return '';
