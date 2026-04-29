@@ -706,9 +706,19 @@ window.addEventListener('DOMContentLoaded', () => {
 // localStorage cache populated by lookup's Firebase subscription. New
 // branches' prices appear the moment that branch's POS pushes a snapshot.
 const ALL_BRANCH_INDEX = {}; // { branchId: { byKey: {KEY: {PRICE, STOCK}} } }
+// Firebase converts arrays with non-sequential or large keys into plain
+// objects (e.g. {10292:{...}, 19125:{...}}). Coerce both shapes back to
+// an iterable list so indexing works for every branch.
+function rowsAsArray(payloadRows){
+  if (!payloadRows) return [];
+  if (Array.isArray(payloadRows)) return payloadRows;
+  if (typeof payloadRows === 'object') return Object.values(payloadRows);
+  return [];
+}
 function indexBranchPayload(payload){
   const byKey = Object.create(null);
-  for (const r of (payload?.rows || [])){
+  for (const r of rowsAsArray(payload?.rows)){
+    if (!r || typeof r !== 'object') continue;
     const norm = (s) => String(s || '').trim().toUpperCase();
     const keys = [norm(r.CODE), norm(r.FULL_BARCODE), norm(r.PID)];
     const entry = { PRICE: +r.PRICE || 0, STOCK: +r.STOCK || 0 };
@@ -1791,8 +1801,13 @@ function subscribeProducts(branchId){
   currentSub = branchId;
   if (!branchId) return;
   unsub = onValue(ref(db, prodPath(branchId)), (snap) => {
-    const remote = snap.val();
-    if (!remote || !Array.isArray(remote.rows) || !remote.rows.length) return;
+    const remoteRaw = snap.val();
+    if (!remoteRaw) return;
+    const rowsArr = rowsAsArray(remoteRaw.rows);
+    if (!rowsArr.length) return;
+    // Normalize so downstream code (PRODUCTS_DATA replacement, indexers) can
+    // iterate as a real array even when Firebase returned the object form.
+    const remote = Object.assign({}, remoteRaw, { rows: rowsArr });
     // Compare with local override; use newer one.
     let localTs = 0;
     try {
@@ -1842,8 +1857,11 @@ async function fetchAllBranchPrices(){
     if (b.id === CURRENT_BRANCH) continue; // already streamed via subscribeProducts
     try {
       const snap = await get(ref(db, prodPath(b.id)));
-      const remote = snap.val();
-      if (!remote || !Array.isArray(remote.rows) || !remote.rows.length) continue;
+      const remoteRaw = snap.val();
+      if (!remoteRaw) continue;
+      const rowsArr = rowsAsArray(remoteRaw.rows);
+      if (!rowsArr.length) continue;
+      const remote = Object.assign({}, remoteRaw, { rows: rowsArr });
       try { localStorage.setItem('kimchi-products-override-' + b.id, JSON.stringify(remote)); } catch(e){}
       window.dispatchEvent(new CustomEvent('products-override', { detail: { branchId: b.id, remote } }));
     } catch(e){ /* offline / no data — skip */ }
