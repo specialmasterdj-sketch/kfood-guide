@@ -5,7 +5,7 @@
 <title>김치마트 상품조회</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
-<script src="./nav-sidebar.js?v=3" defer></script>
+<script src="./nav-sidebar.js?v=2" defer></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="김치마트 상품조회">
@@ -737,6 +737,14 @@ function loadAllBranchPrices(){
     } catch(e){}
   }
 }
+// In-memory index update — used directly from products-override event detail
+// so we don't depend on localStorage (which silently fails with quota
+// exceeded when 5×3MB payloads exceed the 5-10MB origin limit, leaving
+// ALL_BRANCH_INDEX empty and every other branch showing "자료 없음").
+function setBranchIndexInMemory(branchId, payload){
+  if (!branchId || !payload) return;
+  ALL_BRANCH_INDEX[branchId] = indexBranchPayload(payload);
+}
 function lookupBranchEntry(p, branchId){
   const idx = ALL_BRANCH_INDEX[branchId];
   if (!idx) return null;
@@ -745,21 +753,13 @@ function lookupBranchEntry(p, branchId){
   for (const k of keys) if (k && idx.byKey[k]) return idx.byKey[k];
   return null;
 }
-// In-memory update — bypasses localStorage. With 5×3MB payloads the 5-10MB
-// origin quota silently rejects setItem, leaving loadAllBranchPrices reading
-// nothing and every other branch showing "자료 없음" forever. Indexing
-// straight from the products-override event detail keeps the comparison
-// table working regardless of localStorage success.
-function setBranchIndexInMemory(branchId, payload){
-  if (!branchId || !payload) return;
-  ALL_BRANCH_INDEX[branchId] = indexBranchPayload(payload);
-}
 loadAllBranchPrices();
 window.addEventListener('products-override', (ev) => {
-  // 1) Index from event detail directly
-  const d = ev && ev.detail;
-  if (d && d.branchId && d.remote) setBranchIndexInMemory(d.branchId, d.remote);
-  // 2) Refresh anything cached from prior sessions
+  // 1) Index from event detail directly — bypasses localStorage so quota
+  //    exceeded (5×3MB payloads) doesn't silently leave the index empty.
+  const d = ev.detail || {};
+  if (d.branchId && d.remote) setBranchIndexInMemory(d.branchId, d.remote);
+  // 2) Also pull from localStorage for branches that loaded on a prior session
   loadAllBranchPrices();
   // 3) Re-render the comparison rows of the currently displayed product so
   //    late-arriving branch data replaces "자료 없음" with the real price
