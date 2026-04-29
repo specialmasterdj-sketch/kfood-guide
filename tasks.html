@@ -295,6 +295,24 @@ button{font-family:inherit;cursor:pointer}
         <button type="button" id="aCatDelete" onclick="rmCatFromSelect()" title="이 카테고리 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">×</button>
       </div>
     </div>
+    <div class="field" id="displayPlaceField" style="display:none">
+      <label>📍 장소</label>
+      <select id="aDisplayPlace">
+        <option value="">— 장소 선택 (선택 시 업무명 앞에 표시) —</option>
+        <option value="1번 통로">1번 통로</option>
+        <option value="2번 통로">2번 통로</option>
+        <option value="3번 통로">3번 통로</option>
+        <option value="4번 통로">4번 통로</option>
+        <option value="5번 통로">5번 통로</option>
+        <option value="6번 통로">6번 통로</option>
+        <option value="7번 통로">7번 통로</option>
+        <option value="누들 냉장">누들 냉장</option>
+        <option value="김치 냉장">김치 냉장</option>
+        <option value="soup 냉장">soup 냉장</option>
+        <option value="술 냉장">술 냉장</option>
+        <option value="음료수 냉장">음료수 냉장</option>
+      </select>
+    </div>
     <div class="field" id="cashierStagesField" style="display:none">
       <label id="stagesLabel">🛒 캐셔 4교대 시간</label>
       <div id="cashierStagesGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px"></div>
@@ -736,6 +754,13 @@ function populateTaskCheckList(){
       </label>
     `).join('')}
   `).join('');
+  // 체크박스 토글 시 장소 필드 노출 재평가 (진열 항목 체크 시 표시)
+  el.querySelectorAll('.task-pick').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const placeField = document.getElementById('displayPlaceField');
+      if (placeField) placeField.style.display = isDisplayCategoryActive() ? '' : 'none';
+    });
+  });
 }
 // Categories that always go out as a single bundled checklist (the manager
 // only picks deadline + assignee; every item in the category becomes a
@@ -795,6 +820,13 @@ function getCashierItemsByStage(cat){
   if (cursor < all.length) out[out.length - 1].items.push(...all.slice(cursor));
   return out;
 }
+// 진열 카테고리 활성 여부 — 카테고리 드롭다운이 진열이거나, 멀티체크에서 진열 항목이 1개라도 체크된 경우
+function isDisplayCategoryActive(){
+  const cat = document.getElementById('aCat')?.value;
+  if (cat === '진열') return true;
+  const checked = document.querySelectorAll('.task-pick:checked');
+  return Array.from(checked).some(cb => cb.dataset.cat === '진열');
+}
 function onChecklistToggle(){
   const cb = document.getElementById('aChecklist');
   const cat = document.getElementById('aCat').value;
@@ -802,6 +834,9 @@ function onChecklistToggle(){
   const items = checklistItemsFor(cat);
   const cntEl = document.getElementById('aChecklistCount');
   if (cntEl) cntEl.textContent = items.length ? `(${items.length}개 항목)` : '';
+  // 진열 카테고리에서만 장소 선택 필드 노출 (드롭다운 진열 OR 멀티체크 진열 항목)
+  const placeField = document.getElementById('displayPlaceField');
+  if (placeField) placeField.style.display = isDisplayCategoryActive() ? '' : 'none';
   const stagesField = document.getElementById('cashierStagesField');
   if (cb && cb.checked) {
     const name = (cat==='기타' ? '일일 체크리스트' : cat + ' 일일 체크리스트');
@@ -2163,6 +2198,15 @@ async function sendAssign(){
   }
   if (!name && !STAGE_MODE_CATS.includes(cat)) { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
   if (!to && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
+  // 진열 활성 시(드롭다운 진열 OR 멀티체크 진열 항목) 장소 선택값을 업무명 앞에 [장소] prefix
+  const displayActive = (cat === '진열') || pickedItems.some(it => it.cat === '진열');
+  if (displayActive) {
+    const placeEl = document.getElementById('aDisplayPlace');
+    const place = placeEl ? placeEl.value : '';
+    if (place && !name.startsWith('[' + place + ']')) {
+      name = '[' + place + '] ' + name;
+    }
+  }
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
   // Translate name + note into ko/en/es so any employee sees it in their language
