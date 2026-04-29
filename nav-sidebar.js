@@ -31,7 +31,7 @@
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
     { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
     { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: 'https://specialmasterdj-sketch.github.io/kfood-guide/lookup.html', target: '_blank' },
-    { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/', target: '_blank' },
+    { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/' },
     { ic: '📄', lbl: { ko:'인보이스',       en:'Invoices',       es:'Facturas' },         href: './invoice-to-excel.html' },
 
     { sec: { ko:'트레이닝', en:'Training', es:'Capacitación' } },
@@ -71,8 +71,8 @@
   style.textContent = css;
   document.head.appendChild(style);
 
-  // Pick the active language — try all keys other pages use, fall back to nav language
-  const LANG_KEYS = ['tasks.lang','kimchi_lang','hub.lang'];
+  // kimchi_lang is the primary key — all pages must set it; tasks.lang is checked last
+  const LANG_KEYS = ['kimchi_lang','hub.lang','tasks.lang'];
   function currentLang(){
     for (const k of LANG_KEYS) {
       const v = localStorage.getItem(k);
@@ -130,6 +130,8 @@
   window.addEventListener('storage', e => { if (LANG_KEYS.includes(e.key) || e.key === 'chat.me') renderInner(); });
   window.addEventListener('km-lang-changed', renderInner);
   window.addEventListener('km-identity-changed', renderInner);
+  // Re-render after page's own inline scripts have run (they set kimchi_lang before DOMContentLoaded)
+  document.addEventListener('DOMContentLoaded', renderInner);
 
   function mount(){
     document.body.appendChild(aside);

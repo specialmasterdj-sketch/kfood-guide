@@ -6,7 +6,7 @@
 <title>김치마트 — 공지</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
-<script src="./nav-sidebar.js?v=3" defer></script>
+<script src="./nav-sidebar.js?v=4" defer></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px}
@@ -97,12 +97,17 @@ input[type=file]{display:none}
 <body>
 
 <div class="topbar">
-  <button class="back" onclick="location.href='hub.html'">←</button>
-  <div class="brand"><div class="logo">K</div><span>📣 공지</span></div>
+  <button class="back" onclick="if(history.length>1)history.back();else location.href='./apps.html'">←</button>
+  <div class="brand"><div class="logo">K</div><span id="upBrand">📣 Announcements</span></div>
   <div class="spacer"></div>
+  <div style="display:flex;gap:4px;margin-right:8px">
+    <button onclick="setLang('en')" data-ul="en" style="background:#f4f6f9;color:#6b7280;border:1px solid #e5e7eb;border-radius:6px;padding:3px 8px;font-size:.72em;font-weight:700;cursor:pointer">EN</button>
+    <button onclick="setLang('es')" data-ul="es" style="background:#f4f6f9;color:#6b7280;border:1px solid #e5e7eb;border-radius:6px;padding:3px 8px;font-size:.72em;font-weight:700;cursor:pointer">ES</button>
+    <button onclick="setLang('ko')" data-ul="ko" style="background:#f4f6f9;color:#6b7280;border:1px solid #e5e7eb;border-radius:6px;padding:3px 8px;font-size:.72em;font-weight:700;cursor:pointer">KO</button>
+  </div>
   <button class="me-pill" id="mePill" onclick="openMeModal()">
     <div class="av" id="meAv">?</div>
-    <span id="meName">이름 선택</span>
+    <span id="meName" data-up="me_select">Select name</span>
   </button>
 </div>
 
@@ -222,13 +227,79 @@ const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
 const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
 
+// ===== LANGUAGE =====
+let LANG = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || localStorage.getItem('tasks.lang') || 'en';
+const UP_T = {
+  en: {
+    brand:'📣 Announcements', me_select:'Select name',
+    filter_all:'📋 All', filter_urgent:'🚨 Urgent/Important', filter_branch:'🏢 My Branch', filter_mine:'✏ My Posts',
+    empty_no:'No announcements yet.', empty_hint:'Tap the ＋ button to create one.',
+    aud_all:'All Staff', aud_mgr:'Managers Only',
+    pri_urgent:'🚨 Urgent', pri_important:'⚠ Important',
+    del:'🗑 Delete',
+    just_now:'just now', min_ago:'m ago', hr_ago:'h ago',
+    mgr_can:'👔 Manager (role: $r) — can post', staff_only:'Staff (role: $r) — read only',
+    toast_name:'Please enter your name', toast_mgr_only:'Only managers can post announcements',
+    back:'← Apps',
+  },
+  es: {
+    brand:'📣 Avisos', me_select:'Seleccionar nombre',
+    filter_all:'📋 Todo', filter_urgent:'🚨 Urgente/Importante', filter_branch:'🏢 Mi Sucursal', filter_mine:'✏ Mis Posts',
+    empty_no:'No hay avisos aún.', empty_hint:'Toca ＋ para crear uno.',
+    aud_all:'Todo el personal', aud_mgr:'Solo gerentes',
+    pri_urgent:'🚨 Urgente', pri_important:'⚠ Importante',
+    del:'🗑 Eliminar',
+    just_now:'ahora', min_ago:'min', hr_ago:'h',
+    mgr_can:'👔 Gerente (rol: $r) — puede publicar', staff_only:'Personal (rol: $r) — solo lectura',
+    toast_name:'Ingresa tu nombre', toast_mgr_only:'Solo gerentes pueden publicar',
+    back:'← Apps',
+  },
+  ko: {
+    brand:'📣 공지', me_select:'이름 선택',
+    filter_all:'📋 전체', filter_urgent:'🚨 긴급/중요', filter_branch:'🏢 우리 지점', filter_mine:'✏ 내가 쓴 글',
+    empty_no:'아직 공지가 없습니다.', empty_hint:'우측 하단 ＋ 버튼으로 새 공지를 작성하세요.',
+    aud_all:'전 직원', aud_mgr:'매니저만',
+    pri_urgent:'🚨 긴급', pri_important:'⚠ 중요',
+    del:'🗑 삭제',
+    just_now:'방금', min_ago:'분 전', hr_ago:'시간 전',
+    mgr_can:'👔 매니저 권한 (역할: $r) — 공지 작성 가능', staff_only:'일반 직원 (역할: $r) — 읽기만 가능',
+    toast_name:'이름을 입력하세요', toast_mgr_only:'매니저만 공지를 작성할 수 있습니다',
+    back:'← Apps',
+  }
+};
+function t(k){ return (UP_T[LANG] || UP_T.en)[k] || (UP_T.en)[k] || k; }
+function setLang(l){
+  if (!['ko','en','es'].includes(l)) return;
+  LANG = l;
+  localStorage.setItem('kimchi_lang', l);
+  localStorage.setItem('hub.lang', l);
+  localStorage.setItem('tasks.lang', l);
+  applyUpLang();
+  window.dispatchEvent(new CustomEvent('km-lang-changed', { detail: l }));
+}
+function applyUpLang(){
+  const el = document.getElementById('upBrand'); if (el) el.textContent = t('brand');
+  const mn = document.getElementById('meName'); if (mn && !me) mn.textContent = t('me_select');
+  document.querySelectorAll('[data-ul]').forEach(b => {
+    const isActive = b.dataset.ul === LANG;
+    b.style.background = isActive ? '#1a5c3a' : '#f4f6f9';
+    b.style.color = isActive ? '#fff' : '#6b7280';
+    b.style.borderColor = isActive ? '#1a5c3a' : '#e5e7eb';
+  });
+  renderFeed();
+}
+window.addEventListener('km-lang-changed', e => { if (e.detail && e.detail !== LANG) { LANG = e.detail; applyUpLang(); } });
+window.addEventListener('storage', e => {
+  if (e.key === 'kimchi_lang' && e.newValue && e.newValue !== LANG) { LANG = e.newValue; applyUpLang(); }
+});
+
 const BRANCHES = [
-  { id:'MIAMI',         ko:'마이애미' },
-  { id:'PEMBROKE_PINES',ko:'펨브로크 파인즈' },
-  { id:'HOLLYWOOD',     ko:'할리우드' },
-  { id:'CORAL_SPRINGS', ko:'코럴 스프링스' },
-  { id:'LASOLAS',       ko:'라스올라스' },
-  { id:'WEST_PALM',     ko:'웨스트 팜 비치' },
+  { id:'MIAMI',         ko:'마이애미',       en:'Miami',         es:'Miami' },
+  { id:'PEMBROKE_PINES',ko:'펨브로크 파인즈', en:'Pembroke Pines',es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',     ko:'할리우드',        en:'Hollywood',     es:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스',   en:'Coral Springs', es:'Coral Springs' },
+  { id:'LASOLAS',       ko:'라스올라스',      en:'Las Olas',      es:'Las Olas' },
+  { id:'WEST_PALM',     ko:'웨스트 팜 비치',  en:'West Palm',     es:'West Palm' },
 ];
 const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
 const COLORS = ['#22c55e','#3b82f6','#a855f7','#ec4899','#f59e0b','#ef4444','#06b6d4','#0ea5e9','#84cc16','#f97316'];
@@ -247,12 +318,13 @@ function isManagerRole(role){
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtTimeAgo(ts){
   const diff = (Date.now() - ts) / 1000;
-  if (diff < 60) return '방금';
-  if (diff < 3600) return Math.floor(diff/60) + '분 전';
-  if (diff < 86400) return Math.floor(diff/3600) + '시간 전';
+  if (diff < 60) return t('just_now');
+  if (diff < 3600) return Math.floor(diff/60) + t('min_ago');
+  if (diff < 86400) return Math.floor(diff/3600) + t('hr_ago');
   const d = new Date(ts);
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
 }
+function branchName(b){ return b ? (b[LANG] || b.en || b.ko) : ''; }
 function showToast(msg, color){
   const t = document.getElementById('toast');
   t.textContent = msg; t.style.background = color || '#1a5c3a'; t.style.display = 'block';
@@ -309,7 +381,7 @@ function saveMe(){
   const selRole = sel.options[sel.selectedIndex]?.dataset.role || '';
   const fromCustom = document.getElementById('meCustom').value.trim();
   const name = fromCustom || fromSel;
-  if (!name) { showToast('이름을 입력하세요', '#dc2626'); return; }
+  if (!name) { showToast(t('toast_name'), '#dc2626'); return; }
   let role = selRole;
   if (!role && fromCustom) {
     try {
@@ -330,7 +402,7 @@ function refreshMePill(){
   document.getElementById('meAv').textContent = initialsOf(me.name);
   document.getElementById('meAv').style.background = me.color || '#1a5c3a';
   const branch = BRANCH_BY_ID[me.branch];
-  document.getElementById('meName').textContent = (me.isManager ? '👔 ' : '') + me.name + (branch ? ' · ' + branch.ko : '');
+  document.getElementById('meName').textContent = (me.isManager ? '👔 ' : '') + me.name + (branch ? ' · ' + branchName(branch) : '');
 }
 function refreshComposeFab(){
   const fab = document.getElementById('composeFab');
@@ -345,10 +417,10 @@ let FILTER = localStorage.getItem('updates.filter') || 'all';   // all | unread 
 function renderFilters(){
   const cont = document.getElementById('filters');
   const opts = [
-    { id:'all',     label:'📋 전체' },
-    { id:'urgent',  label:'🚨 긴급/중요' },
-    { id:'mybranch',label:`🏢 우리 지점` },
-    me?.isManager ? { id:'mine', label:'✏ 내가 쓴 글' } : null,
+    { id:'all',      label: t('filter_all') },
+    { id:'urgent',   label: t('filter_urgent') },
+    { id:'mybranch', label: t('filter_branch') },
+    me?.isManager ? { id:'mine', label: t('filter_mine') } : null,
   ].filter(Boolean);
   cont.innerHTML = opts.map(o => `<div class="chip ${o.id===FILTER?'active':''}" onclick="setFilter('${o.id}')">${o.label}</div>`).join('');
 }
@@ -375,7 +447,7 @@ function renderFeed(){
   const feed = document.getElementById('feed');
   const list = visibleUpdates();
   if (list.length === 0) {
-    feed.innerHTML = `<div class="empty"><div class="ico">📣</div><div>아직 공지가 없습니다.</div>${me?.isManager ? '<div style="font-size:.85em;margin-top:6px">우측 하단 ＋ 버튼으로 새 공지를 작성하세요.</div>' : ''}</div>`;
+    feed.innerHTML = `<div class="empty"><div class="ico">📣</div><div>${t('empty_no')}</div>${me?.isManager ? `<div style="font-size:.85em;margin-top:6px">${t('empty_hint')}</div>` : ''}</div>`;
     return;
   }
   feed.innerHTML = list.map(u => renderCard(u)).join('');
@@ -383,17 +455,17 @@ function renderFeed(){
 function renderCard(u){
   const mine = me && u.author === me.name && u.authorBranch === me.branch;
   const branch = BRANCH_BY_ID[u.authorBranch];
-  const branchTxt = branch ? branch.ko : '';
-  const audLabel = u.audience === 'all' ? '전 직원'
-    : u.audience === 'managers' ? '매니저만'
-    : (BRANCH_BY_ID[u.audience]?.ko || u.audience);
+  const branchTxt = branchName(branch);
+  const audLabel = u.audience === 'all' ? t('aud_all')
+    : u.audience === 'managers' ? t('aud_mgr')
+    : branchName(BRANCH_BY_ID[u.audience]) || u.audience;
   const audClass = u.audience === 'managers' ? 'audience managers' : 'audience';
   const photosHtml = (u.photos && u.photos.length)
     ? `<div class="photos n${Math.min(u.photos.length,6)}">${u.photos.map(url => `<img src="${url}" onclick="openLightbox('${url}')">`).join('')}</div>`
     : '';
   const priClass = u.priority === 'urgent' ? 'priority-urgent' : u.priority === 'important' ? 'priority-important' : '';
-  const priBadge = u.priority === 'urgent' ? '<span class="badge urgent">🚨 긴급</span>'
-                  : u.priority === 'important' ? '<span class="badge important">⚠ 중요</span>'
+  const priBadge = u.priority === 'urgent' ? `<span class="badge urgent">${t('pri_urgent')}</span>`
+                  : u.priority === 'important' ? `<span class="badge important">${t('pri_important')}</span>`
                   : '';
   const color = u.color || colorFor(u.author || '?');
   return `<div class="update ${priClass} ${mine?'mine':''}" data-id="${u.id}">
@@ -408,14 +480,14 @@ function renderCard(u){
     ${u.title ? `<h3>${escapeHtml(u.title)}</h3>` : ''}
     ${u.body ? `<div class="body">${escapeHtml(u.body)}</div>` : ''}
     ${photosHtml}
-    ${mine ? `<div class="actions"><button class="del" onclick="deleteUpdate('${u.id}')">🗑 삭제</button></div>` : ''}
+    ${mine ? `<div class="actions"><button class="del" onclick="deleteUpdate('${u.id}')">${t('del')}</button></div>` : ''}
   </div>`;
 }
 
 // ===== COMPOSER =====
 function openComposeModal(){
   if (!ensureMe()) return;
-  if (!me.isManager) { showToast('매니저만 공지를 작성할 수 있습니다', '#dc2626'); return; }
+  if (!me.isManager) { showToast(t('toast_mgr_only'), '#dc2626'); return; }
   document.getElementById('cTitle').value = '';
   document.getElementById('cBody').value = '';
   document.getElementById('cPriority').value = 'normal';
@@ -562,10 +634,11 @@ setTimeout(() => { if (!window.__fb) fetchRest(); }, 2500);
 // expose
 Object.assign(window, {
   openMeModal, saveMe, renderMeNames, openComposeModal, postUpdate,
-  handleFiles, removeAttach, deleteUpdate, openLightbox, closeOverlay, setFilter,
+  handleFiles, removeAttach, deleteUpdate, openLightbox, closeOverlay, setFilter, setLang,
 });
 
 // ===== INIT =====
+applyUpLang();
 if (me) { refreshMePill(); refreshComposeFab(); } else { openMeModal(); }
 fetchRest();
 renderFeed();
