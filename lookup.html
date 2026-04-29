@@ -743,7 +743,15 @@ function lookupBranchEntry(p, branchId){
   return null;
 }
 loadAllBranchPrices();
-window.addEventListener('products-override', () => loadAllBranchPrices());
+window.addEventListener('products-override', () => {
+  loadAllBranchPrices();
+  // Re-render the comparison rows of the currently displayed product so
+  // late-arriving branch data replaces "자료 없음" with the real price
+  // automatically, without the user having to search again.
+  if (typeof __LAST_SINGLE_RESULT !== 'undefined' && __LAST_SINGLE_RESULT && typeof showSingleResult === 'function') {
+    try { showSingleResult(__LAST_SINGLE_RESULT); } catch(e){}
+  }
+});
 
 function getPrice(p, branch){
   const b = branch || CURRENT_BRANCH;
@@ -1450,11 +1458,16 @@ function doSearch() {
   }
 }
 
+// Track the last single-result so async branch data arrivals can re-render
+// the comparison rows ("자료 없음" → real prices) without forcing the user
+// to click 검색 again.
+let __LAST_SINGLE_RESULT = null;
 function showResults(results, query) {
   const area = document.getElementById('result-area');
   const status = document.getElementById('status-bar');
 
   if (results.length === 0) {
+    __LAST_SINGLE_RESULT = null;
     area.innerHTML = `
       <div class="not-found">
         <div class="not-found-icon">🔍</div>
@@ -1469,9 +1482,11 @@ function showResults(results, query) {
   }
 
   if (results.length === 1) {
+    __LAST_SINGLE_RESULT = results[0];
     showSingleResult(results[0]);
     status.innerHTML = `<span style="color:var(--green)">✅ 상품 발견</span>`;
   } else {
+    __LAST_SINGLE_RESULT = null;
     showMultipleResults(results, query);
     status.innerHTML = `<span style="color:#555">📋 ${results.length}개 결과 발견</span>`;
   }
