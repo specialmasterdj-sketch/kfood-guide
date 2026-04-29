@@ -197,7 +197,7 @@ a{color:inherit;text-decoration:none}
     <span id="meName" data-t="me_select">이름 선택</span>
   </button>
   <button onclick="resetCache()" title="캐시 초기화" style="background:transparent;border:0;font-size:1.1em;cursor:pointer;padding:0 4px;color:#9ca3af">🔄</button>
-  <span style="font-size:.65em;color:#9ca3af;font-weight:600">v12</span>
+  <span style="font-size:.65em;color:#9ca3af;font-weight:600">v13</span>
 </div>
 
 <div class="shell">
@@ -840,11 +840,14 @@ function renderRooms(){
   const list = document.getElementById('roomsList');
   const items = Object.entries(ROOMS)
     .filter(([id, r]) => {
-      // 'payroll' = 매니저+, 'managers' = 매니저, 그 외 모든 룸은 누구나 표시
-      if (id === 'payroll') return canAccessPayrollRoom();
-      if (id === 'managers') return !!me?.isManager;
+      // 권한 체크 (통과 못하면 숨김, 검색 무관)
+      if (id === 'payroll' && !canAccessPayrollRoom()) return false;
+      if (id === 'managers' && !me?.isManager) return false;
+      // 검색 필터 — 모든 방에 동등 적용
       if (ROOM_QUERY) {
-        const hay = (r.name + ' ' + (r.desc||'') + ' ' + (r.lastMsg||'')).toLowerCase();
+        const nm = roomLocalName(id, r);
+        const ds = roomLocalDesc(id, r);
+        const hay = (nm + ' ' + ds + ' ' + (r.lastMsg||'')).toLowerCase();
         if (!hay.includes(ROOM_QUERY)) return false;
       }
       if (ROOM_FILTER === 'unread' && !(r.unread > 0)) return false;
@@ -853,8 +856,13 @@ function renderRooms(){
     })
     .sort((a,b) => (b[1].lastTs||0) - (a[1].lastTs||0));
   if (items.length === 0) {
-    const noRoomsTxt = {ko:'방이 없습니다.<br>＋ 버튼으로 만드세요.', en:'No rooms yet.<br>Use ＋ to create one.', es:'Sin salas.<br>Usa ＋ para crear una.'};
-    list.innerHTML = `<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">${noRoomsTxt[LANG] || noRoomsTxt.ko}</div>`;
+    if (ROOM_QUERY) {
+      const clearTxt = {ko:`"${ROOM_QUERY}" 검색 결과 없음.<br><button onclick="document.getElementById('roomSearch').value='';ROOM_QUERY='';renderRooms()" style="margin-top:8px;background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:5px 14px;font-size:.85em;cursor:pointer">검색 지우기</button>`, en:`No results for "${ROOM_QUERY}".<br><button onclick="document.getElementById('roomSearch').value='';ROOM_QUERY='';renderRooms()" style="margin-top:8px;background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:5px 14px;font-size:.85em;cursor:pointer">Clear search</button>`, es:`Sin resultados para "${ROOM_QUERY}".<br><button onclick="document.getElementById('roomSearch').value='';ROOM_QUERY='';renderRooms()" style="margin-top:8px;background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:5px 14px;font-size:.85em;cursor:pointer">Limpiar búsqueda</button>`};
+      list.innerHTML = `<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">${clearTxt[LANG] || clearTxt.ko}</div>`;
+    } else {
+      const noRoomsTxt = {ko:'방이 없습니다.<br>＋ 버튼으로 만드세요.', en:'No rooms yet.<br>Use ＋ to create one.', es:'Sin salas.<br>Usa ＋ para crear una.'};
+      list.innerHTML = `<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">${noRoomsTxt[LANG] || noRoomsTxt.ko}</div>`;
+    }
     return;
   }
   list.innerHTML = items.map(([id, r]) => {
@@ -1412,12 +1420,12 @@ function loadRoomsRest(){
     }
     ensureDefaultRooms();
     renderRooms();
-    if (shouldAutoRestoreRoom()) openRoom(ACTIVE_ROOM);
+    if (shouldAutoRestoreRoom() && !__unsubMsgs) openRoom(ACTIVE_ROOM);
   }).catch(() => {
     // load just defaults
     DEFAULT_ROOMS.forEach(r => { ROOMS[r.id] = { name: typeof r.name==='object'?r.name.ko:r.name, desc: typeof r.desc==='object'?r.desc.ko:r.desc }; });
     renderRooms();
-    if (shouldAutoRestoreRoom()) openRoom(ACTIVE_ROOM);
+    if (shouldAutoRestoreRoom() && !__unsubMsgs) openRoom(ACTIVE_ROOM);
   });
 }
 function subscribeRooms(){
@@ -1428,8 +1436,8 @@ function subscribeRooms(){
     Object.entries(d).forEach(([id, r]) => { ROOMS[id] = Object.assign(ROOMS[id]||{}, r); });
     ensureDefaultRooms();
     renderRooms();
-    if (shouldAutoRestoreRoom() && ROOMS[ACTIVE_ROOM] && !document.getElementById('composer').style.display) {
-      // rooms loaded after page mount — open the previously active one (desktop only)
+    if (shouldAutoRestoreRoom() && ROOMS[ACTIVE_ROOM] && !__unsubMsgs) {
+      // rooms loaded after page mount — open the previously active one (desktop only, once)
       openRoom(ACTIVE_ROOM);
     }
   });
