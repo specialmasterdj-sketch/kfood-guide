@@ -144,6 +144,9 @@ a{color:inherit;text-decoration:none}
 .fwd-room-item:hover{background:#f0fdf4}
 .fwd-room-item .nm{font-weight:700;font-size:.95em}
 .fwd-room-item .ds{font-size:.78em;color:#9ca3af;margin-top:2px}
+
+/* DATE BADGE — 보낸이 옆에 며칠 전 표시 (오늘이 아닌 경우만) */
+.date-badge{display:inline-block;font-size:.72em;font-weight:700;background:#fef3c7;color:#92400e;border-radius:8px;padding:2px 7px;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
 .rxn-picker button{background:none;border:0;font-size:1.5em;padding:4px 6px;cursor:pointer;border-radius:8px;line-height:1}
 .rxn-picker button:hover{background:#f3f4f6;transform:scale(1.2)}
 
@@ -1080,11 +1083,13 @@ function renderMessages(){
       ? `<div class="fwd-from">↗ ${({ko:'전달됨',en:'Forwarded',es:'Reenviado'}[LANG]||'전달됨')}: ${escapeHtml(m.forwardedFrom.sender||'')}${m.forwardedFrom.senderBranch?(' · '+escapeHtml((BRANCH_BY_ID[m.forwardedFrom.senderBranch]?.[LANG])||m.forwardedFrom.senderBranch)):''}</div>`
       : '';
     const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'전달',en:'Forward',es:'Reenviar'}[LANG]||'전달')}</button>` : '';
+    const dateBadge = fmtMsgDateBadge(d);
+    const dateBadgeHtml = dateBadge ? ` <span class="date-badge">${escapeHtml(dateBadge)}</span>` : '';
     html += `<div class="msg ${mine?'mine':''}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
         ${delBtn}
-        <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}</div>
+        <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}${dateBadgeHtml}</div>
         ${fwdHeader}
         ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
         ${photoHtml}
@@ -1097,14 +1102,16 @@ function renderMessages(){
   cont.innerHTML = html;
   cont.scrollTop = cont.scrollHeight;
 }
-// 오늘이면 시간만, 다른 날이면 'M/D HH:MM' 형식
+// 시간만 (HH:MM) — 시간은 항상 메시지 하단에 단독 표시
 function fmtMsgTime(d){
   if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
-  const t = new Date();
-  const today = t.toDateString();
-  const time = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
-  if (d.toDateString() === today) return time;
-  return (d.getMonth()+1) + '/' + d.getDate() + ' ' + time;
+  return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+}
+// 오늘이 아니면 'M/D' 라벨 — 보낸이 옆에 표시 (며칠 전 글인지 즉시 인지)
+function fmtMsgDateBadge(d){
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+  if (d.toDateString() === new Date().toDateString()) return '';
+  return (d.getMonth()+1) + '/' + d.getDate();
 }
 function dayLabel(d){
   const t = new Date();
@@ -1272,14 +1279,17 @@ function renderReplies(m){
       const r = replies[id];
       const branch = BRANCH_BY_ID[r.senderBranch];
       const branchTxt = branch ? ' · ' + (branch[LANG] || branch.ko) : '';
-      const t = fmtMsgTime(new Date(r.ts||0));
+      const rd = new Date(r.ts||0);
+      const t = fmtMsgTime(rd);
+      const replyDateBadge = fmtMsgDateBadge(rd);
+      const rdBadge = replyDateBadge ? ` <span class="date-badge">${escapeHtml(replyDateBadge)}</span>` : '';
       const mine = me && r.sender === me.name && r.senderBranch === me.branch;
       const delBtn = mine ? `<button class="del-reply" title="삭제" onclick="deleteReply('${m.id}','${id}')">✕</button>` : '';
       html += `<div class="reply">
         <div class="av-sm" style="background:${r.color || colorFor(r.sender||'?')}">${initialsOf(r.sender)}</div>
         <div class="reply-body">
           ${delBtn}
-          <div class="who-sm">${escapeHtml(r.sender||'?')}${escapeHtml(branchTxt)}</div>
+          <div class="who-sm">${escapeHtml(r.sender||'?')}${escapeHtml(branchTxt)}${rdBadge}</div>
           <div class="text">${escapeHtml(r.text||'')}</div>
           <div class="ts-sm">${t}</div>
         </div>
