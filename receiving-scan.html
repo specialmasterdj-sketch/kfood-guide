@@ -381,10 +381,10 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
     <h3>📚 <span id="lblMasterTitle">상품 바코드 마스터</span></h3>
     <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblMasterDesc">스캔해도 인식되도록 미리 등록된 바코드. 엑셀로 일괄 등록 가능.</div>
     <div class="row2" style="margin-bottom:10px">
-      <button class="btn sec" onclick="document.getElementById('masterFile').click()">📥 <span id="lblMasterImport">엑셀 가져오기</span></button>
+      <label class="btn sec" for="masterFile" style="cursor:pointer">📥 <span id="lblMasterImport">엑셀 가져오기</span></label>
       <button class="btn sec" onclick="exportMaster()">📤 <span id="lblMasterExport">엑셀 내보내기</span></button>
     </div>
-    <input type="file" id="masterFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="importMaster(event)">
+    <input type="file" id="masterFile" accept=".xlsx,.xls,.csv,.xlsm,.txt" style="position:absolute;left:-9999px;opacity:0" onchange="importMaster(event)">
     <div class="field">
       <label id="lblMasterSearch">검색</label>
       <input type="text" id="masterSearch" placeholder="바코드 또는 상품명" oninput="renderMasterList()">
@@ -1222,6 +1222,12 @@ function importMaster(ev){
       const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      if (!rows.length) {
+        toast(({ko:'파일이 비어있음',en:'Empty file',es:'Archivo vacío'}[LANG]||''), 'err');
+        ev.target.value = '';
+        return;
+      }
+      const detectedCols = Object.keys(rows[0] || {}).join(', ');
       let added = 0;
       rows.forEach(r => {
         const k = Object.keys(r);
@@ -1241,10 +1247,21 @@ function importMaster(ev){
         added++;
       });
       saveMaster();
-      toast('✓ ' + added + ' ' + ({ko:'개 추가',en:'added',es:'añadidos'}[LANG]||''), 'ok');
+      if (added === 0) {
+        // 컬럼 인식 실패 — 사용자에게 감지된 컬럼 보여줌
+        alert(({ko:'⚠️ 바코드 컬럼을 찾지 못함\n\n파일에서 감지된 컬럼:\n',en:'⚠️ No barcode column found\n\nDetected columns:\n',es:'⚠️ Sin columna código\n\nDetectado:\n'}[LANG]||'') + detectedCols + '\n\n' + ({ko:'필요한 컬럼명 (대소문자·공백 무관):\n· 바코드 / barcode / upc / ean (필수)\n· 상품명 / name (선택)\n· 상품코드 / code / sku (선택)\n· 벤더 / vendor (선택)',en:'Required (case-insensitive):\n· barcode / 바코드 / upc / ean (required)\n· name / 상품명 (optional)\n· code / sku (optional)\n· vendor (optional)',es:'Requerido:\n· barcode / 바코드 / upc / ean'}[LANG]||''));
+      } else {
+        toast('✓ ' + added + ' ' + ({ko:'개 추가',en:'added',es:'añadidos'}[LANG]||''), 'ok');
+      }
       renderMasterList();
-    } catch(err) { toast(({ko:'파일 오류',en:'File error',es:'Error'}[LANG]||''), 'err'); }
+    } catch(err) {
+      console.error('importMaster failed', err);
+      toast(({ko:'파일 오류 — 콘솔 확인',en:'File error — see console',es:'Error — ver consola'}[LANG]||'') + ': ' + (err.message||''), 'err');
+    }
     ev.target.value = '';
+  };
+  reader.onerror = function(){
+    toast(({ko:'파일 읽기 실패',en:'Read failed',es:'Lectura falló'}[LANG]||''), 'err');
   };
   reader.readAsArrayBuffer(file);
 }
