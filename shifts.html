@@ -855,19 +855,76 @@ function syncStickyDayHeaderTop(){
   if (!tb) return;
   const h = Math.ceil(tb.getBoundingClientRect().height);
   const bar = document.getElementById('dayHeaderBar');
-  if (bar) bar.style.top = h + 'px';
+  if (bar && !bar._jsFixed) bar.style.top = h + 'px';
   // legacy .gh inline top (kept for safety if dayHeaderBar is absent)
   document.querySelectorAll('.grid > .gh').forEach(g => { g.style.top = h + 'px'; });
 }
 window.addEventListener('resize', syncStickyDayHeaderTop);
 window.addEventListener('orientationchange', syncStickyDayHeaderTop);
 window.addEventListener('load', syncStickyDayHeaderTop);
-// 스크롤 중에도 가끔 갱신 — 모바일에서 주소창 숨김으로 topbar 높이가 바뀌는 케이스 대응
+
+// === JS fallback for sticky day header ===
+// 삼성 인터넷 브라우저는 body 가로스크롤 + position:sticky 조합에서
+// 세로 sticky 가 작동 안 함. 항상 JS로 fixed positioning 적용 — Chrome/iOS
+// 에서도 동일하게 동작하니 환경 분기 안 함.
+function ensureDayHeaderVisible(){
+  const bar = document.getElementById('dayHeaderBar');
+  if (!bar) return;
+  const tb = document.querySelector('.topbar');
+  if (!tb) return;
+  const tbH = Math.ceil(tb.getBoundingClientRect().height);
+  // placeholder 로 자연스러운 레이아웃 유지
+  let ph = document.getElementById('__dayHdrPh');
+  let naturalTop;
+  if (bar._jsFixed && ph) {
+    naturalTop = ph.getBoundingClientRect().top + window.scrollY;
+  } else {
+    naturalTop = bar.getBoundingClientRect().top + window.scrollY;
+  }
+  const wantFixed = window.scrollY > (naturalTop - tbH);
+  if (wantFixed) {
+    if (!bar._jsFixed) {
+      ph = document.createElement('div');
+      ph.id = '__dayHdrPh';
+      ph.style.cssText = 'height:' + bar.offsetHeight + 'px';
+      bar.parentNode.insertBefore(ph, bar);
+      bar._jsFixed = true;
+    }
+    // 가로 스크롤도 함께 sync — wrap 의 자연 left 위치 - scrollX
+    const wrap = bar.parentElement; // .grid-wrap
+    const wrapLeft = wrap.getBoundingClientRect().left + window.scrollX;
+    bar.style.position = 'fixed';
+    bar.style.top = tbH + 'px';
+    bar.style.left = (wrapLeft - window.scrollX) + 'px';
+    bar.style.width = wrap.offsetWidth + 'px';
+    bar.style.zIndex = '6';
+  } else {
+    if (bar._jsFixed) {
+      bar.style.position = '';
+      bar.style.top = tbH + 'px';
+      bar.style.left = '';
+      bar.style.width = '';
+      const ph2 = document.getElementById('__dayHdrPh');
+      if (ph2) ph2.remove();
+      bar._jsFixed = false;
+    }
+  }
+}
+
+// 스크롤·리사이즈 시 매번 재계산 (rAF 스로틀)
 let __syncScrollTick = 0;
-window.addEventListener('scroll', () => {
+function __schedSyncDayHeader(){
   if (__syncScrollTick) return;
-  __syncScrollTick = requestAnimationFrame(() => { __syncScrollTick = 0; syncStickyDayHeaderTop(); });
-}, { passive: true });
+  __syncScrollTick = requestAnimationFrame(() => {
+    __syncScrollTick = 0;
+    syncStickyDayHeaderTop();
+    ensureDayHeaderVisible();
+  });
+}
+window.addEventListener('scroll', __schedSyncDayHeader, { passive: true });
+window.addEventListener('resize', __schedSyncDayHeader);
+window.addEventListener('orientationchange', __schedSyncDayHeader);
+window.addEventListener('load', __schedSyncDayHeader);
 
 // Offer to clone last week's shifts when navigating to an empty week (next-week scheduling).
 let __cloneOfferShownFor = '';
