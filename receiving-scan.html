@@ -1213,6 +1213,35 @@ function renderMasterList(){
   }).join('') + (filtered.length > 200 ? '<div style="padding:8px;text-align:center;color:#6b7280;font-size:.78em">+'+(filtered.length-200)+' '+({ko:'더',en:'more',es:'más'}[LANG]||'')+'</div>' : '');
 }
 window.renderMasterList = renderMasterList;
+// 컬럼 이름이 명시 안 됐을 때 — 내용으로 자동 감지.
+// barcode: 6~14자리 숫자가 가장 많은 컬럼
+// name: 한글·영문 글자 가장 많은 컬럼 (바코드 컬럼 제외)
+function autoDetectColumns(rows){
+  if (!rows.length) return { barcode:null, name:null };
+  const cols = Object.keys(rows[0]);
+  const sample = rows.slice(0, 80);
+  const scores = {};
+  cols.forEach(c => {
+    let nNum=0, nText=0, totalTextLen=0;
+    sample.forEach(r => {
+      const v = String(r[c]||'').trim();
+      if (!v) return;
+      // 바코드 후보: 숫자만 6~14자리
+      const numOnly = v.replace(/[\s\-_,.]/g, '');
+      if (/^\d{6,14}$/.test(numOnly)) nNum++;
+      // 텍스트 후보: 영문/한글 들어간 길이 4 이상
+      if (/[가-힣A-Za-z]{2,}/.test(v) && v.length >= 3) { nText++; totalTextLen += v.length; }
+    });
+    scores[c] = { nNum, nText, avgTextLen: nText ? totalTextLen/nText : 0 };
+  });
+  // barcode = nNum 최댓값 (적어도 3행 매치)
+  let bcCol = null, bcScore = 0;
+  cols.forEach(c => { if (scores[c].nNum > bcScore && scores[c].nNum >= 3) { bcScore = scores[c].nNum; bcCol = c; } });
+  // name = bcCol 제외, nText 최댓값
+  let nmCol = null, nmScore = 0;
+  cols.forEach(c => { if (c === bcCol) return; if (scores[c].nText > nmScore && scores[c].nText >= 3) { nmScore = scores[c].nText; nmCol = c; } });
+  return { barcode: bcCol, name: nmCol };
+}
 function importMaster(ev){
   const file = ev.target.files[0];
   if (!file) return;
@@ -1227,31 +1256,57 @@ function importMaster(ev){
         ev.target.value = '';
         return;
       }
-      const detectedCols = Object.keys(rows[0] || {}).join(', ');
-      let added = 0;
+      const cols = Object.keys(rows[0] || {});
+      // 1) 헤더 이름 기반 매칭
+      const k0 = cols.map(c => c.toString().toLowerCase().replace(/\s+/g,''));
+      function findCol(names){
+        for (let i=0;i<names.length;i++) for (let j=0;j<k0.length;j++) if (k0[j].includes(names[i])) return cols[j];
+        return null;
+      }
+      let bcCol = findCol(['barcode','바코드','upc','ean']);
+      let nmCol = findCol(['name','상품명','product','item']);
+      const cdCol = findCol(['code','상품코드','sku']);
+      const vdCol = findCol(['vendor','벤더','supplier','업체']);
+      const ctCol = findCol(['category','카테고리','cat']);
+      // 2) 헤더 매칭 실패 시 — 내용 기반 자동 감지
+      let usedAutoDetect = false;
+      if (!bcCol) {
+        const auto = autoDetectColumns(rows);
+        if (auto.barcode) { bcCol = auto.barcode; nmCol = nmCol || auto.name; usedAutoDetect = true; }
+      }
+      if (!bcCol) {
+        // 그래도 못 찾음 — 가이드 표시
+        const sample = rows.slice(0, 3).map(r => JSON.stringify(r).slice(0, 200)).join('\n\n');
+        alert(({ko:'⚠️ 바코드 컬럼을 찾지 못함\n\n감지된 컬럼:\n',en:'⚠️ No barcode column\n\nColumns:\n',es:'⚠️ Sin código\n\nColumnas:\n'}[LANG]||'') + cols.join(', ') + '\n\n' + ({ko:'첫 3행 샘플:\n',en:'Sample first 3 rows:\n',es:'Muestra:\n'}[LANG]||'') + sample + '\n\n' + ({ko:'필요한 컬럼: 바코드 / barcode / upc / ean 중 하나',en:'Need: barcode / 바코드 / upc / ean',es:'Necesario: barcode / 바코드'}[LANG]||''));
+        ev.target.value = '';
+        return;
+      }
+      let added = 0, skipped = 0;
       rows.forEach(r => {
-        const k = Object.keys(r);
-        const get = (...names) => {
-          for (let i=0;i<names.length;i++) for (let j=0;j<k.length;j++) if (k[j].toString().toLowerCase().replace(/\s+/g,'').includes(names[i])) return r[k[j]];
-          return '';
-        };
-        const barcode = String(get('barcode','바코드','upc','ean')).trim();
-        if (!barcode) return;
+        const barcode = String(r[bcCol]||'').trim().replace(/[\s\-_,]/g, '');
+        if (!barcode || !/^\d{4,14}$/.test(barcode)) { skipped++; return; }
         MASTER[barcode] = {
-          name: String(get('name','상품명','product','item')).trim() || MASTER[barcode]?.name || '',
-          code: String(get('code','상품코드','sku')).trim() || MASTER[barcode]?.code || '',
-          vendor: String(get('vendor','벤더','supplier','업체')).trim() || MASTER[barcode]?.vendor || '',
-          category: String(get('category','카테고리','cat')).trim() || MASTER[barcode]?.category || '',
+          name: (nmCol ? String(r[nmCol]||'').trim() : '') || MASTER[barcode]?.name || '',
+          code: (cdCol ? String(r[cdCol]||'').trim() : '') || MASTER[barcode]?.code || '',
+          vendor: (vdCol ? String(r[vdCol]||'').trim() : '') || MASTER[barcode]?.vendor || '',
+          category: (ctCol ? String(r[ctCol]||'').trim() : '') || MASTER[barcode]?.category || '',
         };
         MASTER_MAP.set(barcode, MASTER[barcode]);
         added++;
       });
       saveMaster();
+      const detectInfo = usedAutoDetect
+        ? ({ko:' (자동 감지: 바코드='+bcCol+(nmCol?', 상품명='+nmCol:'')+')',en:' (auto: barcode='+bcCol+')',es:' (auto)'}[LANG]||'')
+        : '';
+      const msg = '✓ ' + added + ' ' + ({ko:'개 추가',en:'added',es:'añadidos'}[LANG]||'')
+                + (skipped ? ' · ' + skipped + ' ' + ({ko:'건 스킵',en:'skipped',es:'omitidos'}[LANG]||'') : '')
+                + detectInfo;
       if (added === 0) {
-        // 컬럼 인식 실패 — 사용자에게 감지된 컬럼 보여줌
-        alert(({ko:'⚠️ 바코드 컬럼을 찾지 못함\n\n파일에서 감지된 컬럼:\n',en:'⚠️ No barcode column found\n\nDetected columns:\n',es:'⚠️ Sin columna código\n\nDetectado:\n'}[LANG]||'') + detectedCols + '\n\n' + ({ko:'필요한 컬럼명 (대소문자·공백 무관):\n· 바코드 / barcode / upc / ean (필수)\n· 상품명 / name (선택)\n· 상품코드 / code / sku (선택)\n· 벤더 / vendor (선택)',en:'Required (case-insensitive):\n· barcode / 바코드 / upc / ean (required)\n· name / 상품명 (optional)\n· code / sku (optional)\n· vendor (optional)',es:'Requerido:\n· barcode / 바코드 / upc / ean'}[LANG]||''));
+        alert(({ko:'⚠️ 추가된 행이 없음 — 모두 바코드 형식 오류',en:'⚠️ No rows added — all invalid barcode',es:'⚠️ Sin filas añadidas'}[LANG]||'') + '\n\n' + ({ko:'사용한 컬럼: ',en:'Used col: ',es:'Columna: '}[LANG]||'') + bcCol);
+      } else if (usedAutoDetect) {
+        alert('✅ ' + msg + '\n\n' + ({ko:'(헤더에 바코드 이름이 없어서 내용으로 자동 감지)',en:'(Auto-detected by content)',es:'(Detección automática)'}[LANG]||''));
       } else {
-        toast('✓ ' + added + ' ' + ({ko:'개 추가',en:'added',es:'añadidos'}[LANG]||''), 'ok');
+        toast(msg, 'ok');
       }
       renderMasterList();
     } catch(err) {
