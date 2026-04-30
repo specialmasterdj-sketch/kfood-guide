@@ -392,6 +392,10 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
       <label class="btn sec" for="masterFile" style="cursor:pointer">📥 <span id="lblMasterImport">엑셀 가져오기</span></label>
       <button class="btn sec" onclick="exportMaster()">📤 <span id="lblMasterExport">엑셀 내보내기</span></button>
     </div>
+    <button class="btn block" onclick="cloudSync()" style="margin-bottom:10px;background:#0369a1">
+      🔄 <span id="lblCloudSync">클라우드 동기화</span>
+      <span id="cloudSyncStatus" style="font-size:.78em;font-weight:500;opacity:.85;margin-left:6px"></span>
+    </button>
     <input type="file" id="masterFile" accept=".xlsx,.xls,.csv,.xlsm,.txt" style="position:absolute;left:-9999px;opacity:0" onchange="importMaster(event)">
     <div class="field">
       <label id="lblMasterSearch">검색</label>
@@ -559,12 +563,120 @@ function loadAll(){
   }
   // 모든 지점에 대한 Map 빌드
   rebuildMasterMaps();
+  // 클라우드 sync 메타 복원
+  try {
+    const cm = localStorage.getItem('recv.cloudMeta.v1');
+    if (cm) __cloudMeta = JSON.parse(cm) || {};
+  } catch(e){ __cloudMeta = {}; }
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) SETTINGS = Object.assign({ sound:true, native:true }, JSON.parse(raw));
   } catch(e){}
 }
-function saveMaster(){ try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){} }
+function saveMaster(){
+  try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){}
+  // 변경 후 클라우드에 자동 푸시 (3초 debounce — import 끝까지 모음)
+  scheduleCloudPush();
+}
+//==================================================================
+// CLOUD SYNC — Firebase RTDB 로 지점별 마스터 공유
+//==================================================================
+const RECV_FB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+let __pushTimer = null;
+let __cloudMeta = {}; // { branchId: { updatedAt, count } } 마지막 sync 시각 추적
+function scheduleCloudPush(){
+  if (__pushTimer) clearTimeout(__pushTimer);
+  __pushTimer = setTimeout(() => { __pushTimer = null; pushAllBranchesToCloud(); }, 3000);
+}
+async function pushBranchToCloud(branchId){
+  const m = MASTER[branchId] || {};
+  const cnt = Object.keys(m).length;
+  const payload = {
+    items: m,
+    count: cnt,
+    updatedAt: Date.now(),
+    updatedBy: (function(){ try { return JSON.parse(localStorage.getItem('chat.me')||'{}').name || 'anon'; } catch(e){ return 'anon'; }})()
+  };
+  try {
+    const r = await fetch(RECV_FB_URL + '/receiving/master/' + branchId + '.json', {
+      method:'PUT', body: JSON.stringify(payload)
+    });
+    if (r.ok) {
+      __cloudMeta[branchId] = { updatedAt: payload.updatedAt, count: cnt };
+      try { localStorage.setItem('recv.cloudMeta.v1', JSON.stringify(__cloudMeta)); } catch(e){}
+      return true;
+    }
+  } catch(e){ console.warn('push failed', e); }
+  return false;
+}
+async function pushAllBranchesToCloud(){
+  setSyncStatus('pushing');
+  let ok = 0;
+  for (const b of Object.keys(MASTER)) {
+    if (Object.keys(MASTER[b]).length > 0) {
+      if (await pushBranchToCloud(b)) ok++;
+    }
+  }
+  setSyncStatus(ok ? 'ok' : 'err');
+}
+async function pullBranchFromCloud(branchId, force){
+  try {
+    const r = await fetch(RECV_FB_URL + '/receiving/master/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' });
+    const d = await r.json();
+    if (!d || !d.items) return 0;
+    const localTime = (__cloudMeta[branchId] || {}).updatedAt || 0;
+    if (!force && d.updatedAt && d.updatedAt <= localTime) return 0; // 이미 최신
+    MASTER[branchId] = d.items;
+    rebuildMasterMaps();
+    try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){}
+    __cloudMeta[branchId] = { updatedAt: d.updatedAt || Date.now(), count: d.count || Object.keys(d.items).length };
+    try { localStorage.setItem('recv.cloudMeta.v1', JSON.stringify(__cloudMeta)); } catch(e){}
+    return d.count || Object.keys(d.items).length;
+  } catch(e){ console.warn('pull failed', e); return 0; }
+}
+async function pullAllBranchesFromCloud(force){
+  let total = 0;
+  for (const b of BRANCHES) {
+    const n = await pullBranchFromCloud(b.id, force);
+    if (n) total += n;
+  }
+  return total;
+}
+function setSyncStatus(state, msg){
+  const el = document.getElementById('cloudSyncStatus');
+  if (!el) return;
+  const labels = {
+    pushing: { ko:'· 업로드 중…', en:'· uploading…', es:'· subiendo…' },
+    pulling: { ko:'· 다운로드 중…', en:'· downloading…', es:'· descargando…' },
+    ok:      { ko:'· ✓ 동기화됨', en:'· ✓ synced', es:'· ✓ sincronizado' },
+    err:     { ko:'· ⚠ 실패 (오프라인?)', en:'· ⚠ failed', es:'· ⚠ falló' },
+  };
+  el.textContent = msg || (labels[state] ? (labels[state][LANG]||labels[state].ko) : '');
+  if (state === 'ok' || state === 'err') {
+    setTimeout(() => { if (el.textContent === (labels[state][LANG]||labels[state].ko)) el.textContent = ''; }, 4000);
+  }
+}
+async function cloudSync(){
+  // 수동 트리거: pull all 후 push current branch
+  setSyncStatus('pulling');
+  try {
+    const pulled = await pullAllBranchesFromCloud(true);
+    setSyncStatus('pushing');
+    let pushed = 0;
+    for (const b of Object.keys(MASTER)) {
+      if (Object.keys(MASTER[b]).length > 0) {
+        if (await pushBranchToCloud(b)) pushed++;
+      }
+    }
+    setSyncStatus('ok');
+    renderMasterList();
+    toast('✓ ' + ({ko:'동기화 완료',en:'Synced',es:'Sincronizado'}[LANG]||'') + ' (↓' + pulled + ' ↑' + pushed + ')', 'ok');
+  } catch(e) {
+    setSyncStatus('err');
+    toast(({ko:'동기화 실패',en:'Sync failed',es:'Falló'}[LANG]||''), 'err');
+  }
+}
+window.cloudSync = cloudSync;
 // 지점별 Map 재구축
 function rebuildMasterMaps(){
   MASTER_MAPS = {};
@@ -1255,6 +1367,17 @@ function openMasterSheet(){
   }
   renderMasterList();
   document.getElementById('masterOv').classList.add('show');
+  // 백그라운드 자동 pull — 다른 디바이스에서 푸시한 게 있으면 받아옴
+  setSyncStatus('pulling');
+  pullAllBranchesFromCloud(false).then(n => {
+    if (n > 0) {
+      setSyncStatus('ok');
+      renderMasterList();
+      toast('☁ ' + n + ' ' + ({ko:'개 클라우드에서 받음',en:'pulled from cloud',es:'descargados'}[LANG]||''), 'ok');
+    } else {
+      setSyncStatus('ok');
+    }
+  }).catch(() => setSyncStatus('err'));
 }
 window.openMasterSheet = openMasterSheet;
 function renderMasterList(){
