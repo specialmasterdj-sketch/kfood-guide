@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover,maximum-scale=1.0,user-scalable=no">
+<title>김치마트 — 입고 스캔 검수</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script src="./nav-sidebar.js?v=6" defer></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;font-size:14px;-webkit-tap-highlight-color:transparent}
+
+/* TOPBAR */
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50;flex-wrap:wrap}
+.topbar .brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:1.05em;flex-shrink:0}
+.topbar .brand .logo{width:30px;height:30px;border-radius:7px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:1.05em}
+.topbar .spacer{flex:1}
+.topbar .lang{display:flex;gap:0;background:rgba(255,255,255,.15);border-radius:8px;padding:2px}
+.topbar .lang button{background:transparent;border:0;color:#fff;font-size:.78em;font-weight:700;padding:5px 10px;border-radius:6px;cursor:pointer}
+.topbar .lang button.active{background:#fff;color:#1a5c3a}
+.back-btn{background:rgba(255,255,255,.18);border:0;color:#fff;width:32px;height:32px;border-radius:8px;font-size:1em;cursor:pointer;display:none;align-items:center;justify-content:center;flex-shrink:0}
+.back-btn.show{display:flex}
+
+/* PAGES */
+.page{display:none;padding:14px;max-width:980px;margin:0 auto}
+.page.active{display:block}
+
+/* SECTION */
+.sec-title{font-weight:800;font-size:.95em;margin:14px 4px 8px;color:#1f2937;display:flex;align-items:center;gap:8px}
+.sec-title .badge{background:#1a5c3a;color:#fff;font-size:.7em;padding:2px 8px;border-radius:10px;font-weight:700}
+
+/* CARDS */
+.card{background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);margin-bottom:10px}
+.card.clickable{cursor:pointer;transition:.1s}
+.card.clickable:active{transform:scale(.98)}
+
+/* SESSION CARD */
+.sess{display:flex;align-items:center;gap:12px;background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin-bottom:10px;cursor:pointer;border-left:5px solid #d1d5db;transition:.1s}
+.sess:active{transform:scale(.99)}
+.sess.s-pending{border-left-color:#9ca3af}
+.sess.s-active{border-left-color:#f59e0b;background:#fffbeb}
+.sess.s-done{border-left-color:#15803d;background:#f0fdf4}
+.sess .icon{width:42px;height:42px;border-radius:10px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:1.4em;flex-shrink:0}
+.sess .body{flex:1;min-width:0}
+.sess .vendor{font-weight:800;font-size:1em}
+.sess .meta{font-size:.78em;color:#6b7280;margin-top:2px}
+.sess .stat{font-size:.78em;font-weight:700;padding:3px 8px;border-radius:10px;flex-shrink:0}
+.sess .stat.s-pending{background:#f3f4f6;color:#374151}
+.sess .stat.s-active{background:#fef3c7;color:#92400e}
+.sess .stat.s-done{background:#dcfce7;color:#166534}
+
+/* BUTTON */
+.btn{background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:11px 18px;font-weight:700;font-size:.95em;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;justify-content:center}
+.btn:active{transform:scale(.97)}
+.btn.block{width:100%}
+.btn.sec{background:#fff;border:1.5px solid #d1d5db;color:#374151}
+.btn.danger{background:#dc2626}
+.btn.warn{background:#f59e0b}
+.btn.ghost{background:transparent;border:0;color:#1a5c3a;padding:8px 12px}
+
+/* SCAN VIEW */
+.scan-stats{background:#fff;border-radius:12px;padding:12px 14px;margin-bottom:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.scan-stats .cell{text-align:center;padding:6px 4px;border-radius:8px}
+.scan-stats .cell .n{font-size:1.3em;font-weight:800;line-height:1}
+.scan-stats .cell .l{font-size:.65em;color:#6b7280;margin-top:3px;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.scan-stats .cell.ok{background:#f0fdf4}
+.scan-stats .cell.ok .n{color:#15803d}
+.scan-stats .cell.short{background:#fef3c7}
+.scan-stats .cell.short .n{color:#92400e}
+.scan-stats .cell.over{background:#fef2f2}
+.scan-stats .cell.over .n{color:#dc2626}
+.scan-stats .cell.unkn{background:#f3f4f6}
+.scan-stats .cell.unkn .n{color:#374151}
+
+.progress-wrap{height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin-bottom:10px}
+.progress-bar{height:100%;background:linear-gradient(90deg,#1a5c3a,#22c55e);transition:width .3s}
+
+#scanArea{position:relative;background:#000;border-radius:14px;overflow:hidden;margin-bottom:10px;min-height:280px}
+#qrReader{width:100%;background:#000}
+#qrReader video{width:100% !important;height:auto !important;display:block;max-height:60vh;object-fit:cover}
+#qrReader__dashboard{display:none !important}
+#qrReader__scan_region{padding:0 !important;background:#000 !important;}
+.scan-overlay-hint{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:rgba(255,255,255,.7);font-size:.85em;font-weight:600;text-align:center;pointer-events:none;z-index:2}
+.scan-flash{position:fixed;inset:0;pointer-events:none;z-index:200;opacity:0;transition:opacity .15s;background:transparent}
+.scan-flash.ok{background:rgba(34,197,94,.4);opacity:1}
+.scan-flash.short{background:rgba(245,158,11,.4);opacity:1}
+.scan-flash.over{background:rgba(245,158,11,.55);opacity:1}
+.scan-flash.bad{background:rgba(220,38,38,.5);opacity:1}
+
+.scan-toolbar{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.scan-toolbar .btn{flex:1;min-width:100px}
+
+/* RECENT */
+.recent{background:#fff;border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.recent .head{font-size:.8em;font-weight:700;color:#6b7280;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
+.recent .row{display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid #f3f4f6;font-size:.92em}
+.recent .row:last-child{border-bottom:0}
+.recent .row .ic{font-size:1.1em;flex-shrink:0;width:24px}
+.recent .row .nm{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.recent .row .qty{font-weight:800;font-size:.92em;flex-shrink:0;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums}
+.recent .row.ok .qty{background:#dcfce7;color:#166534}
+.recent .row.over .qty{background:#fef3c7;color:#92400e}
+.recent .row.bad .qty{background:#fee2e2;color:#991b1b}
+.recent .empty{padding:18px;text-align:center;color:#9ca3af;font-size:.85em}
+
+/* OVERLAY / MODAL */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;justify-content:center;z-index:1000}
+.overlay.show{display:flex}
+.sheet{background:#fff;border-radius:18px 18px 0 0;width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:18px}
+.sheet h3{font-size:1.05em;font-weight:800;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:.8em;font-weight:700;color:#374151;margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%;border:1.5px solid #d1d5db;border-radius:10px;padding:10px 12px;font-size:.95em;font-family:inherit;background:#fff;-webkit-appearance:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:#1a5c3a;outline:none}
+.actions{display:flex;gap:8px;margin-top:14px}
+.actions .btn{flex:1}
+
+/* QTY KEYPAD */
+.qty-display{font-size:2.4em;font-weight:900;text-align:center;color:#1a5c3a;padding:14px;background:#f0fdf4;border-radius:12px;margin-bottom:10px;font-variant-numeric:tabular-nums}
+.qty-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.qty-pad button{background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;font-size:1.2em;font-weight:800;cursor:pointer;color:#374151}
+.qty-pad button:active{background:#f3f4f6}
+.qty-pad button.act{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+
+/* ITEM LIST (scan + report) */
+.item-list{background:#fff;border-radius:12px;overflow:hidden;margin-bottom:10px}
+.item-list .item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6}
+.item-list .item:last-child{border-bottom:0}
+.item-list .item .nm{flex:1;font-size:.9em;font-weight:600}
+.item-list .item .nm .b{font-size:.75em;color:#9ca3af;font-weight:500;font-family:Consolas,monospace}
+.item-list .item .nums{font-size:.85em;font-weight:700;padding:3px 9px;border-radius:6px;font-variant-numeric:tabular-nums;flex-shrink:0}
+.item-list .item.ok .nums{background:#dcfce7;color:#166534}
+.item-list .item.short .nums{background:#fef3c7;color:#92400e}
+.item-list .item.over .nums{background:#fef3c7;color:#92400e}
+.item-list .item.zero .nums{background:#f3f4f6;color:#6b7280}
+.item-list .item.bad .nums{background:#fee2e2;color:#991b1b}
+
+.tabs{display:flex;gap:4px;background:#fff;border-radius:10px;padding:4px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.tabs button{flex:1;background:transparent;border:0;padding:8px;font-size:.82em;font-weight:700;color:#6b7280;border-radius:7px;cursor:pointer}
+.tabs button.active{background:#1a5c3a;color:#fff}
+
+/* TOAST */
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(60px);background:#1f2937;color:#fff;padding:10px 18px;border-radius:10px;font-size:.88em;font-weight:600;z-index:1500;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:#991b1b}
+.toast.ok{background:#15803d}
+
+/* EMPTY STATE */
+.empty-st{text-align:center;padding:40px 20px;color:#9ca3af}
+.empty-st .ic{font-size:3em;margin-bottom:8px}
+.empty-st .msg{font-size:.95em;font-weight:600;color:#6b7280}
+.empty-st .sub{font-size:.82em;margin-top:6px}
+
+/* HELPER */
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.muted{color:#9ca3af}
+@media(max-width:480px){
+  .scan-stats{grid-template-columns:repeat(4,1fr)}
+  .scan-stats .cell .n{font-size:1.15em}
+}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <button class="back-btn" id="backBtn" onclick="goBack()">←</button>
+  <div class="brand"><div class="logo">📦</div><span id="topTitle">입고 스캔</span></div>
+  <div class="spacer"></div>
+  <div class="lang">
+    <button data-l="ko" onclick="setLang('ko')">KO</button>
+    <button data-l="en" onclick="setLang('en')">EN</button>
+    <button data-l="es" onclick="setLang('es')">ES</button>
+  </div>
+</div>
+
+<!-- ============= HOME ============= -->
+<div class="page" id="page-home">
+  <div class="sec-title" id="lblTodayHead">📅 오늘 입고</div>
+  <div id="sessionList"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+    <button class="btn block" onclick="openNewSessionSheet()">＋ <span id="lblNewSess">새 입고 시작</span></button>
+    <button class="btn sec block" onclick="openMasterSheet()">📚 <span id="lblMaster">상품 바코드</span></button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+    <button class="btn sec block" onclick="goView('settings')">⚙️ <span id="lblSettings">설정</span></button>
+    <button class="btn sec block" onclick="exportAllSessionsExcel()">📥 <span id="lblExportAll">전체 내보내기</span></button>
+  </div>
+</div>
+
+<!-- ============= SCAN ============= -->
+<div class="page" id="page-scan">
+  <div class="card" style="padding:10px 12px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="font-size:1.1em">📦</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:800;font-size:.95em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="scanVendor">—</div>
+        <div style="font-size:.72em;color:#6b7280;margin-top:2px" id="scanProgressLabel">0 / 0 · 0%</div>
+      </div>
+      <button class="btn ghost" style="padding:6px 8px" onclick="finishSession()" id="btnFinish">✓ <span id="lblFinish">마감</span></button>
+    </div>
+    <div class="progress-wrap" style="margin-top:8px;margin-bottom:0"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
+  </div>
+
+  <div class="scan-stats">
+    <div class="cell ok"><div class="n" id="stOk">0</div><div class="l" id="lblStOk">정상</div></div>
+    <div class="cell short"><div class="n" id="stShort">0</div><div class="l" id="lblStShort">부족</div></div>
+    <div class="cell over"><div class="n" id="stOver">0</div><div class="l" id="lblStOver">초과</div></div>
+    <div class="cell unkn"><div class="n" id="stUnkn">0</div><div class="l" id="lblStUnkn">문제</div></div>
+  </div>
+
+  <div id="scanArea">
+    <div id="qrReader"></div>
+    <div class="scan-overlay-hint" id="scanHint">카메라 시작 중…</div>
+  </div>
+
+  <div class="scan-toolbar">
+    <button class="btn sec" onclick="openManualEntry()">⌨ <span id="lblManual">수동 입력</span></button>
+    <button class="btn sec" onclick="toggleTorch()" id="btnTorch">🔦 <span id="lblTorch">조명</span></button>
+    <button class="btn sec" onclick="restartScanner()">🔄 <span id="lblRestart">재시작</span></button>
+    <button class="btn sec" onclick="goView('items')">📋 <span id="lblItems">전체 목록</span></button>
+  </div>
+
+  <div class="recent">
+    <div class="head" id="lblRecent">최근 스캔</div>
+    <div id="recentList"><div class="empty" id="lblNoScan">아직 스캔 없음</div></div>
+  </div>
+</div>
+
+<!-- ============= ITEM LIST ============= -->
+<div class="page" id="page-items">
+  <div class="tabs">
+    <button data-flt="all" onclick="setItemFilter('all',this)" class="active" id="lblFltAll">전체</button>
+    <button data-flt="ok" onclick="setItemFilter('ok',this)" id="lblFltOk">정상</button>
+    <button data-flt="short" onclick="setItemFilter('short',this)" id="lblFltShort">부족</button>
+    <button data-flt="over" onclick="setItemFilter('over',this)" id="lblFltOver">초과</button>
+    <button data-flt="zero" onclick="setItemFilter('zero',this)" id="lblFltZero">미입고</button>
+    <button data-flt="bad" onclick="setItemFilter('bad',this)" id="lblFltBad">문제</button>
+  </div>
+  <div id="itemList" class="item-list"></div>
+</div>
+
+<!-- ============= REPORT ============= -->
+<div class="page" id="page-report">
+  <div class="card">
+    <h3 id="reportTitle" style="font-size:1em;font-weight:800;margin-bottom:8px">검수 결과</h3>
+    <div id="reportSummary" style="font-size:.88em;line-height:1.7"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+      <button class="btn block" onclick="downloadReport()">📥 <span id="lblExportXlsx">엑셀 다운로드</span></button>
+      <button class="btn sec block" onclick="goView('items')">📋 <span id="lblViewItems">상품 보기</span></button>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="font-size:.95em;font-weight:800;margin-bottom:8px">⚠️ <span id="lblNeedAction">처리 필요</span></h3>
+    <div id="reportProblems" style="font-size:.88em"></div>
+  </div>
+</div>
+
+<!-- ============= SETTINGS ============= -->
+<div class="page" id="page-settings">
+  <div class="sec-title">⚙️ <span id="lblSetTitle">설정</span></div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">🏬 <span id="lblBranch">지점</span></div>
+    <select id="branchSel" style="width:100%;border:1.5px solid #d1d5db;border-radius:10px;padding:10px;font-size:.95em" onchange="onBranchChange()"></select>
+  </div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">🔊 <span id="lblSoundLbl">소리 피드백</span></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:.92em">
+      <input type="checkbox" id="soundOn" checked onchange="saveSettings()">
+      <span id="lblSoundEnable">스캔할 때 비프음 활성화</span>
+    </label>
+  </div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">📷 <span id="lblCamLbl">카메라</span></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:.92em">
+      <input type="checkbox" id="nativeDetector" checked onchange="saveSettings()">
+      <span id="lblNative">네이티브 바코드 검출 가속 (Android)</span>
+    </label>
+  </div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">🗑 <span id="lblDangerZone">데이터 정리</span></div>
+    <button class="btn sec block" onclick="clearAllSessions()" style="margin-bottom:6px">완료된 세션 모두 삭제</button>
+    <button class="btn danger block" onclick="clearAllData()">⚠️ 전체 데이터 초기화</button>
+  </div>
+</div>
+
+<!-- ============= NEW SESSION SHEET ============= -->
+<div class="overlay" id="newSessOv">
+  <div class="sheet">
+    <h3>📦 <span id="lblNewSessTitle">새 입고 시작</span></h3>
+    <div class="field">
+      <label id="lblNewVendor">벤더명</label>
+      <input type="text" id="newVendor" placeholder="예: ASSI" autocomplete="off">
+    </div>
+    <div class="field">
+      <label id="lblOrderUpload">주문서 업로드 (선택)</label>
+      <input type="file" id="orderFile" accept=".xlsx,.xls,.csv">
+      <div style="font-size:.74em;color:#6b7280;margin-top:6px" id="lblColHint">컬럼: 바코드 / 상품명 / 주문수량 (있으면 상품코드·벤더도)</div>
+      <div id="orderPreview" style="margin-top:8px;font-size:.82em"></div>
+    </div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('newSessOv')" id="lblCancel">취소</button>
+      <button class="btn" onclick="createSession()" id="lblStart">시작</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= QTY KEYPAD ============= -->
+<div class="overlay" id="qtyOv">
+  <div class="sheet" style="max-width:380px">
+    <h3 id="qtyTitle">+ N 추가</h3>
+    <div style="font-size:.85em;color:#6b7280;margin-bottom:6px" id="qtyItemName">—</div>
+    <div class="qty-display"><span id="qtyDisplayN">1</span><span style="font-size:.5em;color:#9ca3af;margin-left:6px">개 추가</span></div>
+    <div class="qty-pad">
+      <button onclick="qtyPad('1')">1</button><button onclick="qtyPad('2')">2</button><button onclick="qtyPad('3')">3</button>
+      <button onclick="qtyPad('4')">4</button><button onclick="qtyPad('5')">5</button><button onclick="qtyPad('6')">6</button>
+      <button onclick="qtyPad('7')">7</button><button onclick="qtyPad('8')">8</button><button onclick="qtyPad('9')">9</button>
+      <button onclick="qtyPad('C')" class="act">C</button><button onclick="qtyPad('0')">0</button><button onclick="qtyPad('B')" class="act">⌫</button>
+    </div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('qtyOv')" id="lblQtyCancel">취소</button>
+      <button class="btn" onclick="qtyApply()" id="lblQtyApply">적용</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= MANUAL ENTRY ============= -->
+<div class="overlay" id="manOv">
+  <div class="sheet" style="max-width:420px">
+    <h3>⌨ <span id="lblManualTitle">수동 입력</span></h3>
+    <div class="field">
+      <label id="lblManualBarcode">바코드</label>
+      <input type="text" id="manBarcode" placeholder="바코드 직접 입력" autocomplete="off" inputmode="numeric">
+    </div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('manOv')" id="lblManualCancel">취소</button>
+      <button class="btn" onclick="manualSubmit()" id="lblManualSubmit">스캔</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= UNREGISTERED ============= -->
+<div class="overlay" id="unregOv">
+  <div class="sheet">
+    <h3>⚠️ <span id="lblUnregTitle">바코드 미등록</span></h3>
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px;font-size:.85em;color:#92400e;margin-bottom:12px">
+      <span id="lblUnregHint">이 바코드는 마스터에 없습니다. 임시 등록하거나 메모만 남길 수 있어요.</span>
+    </div>
+    <div class="field">
+      <label id="lblUnregBcode">바코드</label>
+      <input type="text" id="unregBcode" readonly style="background:#f3f4f6">
+    </div>
+    <div class="field">
+      <label id="lblUnregName">상품명 (임시)</label>
+      <input type="text" id="unregName" placeholder="예: 오뚜기 진라면">
+    </div>
+    <div class="field">
+      <label id="lblUnregNote">메모</label>
+      <input type="text" id="unregNote" placeholder="예: 박스 손상, 라벨 흐림">
+    </div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('unregOv')" id="lblUnregCancel">취소</button>
+      <button class="btn warn" onclick="unregSaveOnly()" id="lblUnregMemo">메모만 저장</button>
+      <button class="btn" onclick="unregRegister()" id="lblUnregReg">상품 등록 + 입고</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= MASTER ============= -->
+<div class="overlay" id="masterOv">
+  <div class="sheet">
+    <h3>📚 <span id="lblMasterTitle">상품 바코드 마스터</span></h3>
+    <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblMasterDesc">스캔해도 인식되도록 미리 등록된 바코드. 엑셀로 일괄 등록 가능.</div>
+    <div class="row2" style="margin-bottom:10px">
+      <button class="btn sec" onclick="document.getElementById('masterFile').click()">📥 <span id="lblMasterImport">엑셀 가져오기</span></button>
+      <button class="btn sec" onclick="exportMaster()">📤 <span id="lblMasterExport">엑셀 내보내기</span></button>
+    </div>
+    <input type="file" id="masterFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="importMaster(event)">
+    <div class="field">
+      <label id="lblMasterSearch">검색</label>
+      <input type="text" id="masterSearch" placeholder="바코드 또는 상품명" oninput="renderMasterList()">
+    </div>
+    <div id="masterList" style="max-height:50vh;overflow-y:auto;border:1px solid #e5e7eb;border-radius:10px"></div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('masterOv')" id="lblMasterClose">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- VISUAL FLASH -->
+<div class="scan-flash" id="flash"></div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+//==================================================================
+// 상태 (state) — localStorage 영속, 메모리에서 빠른 조회 위해 Map 도 유지
+//==================================================================
+const STORAGE_KEY = 'recv.v1';
+const MASTER_KEY  = 'recv.master.v1';
+const SETTINGS_KEY = 'recv.settings.v1';
+
+let SESSIONS = [];      // [{ id, vendor, branch, date, items: [{ barcode,name,code,ordered,received,status,note,photo }], extras: [{ barcode, qty, name, note }], status }]
+let MASTER = {};        // { barcode: { name, code, vendor, category } }
+let MASTER_MAP = new Map();  // 동일 데이터 — 빠른 조회용
+let SETTINGS = { sound:true, native:true };
+
+let CUR = null;          // 현재 활성 세션 객체
+let RECENT = [];         // 화면 표시용 최근 스캔 (최근 8개)
+let ITEM_FILTER = 'all'; // 전체 목록 필터
+let LAST_SCAN = { code:null, ts:0 };  // 동일 바코드 1.5초 잠금
+let QTY_BUF = '';        // 키패드 입력 버퍼
+let QTY_TARGET = null;   // 키패드가 적용할 대상 { type:'item'|'extra', barcode, ref }
+let SCANNER = null;      // html5-qrcode 인스턴스
+let SCANNER_RUNNING = false;
+
+let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; }})();
+const VALID = { ko:1, en:1, es:1 };
+if (!VALID[LANG]) LANG = 'ko';
+
+const BRANCHES = [
+  { id:'MIAMI',          ko:'마이애미',          en:'Miami',          es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈',   en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',      ko:'할리우드',          en:'Hollywood',      es:'Hollywood' },
+  { id:'CORAL_SPRINGS',  ko:'코랄 스프링스',     en:'Coral Springs',  es:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스 올라스',       en:'Las Olas',       es:'Las Olas' },
+  { id:'WEST_PALM',      ko:'웨스트 팜',         en:'West Palm',      es:'West Palm' },
+];
+let BRANCH = (function(){ try { return localStorage.getItem('recv.branch') || 'MIAMI'; } catch(e){ return 'MIAMI'; }})();
+
+const I18N = {
+  topTitle:    {ko:'입고 스캔', en:'Receiving Scan', es:'Escaneo de entrada'},
+  lblTodayHead:{ko:'📅 오늘 입고', en:'📅 Today\'s Deliveries', es:'📅 Entregas de hoy'},
+  lblNewSess:  {ko:'새 입고 시작', en:'New delivery', es:'Nueva entrega'},
+  lblMaster:   {ko:'상품 바코드', en:'Product master', es:'Maestro productos'},
+  lblSettings: {ko:'설정', en:'Settings', es:'Ajustes'},
+  lblExportAll:{ko:'전체 내보내기', en:'Export all', es:'Exportar todo'},
+  lblFinish:   {ko:'마감', en:'Finish', es:'Cerrar'},
+  lblManual:   {ko:'수동 입력', en:'Manual', es:'Manual'},
+  lblTorch:    {ko:'조명', en:'Torch', es:'Linterna'},
+  lblRestart:  {ko:'재시작', en:'Restart', es:'Reiniciar'},
+  lblItems:    {ko:'전체 목록', en:'All items', es:'Todos los ítems'},
+  lblRecent:   {ko:'최근 스캔', en:'Recent scans', es:'Escaneos recientes'},
+  lblNoScan:   {ko:'아직 스캔 없음', en:'No scans yet', es:'Aún sin escanear'},
+  lblStOk:     {ko:'정상', en:'OK', es:'OK'},
+  lblStShort:  {ko:'부족', en:'Short', es:'Falta'},
+  lblStOver:   {ko:'초과', en:'Over', es:'Exceso'},
+  lblStUnkn:   {ko:'문제', en:'Issue', es:'Problema'},
+  lblFltAll:   {ko:'전체', en:'All', es:'Todo'},
+  lblFltOk:    {ko:'정상', en:'OK', es:'OK'},
+  lblFltShort: {ko:'부족', en:'Short', es:'Falta'},
+  lblFltOver:  {ko:'초과', en:'Over', es:'Exceso'},
+  lblFltZero:  {ko:'미입고', en:'Pending', es:'Pendiente'},
+  lblFltBad:   {ko:'문제', en:'Issues', es:'Problemas'},
+  lblNewSessTitle:{ko:'새 입고 시작', en:'New delivery', es:'Nueva entrega'},
+  lblNewVendor:{ko:'벤더명', en:'Vendor name', es:'Proveedor'},
+  lblOrderUpload:{ko:'주문서 업로드 (선택)', en:'Order upload (optional)', es:'Pedido (opcional)'},
+  lblColHint:  {ko:'컬럼: 바코드 / 상품명 / 주문수량 (있으면 상품코드·벤더도)', en:'Cols: barcode / name / qty (also code / vendor if any)', es:'Cols: barcode / nombre / cant.'},
+  lblCancel:   {ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblStart:    {ko:'시작', en:'Start', es:'Iniciar'},
+  lblQtyCancel:{ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblQtyApply: {ko:'적용', en:'Apply', es:'Aplicar'},
+  lblManualTitle:{ko:'수동 입력', en:'Manual entry', es:'Entrada manual'},
+  lblManualBarcode:{ko:'바코드', en:'Barcode', es:'Código'},
+  lblManualCancel:{ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblManualSubmit:{ko:'스캔', en:'Submit', es:'Escanear'},
+  lblUnregTitle:{ko:'바코드 미등록', en:'Unregistered barcode', es:'Código no registrado'},
+  lblUnregHint:{ko:'이 바코드는 마스터에 없습니다. 임시 등록하거나 메모만 남길 수 있어요.', en:'This barcode is not in master. Register temporarily or just leave a memo.', es:'No está en el maestro. Registre o deje una nota.'},
+  lblUnregBcode:{ko:'바코드', en:'Barcode', es:'Código'},
+  lblUnregName:{ko:'상품명 (임시)', en:'Name (temp)', es:'Nombre (temp.)'},
+  lblUnregNote:{ko:'메모', en:'Note', es:'Nota'},
+  lblUnregCancel:{ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblUnregMemo:{ko:'메모만 저장', en:'Memo only', es:'Solo nota'},
+  lblUnregReg: {ko:'상품 등록 + 입고', en:'Register + receive', es:'Registrar + recibir'},
+  lblMasterTitle:{ko:'상품 바코드 마스터', en:'Product master', es:'Maestro productos'},
+  lblMasterDesc:{ko:'스캔해도 인식되도록 미리 등록된 바코드. 엑셀로 일괄 등록 가능.', en:'Pre-registered barcodes. Bulk import via Excel.', es:'Códigos pre-registrados.'},
+  lblMasterImport:{ko:'엑셀 가져오기', en:'Excel import', es:'Importar Excel'},
+  lblMasterExport:{ko:'엑셀 내보내기', en:'Excel export', es:'Exportar Excel'},
+  lblMasterSearch:{ko:'검색', en:'Search', es:'Buscar'},
+  lblMasterClose:{ko:'닫기', en:'Close', es:'Cerrar'},
+  lblExportXlsx:{ko:'엑셀 다운로드', en:'Download Excel', es:'Descargar Excel'},
+  lblViewItems:{ko:'상품 보기', en:'View items', es:'Ver ítems'},
+  lblNeedAction:{ko:'처리 필요', en:'Needs action', es:'Requiere acción'},
+  lblSetTitle: {ko:'설정', en:'Settings', es:'Ajustes'},
+  lblBranch:   {ko:'지점', en:'Branch', es:'Sucursal'},
+  lblSoundLbl: {ko:'소리 피드백', en:'Sound', es:'Sonido'},
+  lblSoundEnable:{ko:'스캔할 때 비프음 활성화', en:'Beep on scan', es:'Pitido al escanear'},
+  lblCamLbl:   {ko:'카메라', en:'Camera', es:'Cámara'},
+  lblNative:   {ko:'네이티브 바코드 검출 가속 (Android)', en:'Native barcode detector (Android)', es:'Detector nativo (Android)'},
+  lblDangerZone:{ko:'데이터 정리', en:'Clean up', es:'Limpieza'},
+};
+function t(k){ const o = I18N[k]; return o ? (o[LANG]||o.ko) : k; }
+function applyLang(){
+  document.querySelectorAll('.lang button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+  Object.keys(I18N).forEach(k => { const el = document.getElementById(k); if (el) el.textContent = t(k); });
+}
+window.setLang = function(l){
+  if (!VALID[l]) return;
+  LANG = l;
+  try {
+    localStorage.setItem('kimchi_lang', l);
+    localStorage.setItem('hub.lang', l);
+    localStorage.setItem('tasks.lang', l);
+  } catch(e){}
+  applyLang();
+  // 다시 그리기 — 통계/리포트/최근 스캔 같은 동적 텍스트
+  if (currentPage === 'home') renderSessions();
+  if (currentPage === 'scan') renderRecent();
+  if (currentPage === 'items') renderItemList();
+  if (currentPage === 'report') renderReport();
+};
+
+//==================================================================
+// PERSIST
+//==================================================================
+function saveAll(){
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessions: SESSIONS, branch: BRANCH })); } catch(e){}
+}
+function loadAll(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      SESSIONS = (d && d.sessions) || [];
+      if (d && d.branch) BRANCH = d.branch;
+    }
+  } catch(e){ SESSIONS = []; }
+  try {
+    const raw = localStorage.getItem(MASTER_KEY);
+    if (raw) MASTER = JSON.parse(raw) || {};
+  } catch(e){ MASTER = {}; }
+  // Master Map 빌드 — O(1) 조회용
+  MASTER_MAP = new Map();
+  Object.keys(MASTER).forEach(k => MASTER_MAP.set(String(k).trim(), MASTER[k]));
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) SETTINGS = Object.assign({ sound:true, native:true }, JSON.parse(raw));
+  } catch(e){}
+}
+function saveMaster(){ try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){} }
+function saveSettings(){
+  SETTINGS.sound = document.getElementById('soundOn').checked;
+  SETTINGS.native = document.getElementById('nativeDetector').checked;
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch(e){}
+}
+
+//==================================================================
+// PAGE NAV
+//==================================================================
+let currentPage = 'home';
+function goView(p){
+  currentPage = p;
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  const el = document.getElementById('page-' + p);
+  if (el) el.classList.add('active');
+  document.getElementById('backBtn').classList.toggle('show', p !== 'home');
+  if (p === 'home') {
+    stopScanner();
+    renderSessions();
+  }
+  if (p === 'scan') {
+    renderScanHeader();
+    renderStats();
+    renderRecent();
+    startScanner();
+  }
+  if (p === 'items') {
+    stopScanner();
+    renderItemList();
+  }
+  if (p === 'report') {
+    stopScanner();
+    renderReport();
+  }
+  if (p === 'settings') {
+    stopScanner();
+    renderSettings();
+  }
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function goBack(){
+  if (currentPage === 'scan' && CUR) { stopScanner(); goView('home'); return; }
+  if (currentPage === 'items') { goView(CUR ? 'scan' : 'home'); return; }
+  if (currentPage === 'report' || currentPage === 'settings') { goView('home'); return; }
+  goView('home');
+}
+window.goBack = goBack;
+window.goView = goView;
+
+//==================================================================
+// HOME — 세션 리스트
+//==================================================================
+function todayKey(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function fmtTime(ts){ if(!ts) return ''; const d = new Date(ts); return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+function vendorIcon(vendor){
+  const v = (vendor||'').toUpperCase();
+  if (v.includes('SEOUL')) return '🥫';
+  if (v.includes('ASSI')) return '🍜';
+  if (v.includes('EAST')) return '📦';
+  if (v.includes('HANMI')) return '🌶';
+  if (v.includes('JFC')) return '🍣';
+  if (v.includes('WIS')) return '🍙';
+  if (v.includes('CJ')) return '🥡';
+  return '📦';
+}
+function statusOf(sess){
+  if (sess.status === 'done') return 'done';
+  const got = sess.items.reduce((s,i) => s + (i.received || 0), 0);
+  if (got > 0) return 'active';
+  return 'pending';
+}
+function statusLabel(st){
+  return { pending: { ko:'대기', en:'Pending', es:'Pendiente' }, active: { ko:'진행 중', en:'Active', es:'En curso' }, done: { ko:'완료', en:'Done', es:'Hecho' } }[st][LANG] || '';
+}
+function renderSessions(){
+  const today = todayKey();
+  const list = SESSIONS.filter(s => s.branch === BRANCH).sort((a,b) => (b.created||0) - (a.created||0));
+  const wrap = document.getElementById('sessionList');
+  if (!list.length) {
+    wrap.innerHTML = '<div class="empty-st"><div class="ic">📦</div><div class="msg">'+({ko:'오늘 입고 예정 없음',en:'No deliveries today',es:'Sin entregas hoy'}[LANG]||'')+'</div><div class="sub">'+({ko:'아래 [새 입고 시작]을 누르세요',en:'Tap [New delivery]',es:'Pulse [Nueva entrega]'}[LANG]||'')+'</div></div>';
+    return;
+  }
+  wrap.innerHTML = list.map(s => {
+    const st = statusOf(s);
+    const total = s.items.length;
+    const done  = s.items.filter(i => (i.received||0) >= i.ordered && i.ordered > 0).length;
+    const meta = (s.items.length || s.extras.length)
+      ? (total + ' ' + ({ko:'품목',en:'items',es:'ítems'}[LANG]||'') + (total ? ' · ' + done + '/' + total + ' ' + ({ko:'완료',en:'done',es:'hechos'}[LANG]||'') : '') + (s.extras.length ? ' · +' + s.extras.length + ' ' + ({ko:'추가',en:'extras',es:'extras'}[LANG]||'') : ''))
+      : ({ko:'주문서 없음 — 자유 스캔',en:'No order — free scan',es:'Sin pedido — escaneo libre'}[LANG]||'');
+    return '<div class="sess s-'+st+'" onclick="openSession(\''+s.id+'\')">'
+      + '<div class="icon">'+vendorIcon(s.vendor)+'</div>'
+      + '<div class="body"><div class="vendor">'+escHtml(s.vendor||'—')+'</div><div class="meta">'+escHtml(meta)+' · '+fmtTime(s.created)+'</div></div>'
+      + '<div class="stat s-'+st+'">'+escHtml(statusLabel(st))+'</div>'
+      + '</div>';
+  }).join('');
+}
+function openSession(id){
+  CUR = SESSIONS.find(s => s.id === id) || null;
+  if (!CUR) return;
+  if (CUR.status === 'done') { goView('report'); return; }
+  goView('scan');
+}
+
+//==================================================================
+// NEW SESSION
+//==================================================================
+function openNewSessionSheet(){
+  document.getElementById('newVendor').value = '';
+  document.getElementById('orderFile').value = '';
+  document.getElementById('orderPreview').innerHTML = '';
+  __pendingOrderItems = null;
+  document.getElementById('newSessOv').classList.add('show');
+  setTimeout(() => document.getElementById('newVendor').focus(), 60);
+}
+window.openNewSessionSheet = openNewSessionSheet;
+let __pendingOrderItems = null;
+document.addEventListener('change', function(ev){
+  if (ev.target && ev.target.id === 'orderFile') parseOrderFile(ev.target.files[0]);
+});
+function parseOrderFile(file){
+  if (!file) { __pendingOrderItems = null; document.getElementById('orderPreview').innerHTML = ''; return; }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      // 컬럼 자동 매핑 — 한글/영어 모두 지원
+      const items = rows.map(r => {
+        const k = Object.keys(r);
+        const get = (...names) => {
+          for (let i=0; i<names.length; i++) {
+            for (let j=0; j<k.length; j++) {
+              if (k[j].toString().toLowerCase().replace(/\s+/g,'').includes(names[i])) return r[k[j]];
+            }
+          }
+          return '';
+        };
+        const barcode = String(get('barcode','바코드','upc','ean')).trim();
+        const name = String(get('name','상품명','product','item')).trim();
+        const code = String(get('code','상품코드','sku')).trim();
+        const ordered = Number(get('qty','주문수량','수량','quantity','ordered','order')) || 0;
+        const vendor = String(get('vendor','벤더','supplier','업체')).trim();
+        return { barcode, name, code, ordered, vendor };
+      }).filter(x => x.barcode || x.name);
+      __pendingOrderItems = items;
+      const previewVendor = items.find(x => x.vendor)?.vendor || '';
+      if (previewVendor && !document.getElementById('newVendor').value) {
+        document.getElementById('newVendor').value = previewVendor;
+      }
+      const total = items.length;
+      const ttl = items.reduce((s,i) => s + (i.ordered||0), 0);
+      document.getElementById('orderPreview').innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;color:#166534"><b>✓ '+total+' '+({ko:'개 품목 인식',en:'items parsed',es:'ítems leídos'}[LANG]||'')+'</b><div style="font-size:.78em;color:#15803d;margin-top:3px">'+({ko:'총 주문수량',en:'Total ordered',es:'Total pedido'}[LANG]||'')+': '+ttl+'</div></div>';
+    } catch(err) {
+      console.warn(err);
+      document.getElementById('orderPreview').innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;color:#991b1b">⚠ '+({ko:'파일을 읽을 수 없음',en:'Cannot read file',es:'No se pudo leer'}[LANG]||'')+'</div>';
+      __pendingOrderItems = null;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function createSession(){
+  const vendor = document.getElementById('newVendor').value.trim() || '—';
+  const items = __pendingOrderItems ? __pendingOrderItems.map(x => ({
+    barcode: x.barcode || '',
+    name: x.name || x.barcode || '—',
+    code: x.code || '',
+    ordered: x.ordered || 0,
+    received: 0,
+    note: ''
+  })) : [];
+  const sess = {
+    id: 'r_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    vendor, branch: BRANCH, date: todayKey(),
+    items, extras: [],
+    status: 'active', created: Date.now()
+  };
+  SESSIONS.push(sess);
+  saveAll();
+  // 마스터에도 미리 자동 등록
+  items.forEach(it => {
+    if (it.barcode && !MASTER_MAP.has(it.barcode)) {
+      MASTER[it.barcode] = { name: it.name, code: it.code, vendor };
+      MASTER_MAP.set(it.barcode, MASTER[it.barcode]);
+    }
+  });
+  saveMaster();
+  __pendingOrderItems = null;
+  closeOv('newSessOv');
+  CUR = sess;
+  goView('scan');
+}
+window.createSession = createSession;
+
+//==================================================================
+// SCAN HEADER + STATS + RECENT
+//==================================================================
+function renderScanHeader(){
+  if (!CUR) return;
+  document.getElementById('scanVendor').textContent = (CUR.vendor || '—') + ' · ' + (BRANCHES.find(b => b.id === BRANCH)?.[LANG] || BRANCH);
+  const total = CUR.items.reduce((s,i) => s + (i.ordered||0), 0);
+  const got = CUR.items.reduce((s,i) => s + (i.received||0), 0);
+  const pct = total ? Math.min(100, Math.round(got/total*100)) : 0;
+  document.getElementById('scanProgressLabel').textContent = got + ' / ' + total + ' · ' + pct + '%';
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+function renderStats(){
+  if (!CUR) return;
+  let ok=0, sh=0, ov=0, un=0;
+  CUR.items.forEach(it => {
+    if (it.received === 0) sh++;
+    else if (it.received < it.ordered) sh++;
+    else if (it.received > it.ordered && it.ordered > 0) ov++;
+    else if (it.received === it.ordered && it.ordered > 0) ok++;
+    else if (it.ordered === 0 && it.received > 0) un++;
+  });
+  un += CUR.extras.length;
+  document.getElementById('stOk').textContent = ok;
+  document.getElementById('stShort').textContent = sh;
+  document.getElementById('stOver').textContent = ov;
+  document.getElementById('stUnkn').textContent = un;
+}
+function renderRecent(){
+  const wrap = document.getElementById('recentList');
+  if (!RECENT.length) {
+    wrap.innerHTML = '<div class="empty">'+t('lblNoScan')+'</div>';
+    return;
+  }
+  wrap.innerHTML = RECENT.slice(0, 8).map(r => {
+    const cls = r.kind === 'ok' ? 'ok' : (r.kind === 'over' ? 'over' : 'bad');
+    const ic  = r.kind === 'ok' ? '✅' : (r.kind === 'over' ? '⚠️' : (r.kind === 'unreg' ? '❓' : '❌'));
+    return '<div class="row '+cls+'"><div class="ic">'+ic+'</div><div class="nm">'+escHtml(r.name)+'</div><div class="qty">'+escHtml(r.qtyText)+'</div></div>';
+  }).join('');
+}
+
+//==================================================================
+// SCANNER
+//==================================================================
+async function startScanner(){
+  if (SCANNER_RUNNING) return;
+  if (typeof Html5Qrcode === 'undefined') {
+    document.getElementById('scanHint').textContent = ({ko:'스캐너 라이브러리 로드 실패',en:'Scanner failed to load',es:'Falló la carga del escáner'}[LANG]||'');
+    return;
+  }
+  try {
+    SCANNER = new Html5Qrcode('qrReader', { verbose:false });
+    const config = {
+      fps: 12,
+      qrbox: undefined,  // 전체 영역 사용 — 더 빠른 검출
+      aspectRatio: 4/3,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.QR_CODE,
+      ],
+      experimentalFeatures: { useBarCodeDetectorIfSupported: !!SETTINGS.native }
+    };
+    await SCANNER.start({ facingMode: 'environment' }, config, onScan, () => {});
+    SCANNER_RUNNING = true;
+    document.getElementById('scanHint').style.display = 'none';
+  } catch(e) {
+    console.warn('scanner start failed', e);
+    document.getElementById('scanHint').innerHTML = '⚠ ' + ({ko:'카메라 권한 필요 — 브라우저 설정에서 허용해주세요',en:'Camera permission needed',es:'Permiso de cámara requerido'}[LANG]||'');
+  }
+}
+async function stopScanner(){
+  if (!SCANNER_RUNNING || !SCANNER) return;
+  try { await SCANNER.stop(); } catch(e){}
+  try { SCANNER.clear(); } catch(e){}
+  SCANNER_RUNNING = false;
+  SCANNER = null;
+}
+async function restartScanner(){
+  await stopScanner();
+  setTimeout(startScanner, 200);
+}
+window.restartScanner = restartScanner;
+async function toggleTorch(){
+  if (!SCANNER || !SCANNER_RUNNING) return;
+  try {
+    const caps = SCANNER.getRunningTrackCameraCapabilities ? SCANNER.getRunningTrackCameraCapabilities() : null;
+    if (caps && caps.torchFeature && caps.torchFeature().isSupported && caps.torchFeature().isSupported()) {
+      const on = caps.torchFeature().value;
+      await caps.torchFeature().apply(!on);
+    } else {
+      toast(({ko:'이 기기는 조명 미지원',en:'Torch not supported',es:'Sin linterna'}[LANG]||''), 'err');
+    }
+  } catch(e){ toast(({ko:'조명 전환 실패',en:'Torch toggle failed',es:'No se pudo'}[LANG]||''), 'err'); }
+}
+window.toggleTorch = toggleTorch;
+
+//==================================================================
+// SCAN PROCESS — CORE
+//==================================================================
+function onScan(code){
+  // 1.5초 동일 바코드 잠금
+  const now = Date.now();
+  if (LAST_SCAN.code === code && (now - LAST_SCAN.ts) < 1500) return;
+  LAST_SCAN = { code, ts: now };
+  processBarcode(code, 1);
+}
+function processBarcode(barcode, qty){
+  if (!CUR) return;
+  qty = qty || 1;
+  barcode = String(barcode).trim();
+  // 1) 주문서 안에 있나?
+  let item = CUR.items.find(i => i.barcode === barcode);
+  if (item) {
+    item.received = (item.received || 0) + qty;
+    saveAll();
+    let kind = 'ok', flash = 'ok', sound = 'ok';
+    if (item.ordered > 0 && item.received > item.ordered) { kind = 'over'; flash = 'over'; sound = 'over'; }
+    if (item.ordered === 0) { kind = 'unreg'; flash = 'over'; sound = 'over'; }
+    pushRecent({ name: item.name, kind, qtyText: item.received + '/' + item.ordered });
+    feedback(flash, sound);
+    renderScanHeader();
+    renderStats();
+    renderRecent();
+    return;
+  }
+  // 2) 마스터에 있나? — 주문엔 없지만 알려진 상품 → extras 에 추가, 미주문 표시
+  const m = MASTER_MAP.get(barcode);
+  if (m) {
+    let ex = CUR.extras.find(e => e.barcode === barcode);
+    if (ex) ex.qty += qty; else { ex = { barcode, qty, name: m.name, vendor: m.vendor || '', code: m.code || '', note:'미주문' }; CUR.extras.push(ex); }
+    saveAll();
+    pushRecent({ name: m.name + ' ('+ ({ko:'미주문',en:'Not ordered',es:'No pedido'}[LANG]||'미주문') +')', kind:'bad', qtyText: '+' + qty });
+    feedback('bad', 'bad');
+    renderStats();
+    renderRecent();
+    return;
+  }
+  // 3) 마스터에도 없음 — 미등록 모달
+  feedback('bad', 'bad');
+  pushRecent({ name: ({ko:'미등록 바코드',en:'Unregistered',es:'No registrado'}[LANG]||'') + ' ' + barcode, kind:'bad', qtyText:'?' });
+  renderRecent();
+  openUnregModal(barcode);
+}
+function pushRecent(r){
+  RECENT.unshift(r);
+  if (RECENT.length > 8) RECENT.length = 8;
+}
+function feedback(flashKind, soundKind){
+  const f = document.getElementById('flash');
+  f.className = 'scan-flash ' + flashKind;
+  setTimeout(() => { f.className = 'scan-flash'; }, 200);
+  if (SETTINGS.sound) playBeep(soundKind);
+}
+
+//==================================================================
+// SOUND — Web Audio (preloaded ctx)
+//==================================================================
+let __audioCtx = null;
+function ensureAudio(){
+  if (!__audioCtx) {
+    try { __audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){}
+  }
+  return __audioCtx;
+}
+function playBeep(kind){
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch(e){} }
+  const profiles = {
+    ok:    [{ f:880, d:0.07 }],
+    over:  [{ f:660, d:0.07 }, { f:660, d:0.07, gap:0.06 }],
+    bad:   [{ f:220, d:0.32 }],
+  };
+  const p = profiles[kind] || profiles.ok;
+  let t0 = ctx.currentTime;
+  p.forEach(b => {
+    if (b.gap) t0 += b.gap;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.frequency.value = b.f;
+    osc.type = 'square';
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + b.d);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + b.d + 0.02);
+    t0 += b.d;
+  });
+}
+
+//==================================================================
+// MANUAL ENTRY
+//==================================================================
+function openManualEntry(){
+  document.getElementById('manBarcode').value = '';
+  document.getElementById('manOv').classList.add('show');
+  setTimeout(() => document.getElementById('manBarcode').focus(), 60);
+}
+window.openManualEntry = openManualEntry;
+function manualSubmit(){
+  const code = document.getElementById('manBarcode').value.trim();
+  if (!code) return;
+  closeOv('manOv');
+  // 잠금 무시 — 수동 입력은 직원이 의도한 액션
+  LAST_SCAN = { code:null, ts:0 };
+  processBarcode(code, 1);
+}
+window.manualSubmit = manualSubmit;
+
+//==================================================================
+// QTY KEYPAD
+//==================================================================
+function openQtyKeypad(target, name){
+  QTY_TARGET = target;
+  QTY_BUF = '';
+  document.getElementById('qtyDisplayN').textContent = '1';
+  document.getElementById('qtyItemName').textContent = name || '';
+  document.getElementById('qtyOv').classList.add('show');
+}
+window.qtyPad = function(k){
+  if (k === 'C') QTY_BUF = '';
+  else if (k === 'B') QTY_BUF = QTY_BUF.slice(0, -1);
+  else { if (QTY_BUF.length < 4) QTY_BUF += k; }
+  document.getElementById('qtyDisplayN').textContent = QTY_BUF || '1';
+};
+window.qtyApply = function(){
+  const n = parseInt(QTY_BUF || '1', 10);
+  if (!n || n <= 0) { closeOv('qtyOv'); return; }
+  closeOv('qtyOv');
+  if (!QTY_TARGET) return;
+  if (QTY_TARGET.barcode) {
+    LAST_SCAN = { code:null, ts:0 };
+    processBarcode(QTY_TARGET.barcode, n);
+  }
+  QTY_TARGET = null;
+};
+
+//==================================================================
+// UNREGISTERED MODAL
+//==================================================================
+let __pendingUnregBarcode = null;
+function openUnregModal(barcode){
+  __pendingUnregBarcode = barcode;
+  document.getElementById('unregBcode').value = barcode;
+  document.getElementById('unregName').value = '';
+  document.getElementById('unregNote').value = '';
+  document.getElementById('unregOv').classList.add('show');
+}
+window.unregSaveOnly = function(){
+  if (!__pendingUnregBarcode || !CUR) return closeOv('unregOv');
+  const note = document.getElementById('unregNote').value.trim();
+  const name = document.getElementById('unregName').value.trim();
+  let ex = CUR.extras.find(e => e.barcode === __pendingUnregBarcode);
+  if (ex) ex.qty += 1; else { ex = { barcode: __pendingUnregBarcode, qty:1, name: name || '미등록', note, code:'' }; CUR.extras.push(ex); }
+  saveAll();
+  pushRecent({ name: '⚠ ' + (name || ({ko:'미등록',en:'Unregistered',es:'No registrado'}[LANG]||'')), kind:'bad', qtyText: '+1' });
+  closeOv('unregOv');
+  renderStats();
+  renderRecent();
+  __pendingUnregBarcode = null;
+};
+window.unregRegister = function(){
+  if (!__pendingUnregBarcode) return closeOv('unregOv');
+  const name = document.getElementById('unregName').value.trim() || ('item-' + __pendingUnregBarcode.slice(-5));
+  const note = document.getElementById('unregNote').value.trim();
+  // 마스터 등록
+  MASTER[__pendingUnregBarcode] = { name, code:'', vendor: CUR ? CUR.vendor : '', category:'' };
+  MASTER_MAP.set(__pendingUnregBarcode, MASTER[__pendingUnregBarcode]);
+  saveMaster();
+  if (CUR) {
+    let ex = CUR.extras.find(e => e.barcode === __pendingUnregBarcode);
+    if (ex) ex.qty += 1; else { ex = { barcode: __pendingUnregBarcode, qty:1, name, note, code:'' }; CUR.extras.push(ex); }
+    saveAll();
+    pushRecent({ name: '✓ ' + name + ' ('+ ({ko:'등록됨',en:'registered',es:'registrado'}[LANG]||'') +')', kind:'over', qtyText:'+1' });
+    renderStats();
+    renderRecent();
+  }
+  closeOv('unregOv');
+  __pendingUnregBarcode = null;
+};
+
+//==================================================================
+// ITEM LIST PAGE
+//==================================================================
+function setItemFilter(f, btn){
+  ITEM_FILTER = f;
+  document.querySelectorAll('#page-items .tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderItemList();
+}
+window.setItemFilter = setItemFilter;
+function classifyItem(it){
+  if (it.ordered === 0 && it.received > 0) return 'over';   // 주문 없는데 받음 → 미주문 비슷
+  if (it.received === 0) return 'zero';
+  if (it.received < it.ordered) return 'short';
+  if (it.received === it.ordered) return 'ok';
+  if (it.received > it.ordered) return 'over';
+  return 'zero';
+}
+function renderItemList(){
+  if (!CUR) { document.getElementById('itemList').innerHTML = ''; return; }
+  let rows = [];
+  CUR.items.forEach(it => {
+    const cls = classifyItem(it);
+    if (ITEM_FILTER !== 'all' && ITEM_FILTER !== cls) return;
+    rows.push({ it, cls, kind:'ord' });
+  });
+  if (ITEM_FILTER === 'all' || ITEM_FILTER === 'bad') {
+    CUR.extras.forEach(ex => rows.push({ it: ex, cls:'bad', kind:'extra' }));
+  }
+  const wrap = document.getElementById('itemList');
+  if (!rows.length) { wrap.innerHTML = '<div class="empty-st"><div class="ic">📋</div><div class="msg">'+({ko:'해당 상품 없음',en:'No items',es:'Sin ítems'}[LANG]||'')+'</div></div>'; return; }
+  wrap.innerHTML = rows.map(r => {
+    const it = r.it;
+    if (r.kind === 'ord') {
+      const nums = (it.received||0) + ' / ' + it.ordered;
+      return '<div class="item '+r.cls+'" onclick="quickAdd(\''+escAttr(it.barcode)+'\', '+JSON.stringify(it.name).replace(/"/g,'&quot;')+')"><div class="nm">'+escHtml(it.name||'—')+'<div class="b">'+escHtml(it.barcode||'')+'</div></div><div class="nums">'+nums+'</div></div>';
+    } else {
+      return '<div class="item bad" onclick="quickAdd(\''+escAttr(it.barcode)+'\', '+JSON.stringify(it.name||'extra').replace(/"/g,'&quot;')+')"><div class="nm">⚠ '+escHtml(it.name||'—')+'<div class="b">'+escHtml(it.barcode)+(it.note?' · '+escHtml(it.note):'')+'</div></div><div class="nums">+'+it.qty+'</div></div>';
+    }
+  }).join('');
+}
+window.quickAdd = function(barcode, name){
+  if (!barcode) return;
+  openQtyKeypad({ barcode }, name);
+};
+
+//==================================================================
+// FINISH + REPORT
+//==================================================================
+function finishSession(){
+  if (!CUR) return;
+  if (!confirm(({ko:'이 입고를 마감합니까? 마감 후에는 추가 스캔이 불가합니다.',en:'Finish this delivery? No more scans after.',es:'¿Cerrar esta entrega? No se podrá escanear más.'}[LANG]||''))) return;
+  CUR.status = 'done';
+  CUR.finishedAt = Date.now();
+  saveAll();
+  stopScanner();
+  goView('report');
+}
+window.finishSession = finishSession;
+function renderReport(){
+  if (!CUR) return;
+  document.getElementById('reportTitle').textContent = (CUR.vendor || '—') + ' · ' + ({ko:'입고 결과',en:'Delivery report',es:'Informe de entrega'}[LANG]||'');
+  let ok=0, sh=0, ov=0, zr=0;
+  CUR.items.forEach(it => {
+    const c = classifyItem(it);
+    if (c === 'ok') ok++; else if (c === 'short') sh++; else if (c === 'over') ov++; else if (c === 'zero') zr++;
+  });
+  const ex = CUR.extras.length;
+  const ttlOrd = CUR.items.length;
+  const ttlGot = CUR.items.reduce((s,i)=>s+(i.received||0),0) + CUR.extras.reduce((s,e)=>s+(e.qty||0),0);
+  const total = CUR.items.reduce((s,i)=>s+(i.ordered||0),0);
+  const L = (k) => ({
+    total:    { ko:'총 주문 상품', en:'Ordered items', es:'Ítems pedidos' },
+    rec:      { ko:'총 입고 수량', en:'Total received', es:'Total recibido' },
+    ord:      { ko:'총 주문 수량', en:'Total ordered',  es:'Total pedido' },
+    cmpl:     { ko:'정상 완료',    en:'Completed OK',   es:'Completados' },
+    short:    { ko:'부족',         en:'Short',          es:'Falta' },
+    over:     { ko:'초과',         en:'Over',           es:'Exceso' },
+    zero:     { ko:'미입고',       en:'Pending',        es:'Pendiente' },
+    extras:   { ko:'미주문/미등록',en:'Extras',         es:'Extras' },
+  })[k][LANG] || '';
+  document.getElementById('reportSummary').innerHTML =
+    '<div>📦 <b>'+L('total')+':</b> '+ttlOrd+'</div>'
+  + '<div>📥 <b>'+L('rec')+':</b> '+ttlGot+' / '+total+'</div>'
+  + '<div>✅ <b>'+L('cmpl')+':</b> '+ok+'</div>'
+  + '<div>🟡 <b>'+L('short')+':</b> '+sh+'</div>'
+  + '<div>🟠 <b>'+L('over')+':</b> '+ov+'</div>'
+  + '<div>⚪ <b>'+L('zero')+':</b> '+zr+'</div>'
+  + '<div>❗ <b>'+L('extras')+':</b> '+ex+'</div>';
+  // problems
+  const probs = [];
+  CUR.items.forEach(it => {
+    const c = classifyItem(it);
+    if (c === 'short' && it.ordered > 0) probs.push({ ic:'🟡', t:it.name, sub:(it.received||0)+'/'+it.ordered });
+    if (c === 'over')                    probs.push({ ic:'🟠', t:it.name, sub:(it.received||0)+'/'+it.ordered });
+    if (c === 'zero')                    probs.push({ ic:'⚪', t:it.name, sub:'0/'+it.ordered });
+  });
+  CUR.extras.forEach(e => probs.push({ ic:'❗', t:'⚠ '+(e.name||e.barcode), sub:'+'+e.qty+(e.note?' · '+e.note:'') }));
+  const wrap = document.getElementById('reportProblems');
+  if (!probs.length) wrap.innerHTML = '<div style="color:#15803d;padding:8px">✅ '+({ko:'문제 없음',en:'All clear',es:'Sin problemas'}[LANG]||'')+'</div>';
+  else wrap.innerHTML = probs.slice(0, 50).map(p => '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f3f4f6"><div style="font-size:1.1em">'+p.ic+'</div><div style="flex:1;font-size:.88em">'+escHtml(p.t)+'</div><div style="font-size:.82em;font-weight:700;color:#374151">'+escHtml(p.sub)+'</div></div>').join('') + (probs.length > 50 ? '<div style="text-align:center;color:#6b7280;font-size:.82em;padding:6px">'+(probs.length-50)+' '+({ko:'개 더',en:'more',es:'más'}[LANG]||'')+'…</div>' : '');
+}
+
+//==================================================================
+// EXCEL EXPORT (per session)
+//==================================================================
+function downloadReport(){
+  if (!CUR) return;
+  const wb = XLSX.utils.book_new();
+  // 시트1 — 정상 완료
+  const ok = CUR.items.filter(i => classifyItem(i) === 'ok').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ok.length ? ok : [{}]), '정상');
+  // 시트2 — 부족
+  const sh = CUR.items.filter(i => classifyItem(i) === 'short').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '부족수량': i.ordered - i.received }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh.length ? sh : [{}]), '부족');
+  // 시트3 — 초과
+  const ov = CUR.items.filter(i => classifyItem(i) === 'over').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '초과수량': i.received - i.ordered }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ov.length ? ov : [{}]), '초과');
+  // 시트4 — 미입고
+  const zr = CUR.items.filter(i => classifyItem(i) === 'zero').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(zr.length ? zr : [{}]), '미입고');
+  // 시트5 — 미주문/미등록
+  const ex = CUR.extras.map(e => ({ '바코드':e.barcode, '상품명':e.name||'', '상품코드':e.code||'', '벤더':e.vendor||'', '입고수량':e.qty, '메모':e.note||'' }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ex.length ? ex : [{}]), '미주문_미등록');
+  // 시트0 — 요약
+  const sum = [
+    { '항목':'벤더', '값': CUR.vendor },
+    { '항목':'지점', '값': BRANCH },
+    { '항목':'날짜', '값': CUR.date },
+    { '항목':'마감 시각', '값': CUR.finishedAt ? new Date(CUR.finishedAt).toLocaleString() : '' },
+    { '항목':'총 주문 상품', '값': CUR.items.length },
+    { '항목':'총 주문 수량', '값': CUR.items.reduce((s,i)=>s+i.ordered,0) },
+    { '항목':'총 입고 수량', '값': CUR.items.reduce((s,i)=>s+(i.received||0),0) + CUR.extras.reduce((s,e)=>s+e.qty,0) },
+    { '항목':'정상 완료', '값': ok.length },
+    { '항목':'부족', '값': sh.length },
+    { '항목':'초과', '값': ov.length },
+    { '항목':'미입고', '값': zr.length },
+    { '항목':'미주문/미등록', '값': ex.length },
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sum), '요약');
+  const fname = '입고_' + (CUR.vendor||'vendor').replace(/[^\w가-힣]/g,'_') + '_' + CUR.date + '.xlsx';
+  XLSX.writeFile(wb, fname);
+}
+window.downloadReport = downloadReport;
+function exportAllSessionsExcel(){
+  if (!SESSIONS.length) { toast(({ko:'세션 없음',en:'No sessions',es:'Sin sesiones'}[LANG]||''), 'err'); return; }
+  const wb = XLSX.utils.book_new();
+  SESSIONS.forEach(s => {
+    const rows = [];
+    s.items.forEach(i => rows.push({ '벤더':s.vendor, '지점':s.branch, '날짜':s.date, '바코드':i.barcode, '상품명':i.name, '주문':i.ordered, '입고':i.received }));
+    s.extras.forEach(e => rows.push({ '벤더':s.vendor, '지점':s.branch, '날짜':s.date, '바코드':e.barcode, '상품명':e.name||'', '주문':0, '입고':e.qty, '메모':e.note||'' }));
+    if (!rows.length) rows.push({});
+    const sheetName = (s.vendor||'X').slice(0,20) + '_' + s.date.slice(5);
+    try { XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), sheetName); }
+    catch(e){ /* 시트명 중복 시 스킵 */ }
+  });
+  XLSX.writeFile(wb, '입고_전체_' + todayKey() + '.xlsx');
+}
+window.exportAllSessionsExcel = exportAllSessionsExcel;
+
+//==================================================================
+// MASTER
+//==================================================================
+function openMasterSheet(){
+  document.getElementById('masterSearch').value = '';
+  renderMasterList();
+  document.getElementById('masterOv').classList.add('show');
+}
+window.openMasterSheet = openMasterSheet;
+function renderMasterList(){
+  const q = (document.getElementById('masterSearch').value || '').toLowerCase().trim();
+  const all = Object.keys(MASTER);
+  const filtered = q ? all.filter(b => b.includes(q) || (MASTER[b].name||'').toLowerCase().includes(q)) : all;
+  const wrap = document.getElementById('masterList');
+  if (!filtered.length) { wrap.innerHTML = '<div class="empty-st" style="padding:20px"><div class="ic">📚</div><div class="msg">'+({ko:'마스터 비어있음',en:'Master empty',es:'Maestro vacío'}[LANG]||'')+'</div><div class="sub">'+({ko:'엑셀로 일괄 가져오기 권장',en:'Use Excel import',es:'Importe Excel'}[LANG]||'')+'</div></div>'; return; }
+  wrap.innerHTML = filtered.slice(0, 200).map(b => {
+    const m = MASTER[b];
+    return '<div style="padding:10px 12px;border-bottom:1px solid #f3f4f6"><div style="font-weight:600;font-size:.9em">'+escHtml(m.name||'—')+'</div><div style="font-size:.74em;color:#9ca3af;font-family:Consolas,monospace">'+escHtml(b)+(m.vendor?' · '+escHtml(m.vendor):'')+'</div></div>';
+  }).join('') + (filtered.length > 200 ? '<div style="padding:8px;text-align:center;color:#6b7280;font-size:.78em">+'+(filtered.length-200)+' '+({ko:'더',en:'more',es:'más'}[LANG]||'')+'</div>' : '');
+}
+window.renderMasterList = renderMasterList;
+function importMaster(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      let added = 0;
+      rows.forEach(r => {
+        const k = Object.keys(r);
+        const get = (...names) => {
+          for (let i=0;i<names.length;i++) for (let j=0;j<k.length;j++) if (k[j].toString().toLowerCase().replace(/\s+/g,'').includes(names[i])) return r[k[j]];
+          return '';
+        };
+        const barcode = String(get('barcode','바코드','upc','ean')).trim();
+        if (!barcode) return;
+        MASTER[barcode] = {
+          name: String(get('name','상품명','product','item')).trim() || MASTER[barcode]?.name || '',
+          code: String(get('code','상품코드','sku')).trim() || MASTER[barcode]?.code || '',
+          vendor: String(get('vendor','벤더','supplier','업체')).trim() || MASTER[barcode]?.vendor || '',
+          category: String(get('category','카테고리','cat')).trim() || MASTER[barcode]?.category || '',
+        };
+        MASTER_MAP.set(barcode, MASTER[barcode]);
+        added++;
+      });
+      saveMaster();
+      toast('✓ ' + added + ' ' + ({ko:'개 추가',en:'added',es:'añadidos'}[LANG]||''), 'ok');
+      renderMasterList();
+    } catch(err) { toast(({ko:'파일 오류',en:'File error',es:'Error'}[LANG]||''), 'err'); }
+    ev.target.value = '';
+  };
+  reader.readAsArrayBuffer(file);
+}
+window.importMaster = importMaster;
+function exportMaster(){
+  const rows = Object.keys(MASTER).map(b => ({ '바코드':b, '상품명':MASTER[b].name||'', '상품코드':MASTER[b].code||'', '벤더':MASTER[b].vendor||'', '카테고리':MASTER[b].category||'' }));
+  if (!rows.length) { toast(({ko:'마스터 비어있음',en:'Master empty',es:'Vacío'}[LANG]||''), 'err'); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), '상품마스터');
+  XLSX.writeFile(wb, '상품_마스터_' + todayKey() + '.xlsx');
+}
+window.exportMaster = exportMaster;
+
+//==================================================================
+// SETTINGS
+//==================================================================
+function renderSettings(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b => '<option value="'+b.id+'">'+(b[LANG]||b.ko)+'</option>').join('');
+  sel.value = BRANCH;
+  document.getElementById('soundOn').checked = !!SETTINGS.sound;
+  document.getElementById('nativeDetector').checked = !!SETTINGS.native;
+}
+function onBranchChange(){
+  BRANCH = document.getElementById('branchSel').value;
+  try { localStorage.setItem('recv.branch', BRANCH); } catch(e){}
+  saveAll();
+}
+window.onBranchChange = onBranchChange;
+window.saveSettings = saveSettings;
+function clearAllSessions(){
+  if (!confirm(({ko:'완료된 세션을 모두 삭제할까요?',en:'Delete all finished sessions?',es:'¿Borrar sesiones finalizadas?'}[LANG]||''))) return;
+  SESSIONS = SESSIONS.filter(s => s.status !== 'done');
+  saveAll();
+  toast(({ko:'정리 완료',en:'Cleaned',es:'Limpiado'}[LANG]||''), 'ok');
+}
+window.clearAllSessions = clearAllSessions;
+function clearAllData(){
+  if (!confirm('⚠️ ' + ({ko:'모든 세션과 마스터까지 모두 삭제됩니다. 계속할까요?',en:'All sessions AND master will be deleted. Continue?',es:'Se borrará todo. ¿Continuar?'}[LANG]||''))) return;
+  SESSIONS = []; MASTER = {}; MASTER_MAP = new Map();
+  saveAll(); saveMaster();
+  toast(({ko:'초기화 완료',en:'Reset done',es:'Reinicio'}[LANG]||''), 'ok');
+  goView('home');
+}
+window.clearAllData = clearAllData;
+
+//==================================================================
+// COMMON HELPERS
+//==================================================================
+function closeOv(id){ document.getElementById(id).classList.remove('show'); }
+window.closeOv = closeOv;
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escAttr(s){ return String(s||'').replace(/['"\\]/g,'\\$&'); }
+let __toastT = 0;
+function toast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (kind || '');
+  if (__toastT) clearTimeout(__toastT);
+  __toastT = setTimeout(() => { t.className = 'toast'; }, 1800);
+}
+
+//==================================================================
+// INIT
+//==================================================================
+loadAll();
+applyLang();
+goView('home');
+
+// Manual entry submit on Enter
+document.getElementById('manBarcode').addEventListener('keydown', e => { if (e.key === 'Enter') manualSubmit(); });
+document.getElementById('newVendor').addEventListener('keydown', e => { if (e.key === 'Enter') createSession(); });
+
+// 페이지 떠날 때 카메라 정리
+window.addEventListener('pagehide', stopScanner);
+window.addEventListener('beforeunload', stopScanner);
+</script>
+</body>
+</html>
