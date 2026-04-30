@@ -586,6 +586,24 @@ function saveMaster(){
   // 변경 후 클라우드에 자동 푸시 (3초 debounce — import 끝까지 모음)
   scheduleCloudPush();
 }
+// 바코드 정규화 — Vela POS 가 체크 디지트(끝자리) 를 빼고 저장하는 경우 대응.
+// canonicalBC: 숫자만 + 앞자리 0 제거. 같은 상품의 여러 표기가 같은 canonical 이 되도록.
+function canonicalBC(s){
+  s = String(s||'').trim().replace(/[^0-9]/g, '');
+  return s.replace(/^0+/, '');
+}
+// 두 바코드가 동일 상품인지 — 정확/앞0/체크디지트 차이 모두 매칭
+function fuzzyBcMatch(scanned, stored){
+  if (!scanned || !stored) return false;
+  if (scanned === stored) return true;
+  const a = canonicalBC(scanned), b = canonicalBC(stored);
+  if (a === b) return true;
+  // scanned 가 체크 디지트 포함, stored 는 미포함 (Vela POS 패턴)
+  if (a.length > 6 && a.slice(0,-1) === b) return true;
+  // 반대: stored 가 체크 디지트 포함, scanned 미포함
+  if (b.length > 6 && b.slice(0,-1) === a) return true;
+  return false;
+}
 //==================================================================
 // CLOUD SYNC — Firebase RTDB 로 지점별 마스터 공유
 //==================================================================
@@ -698,12 +716,29 @@ async function cloudSync(){
   }
 }
 window.cloudSync = cloudSync;
-// 지점별 Map 재구축
+// 지점별 Map 재구축 + 정규화 인덱스 (퍼지 매칭용)
+let MASTER_CANON = new Map();  // canonicalBC → [{ branchId, barcode, info }]
 function rebuildMasterMaps(){
   MASTER_MAPS = {};
+  MASTER_CANON = new Map();
+  function addCanon(canon, branchId, barcode, info){
+    if (!canon) return;
+    if (!MASTER_CANON.has(canon)) MASTER_CANON.set(canon, []);
+    MASTER_CANON.get(canon).push({ branchId, barcode, info });
+  }
   Object.keys(MASTER).forEach(branch => {
     const m = new Map();
-    Object.keys(MASTER[branch] || {}).forEach(b => m.set(String(b).trim(), MASTER[branch][b]));
+    Object.keys(MASTER[branch] || {}).forEach(b => {
+      const trimmed = String(b).trim();
+      m.set(trimmed, MASTER[branch][b]);
+      // 정규화 인덱스: 원본 + 끝자리 제거 변형 모두 등록
+      const c = canonicalBC(trimmed);
+      addCanon(c, branch, trimmed, MASTER[branch][b]);
+      if (trimmed.length > 6) {
+        const cTrim = canonicalBC(trimmed.slice(0, -1));
+        if (cTrim && cTrim !== c) addCanon(cTrim, branch, trimmed, MASTER[branch][b]);
+      }
+    });
     MASTER_MAPS[branch] = m;
   });
 }
@@ -716,14 +751,27 @@ function getBranchMasterMap(branchId){
   if (!MASTER_MAPS[branchId]) MASTER_MAPS[branchId] = new Map();
   return MASTER_MAPS[branchId];
 }
-// 스캔 시 마스터 조회 — 현재 지점 우선, 없으면 다른 지점에서 fallback
+// 스캔 시 마스터 조회 — 정규화 인덱스로 체크디지트/앞0 차이 자동 매칭
 function lookupBarcode(branchId, barcode){
+  // 1) 정확 매치
   const cur = getBranchMasterMap(branchId);
   if (cur.has(barcode)) return cur.get(barcode);
-  // fallback: 다른 지점
-  for (const b of Object.keys(MASTER_MAPS)) {
-    if (b === branchId) continue;
-    if (MASTER_MAPS[b].has(barcode)) return MASTER_MAPS[b].get(barcode);
+  // 2) 정규화 변형들로 매치
+  const variants = [];
+  variants.push(canonicalBC(barcode));
+  if (barcode.length > 6) variants.push(canonicalBC(barcode.slice(0,-1)));
+  // 우선 현재 지점, 다음 다른 지점
+  for (const v of variants) {
+    if (!v) continue;
+    const list = MASTER_CANON.get(v);
+    if (!list || !list.length) continue;
+    const sameBranch = list.find(e => e.branchId === branchId);
+    if (sameBranch) return sameBranch.info;
+  }
+  for (const v of variants) {
+    if (!v) continue;
+    const list = MASTER_CANON.get(v);
+    if (list && list.length) return list[0].info;
   }
   return null;
 }
@@ -1073,8 +1121,8 @@ function processBarcode(barcode, qty){
   if (!CUR) return;
   qty = qty || 1;
   barcode = String(barcode).trim();
-  // 1) 주문서 안에 있나?
-  let item = CUR.items.find(i => i.barcode === barcode);
+  // 1) 주문서 안에 있나? — 퍼지 매칭 (체크 디지트/앞0 차이 흡수)
+  let item = CUR.items.find(i => fuzzyBcMatch(barcode, i.barcode));
   if (item) {
     item.received = (item.received || 0) + qty;
     saveAll();
