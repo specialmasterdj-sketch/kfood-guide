@@ -15,7 +15,7 @@
 (function(){
   'use strict';
 
-  var KEYS = ['recv.master.v1', 'recv.v1', 'recv.settings.v1'];
+  var KEYS = ['recv.master.v1', 'recv.v1', 'recv.settings.v1', 'recv.branch', 'recv.cloudMeta.v1'];
   var IDB_NAME = 'kimchi_persist';
   var IDB_STORE = 'kv';
 
