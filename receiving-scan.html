@@ -191,6 +191,10 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
       <div style="font-size:.74em;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em" id="lblHomeBranch">지점</div>
       <select id="homeBranchSel" onchange="onHomeBranchChange()" style="border:0;background:transparent;font-size:1em;font-weight:700;padding:2px 0;width:100%;color:#1a5c3a;-webkit-appearance:none"></select>
     </div>
+    <div style="text-align:right;flex-shrink:0;cursor:pointer" onclick="cloudSync()" title="클릭해서 동기화">
+      <div id="homeMasterCount" style="font-size:.95em;font-weight:700;color:#15803d;line-height:1">—</div>
+      <div id="homeMasterSync" style="font-size:.7em;color:#6b7280;margin-top:3px;line-height:1">·</div>
+    </div>
   </div>
   <div class="sec-title" id="lblTodayHead">📅 오늘 입고</div>
   <div id="sessionList"></div>
@@ -1043,7 +1047,38 @@ function renderHomeBranchSel(){
   if (!sel) return;
   sel.innerHTML = BRANCHES.map(b => '<option value="'+b.id+'">'+(b[LANG]||b.ko)+'</option>').join('');
   sel.value = BRANCH;
+  refreshHomeMasterStatus();
 }
+function refreshHomeMasterStatus(){
+  const cnt = Object.keys(MASTER[BRANCH] || {}).length;
+  const meta = __cloudMeta[BRANCH];
+  const cntEl = document.getElementById('homeMasterCount');
+  const syncEl = document.getElementById('homeMasterSync');
+  if (!cntEl || !syncEl) return;
+  if (cnt === 0) {
+    cntEl.textContent = '⚠️ 0';
+    cntEl.style.color = '#dc2626';
+    syncEl.textContent = ({ko:'데이터 없음 — 탭해서 동기화',en:'No data — tap to sync',es:'Sin datos — toque'}[LANG]||'데이터 없음');
+    syncEl.style.color = '#dc2626';
+  } else {
+    cntEl.textContent = cnt.toLocaleString() + (LANG==='ko'?'개':'');
+    cntEl.style.color = '#15803d';
+    if (meta && meta.updatedAt) {
+      const ago = Date.now() - meta.updatedAt;
+      let agoStr;
+      if (ago < 60000) agoStr = ({ko:'방금',en:'just now',es:'ahora'}[LANG]||'방금');
+      else if (ago < 3600000) agoStr = Math.floor(ago/60000) + ({ko:'분 전',en:'m ago',es:'min'}[LANG]||'분 전');
+      else if (ago < 86400000) agoStr = Math.floor(ago/3600000) + ({ko:'시간 전',en:'h ago',es:'h'}[LANG]||'시간 전');
+      else agoStr = Math.floor(ago/86400000) + ({ko:'일 전',en:'d ago',es:'d'}[LANG]||'일 전');
+      syncEl.textContent = '✓ ' + agoStr;
+      syncEl.style.color = '#15803d';
+    } else {
+      syncEl.textContent = '✓ ' + ({ko:'로컬',en:'local',es:'local'}[LANG]||'로컬');
+      syncEl.style.color = '#6b7280';
+    }
+  }
+}
+window.refreshHomeMasterStatus = refreshHomeMasterStatus;
 function onHomeBranchChange(){
   const sel = document.getElementById('homeBranchSel');
   if (!sel) return;
@@ -2228,6 +2263,7 @@ async function autoBootPull(){
       if (currentPage === 'home') renderSessions();
       toast('☁ ' + ({ko:'클라우드에서 동기화됨',en:'Synced from cloud',es:'Sincronizado'}[LANG]||'') + ' (' + n + ')', 'ok');
     }
+    refreshHomeMasterStatus();
   } catch(e){ setSyncStatus('err'); }
 }
 // 현재 BRANCH 가 비어있으면 데이터 가장 많은 지점으로 자동 전환
