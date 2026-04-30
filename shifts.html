@@ -719,21 +719,48 @@ function lookupRoleFor(name, branchId){
 function populateMeNames(){
   var branchId = document.getElementById('meModalBranch').value;
   var nsel = document.getElementById('meModalName');
-  // 같은 지점이면 현재 DATA.employees, 아니면 localStorage에서 로드
+  // 같은 지점이면 현재 DATA.employees, 아니면 localStorage 시도
   var emps = DATA.employees;
+  var fromCache = true;
   if (branchId !== BRANCH){
     try {
       var raw = localStorage.getItem('shifts.' + branchId);
       if (raw) { var d = JSON.parse(raw); emps = (d && d.employees) || []; }
-      else emps = [];
-    } catch(e){ emps = []; }
+      else { emps = []; fromCache = false; }
+    } catch(e){ emps = []; fromCache = false; }
   }
   // 글로벌 OWNER도 포함
   var globalOwners = (GLOBAL.owners || []).map(function(o){ return Object.assign({}, o, {role:'OWNER'}); });
-  var all = globalOwners.concat(emps).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-  nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(function(e){
-    return '<option value="'+e.name+'" data-role="'+(e.role||'')+'">'+e.name+(e.role?' ('+e.role+')':'')+'</option>';
-  }).join('');
+  function renderOpts(list){
+    var all = globalOwners.concat(list).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+    nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(function(e){
+      return '<option value="'+e.name+'" data-role="'+(e.role||'')+'">'+e.name+(e.role?' ('+e.role+')':'')+'</option>';
+    }).join('');
+  }
+  renderOpts(emps);
+  // 다른 지점인데 캐시 비어있으면 Firebase REST 에서 가져와 dropdown 재구성 + 캐시 저장
+  if (branchId !== BRANCH && !fromCache && typeof FB_DB_URL === 'string') {
+    nsel.innerHTML = '<option value="">불러오는 중…</option>';
+    fetch(FB_DB_URL + '/schedules/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        // 사용자가 그 사이 다른 지점 선택했으면 결과 무시
+        if (document.getElementById('meModalBranch').value !== branchId) return;
+        var fetched = (d && d.employees) || [];
+        try { if (d) localStorage.setItem('shifts.' + branchId, JSON.stringify(d)); } catch(_){}
+        renderOpts(fetched);
+        // 직원 0명이면 안내
+        if (fetched.length === 0 && (globalOwners.length === 0)) {
+          nsel.innerHTML = '<option value="">— (등록된 직원 없음 — 직접 입력) —</option>';
+        }
+        // role 표시 새로고침
+        refreshMeRoleDisplay();
+      })
+      .catch(function(){
+        // 실패해도 직접 입력은 가능
+        renderOpts([]);
+      });
+  }
 }
 function saveMeIdentity(){
   var branchId = document.getElementById('meModalBranch').value;
