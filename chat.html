@@ -147,6 +147,15 @@ a{color:inherit;text-decoration:none}
 
 /* DATE BADGE — 보낸이 옆에 며칠 전 표시 (오늘이 아닌 경우만) */
 .date-badge{display:inline-block;font-size:.72em;font-weight:700;background:#fef3c7;color:#92400e;border-radius:8px;padding:2px 7px;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
+
+/* REFERENCE CARD — 공유된 메시지 참조 카드 */
+.ref-card{display:flex;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-left:3px solid #15803d;border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:pointer;transition:.12s;align-items:center}
+.ref-card:hover{background:#dcfce7;border-left-color:#166534}
+.ref-card .ref-body{flex:1;min-width:0}
+.ref-card .ref-head{font-size:.78em;font-weight:700;color:#15803d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ref-card .ref-snippet{font-size:.85em;color:#374151;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msg.msg-highlight{animation:msgPulse 2.4s ease-in-out}
+@keyframes msgPulse{0%,100%{background:transparent}30%,70%{background:#fef3c7}}
 .rxn-picker button{background:none;border:0;font-size:1.5em;padding:4px 6px;cursor:pointer;border-radius:8px;line-height:1}
 .rxn-picker button:hover{background:#f3f4f6;transform:scale(1.2)}
 
@@ -372,12 +381,16 @@ a{color:inherit;text-decoration:none}
   </div>
 </div>
 
-<!-- FORWARD MODAL -->
+<!-- FORWARD (REFERENCE SHARE) MODAL -->
 <div class="overlay" id="fwdOv">
   <div class="modal" style="max-width:460px">
-    <h3>↗ <span id="lblFwdTitle">메시지 전달</span></h3>
-    <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblFwdHint">전달할 채팅방을 선택하세요</div>
+    <h3>↗ <span id="lblFwdTitle">메시지 공유</span></h3>
+    <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblFwdHint">참조 카드만 보내져요. 받는 사람이 클릭하면 원본으로 이동.</div>
     <div id="fwdPreview" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:.85em;color:#374151;margin-bottom:12px;max-height:140px;overflow:auto"></div>
+    <div class="field-row">
+      <label id="lblFwdComment">댓글 (선택)</label>
+      <input type="text" id="fwdComment" placeholder="예: 이거 확인 부탁드려요" autocomplete="off">
+    </div>
     <div id="fwdRoomList" style="max-height:50vh;overflow:auto;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:10px"></div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeOverlay('fwdOv')" id="lblFwdCancel">취소</button>
@@ -1079,18 +1092,16 @@ function renderMessages(){
       : '';
     const delBtn = mine ? `<button class="del" title="삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
     const rxnHtml = renderReactions(m);
-    const fwdHeader = m.forwardedFrom
-      ? `<div class="fwd-from">↗ ${({ko:'전달됨',en:'Forwarded',es:'Reenviado'}[LANG]||'전달됨')}: ${escapeHtml(m.forwardedFrom.sender||'')}${m.forwardedFrom.senderBranch?(' · '+escapeHtml((BRANCH_BY_ID[m.forwardedFrom.senderBranch]?.[LANG])||m.forwardedFrom.senderBranch)):''}</div>`
-      : '';
-    const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'전달',en:'Forward',es:'Reenviar'}[LANG]||'전달')}</button>` : '';
+    const refCard = m.reference ? renderRef(m.reference) : '';
+    const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'공유',en:'Share',es:'Compartir'}[LANG]||'공유')}</button>` : '';
     const dateBadge = fmtMsgDateBadge(d);
     const dateBadgeHtml = dateBadge ? ` <span class="date-badge">${escapeHtml(dateBadge)}</span>` : '';
-    html += `<div class="msg ${mine?'mine':''}">
+    html += `<div class="msg ${mine?'mine':''}" data-msg-id="${m.id}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
         ${delBtn}
         <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}${dateBadgeHtml}</div>
-        ${fwdHeader}
+        ${refCard}
         ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
         ${photoHtml}
         <div class="ts">${time}</div>
@@ -1402,42 +1413,93 @@ async function forwardTo(targetRoomId){
   const src = __fwdSourceMsg;
   const ts = Date.now();
   const newMsgId = 'm' + ts + Math.floor(Math.random()*900);
+  const note = (document.getElementById('fwdComment')?.value || '').trim();
+  const photoCount = (src.photos || []).length;
   const fwd = {
     sender: me.name,
     senderBranch: me.branch,
     senderRole: me.role || '',
     isManager: !!me.isManager,
     color: me.color || colorFor(me.name),
-    text: src.text || '',
-    photos: (src.photos || []).slice(),
+    text: note,            // 사용자가 추가한 댓글 (없으면 빈 문자열)
+    photos: [],            // 사진 복사 안 함 — 참조만
     ts,
-    forwardedFrom: {
+    reference: {
+      room: ACTIVE_ROOM,
+      msgId: src.id,
       sender: src.sender || '',
       senderBranch: src.senderBranch || '',
-      originalRoom: ACTIVE_ROOM,
-      originalTs: src.ts || 0,
-      // 원본도 이미 전달본이면 최초 출처 보존
-      originSender: src.forwardedFrom?.sender || src.sender || '',
-      originBranch: src.forwardedFrom?.senderBranch || src.senderBranch || ''
+      ts: src.ts || 0,
+      snippet: (src.text || '').slice(0, 120),
+      photoCount,
+      photoThumb: (src.photos && src.photos[0]) ? src.photos[0] : ''
     }
   };
   try {
     await fetch(`${FB_DB_URL}/chat/messages/${targetRoomId}/${newMsgId}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(fwd)
     });
-    const lastMsg = '↗ ' + (fwd.text || (fwd.photos.length ? '📷 ' + fwd.photos.length + '장' : ''));
+    const lastBits = '↗ ' + (note ? note : (src.text ? src.text.slice(0,40) : (photoCount?'📷 '+photoCount:'공유')));
     await fetch(`${FB_DB_URL}/chat/rooms/${targetRoomId}.json`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ lastMsg: lastMsg.slice(0, 80), lastTs: ts, lastSender: me.name })
+      body: JSON.stringify({ lastMsg: lastBits.slice(0, 80), lastTs: ts, lastSender: me.name })
     });
     closeOverlay('fwdOv');
     const targetName = (ROOMS[targetRoomId]?.name) || targetRoomId;
-    alert('↗ ' + ({ko:'전달 완료',en:'Forwarded',es:'Reenviado'}[LANG]||'전달 완료') + ': ' + targetName);
+    alert('↗ ' + ({ko:'공유 완료',en:'Shared',es:'Compartido'}[LANG]||'공유 완료') + ': ' + targetName);
   } catch(e){
-    alert(({ko:'전달 실패',en:'Forward failed',es:'Error'}[LANG]||'전달 실패') + ': ' + (e.message||''));
+    alert(({ko:'공유 실패',en:'Share failed',es:'Error'}[LANG]||'공유 실패') + ': ' + (e.message||''));
   }
   __fwdSourceMsg = null;
 }
+// 참조 카드 — 옛 메시지로 이동
+function renderRef(ref){
+  if (!ref) return '';
+  const branchName = BRANCH_BY_ID[ref.senderBranch] ? (BRANCH_BY_ID[ref.senderBranch][LANG] || BRANCH_BY_ID[ref.senderBranch].ko) : '';
+  const dateStr = ref.ts ? (new Date(ref.ts).getMonth()+1) + '/' + new Date(ref.ts).getDate() : '';
+  const thumb = ref.photoThumb
+    ? '<img src="'+ref.photoThumb+'" style="width:48px;height:48px;border-radius:6px;object-fit:cover;flex-shrink:0">'
+    : '<div style="width:48px;height:48px;border-radius:6px;background:#dcfce7;display:flex;align-items:center;justify-content:center;font-size:1.2em;flex-shrink:0">💬</div>';
+  const photoLbl = ref.photoCount ? ' · 📷 ' + ref.photoCount : '';
+  return '<div class="ref-card" onclick="goToRef(\''+ref.room+'\',\''+ref.msgId+'\')">'
+    + thumb
+    + '<div class="ref-body">'
+    + '<div class="ref-head">↗ ' + escapeHtml(ref.sender||'?') + (branchName?' · '+escapeHtml(branchName):'') + (dateStr?' · '+dateStr:'') + photoLbl + '</div>'
+    + (ref.snippet ? '<div class="ref-snippet">' + escapeHtml(ref.snippet) + '</div>' : '<div class="ref-snippet" style="color:#9ca3af">' + ({ko:'(클릭해서 원본 보기)',en:'(click to view original)',es:'(clic para ver original)'}[LANG]||'(클릭해서 원본 보기)') + '</div>')
+    + '</div>'
+    + '<div style="color:#15803d;font-weight:700;flex-shrink:0;align-self:center">›</div>'
+    + '</div>';
+}
+function goToRef(roomId, msgId){
+  if (!roomId) return;
+  if (roomId !== ACTIVE_ROOM) {
+    openRoom(roomId);
+    setTimeout(() => scrollToMsg(msgId), 900);
+  } else {
+    scrollToMsg(msgId);
+  }
+}
+window.goToRef = goToRef;
+function scrollToMsg(msgId){
+  if (!msgId) return;
+  const el = document.querySelector('[data-msg-id="'+msgId+'"]');
+  if (el) {
+    el.scrollIntoView({ behavior:'smooth', block:'center' });
+    el.classList.add('msg-highlight');
+    setTimeout(() => el.classList.remove('msg-highlight'), 2400);
+  } else {
+    // 메시지가 아직 로드 안 됐을 수 있음 — 재시도
+    setTimeout(() => {
+      const el2 = document.querySelector('[data-msg-id="'+msgId+'"]');
+      if (el2) {
+        el2.scrollIntoView({ behavior:'smooth', block:'center' });
+        el2.classList.add('msg-highlight');
+        setTimeout(() => el2.classList.remove('msg-highlight'), 2400);
+      }
+    }, 800);
+  }
+}
+window.scrollToMsg = scrollToMsg;
 window.forwardTo = forwardTo;
 
 // ============ REACTIONS ============
