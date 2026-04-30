@@ -396,7 +396,11 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
     </div>
     <div class="field">
       <label id="lblCaseSearch">🔍 상품 검색</label>
-      <input type="text" id="caseItemSearch" placeholder="상품명 또는 바코드" oninput="renderCaseItemSearch()" autocomplete="off">
+      <div style="display:flex;gap:6px">
+        <input type="text" id="caseItemSearch" placeholder="상품명 또는 바코드" oninput="renderCaseItemSearch()" autocomplete="off" inputmode="text" style="flex:1">
+        <button type="button" class="btn sec" onclick="scanForCaseSearch()" style="padding:0 14px;flex-shrink:0" title="바코드 스캔">📷</button>
+      </div>
+      <div style="font-size:.74em;color:#6b7280;margin-top:4px" id="lblCaseSearchHint">이름 일부, 바코드 숫자, 또는 📷 버튼으로 상품 바코드 직접 스캔</div>
     </div>
     <div id="caseItemList" style="max-height:32vh;overflow-y:auto;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:10px"></div>
     <div id="caseSelected" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;font-size:.88em;margin-bottom:10px;display:none"></div>
@@ -557,6 +561,7 @@ const I18N = {
   lblCaseHint:{ko:'이 박스는 어떤 상품 몇 개입인가요? 한 번 등록하면 다음부터 자동 인식됩니다.', en:'Which product is this box, how many per case? Once mapped, future scans auto-resolve.', es:'¿Qué producto es esta caja y cuántos por caja? Una vez mapeado, los próximos escaneos se resuelven automáticamente.'},
   lblCaseBarcode:{ko:'박스 바코드', en:'Box barcode', es:'Código de caja'},
   lblCaseSearch:{ko:'🔍 상품 검색', en:'🔍 Search product', es:'🔍 Buscar producto'},
+  lblCaseSearchHint:{ko:'이름 일부, 바코드 숫자, 또는 📷 버튼으로 상품 바코드 직접 스캔', en:'Type name, barcode digits, or 📷 to scan item barcode', es:'Nombre, código, o 📷 para escanear'},
   lblCaseQty:{ko:'📦 박스 입수 (몇 개)', en:'📦 Units per case', es:'📦 Unidades por caja'},
   lblCaseCancel:{ko:'취소', en:'Cancel', es:'Cancelar'},
   lblCaseSave:{ko:'저장', en:'Save', es:'Guardar'},
@@ -1616,6 +1621,69 @@ function openCaseMapping(barcode){
   document.getElementById('caseOv').classList.add('show');
 }
 window.openCaseMapping = openCaseMapping;
+// 박스 매핑 모달에서 📷 버튼 — 상품 바코드 1회성 스캔으로 검색 채우기
+async function scanForCaseSearch(){
+  // 메인 스캐너 일시 정지 (카메라 충돌 방지)
+  const wasRunning = SCANNER_RUNNING;
+  if (wasRunning) await stopScanner();
+  const overlay = document.createElement('div');
+  overlay.id = '__caseScanOv';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px';
+  overlay.innerHTML =
+    '<div style="color:#fff;font-weight:700;font-size:1em;margin-bottom:10px">📷 ' + ({ko:'상품 바코드 스캔',en:'Scan item barcode',es:'Escanear código'}[LANG]||'상품 바코드 스캔') + '</div>' +
+    '<div id="__caseScanReader" style="width:100%;max-width:480px;background:#000;border-radius:12px;overflow:hidden"></div>' +
+    '<button id="__caseScanCancel" style="margin-top:14px;background:#fff;color:#1f2937;border:0;border-radius:10px;padding:10px 22px;font-weight:700;cursor:pointer">' + ({ko:'취소',en:'Cancel',es:'Cancelar'}[LANG]||'취소') + '</button>';
+  document.body.appendChild(overlay);
+  let mini = null;
+  let done = false;
+  function cleanup(){
+    if (done) return;
+    done = true;
+    try { if (mini) mini.stop().then(() => { try { mini.clear(); } catch(e){} }).catch(() => {}); } catch(e){}
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    // 메인 스캐너 재시작
+    if (wasRunning && currentPage === 'scan') setTimeout(startScanner, 250);
+  }
+  document.getElementById('__caseScanCancel').onclick = cleanup;
+  try {
+    mini = new Html5Qrcode('__caseScanReader');
+    await mini.start({ facingMode:'environment' }, {
+      fps:12, aspectRatio:4/3,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,  Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.ITF, Html5QrcodeSupportedFormats.QR_CODE
+      ],
+      experimentalFeatures: { useBarCodeDetectorIfSupported: !!SETTINGS.native }
+    }, (code) => {
+      if (done) return;
+      const inp = document.getElementById('caseItemSearch');
+      if (inp) {
+        inp.value = String(code).trim();
+        inp.dispatchEvent(new Event('input'));
+      }
+      // 스캔된 바코드가 마스터에 있으면 자동 선택
+      const branchId = (CUR && CUR.branch) || BRANCH;
+      const branchMaster = MASTER[branchId] || {};
+      const exact = branchMaster[code];
+      if (exact) {
+        __caseSelectedItem = { barcode: code, name: exact.name || '', vendor: exact.vendor || '' };
+        const lbl = document.getElementById('caseSelected');
+        if (lbl) {
+          lbl.style.display = '';
+          lbl.innerHTML = '✓ <b>' + escHtml(exact.name || code) + '</b><div style="font-size:.78em;color:#6b7280;margin-top:2px">' + escHtml(code) + '</div>';
+        }
+        renderCaseItemSearch();
+      }
+      cleanup();
+    }, () => {});
+  } catch(e) {
+    cleanup();
+    toast(({ko:'카메라 시작 실패 — 권한 확인',en:'Camera failed — check permission',es:'Cámara falló'}[LANG]||''), 'err');
+  }
+}
+window.scanForCaseSearch = scanForCaseSearch;
 function renderCaseItemSearch(){
   const q = (document.getElementById('caseItemSearch').value || '').toLowerCase().trim();
   const branchId = (CUR && CUR.branch) || BRANCH;
