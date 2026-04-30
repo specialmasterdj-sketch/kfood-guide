@@ -135,6 +135,15 @@ a{color:inherit;text-decoration:none}
 .reply-input input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:.88em;font-family:inherit}
 .reply-input input:focus{outline:none;border-color:#1a5c3a}
 .reply-input button{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:.88em}
+
+/* FORWARD */
+.fwd-btn{background:transparent;border:0;color:#0369a1;font-size:.8em;font-weight:600;cursor:pointer;padding:3px 8px;border-radius:6px;margin-top:6px;margin-left:4px}
+.fwd-btn:hover{background:#dbeafe}
+.fwd-from{font-size:.72em;color:#0369a1;background:#dbeafe;border-radius:6px;padding:3px 8px;margin-bottom:4px;display:inline-block;font-style:italic}
+.fwd-room-item{padding:10px 14px;border-bottom:1px solid #f3f4f6;cursor:pointer;transition:.1s}
+.fwd-room-item:hover{background:#f0fdf4}
+.fwd-room-item .nm{font-weight:700;font-size:.95em}
+.fwd-room-item .ds{font-size:.78em;color:#9ca3af;margin-top:2px}
 .rxn-picker button{background:none;border:0;font-size:1.5em;padding:4px 6px;cursor:pointer;border-radius:8px;line-height:1}
 .rxn-picker button:hover{background:#f3f4f6;transform:scale(1.2)}
 
@@ -356,6 +365,19 @@ a{color:inherit;text-decoration:none}
     <div id="pinAdminList" style="max-height:50vh;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px"></div>
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn secondary" onclick="closeOverlay('pinAdminOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- FORWARD MODAL -->
+<div class="overlay" id="fwdOv">
+  <div class="modal" style="max-width:460px">
+    <h3>↗ <span id="lblFwdTitle">메시지 전달</span></h3>
+    <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblFwdHint">전달할 채팅방을 선택하세요</div>
+    <div id="fwdPreview" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:.85em;color:#374151;margin-bottom:12px;max-height:140px;overflow:auto"></div>
+    <div id="fwdRoomList" style="max-height:50vh;overflow:auto;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:10px"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('fwdOv')" id="lblFwdCancel">취소</button>
     </div>
   </div>
 </div>
@@ -1043,16 +1065,21 @@ function renderMessages(){
       : '';
     const delBtn = mine ? `<button class="del" title="삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
     const rxnHtml = renderReactions(m);
+    const fwdHeader = m.forwardedFrom
+      ? `<div class="fwd-from">↗ ${({ko:'전달됨',en:'Forwarded',es:'Reenviado'}[LANG]||'전달됨')}: ${escapeHtml(m.forwardedFrom.sender||'')}${m.forwardedFrom.senderBranch?(' · '+escapeHtml((BRANCH_BY_ID[m.forwardedFrom.senderBranch]?.[LANG])||m.forwardedFrom.senderBranch)):''}</div>`
+      : '';
+    const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'전달',en:'Forward',es:'Reenviar'}[LANG]||'전달')}</button>` : '';
     html += `<div class="msg ${mine?'mine':''}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
         ${delBtn}
         <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}</div>
+        ${fwdHeader}
         ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
         ${photoHtml}
         <div class="ts">${time}</div>
         ${rxnHtml}
-        ${renderReplies(m)}
+        ${renderReplies(m)}${fwdBtn}
       </div>
     </div>`;
   }
@@ -1289,6 +1316,80 @@ async function deleteReply(parentMsgId, replyId){
   } catch(e){ alert('삭제 실패'); }
 }
 window.deleteReply = deleteReply;
+
+// ============ FORWARD ============
+let __fwdSourceMsg = null;
+function openForward(msgId){
+  const m = MSGS.find(x => x.id === msgId);
+  if (!m) return;
+  __fwdSourceMsg = m;
+  // 미리보기
+  const preview = document.getElementById('fwdPreview');
+  let prev = '';
+  prev += '<div style="font-weight:700;margin-bottom:4px">' + escapeHtml(m.sender||'?') + '</div>';
+  if (m.text) prev += '<div style="white-space:pre-wrap">' + escapeHtml(m.text.slice(0, 200)) + (m.text.length>200?'…':'') + '</div>';
+  if (m.photos && m.photos.length) prev += '<div style="margin-top:6px;color:#6b7280">📷 ' + ({ko:'사진',en:'Photos',es:'Fotos'}[LANG]||'사진') + ' ' + m.photos.length + ({ko:'장',en:'',es:''}[LANG]||'장') + '</div>';
+  preview.innerHTML = prev || '<span style="color:#9ca3af">' + ({ko:'(빈 메시지)',en:'(empty)',es:'(vacío)'}[LANG]||'(빈 메시지)') + '</span>';
+  // 방 목록
+  const wrap = document.getElementById('fwdRoomList');
+  const ids = Object.keys(ROOMS).filter(id => id !== ACTIVE_ROOM);
+  if (!ids.length) {
+    wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#9ca3af">' + ({ko:'다른 방 없음',en:'No other rooms',es:'Sin otras salas'}[LANG]||'') + '</div>';
+  } else {
+    wrap.innerHTML = ids.map(id => {
+      const r = ROOMS[id] || {};
+      return '<div class="fwd-room-item" onclick="forwardTo(\'' + id + '\')">'
+        + '<div class="nm">' + escapeHtml(r.name||id) + '</div>'
+        + (r.desc ? '<div class="ds">' + escapeHtml(r.desc) + '</div>' : '')
+        + '</div>';
+    }).join('');
+  }
+  document.getElementById('fwdOv').classList.add('show');
+}
+window.openForward = openForward;
+async function forwardTo(targetRoomId){
+  if (!__fwdSourceMsg || !targetRoomId) return;
+  if (!ensureMe()) return;
+  const src = __fwdSourceMsg;
+  const ts = Date.now();
+  const newMsgId = 'm' + ts + Math.floor(Math.random()*900);
+  const fwd = {
+    sender: me.name,
+    senderBranch: me.branch,
+    senderRole: me.role || '',
+    isManager: !!me.isManager,
+    color: me.color || colorFor(me.name),
+    text: src.text || '',
+    photos: (src.photos || []).slice(),
+    ts,
+    forwardedFrom: {
+      sender: src.sender || '',
+      senderBranch: src.senderBranch || '',
+      originalRoom: ACTIVE_ROOM,
+      originalTs: src.ts || 0,
+      // 원본도 이미 전달본이면 최초 출처 보존
+      originSender: src.forwardedFrom?.sender || src.sender || '',
+      originBranch: src.forwardedFrom?.senderBranch || src.senderBranch || ''
+    }
+  };
+  try {
+    await fetch(`${FB_DB_URL}/chat/messages/${targetRoomId}/${newMsgId}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(fwd)
+    });
+    const lastMsg = '↗ ' + (fwd.text || (fwd.photos.length ? '📷 ' + fwd.photos.length + '장' : ''));
+    await fetch(`${FB_DB_URL}/chat/rooms/${targetRoomId}.json`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg: lastMsg.slice(0, 80), lastTs: ts, lastSender: me.name })
+    });
+    closeOverlay('fwdOv');
+    const targetName = (ROOMS[targetRoomId]?.name) || targetRoomId;
+    alert('↗ ' + ({ko:'전달 완료',en:'Forwarded',es:'Reenviado'}[LANG]||'전달 완료') + ': ' + targetName);
+  } catch(e){
+    alert(({ko:'전달 실패',en:'Forward failed',es:'Error'}[LANG]||'전달 실패') + ': ' + (e.message||''));
+  }
+  __fwdSourceMsg = null;
+}
+window.forwardTo = forwardTo;
 
 // ============ REACTIONS ============
 function reactionUserKey(){
