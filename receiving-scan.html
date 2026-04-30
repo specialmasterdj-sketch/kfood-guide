@@ -380,6 +380,13 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
   <div class="sheet">
     <h3>📚 <span id="lblMasterTitle">상품 바코드 마스터</span></h3>
     <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblMasterDesc">스캔해도 인식되도록 미리 등록된 바코드. 엑셀로 일괄 등록 가능.</div>
+    <div class="field" style="margin-bottom:10px">
+      <label id="lblMasterBranch" style="display:flex;justify-content:space-between;align-items:center">
+        <span>🏬 지점</span>
+        <span style="font-size:.78em;color:#6b7280;font-weight:500" id="masterCountInfo">—</span>
+      </label>
+      <select id="masterBranchSel" onchange="renderMasterList()"></select>
+    </div>
     <div class="row2" style="margin-bottom:10px">
       <label class="btn sec" for="masterFile" style="cursor:pointer">📥 <span id="lblMasterImport">엑셀 가져오기</span></label>
       <button class="btn sec" onclick="exportMaster()">📤 <span id="lblMasterExport">엑셀 내보내기</span></button>
@@ -411,9 +418,9 @@ const STORAGE_KEY = 'recv.v1';
 const MASTER_KEY  = 'recv.master.v1';
 const SETTINGS_KEY = 'recv.settings.v1';
 
-let SESSIONS = [];      // [{ id, vendor, branch, date, items: [{ barcode,name,code,ordered,received,status,note,photo }], extras: [{ barcode, qty, name, note }], status }]
-let MASTER = {};        // { barcode: { name, code, vendor, category } }
-let MASTER_MAP = new Map();  // 동일 데이터 — 빠른 조회용
+let SESSIONS = [];      // [{ id, vendor, branch, date, items, extras, status }]
+let MASTER = {};        // { branchId: { barcode: { name, code, vendor, category } } }
+let MASTER_MAPS = {};   // { branchId: Map(barcode → info) } — O(1) 조회용
 let SETTINGS = { sound:true, native:true };
 
 let CUR = null;          // 현재 활성 세션 객체
@@ -488,6 +495,7 @@ const I18N = {
   lblMasterImport:{ko:'엑셀 가져오기', en:'Excel import', es:'Importar Excel'},
   lblMasterExport:{ko:'엑셀 내보내기', en:'Excel export', es:'Exportar Excel'},
   lblMasterSearch:{ko:'검색', en:'Search', es:'Buscar'},
+  lblMasterBranch:{ko:'🏬 지점', en:'🏬 Branch', es:'🏬 Sucursal'},
   lblMasterClose:{ko:'닫기', en:'Close', es:'Cerrar'},
   lblExportXlsx:{ko:'엑셀 다운로드', en:'Download Excel', es:'Descargar Excel'},
   lblViewItems:{ko:'상품 보기', en:'View items', es:'Ver ítems'},
@@ -540,15 +548,51 @@ function loadAll(){
     const raw = localStorage.getItem(MASTER_KEY);
     if (raw) MASTER = JSON.parse(raw) || {};
   } catch(e){ MASTER = {}; }
-  // Master Map 빌드 — O(1) 조회용
-  MASTER_MAP = new Map();
-  Object.keys(MASTER).forEach(k => MASTER_MAP.set(String(k).trim(), MASTER[k]));
+  // 마이그레이션 — 옛 평면 구조({barcode:{...}}) → 지점별 구조({branch:{barcode:{...}}})
+  // 휴리스틱: 첫 키가 숫자(바코드) 형태면 평면 구조로 간주
+  const keys = Object.keys(MASTER);
+  if (keys.length && /^\d{4,14}$/.test(keys[0])) {
+    const flat = MASTER;
+    MASTER = {};
+    MASTER[BRANCH] = flat;  // 현재 지점 아래로 옮김
+  }
+  // 모든 지점에 대한 Map 빌드
+  rebuildMasterMaps();
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) SETTINGS = Object.assign({ sound:true, native:true }, JSON.parse(raw));
   } catch(e){}
 }
 function saveMaster(){ try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){} }
+// 지점별 Map 재구축
+function rebuildMasterMaps(){
+  MASTER_MAPS = {};
+  Object.keys(MASTER).forEach(branch => {
+    const m = new Map();
+    Object.keys(MASTER[branch] || {}).forEach(b => m.set(String(b).trim(), MASTER[branch][b]));
+    MASTER_MAPS[branch] = m;
+  });
+}
+// 특정 지점의 마스터 객체 (없으면 만들어 반환)
+function getBranchMaster(branchId){
+  if (!MASTER[branchId]) MASTER[branchId] = {};
+  return MASTER[branchId];
+}
+function getBranchMasterMap(branchId){
+  if (!MASTER_MAPS[branchId]) MASTER_MAPS[branchId] = new Map();
+  return MASTER_MAPS[branchId];
+}
+// 스캔 시 마스터 조회 — 현재 지점 우선, 없으면 다른 지점에서 fallback
+function lookupBarcode(branchId, barcode){
+  const cur = getBranchMasterMap(branchId);
+  if (cur.has(barcode)) return cur.get(barcode);
+  // fallback: 다른 지점
+  for (const b of Object.keys(MASTER_MAPS)) {
+    if (b === branchId) continue;
+    if (MASTER_MAPS[b].has(barcode)) return MASTER_MAPS[b].get(barcode);
+  }
+  return null;
+}
 function saveSettings(){
   SETTINGS.sound = document.getElementById('soundOn').checked;
   SETTINGS.native = document.getElementById('nativeDetector').checked;
@@ -729,11 +773,13 @@ function createSession(){
   };
   SESSIONS.push(sess);
   saveAll();
-  // 마스터에도 미리 자동 등록
+  // 마스터에도 미리 자동 등록 (현재 지점 마스터에)
+  const m = getBranchMaster(BRANCH);
+  const mp = getBranchMasterMap(BRANCH);
   items.forEach(it => {
-    if (it.barcode && !MASTER_MAP.has(it.barcode)) {
-      MASTER[it.barcode] = { name: it.name, code: it.code, vendor };
-      MASTER_MAP.set(it.barcode, MASTER[it.barcode]);
+    if (it.barcode && !mp.has(it.barcode)) {
+      m[it.barcode] = { name: it.name, code: it.code, vendor };
+      mp.set(it.barcode, m[it.barcode]);
     }
   });
   saveMaster();
@@ -876,7 +922,7 @@ function processBarcode(barcode, qty){
     return;
   }
   // 2) 마스터에 있나? — 주문엔 없지만 알려진 상품 → extras 에 추가, 미주문 표시
-  const m = MASTER_MAP.get(barcode);
+  const m = lookupBarcode(CUR.branch || BRANCH, barcode);
   if (m) {
     let ex = CUR.extras.find(e => e.barcode === barcode);
     if (ex) ex.qty += qty; else { ex = { barcode, qty, name: m.name, vendor: m.vendor || '', code: m.code || '', note:'미주문' }; CUR.extras.push(ex); }
@@ -1016,9 +1062,12 @@ window.unregRegister = function(){
   if (!__pendingUnregBarcode) return closeOv('unregOv');
   const name = document.getElementById('unregName').value.trim() || ('item-' + __pendingUnregBarcode.slice(-5));
   const note = document.getElementById('unregNote').value.trim();
-  // 마스터 등록
-  MASTER[__pendingUnregBarcode] = { name, code:'', vendor: CUR ? CUR.vendor : '', category:'' };
-  MASTER_MAP.set(__pendingUnregBarcode, MASTER[__pendingUnregBarcode]);
+  // 마스터 등록 (현재 세션 지점에)
+  const branch = (CUR && CUR.branch) || BRANCH;
+  const m = getBranchMaster(branch);
+  const mp = getBranchMasterMap(branch);
+  m[__pendingUnregBarcode] = { name, code:'', vendor: CUR ? CUR.vendor : '', category:'' };
+  mp.set(__pendingUnregBarcode, m[__pendingUnregBarcode]);
   saveMaster();
   if (CUR) {
     let ex = CUR.extras.find(e => e.barcode === __pendingUnregBarcode);
@@ -1197,18 +1246,35 @@ window.exportAllSessionsExcel = exportAllSessionsExcel;
 //==================================================================
 function openMasterSheet(){
   document.getElementById('masterSearch').value = '';
+  // 지점 셀렉터 채우기
+  const sel = document.getElementById('masterBranchSel');
+  if (sel) {
+    sel.innerHTML = BRANCHES.map(b => '<option value="'+b.id+'">'+(b[LANG]||b.ko)+'</option>').join('');
+    sel.value = BRANCH;
+  }
   renderMasterList();
   document.getElementById('masterOv').classList.add('show');
 }
 window.openMasterSheet = openMasterSheet;
 function renderMasterList(){
+  const branchId = document.getElementById('masterBranchSel')?.value || BRANCH;
   const q = (document.getElementById('masterSearch').value || '').toLowerCase().trim();
-  const all = Object.keys(MASTER);
-  const filtered = q ? all.filter(b => b.includes(q) || (MASTER[b].name||'').toLowerCase().includes(q)) : all;
+  const branchMaster = MASTER[branchId] || {};
+  const all = Object.keys(branchMaster);
+  const filtered = q ? all.filter(b => b.includes(q) || (branchMaster[b].name||'').toLowerCase().includes(q)) : all;
+  // 카운트 정보
+  const info = document.getElementById('masterCountInfo');
+  if (info) info.textContent = all.length + ' ' + ({ko:'개 등록됨',en:'items',es:'ítems'}[LANG]||'') + (q ? ' · ' + filtered.length + ' ' + ({ko:'검색 결과',en:'matches',es:'coincidencias'}[LANG]||'') : '');
   const wrap = document.getElementById('masterList');
-  if (!filtered.length) { wrap.innerHTML = '<div class="empty-st" style="padding:20px"><div class="ic">📚</div><div class="msg">'+({ko:'마스터 비어있음',en:'Master empty',es:'Maestro vacío'}[LANG]||'')+'</div><div class="sub">'+({ko:'엑셀로 일괄 가져오기 권장',en:'Use Excel import',es:'Importe Excel'}[LANG]||'')+'</div></div>'; return; }
+  if (!filtered.length) {
+    const emptyMsg = all.length === 0
+      ? ({ko:'이 지점 마스터 비어있음',en:'Master empty for this branch',es:'Maestro vacío'}[LANG]||'')
+      : ({ko:'검색 결과 없음',en:'No matches',es:'Sin coincidencias'}[LANG]||'');
+    wrap.innerHTML = '<div class="empty-st" style="padding:20px"><div class="ic">📚</div><div class="msg">'+emptyMsg+'</div><div class="sub">'+({ko:'엑셀로 일괄 가져오기 권장',en:'Use Excel import',es:'Importe Excel'}[LANG]||'')+'</div></div>';
+    return;
+  }
   wrap.innerHTML = filtered.slice(0, 200).map(b => {
-    const m = MASTER[b];
+    const m = branchMaster[b];
     return '<div style="padding:10px 12px;border-bottom:1px solid #f3f4f6"><div style="font-weight:600;font-size:.9em">'+escHtml(m.name||'—')+'</div><div style="font-size:.74em;color:#9ca3af;font-family:Consolas,monospace">'+escHtml(b)+(m.vendor?' · '+escHtml(m.vendor):'')+'</div></div>';
   }).join('') + (filtered.length > 200 ? '<div style="padding:8px;text-align:center;color:#6b7280;font-size:.78em">+'+(filtered.length-200)+' '+({ko:'더',en:'more',es:'más'}[LANG]||'')+'</div>' : '');
 }
@@ -1292,17 +1358,21 @@ function importMaster(ev){
         ev.target.value = '';
         return;
       }
+      // 어느 지점 마스터로 import 하나 — 모달의 지점 셀렉터 우선, 없으면 현재 BRANCH
+      const targetBranch = document.getElementById('masterBranchSel')?.value || BRANCH;
+      const targetMaster = getBranchMaster(targetBranch);
+      const targetMap = getBranchMasterMap(targetBranch);
       let added = 0, skipped = 0;
       rows.forEach(r => {
         const barcode = String(r[bcCol]||'').trim().replace(/[\s\-_,]/g, '');
         if (!barcode || !/^\d{4,14}$/.test(barcode)) { skipped++; return; }
-        MASTER[barcode] = {
-          name: (nmCol ? String(r[nmCol]||'').trim() : '') || MASTER[barcode]?.name || '',
-          code: (cdCol ? String(r[cdCol]||'').trim() : '') || MASTER[barcode]?.code || '',
-          vendor: (vdCol ? String(r[vdCol]||'').trim() : '') || MASTER[barcode]?.vendor || '',
-          category: (ctCol ? String(r[ctCol]||'').trim() : '') || MASTER[barcode]?.category || '',
+        targetMaster[barcode] = {
+          name: (nmCol ? String(r[nmCol]||'').trim() : '') || targetMaster[barcode]?.name || '',
+          code: (cdCol ? String(r[cdCol]||'').trim() : '') || targetMaster[barcode]?.code || '',
+          vendor: (vdCol ? String(r[vdCol]||'').trim() : '') || targetMaster[barcode]?.vendor || '',
+          category: (ctCol ? String(r[ctCol]||'').trim() : '') || targetMaster[barcode]?.category || '',
         };
-        MASTER_MAP.set(barcode, MASTER[barcode]);
+        targetMap.set(barcode, targetMaster[barcode]);
         added++;
       });
       saveMaster();
@@ -1333,11 +1403,13 @@ function importMaster(ev){
 }
 window.importMaster = importMaster;
 function exportMaster(){
-  const rows = Object.keys(MASTER).map(b => ({ '바코드':b, '상품명':MASTER[b].name||'', '상품코드':MASTER[b].code||'', '벤더':MASTER[b].vendor||'', '카테고리':MASTER[b].category||'' }));
-  if (!rows.length) { toast(({ko:'마스터 비어있음',en:'Master empty',es:'Vacío'}[LANG]||''), 'err'); return; }
+  const branchId = document.getElementById('masterBranchSel')?.value || BRANCH;
+  const branchMaster = MASTER[branchId] || {};
+  const rows = Object.keys(branchMaster).map(b => ({ '바코드':b, '상품명':branchMaster[b].name||'', '상품코드':branchMaster[b].code||'', '벤더':branchMaster[b].vendor||'', '카테고리':branchMaster[b].category||'', '지점':branchId }));
+  if (!rows.length) { toast(({ko:'이 지점 마스터 비어있음',en:'Empty for this branch',es:'Vacío'}[LANG]||''), 'err'); return; }
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), '상품마스터');
-  XLSX.writeFile(wb, '상품_마스터_' + todayKey() + '.xlsx');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), '상품마스터_' + branchId);
+  XLSX.writeFile(wb, '상품_마스터_' + branchId + '_' + todayKey() + '.xlsx');
 }
 window.exportMaster = exportMaster;
 
@@ -1367,7 +1439,7 @@ function clearAllSessions(){
 window.clearAllSessions = clearAllSessions;
 function clearAllData(){
   if (!confirm('⚠️ ' + ({ko:'모든 세션과 마스터까지 모두 삭제됩니다. 계속할까요?',en:'All sessions AND master will be deleted. Continue?',es:'Se borrará todo. ¿Continuar?'}[LANG]||''))) return;
-  SESSIONS = []; MASTER = {}; MASTER_MAP = new Map();
+  SESSIONS = []; MASTER = {}; MASTER_MAPS = {};
   saveAll(); saveMaster();
   toast(({ko:'초기화 완료',en:'Reset done',es:'Reinicio'}[LANG]||''), 'ok');
   goView('home');
