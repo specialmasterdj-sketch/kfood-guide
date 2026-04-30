@@ -377,6 +377,37 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
       <button class="btn warn" onclick="unregSaveOnly()" id="lblUnregMemo">메모만 저장</button>
       <button class="btn" onclick="unregRegister()" id="lblUnregReg">상품 등록 + 입고</button>
     </div>
+    <button class="btn block" onclick="openCaseFromUnreg()" style="margin-top:8px;background:#0369a1">
+      📦 <span id="lblCaseFromUnreg">박스 → 상품 연결 (입수 N개)</span>
+    </button>
+  </div>
+</div>
+
+<!-- ============= CASE MAPPING ============= -->
+<div class="overlay" id="caseOv">
+  <div class="sheet">
+    <h3>📦 <span id="lblCaseTitle">박스 바코드 매핑</span></h3>
+    <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:10px;padding:10px;font-size:.85em;color:#1e40af;margin-bottom:12px">
+      <span id="lblCaseHint">이 박스는 어떤 상품 몇 개입인가요? 한 번 등록하면 다음부터 자동 인식됩니다.</span>
+    </div>
+    <div class="field">
+      <label id="lblCaseBarcode">박스 바코드</label>
+      <input type="text" id="caseBarcode" readonly style="background:#f3f4f6">
+    </div>
+    <div class="field">
+      <label id="lblCaseSearch">🔍 상품 검색</label>
+      <input type="text" id="caseItemSearch" placeholder="상품명 또는 바코드" oninput="renderCaseItemSearch()" autocomplete="off">
+    </div>
+    <div id="caseItemList" style="max-height:32vh;overflow-y:auto;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:10px"></div>
+    <div id="caseSelected" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;font-size:.88em;margin-bottom:10px;display:none"></div>
+    <div class="field">
+      <label id="lblCaseQty">📦 박스 입수 (몇 개)</label>
+      <input type="number" id="caseQty" value="12" min="1" max="9999">
+    </div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('caseOv')" id="lblCaseCancel">취소</button>
+      <button class="btn" onclick="saveCaseMapping()" id="lblCaseSave">저장</button>
+    </div>
   </div>
 </div>
 
@@ -443,11 +474,14 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 //==================================================================
 const STORAGE_KEY = 'recv.v1';
 const MASTER_KEY  = 'recv.master.v1';
+const CASES_KEY   = 'recv.cases.v1';
 const SETTINGS_KEY = 'recv.settings.v1';
 
 let SESSIONS = [];      // [{ id, vendor, branch, date, items, extras, status }]
 let MASTER = {};        // { branchId: { barcode: { name, code, vendor, category } } }
 let MASTER_MAPS = {};   // { branchId: Map(barcode → info) } — O(1) 조회용
+let CASE_MAP = {};      // { branchId: { caseBarcode: { itemBarcode, qty, name, addedAt } } }
+let CASE_MAPS = {};     // { branchId: Map(caseBarcode → info) }
 let SETTINGS = { sound:true, native:true };
 
 let CUR = null;          // 현재 활성 세션 객체
@@ -518,6 +552,14 @@ const I18N = {
   lblUnregCancel:{ko:'취소', en:'Cancel', es:'Cancelar'},
   lblUnregMemo:{ko:'메모만 저장', en:'Memo only', es:'Solo nota'},
   lblUnregReg: {ko:'상품 등록 + 입고', en:'Register + receive', es:'Registrar + recibir'},
+  lblCaseFromUnreg:{ko:'박스 → 상품 연결 (입수 N개)', en:'Box → product (N per case)', es:'Caja → producto (N por caja)'},
+  lblCaseTitle:{ko:'박스 바코드 매핑', en:'Box barcode mapping', es:'Mapeo de caja'},
+  lblCaseHint:{ko:'이 박스는 어떤 상품 몇 개입인가요? 한 번 등록하면 다음부터 자동 인식됩니다.', en:'Which product is this box, how many per case? Once mapped, future scans auto-resolve.', es:'¿Qué producto es esta caja y cuántos por caja? Una vez mapeado, los próximos escaneos se resuelven automáticamente.'},
+  lblCaseBarcode:{ko:'박스 바코드', en:'Box barcode', es:'Código de caja'},
+  lblCaseSearch:{ko:'🔍 상품 검색', en:'🔍 Search product', es:'🔍 Buscar producto'},
+  lblCaseQty:{ko:'📦 박스 입수 (몇 개)', en:'📦 Units per case', es:'📦 Unidades por caja'},
+  lblCaseCancel:{ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblCaseSave:{ko:'저장', en:'Save', es:'Guardar'},
   lblMasterTitle:{ko:'상품 바코드 마스터', en:'Product master', es:'Maestro productos'},
   lblMasterDesc:{ko:'스캔해도 인식되도록 미리 등록된 바코드. 엑셀로 일괄 등록 가능.', en:'Pre-registered barcodes. Bulk import via Excel.', es:'Códigos pre-registrados.'},
   lblMasterImport:{ko:'엑셀 가져오기', en:'Excel import', es:'Importar Excel'},
@@ -591,6 +633,12 @@ function loadAll(){
   }
   // 모든 지점에 대한 Map 빌드
   rebuildMasterMaps();
+  // 박스 매핑 로드
+  try {
+    const raw = localStorage.getItem(CASES_KEY);
+    if (raw) CASE_MAP = JSON.parse(raw) || {};
+  } catch(e){ CASE_MAP = {}; }
+  rebuildCaseMaps();
   // 클라우드 sync 메타 복원
   try {
     const cm = localStorage.getItem('recv.cloudMeta.v1');
@@ -624,6 +672,90 @@ function fuzzyBcMatch(scanned, stored){
   // 반대: stored 가 체크 디지트 포함, scanned 미포함
   if (b.length > 6 && b.slice(0,-1) === a) return true;
   return false;
+}
+//==================================================================
+// 박스(케이스) 매핑 — 박스 바코드 → 개별 상품 + 입수
+//==================================================================
+function rebuildCaseMaps(){
+  CASE_MAPS = {};
+  Object.keys(CASE_MAP).forEach(branch => {
+    const m = new Map();
+    Object.keys(CASE_MAP[branch] || {}).forEach(bc => m.set(String(bc).trim(), CASE_MAP[branch][bc]));
+    CASE_MAPS[branch] = m;
+  });
+}
+function getCaseMap(branchId){ if (!CASE_MAP[branchId]) CASE_MAP[branchId] = {}; return CASE_MAP[branchId]; }
+function getCaseMapMap(branchId){ if (!CASE_MAPS[branchId]) CASE_MAPS[branchId] = new Map(); return CASE_MAPS[branchId]; }
+function lookupCase(branchId, barcode){
+  // 정확 매치 우선
+  const cur = CASE_MAPS[branchId];
+  if (cur && cur.has(barcode)) return cur.get(barcode);
+  // canonical 매치
+  const canon = canonicalBC(barcode);
+  if (cur) {
+    for (const [k, v] of cur) {
+      if (canonicalBC(k) === canon) return v;
+    }
+  }
+  // fallback: 다른 지점의 매핑
+  for (const b of Object.keys(CASE_MAPS)) {
+    if (b === branchId) continue;
+    const m = CASE_MAPS[b];
+    if (m.has(barcode)) return m.get(barcode);
+    for (const [k, v] of m) {
+      if (canonicalBC(k) === canon) return v;
+    }
+  }
+  return null;
+}
+function saveCases(){
+  try { localStorage.setItem(CASES_KEY, JSON.stringify(CASE_MAP)); } catch(e){}
+  scheduleCasePush();
+}
+let __casePushTimer = null;
+function scheduleCasePush(){
+  if (__casePushTimer) clearTimeout(__casePushTimer);
+  __casePushTimer = setTimeout(() => { __casePushTimer = null; pushAllCasesToCloud(); }, 2000);
+}
+async function pushBranchCasesToCloud(branchId){
+  const data = CASE_MAP[branchId] || {};
+  try {
+    const r = await fetch(RECV_FB_URL + '/receiving/cases/' + branchId + '.json', {
+      method:'PUT',
+      body: JSON.stringify({
+        cases: data,
+        count: Object.keys(data).length,
+        updatedAt: Date.now(),
+        updatedBy: (function(){ try { return JSON.parse(localStorage.getItem('chat.me')||'{}').name || 'anon'; } catch(e){ return 'anon'; }})()
+      })
+    });
+    return r.ok;
+  } catch(e){ console.warn('case push failed', e); return false; }
+}
+async function pushAllCasesToCloud(){
+  for (const b of Object.keys(CASE_MAP)) {
+    if (Object.keys(CASE_MAP[b]).length > 0) await pushBranchCasesToCloud(b);
+  }
+}
+async function pullBranchCasesFromCloud(branchId){
+  try {
+    const r = await fetch(RECV_FB_URL + '/receiving/cases/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' });
+    const d = await r.json();
+    if (d && d.cases) {
+      CASE_MAP[branchId] = d.cases;
+      rebuildCaseMaps();
+      try { localStorage.setItem(CASES_KEY, JSON.stringify(CASE_MAP)); } catch(e){}
+      return Object.keys(d.cases).length;
+    }
+  } catch(e){}
+  return 0;
+}
+async function pullAllCasesFromCloud(){
+  let total = 0;
+  for (const b of BRANCHES) {
+    total += await pullBranchCasesFromCloud(b.id);
+  }
+  return total;
 }
 //==================================================================
 // CLOUD SYNC — Firebase RTDB 로 지점별 마스터 공유
@@ -1271,6 +1403,19 @@ function processBarcode(barcode, qty){
   if (!CUR) return;
   qty = qty || 1;
   barcode = String(barcode).trim();
+  // 0) 박스 매핑이 있나? — 박스 바코드 → 상품 바코드 + 입수
+  const caseInfo = lookupCase(CUR.branch || BRANCH, barcode);
+  if (caseInfo && caseInfo.itemBarcode) {
+    const totalQty = qty * (caseInfo.qty || 1);
+    pushRecent({
+      name: '📦 ' + (caseInfo.name || caseInfo.itemBarcode) + ' (×' + caseInfo.qty + ')',
+      kind: 'ok',
+      qtyText: '+' + totalQty
+    });
+    feedback('ok', 'ok');
+    // 매핑된 상품 바코드로 재처리 (총 수량)
+    return processBarcode(caseInfo.itemBarcode, totalQty);
+  }
   // 1) 주문서 안에 있나? — 퍼지 매칭 (체크 디지트/앞0 차이 흡수)
   let item = CUR.items.find(i => fuzzyBcMatch(barcode, i.barcode));
   if (item) {
@@ -1421,6 +1566,80 @@ window.unregSaveOnly = function(){
   closeOv('unregOv');
   renderStats();
   renderRecent();
+  __pendingUnregBarcode = null;
+};
+// 미등록 모달 → 박스 매핑 시트로 전환
+let __caseSelectedItem = null;
+window.openCaseFromUnreg = function(){
+  const bc = __pendingUnregBarcode || document.getElementById('unregBcode').value;
+  if (!bc) return;
+  closeOv('unregOv');
+  openCaseMapping(bc);
+};
+function openCaseMapping(barcode){
+  __caseSelectedItem = null;
+  document.getElementById('caseBarcode').value = barcode;
+  document.getElementById('caseItemSearch').value = '';
+  document.getElementById('caseQty').value = '12';
+  document.getElementById('caseSelected').style.display = 'none';
+  renderCaseItemSearch();
+  document.getElementById('caseOv').classList.add('show');
+}
+window.openCaseMapping = openCaseMapping;
+function renderCaseItemSearch(){
+  const q = (document.getElementById('caseItemSearch').value || '').toLowerCase().trim();
+  const branchId = (CUR && CUR.branch) || BRANCH;
+  const branchMaster = MASTER[branchId] || {};
+  const all = Object.keys(branchMaster);
+  const filtered = q
+    ? all.filter(b => b.includes(q) || (branchMaster[b].name||'').toLowerCase().includes(q)).slice(0, 50)
+    : all.slice(0, 30);
+  const wrap = document.getElementById('caseItemList');
+  if (!filtered.length) {
+    wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#9ca3af;font-size:.85em">'+({ko:'결과 없음 — 마스터 비어있거나 검색어 변경',en:'No results',es:'Sin resultados'}[LANG]||'')+'</div>';
+    return;
+  }
+  wrap.innerHTML = filtered.map(b => {
+    const m = branchMaster[b];
+    const sel = __caseSelectedItem && __caseSelectedItem.barcode === b ? 'background:#dcfce7;' : '';
+    return '<div style="padding:8px 12px;border-bottom:1px solid #f3f4f6;cursor:pointer;'+sel+'" onclick="selectCaseItem(\''+escAttr(b)+'\')"><div style="font-weight:600;font-size:.88em">'+escHtml(m.name||'—')+'</div><div style="font-size:.74em;color:#9ca3af;font-family:Consolas,monospace">'+escHtml(b)+(m.vendor?' · '+escHtml(m.vendor):'')+'</div></div>';
+  }).join('');
+}
+window.renderCaseItemSearch = renderCaseItemSearch;
+window.selectCaseItem = function(barcode){
+  const branchId = (CUR && CUR.branch) || BRANCH;
+  const m = (MASTER[branchId] || {})[barcode];
+  if (!m) return;
+  __caseSelectedItem = { barcode, name: m.name || '', vendor: m.vendor || '' };
+  const lbl = document.getElementById('caseSelected');
+  lbl.style.display = '';
+  lbl.innerHTML = '✓ <b>' + escHtml(m.name || barcode) + '</b><div style="font-size:.78em;color:#6b7280;margin-top:2px">' + escHtml(barcode) + '</div>';
+  renderCaseItemSearch();
+};
+window.saveCaseMapping = function(){
+  const caseBc = document.getElementById('caseBarcode').value.trim();
+  const qty = parseInt(document.getElementById('caseQty').value, 10) || 1;
+  if (!caseBc) { toast(({ko:'박스 바코드 없음',en:'No barcode',es:'Sin código'}[LANG]||''), 'err'); return; }
+  if (!__caseSelectedItem) { toast(({ko:'상품을 선택하세요',en:'Pick item',es:'Elija ítem'}[LANG]||''), 'err'); return; }
+  if (qty < 1) { toast(({ko:'입수 1개 이상',en:'Qty >= 1',es:'Cant. >= 1'}[LANG]||''), 'err'); return; }
+  const branchId = (CUR && CUR.branch) || BRANCH;
+  const map = getCaseMap(branchId);
+  const mp = getCaseMapMap(branchId);
+  const entry = {
+    itemBarcode: __caseSelectedItem.barcode,
+    qty,
+    name: __caseSelectedItem.name,
+    addedAt: Date.now(),
+    addedBy: (function(){ try { return JSON.parse(localStorage.getItem('chat.me')||'{}').name || 'anon'; } catch(e){ return 'anon'; }})()
+  };
+  map[caseBc] = entry;
+  mp.set(caseBc, entry);
+  saveCases();
+  closeOv('caseOv');
+  toast('✓ 📦 ' + ({ko:'매핑 저장됨',en:'Mapping saved',es:'Mapeo guardado'}[LANG]||'') + ' · ' + qty + ' ' + ({ko:'개입',en:'units',es:'unidades'}[LANG]||''), 'ok');
+  // 즉시 그 박스 바코드 처리 — 사용자가 방금 스캔한 상황 그대로 진행
+  if (CUR) processBarcode(caseBc, 1);
+  __caseSelectedItem = null;
   __pendingUnregBarcode = null;
 };
 window.unregRegister = function(){
@@ -1901,6 +2120,8 @@ async function autoBootPull(){
   try {
     // 모든 지점을 동기 대기 — 스캔 시작 전에 마스터 준비되도록 보장
     const n = await pullAllBranchesFromCloud(false);
+    // 박스 매핑도 같이 받음
+    pullAllCasesFromCloud().catch(() => {});
     setSyncStatus('ok');
     if (n > 0) {
       // 현재 BRANCH 가 비어있고 다른 지점에 데이터 있으면 자동 전환 — "데이터 안 보임" 혼선 방지
