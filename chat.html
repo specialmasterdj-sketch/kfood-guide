@@ -737,12 +737,21 @@ async function resetEmpPin(branchId, name){
   if (ok) { alert('✅ "' + name + '" PIN 리셋 완료. 본인이 다시 등록하면 됩니다.'); openPinAdmin(); }
   else alert('실패. 다시 시도해 주세요.');
 }
+// 이름이 임원(EXECUTIVE_NAMES)이면 role 비어있어도 PIN 필수
+function isExecNameStr(name){
+  if (!name) return false;
+  const nm = String(name).replace(/\s+/g,'').toUpperCase();
+  return EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === nm);
+}
+function requiresPin(role, name){
+  return isManagerRole(role) || isExecNameStr(name);
+}
 async function updatePinUI(role, name){
   const row = document.getElementById('mePinRow');
   const hint = document.getElementById('mePinHint');
   const inp = document.getElementById('mePin');
   inp.value = '';
-  if (!isManagerRole(role) || !name) { row.style.display = 'none'; return; }
+  if (!requiresPin(role, name) || !name) { row.style.display = 'none'; return; }
   row.style.display = '';
   hint.textContent = '확인 중…';
   const branchId = document.getElementById('meBranch').value;
@@ -787,8 +796,15 @@ async function saveMe(){
     } catch(e){}
   }
 
-  // PIN 인증: 매니저급(MANAGER/SUPERVISOR/OWNER 등) 역할은 PIN 필수
-  if (isManagerRole(role)) {
+  // PIN 인증: 매니저급 역할 OR 임원 이름(B.H.K 등) 은 PIN 필수
+  if (requiresPin(role, name)) {
+    // 입력창이 안 보이는 상태면 한 번 더 표시 후 종료 (사용자가 PIN 입력 가능하도록)
+    const row = document.getElementById('mePinRow');
+    if (row && row.style.display === 'none') {
+      await updatePinUI(role || 'EXECUTIVE', name);
+      alert('🔒 PIN 입력창이 표시되었습니다. PIN 입력 후 다시 [저장] 누르세요.');
+      return;
+    }
     const pin = (document.getElementById('mePin').value || '').trim();
     if (!/^\d{4,6}$/.test(pin)) { alert('PIN 4-6자리 숫자를 입력하세요.'); return; }
     const hash = await sha256Hex(pin + '|' + nameSlug(name) + '|' + branchId);
