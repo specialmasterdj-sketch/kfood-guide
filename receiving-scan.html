@@ -927,13 +927,18 @@ function rebuildMasterMaps(){
     Object.keys(MASTER[branch] || {}).forEach(b => {
       const trimmed = String(b).trim();
       m.set(trimmed, MASTER[branch][b]);
-      // 정규화 인덱스: 원본 + 끝자리 제거 변형 모두 등록
-      const c = canonicalBC(trimmed);
-      addCanon(c, branch, trimmed, MASTER[branch][b]);
-      if (trimmed.length > 6) {
-        const cTrim = canonicalBC(trimmed.slice(0, -1));
-        if (cTrim && cTrim !== c) addCanon(cTrim, branch, trimmed, MASTER[branch][b]);
+      // 정규화 인덱스: 원본 + 끝자리 제거(1, 2) + 앞자리 제거 변형 등록
+      const seen = new Set();
+      function addOne(v){
+        const c = canonicalBC(v);
+        if (!c || seen.has(c)) return;
+        seen.add(c);
+        addCanon(c, branch, trimmed, MASTER[branch][b]);
       }
+      addOne(trimmed);
+      if (trimmed.length > 6) addOne(trimmed.slice(0, -1));   // 끝 1자리 제거 (Vela 패턴)
+      if (trimmed.length > 7) addOne(trimmed.slice(0, -2));   // 끝 2자리 제거 (드문 케이스)
+      if (trimmed.length > 6) addOne(trimmed.slice(1));        // 앞 1자리 제거 (ITF-14 등)
     });
     MASTER_MAPS[branch] = m;
   });
@@ -952,10 +957,19 @@ function lookupBarcode(branchId, barcode){
   // 1) 정확 매치
   const cur = getBranchMasterMap(branchId);
   if (cur.has(barcode)) return cur.get(barcode);
-  // 2) 정규화 변형들로 매치
+  // 2) 정규화 변형들로 매치 — 다양한 길이/앞0/체크 변형 시도
   const variants = [];
-  variants.push(canonicalBC(barcode));
-  if (barcode.length > 6) variants.push(canonicalBC(barcode.slice(0,-1)));
+  const seenV = new Set();
+  function addV(v){
+    const c = canonicalBC(v);
+    if (c && !seenV.has(c)) { seenV.add(c); variants.push(c); }
+  }
+  addV(barcode);
+  if (barcode.length > 6) {
+    addV(barcode.slice(0, -1));   // 끝 1 제거 (체크 디지트)
+    addV(barcode.slice(0, -2));   // 끝 2 제거 (드문 케이스)
+    addV(barcode.slice(1));        // 앞 1 제거 (ITF-14 등)
+  }
   // 우선 현재 지점, 다음 다른 지점
   for (const v of variants) {
     if (!v) continue;
