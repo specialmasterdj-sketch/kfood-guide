@@ -117,6 +117,24 @@ a{color:inherit;text-decoration:none}
 .rxn-add:hover{background:#f8fafc;border-color:#94a3b8}
 .rxn-picker{position:fixed;background:#fff;border:1px solid #e5e7eb;border-radius:24px;padding:6px 10px;box-shadow:0 6px 24px rgba(0,0,0,.18);display:none;z-index:150;gap:2px}
 .rxn-picker.show{display:flex}
+
+/* REPLIES (THREAD) */
+.reply-toggle{background:transparent;border:0;color:#1a5c3a;font-size:.8em;font-weight:600;cursor:pointer;margin-top:6px;padding:3px 8px;border-radius:6px}
+.reply-toggle:hover{background:#f0fdf4}
+.replies{margin-top:8px;padding:8px 10px;background:#f9fafb;border-radius:10px;border-left:3px solid #1a5c3a}
+.reply{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #f3f4f6;position:relative}
+.reply:last-of-type{border-bottom:0}
+.av-sm{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.72em;flex-shrink:0}
+.reply-body{flex:1;min-width:0}
+.who-sm{font-size:.78em;font-weight:700;color:#374151}
+.reply-body .text{font-size:.88em;color:#1f2937;margin-top:2px;white-space:pre-wrap;word-wrap:break-word}
+.ts-sm{font-size:.68em;color:#9ca3af;margin-top:3px}
+.del-reply{position:absolute;top:4px;right:0;background:transparent;border:0;color:#9ca3af;font-size:.85em;cursor:pointer;padding:2px 6px;border-radius:4px}
+.del-reply:hover{color:#dc2626;background:#fee2e2}
+.reply-input{display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}
+.reply-input input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:.88em;font-family:inherit}
+.reply-input input:focus{outline:none;border-color:#1a5c3a}
+.reply-input button{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:.88em}
 .rxn-picker button{background:none;border:0;font-size:1.5em;padding:4px 6px;cursor:pointer;border-radius:8px;line-height:1}
 .rxn-picker button:hover{background:#f3f4f6;transform:scale(1.2)}
 
@@ -1034,6 +1052,7 @@ function renderMessages(){
         ${photoHtml}
         <div class="ts">${time}</div>
         ${rxnHtml}
+        ${renderReplies(m)}
       </div>
     </div>`;
   }
@@ -1179,6 +1198,97 @@ async function sendMessage(){
     sendBtn.disabled = false;
   }
 }
+
+// ============ REPLIES (THREADED COMMENTS) ============
+function renderReplies(m){
+  const replies = m.replies || {};
+  const ids = Object.keys(replies).sort((a,b) => (replies[a].ts||0) - (replies[b].ts||0));
+  const cnt = ids.length;
+  const expandedKey = 'thread.expanded.' + m.id;
+  const expanded = sessionStorage.getItem(expandedKey) === '1';
+  const btnLbl = cnt
+    ? ({ko:`💬 댓글 ${cnt}개`,en:`💬 ${cnt} replies`,es:`💬 ${cnt} respuestas`}[LANG] || `💬 댓글 ${cnt}개`)
+    : ({ko:'💬 댓글',en:'💬 Reply',es:'💬 Responder'}[LANG] || '💬 댓글');
+  let html = `<button class="reply-toggle" onclick="toggleReplies('${m.id}')">${btnLbl}${cnt?(expanded?' ▾':' ▸'):''}</button>`;
+  if (expanded || (!cnt && false)) {
+    html += '<div class="replies">';
+    for (const id of ids) {
+      const r = replies[id];
+      const branch = BRANCH_BY_ID[r.senderBranch];
+      const branchTxt = branch ? ' · ' + (branch[LANG] || branch.ko) : '';
+      const t = new Date(r.ts||0).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+      const mine = me && r.sender === me.name && r.senderBranch === me.branch;
+      const delBtn = mine ? `<button class="del-reply" title="삭제" onclick="deleteReply('${m.id}','${id}')">✕</button>` : '';
+      html += `<div class="reply">
+        <div class="av-sm" style="background:${r.color || colorFor(r.sender||'?')}">${initialsOf(r.sender)}</div>
+        <div class="reply-body">
+          ${delBtn}
+          <div class="who-sm">${escapeHtml(r.sender||'?')}${escapeHtml(branchTxt)}</div>
+          <div class="text">${escapeHtml(r.text||'')}</div>
+          <div class="ts-sm">${t}</div>
+        </div>
+      </div>`;
+    }
+    if (me) {
+      const ph = ({ko:'댓글 입력...',en:'Write a reply...',es:'Responder...'}[LANG] || '댓글 입력...');
+      html += `<div class="reply-input">
+        <input type="text" id="reply-${m.id}" placeholder="${ph}" onkeydown="if(event.key==='Enter'){event.preventDefault();sendReply('${m.id}');}" autocomplete="off">
+        <button type="button" onclick="sendReply('${m.id}')">↵</button>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  return html;
+}
+function toggleReplies(msgId){
+  const key = 'thread.expanded.' + msgId;
+  if (sessionStorage.getItem(key) === '1') sessionStorage.removeItem(key);
+  else sessionStorage.setItem(key, '1');
+  renderMessages();
+  // 입력창에 포커스
+  setTimeout(() => {
+    const inp = document.getElementById('reply-' + msgId);
+    if (inp) inp.focus();
+  }, 50);
+}
+window.toggleReplies = toggleReplies;
+async function sendReply(parentMsgId){
+  if (!ensureMe()) return;
+  if (!ACTIVE_ROOM) return;
+  const inp = document.getElementById('reply-' + parentMsgId);
+  if (!inp) return;
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.disabled = true;
+  const ts = Date.now();
+  const replyId = 'r' + ts + Math.floor(Math.random()*900);
+  const reply = {
+    sender: me.name,
+    senderBranch: me.branch,
+    senderRole: me.role || '',
+    color: me.color || colorFor(me.name),
+    text, ts
+  };
+  try {
+    await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${parentMsgId}/replies/${replyId}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reply)
+    });
+    inp.value = '';
+    // 스레드는 펼쳐진 상태 유지
+    sessionStorage.setItem('thread.expanded.' + parentMsgId, '1');
+  } catch(e){
+    alert('답글 전송 실패: ' + (e.message||''));
+  }
+  inp.disabled = false;
+}
+window.sendReply = sendReply;
+async function deleteReply(parentMsgId, replyId){
+  if (!confirm({ko:'이 댓글을 삭제할까요?',en:'Delete this reply?',es:'¿Borrar esta respuesta?'}[LANG] || '이 댓글을 삭제할까요?')) return;
+  try {
+    await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${parentMsgId}/replies/${replyId}.json`, { method:'DELETE' });
+  } catch(e){ alert('삭제 실패'); }
+}
+window.deleteReply = deleteReply;
 
 // ============ REACTIONS ============
 function reactionUserKey(){
