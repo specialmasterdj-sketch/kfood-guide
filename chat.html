@@ -1231,13 +1231,22 @@ function renderReplies(m){
   const replies = m.replies || {};
   const ids = Object.keys(replies).sort((a,b) => (replies[a].ts||0) - (replies[b].ts||0));
   const cnt = ids.length;
-  const expandedKey = 'thread.expanded.' + m.id;
-  const expanded = sessionStorage.getItem(expandedKey) === '1';
-  const btnLbl = cnt
-    ? ({ko:`💬 댓글 ${cnt}개`,en:`💬 ${cnt} replies`,es:`💬 ${cnt} respuestas`}[LANG] || `💬 댓글 ${cnt}개`)
-    : ({ko:'💬 댓글',en:'💬 Reply',es:'💬 Responder'}[LANG] || '💬 댓글');
-  let html = `<button class="reply-toggle" onclick="toggleReplies('${m.id}')">${btnLbl}${cnt?(expanded?' ▾':' ▸'):''}</button>`;
-  if (expanded || (!cnt && false)) {
+  // 답글 있으면 기본 펼침 (sessionStorage 의 'collapsed' 플래그가 있을 때만 접음)
+  // 답글 없으면 기본 접힘 (사용자 클릭 시 입력창만 노출)
+  const collapsedKey = 'thread.collapsed.' + m.id;
+  const openInputKey = 'thread.openInput.' + m.id;
+  const expanded = cnt > 0
+    ? sessionStorage.getItem(collapsedKey) !== '1'
+    : sessionStorage.getItem(openInputKey) === '1';
+  let btnLbl;
+  if (cnt > 0) {
+    const lbl = ({ko:`💬 댓글 ${cnt}개`,en:`💬 ${cnt} replies`,es:`💬 ${cnt} respuestas`}[LANG] || `💬 댓글 ${cnt}개`);
+    btnLbl = lbl + (expanded ? ' ▾' : ' ▸');
+  } else {
+    btnLbl = ({ko:'💬 댓글',en:'💬 Reply',es:'💬 Responder'}[LANG] || '💬 댓글');
+  }
+  let html = `<button class="reply-toggle" onclick="toggleReplies('${m.id}')">${btnLbl}</button>`;
+  if (expanded) {
     html += '<div class="replies">';
     for (const id of ids) {
       const r = replies[id];
@@ -1268,11 +1277,20 @@ function renderReplies(m){
   return html;
 }
 function toggleReplies(msgId){
-  const key = 'thread.expanded.' + msgId;
-  if (sessionStorage.getItem(key) === '1') sessionStorage.removeItem(key);
-  else sessionStorage.setItem(key, '1');
+  const m = MSGS.find(x => x.id === msgId);
+  const cnt = (m && m.replies) ? Object.keys(m.replies).length : 0;
+  if (cnt > 0) {
+    // 답글 있음: 펼침/접힘 토글 (기본 펼침)
+    const k = 'thread.collapsed.' + msgId;
+    if (sessionStorage.getItem(k) === '1') sessionStorage.removeItem(k);
+    else sessionStorage.setItem(k, '1');
+  } else {
+    // 답글 없음: 입력창 노출/숨김 토글 (기본 숨김)
+    const k = 'thread.openInput.' + msgId;
+    if (sessionStorage.getItem(k) === '1') sessionStorage.removeItem(k);
+    else sessionStorage.setItem(k, '1');
+  }
   renderMessages();
-  // 입력창에 포커스
   setTimeout(() => {
     const inp = document.getElementById('reply-' + msgId);
     if (inp) inp.focus();
@@ -1301,8 +1319,9 @@ async function sendReply(parentMsgId){
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reply)
     });
     inp.value = '';
-    // 스레드는 펼쳐진 상태 유지
-    sessionStorage.setItem('thread.expanded.' + parentMsgId, '1');
+    // 답글 보낸 후엔 펼친 상태 유지 (collapsed 플래그 제거)
+    sessionStorage.removeItem('thread.collapsed.' + parentMsgId);
+    sessionStorage.setItem('thread.openInput.' + parentMsgId, '1');
   } catch(e){
     alert('답글 전송 실패: ' + (e.message||''));
   }
