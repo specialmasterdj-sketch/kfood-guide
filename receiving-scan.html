@@ -387,9 +387,24 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 <div class="overlay" id="masterOv">
   <div class="sheet">
     <h3>📚 <span id="lblMasterTitle">상품 바코드 마스터</span></h3>
-    <button class="btn block" onclick="openNewSessionSheet()" style="margin-bottom:10px">
+    <button class="btn block" onclick="toggleInlineNewSession()" id="inlineNewSessBtn" style="margin-bottom:10px">
       ＋ <span id="lblNewSessFromMaster">새 입고 시작</span>
     </button>
+    <div id="inlineNewSession" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;margin-bottom:10px">
+      <div class="field">
+        <label id="lblNewVendorInline">벤더명</label>
+        <input type="text" id="newVendorInline" placeholder="예: ASSI" autocomplete="off">
+      </div>
+      <div class="field">
+        <label id="lblOrderUploadInline">주문서 업로드 (선택)</label>
+        <input type="file" id="orderFileInline" accept=".xlsx,.xls,.csv">
+        <div id="orderPreviewInline" style="margin-top:6px;font-size:.78em"></div>
+      </div>
+      <div class="actions">
+        <button class="btn sec" onclick="toggleInlineNewSession()" id="lblCancelInline">취소</button>
+        <button class="btn" onclick="createSessionInline()" id="lblStartInline">시작</button>
+      </div>
+    </div>
     <div style="font-size:.84em;color:#6b7280;margin-bottom:10px" id="lblMasterDesc">스캔해도 인식되도록 미리 등록된 바코드. 엑셀로 일괄 등록 가능.</div>
     <div class="field" style="margin-bottom:10px">
       <label id="lblMasterBranch" style="display:flex;justify-content:space-between;align-items:center">
@@ -513,6 +528,10 @@ const I18N = {
   lblMasterSearch:{ko:'검색', en:'Search', es:'Buscar'},
   lblMasterBranch:{ko:'🏬 지점', en:'🏬 Branch', es:'🏬 Sucursal'},
   lblNewSessFromMaster:{ko:'새 입고 시작', en:'New delivery', es:'Nueva entrega'},
+  lblNewVendorInline:{ko:'벤더명', en:'Vendor name', es:'Proveedor'},
+  lblOrderUploadInline:{ko:'주문서 업로드 (선택)', en:'Order upload (optional)', es:'Pedido (opcional)'},
+  lblCancelInline:{ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblStartInline:{ko:'시작', en:'Start', es:'Iniciar'},
   lblMasterClose:{ko:'닫기', en:'Close', es:'Cerrar'},
   lblExportXlsx:{ko:'엑셀 다운로드', en:'Download Excel', es:'Descargar Excel'},
   lblViewItems:{ko:'상품 보기', en:'View items', es:'Ver ítems'},
@@ -916,6 +935,104 @@ function openNewSessionSheet(){
   setTimeout(() => document.getElementById('newVendor').focus(), 60);
 }
 window.openNewSessionSheet = openNewSessionSheet;
+
+// 마스터 모달 안 인라인 새 세션 — 모달 쌓이지 않게 그 자리에서 펼침
+let __inlineOrderItems = null;
+function toggleInlineNewSession(){
+  const box = document.getElementById('inlineNewSession');
+  const btn = document.getElementById('inlineNewSessBtn');
+  if (!box) return;
+  const open = box.style.display !== 'none';
+  if (open) {
+    box.style.display = 'none';
+    if (btn) btn.style.display = '';
+  } else {
+    box.style.display = '';
+    if (btn) btn.style.display = 'none';
+    document.getElementById('newVendorInline').value = '';
+    document.getElementById('orderFileInline').value = '';
+    document.getElementById('orderPreviewInline').innerHTML = '';
+    __inlineOrderItems = null;
+    setTimeout(() => document.getElementById('newVendorInline').focus(), 60);
+  }
+}
+window.toggleInlineNewSession = toggleInlineNewSession;
+// 인라인 폼의 파일 선택 핸들러
+document.addEventListener('change', function(ev){
+  if (ev.target && ev.target.id === 'orderFileInline') parseInlineOrderFile(ev.target.files[0]);
+});
+function parseInlineOrderFile(file){
+  if (!file) { __inlineOrderItems = null; document.getElementById('orderPreviewInline').innerHTML = ''; return; }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      const items = rows.map(r => {
+        const k = Object.keys(r);
+        const get = (...names) => {
+          for (let i=0; i<names.length; i++) for (let j=0; j<k.length; j++) if (k[j].toString().toLowerCase().replace(/\s+/g,'').includes(names[i])) return r[k[j]];
+          return '';
+        };
+        return {
+          barcode: String(get('barcode','바코드','upc','ean')).trim(),
+          name: String(get('name','상품명','product','item')).trim(),
+          code: String(get('code','상품코드','sku')).trim(),
+          ordered: Number(get('qty','주문수량','수량','quantity','ordered','order')) || 0,
+          vendor: String(get('vendor','벤더','supplier','업체')).trim(),
+        };
+      }).filter(x => x.barcode || x.name);
+      __inlineOrderItems = items;
+      const v = items.find(x => x.vendor)?.vendor;
+      if (v && !document.getElementById('newVendorInline').value) document.getElementById('newVendorInline').value = v;
+      const ttl = items.reduce((s,i) => s + (i.ordered||0), 0);
+      document.getElementById('orderPreviewInline').innerHTML = '<span style="color:#15803d;font-weight:600">✓ '+items.length+' '+({ko:'품목',en:'items',es:'ítems'}[LANG]||'')+' · '+ttl+' '+({ko:'개 주문',en:'qty',es:'cant.'}[LANG]||'')+'</span>';
+    } catch(err) {
+      document.getElementById('orderPreviewInline').innerHTML = '<span style="color:#dc2626">⚠ '+({ko:'파일 오류',en:'File error',es:'Error'}[LANG]||'')+'</span>';
+      __inlineOrderItems = null;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+async function createSessionInline(){
+  const vendor = document.getElementById('newVendorInline').value.trim() || '—';
+  // 마스터 비어있으면 force pull
+  const localCount = Object.keys(MASTER[BRANCH] || {}).length;
+  if (localCount === 0 && typeof navigator !== 'undefined' && navigator.onLine !== false) {
+    setSyncStatus('pulling');
+    try { await pullBranchFromCloud(BRANCH, true); } catch(e){}
+    setSyncStatus('ok');
+  }
+  const items = __inlineOrderItems ? __inlineOrderItems.map(x => ({
+    barcode: x.barcode || '', name: x.name || x.barcode || '—',
+    code: x.code || '', ordered: x.ordered || 0, received: 0, note: ''
+  })) : [];
+  const sess = {
+    id: 'r_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    vendor, branch: BRANCH, date: todayKey(),
+    items, extras: [], status: 'active', created: Date.now()
+  };
+  SESSIONS.push(sess);
+  saveAll();
+  // 자동으로 마스터에 등록
+  const m = getBranchMaster(BRANCH);
+  const mp = getBranchMasterMap(BRANCH);
+  items.forEach(it => {
+    if (it.barcode && !mp.has(it.barcode)) {
+      m[it.barcode] = { name: it.name, code: it.code, vendor };
+      mp.set(it.barcode, m[it.barcode]);
+    }
+  });
+  saveMaster();
+  __inlineOrderItems = null;
+  // 모든 모달 닫고 스캔 화면으로
+  closeOv('masterOv');
+  toggleInlineNewSession();
+  CUR = sess;
+  goView('scan');
+}
+window.createSessionInline = createSessionInline;
 let __pendingOrderItems = null;
 document.addEventListener('change', function(ev){
   if (ev.target && ev.target.id === 'orderFile') parseOrderFile(ev.target.files[0]);
