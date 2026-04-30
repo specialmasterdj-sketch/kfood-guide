@@ -1407,14 +1407,44 @@ function processBarcode(barcode, qty){
   const caseInfo = lookupCase(CUR.branch || BRANCH, barcode);
   if (caseInfo && caseInfo.itemBarcode) {
     const totalQty = qty * (caseInfo.qty || 1);
+    // 주문서 안의 항목인가?
+    let item = CUR.items.find(i => fuzzyBcMatch(caseInfo.itemBarcode, i.barcode));
+    if (item) {
+      item.boxScans = (item.boxScans || 0) + qty;
+      item.received = (item.received || 0) + totalQty;
+      saveAll();
+      let kind = 'ok', flash = 'ok', sound = 'ok';
+      if (item.ordered > 0 && item.received > item.ordered) { kind = 'over'; flash = 'over'; sound = 'over'; }
+      pushRecent({
+        name: '📦 ' + (caseInfo.name || item.name) + ' · ' + item.boxScans + ({ko:'박스',en:' boxes',es:' cajas'}[LANG]||'박스'),
+        kind, qtyText: item.received + '/' + item.ordered
+      });
+      feedback(flash, sound);
+      renderScanHeader(); renderStats(); renderRecent();
+      return;
+    }
+    // 마스터에 있나? 미주문 extras 로
+    const m = lookupBarcode(CUR.branch || BRANCH, caseInfo.itemBarcode) || { name: caseInfo.name || '' };
+    let ex = CUR.extras.find(e => fuzzyBcMatch(caseInfo.itemBarcode, e.barcode));
+    if (ex) {
+      ex.boxScans = (ex.boxScans || 0) + qty;
+      ex.qty = (ex.qty || 0) + totalQty;
+    } else {
+      ex = {
+        barcode: caseInfo.itemBarcode, qty: totalQty, boxScans: qty,
+        name: m.name || caseInfo.name || '', vendor: m.vendor || '', code: m.code || '',
+        note: ({ko:'미주문',en:'not ordered',es:'no pedido'}[LANG]||'미주문')
+      };
+      CUR.extras.push(ex);
+    }
+    saveAll();
     pushRecent({
-      name: '📦 ' + (caseInfo.name || caseInfo.itemBarcode) + ' (×' + caseInfo.qty + ')',
-      kind: 'ok',
-      qtyText: '+' + totalQty
+      name: '📦 ' + (ex.name || caseInfo.itemBarcode) + ' · ' + ex.boxScans + ({ko:'박스 (미주문)',en:' box(es)',es:' caja(s)'}[LANG]||'박스'),
+      kind: 'bad', qtyText: '+' + totalQty
     });
-    feedback('ok', 'ok');
-    // 매핑된 상품 바코드로 재처리 (총 수량)
-    return processBarcode(caseInfo.itemBarcode, totalQty);
+    feedback('bad', 'bad');
+    renderStats(); renderRecent();
+    return;
   }
   // 1) 주문서 안에 있나? — 퍼지 매칭 (체크 디지트/앞0 차이 흡수)
   let item = CUR.items.find(i => fuzzyBcMatch(barcode, i.barcode));
@@ -1698,11 +1728,12 @@ function renderItemList(){
   if (!rows.length) { wrap.innerHTML = '<div class="empty-st"><div class="ic">📋</div><div class="msg">'+({ko:'해당 상품 없음',en:'No items',es:'Sin ítems'}[LANG]||'')+'</div></div>'; return; }
   wrap.innerHTML = rows.map(r => {
     const it = r.it;
+    const boxLbl = it.boxScans ? ' <span style="color:#0369a1;font-weight:700">📦' + it.boxScans + '</span>' : '';
     if (r.kind === 'ord') {
       const nums = (it.received||0) + ' / ' + it.ordered;
-      return '<div class="item '+r.cls+'" onclick="quickAdd(\''+escAttr(it.barcode)+'\', '+JSON.stringify(it.name).replace(/"/g,'&quot;')+')"><div class="nm">'+escHtml(it.name||'—')+'<div class="b">'+escHtml(it.barcode||'')+'</div></div><div class="nums">'+nums+'</div></div>';
+      return '<div class="item '+r.cls+'" onclick="quickAdd(\''+escAttr(it.barcode)+'\', '+JSON.stringify(it.name).replace(/"/g,'&quot;')+')"><div class="nm">'+escHtml(it.name||'—')+boxLbl+'<div class="b">'+escHtml(it.barcode||'')+'</div></div><div class="nums">'+nums+'</div></div>';
     } else {
-      return '<div class="item bad" onclick="quickAdd(\''+escAttr(it.barcode)+'\', '+JSON.stringify(it.name||'extra').replace(/"/g,'&quot;')+')"><div class="nm">⚠ '+escHtml(it.name||'—')+'<div class="b">'+escHtml(it.barcode)+(it.note?' · '+escHtml(it.note):'')+'</div></div><div class="nums">+'+it.qty+'</div></div>';
+      return '<div class="item bad" onclick="quickAdd(\''+escAttr(it.barcode)+'\', '+JSON.stringify(it.name||'extra').replace(/"/g,'&quot;')+')"><div class="nm">⚠ '+escHtml(it.name||'—')+boxLbl+'<div class="b">'+escHtml(it.barcode)+(it.note?' · '+escHtml(it.note):'')+'</div></div><div class="nums">+'+it.qty+'</div></div>';
     }
   }).join('');
 }
@@ -1775,19 +1806,19 @@ function downloadReport(){
   if (!CUR) return;
   const wb = XLSX.utils.book_new();
   // 시트1 — 정상 완료
-  const ok = CUR.items.filter(i => classifyItem(i) === 'ok').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received }));
+  const ok = CUR.items.filter(i => classifyItem(i) === 'ok').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '박스수':i.boxScans||0 }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ok.length ? ok : [{}]), '정상');
   // 시트2 — 부족
-  const sh = CUR.items.filter(i => classifyItem(i) === 'short').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '부족수량': i.ordered - i.received }));
+  const sh = CUR.items.filter(i => classifyItem(i) === 'short').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '부족수량': i.ordered - i.received, '박스수':i.boxScans||0 }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh.length ? sh : [{}]), '부족');
   // 시트3 — 초과
-  const ov = CUR.items.filter(i => classifyItem(i) === 'over').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '초과수량': i.received - i.ordered }));
+  const ov = CUR.items.filter(i => classifyItem(i) === 'over').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered, '입고수량':i.received, '초과수량': i.received - i.ordered, '박스수':i.boxScans||0 }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ov.length ? ov : [{}]), '초과');
   // 시트4 — 미입고
   const zr = CUR.items.filter(i => classifyItem(i) === 'zero').map(i => ({ '바코드':i.barcode, '상품명':i.name, '상품코드':i.code, '주문수량':i.ordered }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(zr.length ? zr : [{}]), '미입고');
   // 시트5 — 미주문/미등록
-  const ex = CUR.extras.map(e => ({ '바코드':e.barcode, '상품명':e.name||'', '상품코드':e.code||'', '벤더':e.vendor||'', '입고수량':e.qty, '메모':e.note||'' }));
+  const ex = CUR.extras.map(e => ({ '바코드':e.barcode, '상품명':e.name||'', '상품코드':e.code||'', '벤더':e.vendor||'', '입고수량':e.qty, '박스수':e.boxScans||0, '메모':e.note||'' }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ex.length ? ex : [{}]), '미주문_미등록');
   // 시트0 — 요약
   const sum = [
