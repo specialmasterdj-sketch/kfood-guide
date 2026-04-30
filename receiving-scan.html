@@ -368,6 +368,7 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
       <label id="lblUnregBcode">바코드</label>
       <input type="text" id="unregBcode" readonly style="background:#f3f4f6">
     </div>
+    <div id="unregSuggestions" style="display:none;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px;margin-bottom:12px;max-height:30vh;overflow:auto"></div>
     <div class="field">
       <label id="lblUnregName">상품명 (임시)</label>
       <input type="text" id="unregName" placeholder="예: 오뚜기 진라면">
@@ -1623,8 +1624,53 @@ function openUnregModal(barcode){
   document.getElementById('unregBcode').value = barcode;
   document.getElementById('unregName').value = '';
   document.getElementById('unregNote').value = '';
+  // 비슷한 바코드 자동 추천 — 사용자가 "있는 줄 알았는데 미등록" 케이스 진단 도움
+  const hintEl = document.getElementById('unregSuggestions');
+  if (hintEl) {
+    const branchId = (CUR && CUR.branch) || BRANCH;
+    const suggs = findSimilarBarcodes(barcode, branchId, 5);
+    if (suggs.length > 0) {
+      hintEl.innerHTML = '<div style="font-size:.78em;color:#92400e;font-weight:700;margin-bottom:6px">💡 ' + ({ko:'비슷한 바코드 (마스터):',en:'Similar in master:',es:'Similar en maestro:'}[LANG]||'비슷한 바코드') + '</div>'
+        + suggs.map(s => '<div style="padding:6px 8px;border-bottom:1px solid #f3f4f6;cursor:pointer;font-size:.85em" onclick="useSuggestion(\''+escAttr(s.barcode)+'\')"><b>'+escHtml(s.name||'—')+'</b><div style="font-size:.74em;color:#9ca3af;font-family:Consolas,monospace">'+escHtml(s.barcode)+'</div></div>').join('');
+      hintEl.style.display = '';
+    } else {
+      hintEl.style.display = 'none';
+      hintEl.innerHTML = '';
+    }
+  }
   document.getElementById('unregOv').classList.add('show');
 }
+// 비슷한 바코드 검색 — 앞이나 뒤 일부 일치 기반
+function findSimilarBarcodes(scanned, branchId, limit){
+  const canon = canonicalBC(scanned);
+  if (!canon || canon.length < 4) return [];
+  const branchMaster = MASTER[branchId] || {};
+  const all = Object.keys(branchMaster);
+  const scored = [];
+  // 가장 긴 공통 부분(앞 또는 뒤) 기준으로 점수 계산
+  for (const bc of all) {
+    const c = canonicalBC(bc);
+    if (!c) continue;
+    let score = 0;
+    // 앞부분 일치
+    let pre = 0;
+    while (pre < canon.length && pre < c.length && canon[pre] === c[pre]) pre++;
+    // 뒷부분 일치
+    let suf = 0;
+    while (suf < canon.length && suf < c.length && canon[canon.length-1-suf] === c[c.length-1-suf]) suf++;
+    score = Math.max(pre, suf);
+    if (score >= 5) scored.push({ barcode: bc, name: branchMaster[bc].name || '', score });
+  }
+  scored.sort((a,b) => b.score - a.score);
+  return scored.slice(0, limit || 5);
+}
+window.useSuggestion = function(barcode){
+  // 추천된 바코드로 즉시 처리
+  closeOv('unregOv');
+  if (window.LAST_SCAN) window.LAST_SCAN = { code:null, ts:0 };
+  __pendingUnregBarcode = null;
+  processBarcode(barcode, 1);
+};
 window.unregSaveOnly = function(){
   if (!__pendingUnregBarcode || !CUR) return closeOv('unregOv');
   const note = document.getElementById('unregNote').value.trim();
