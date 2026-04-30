@@ -596,9 +596,22 @@ function scheduleCloudPush(){
   if (__pushTimer) clearTimeout(__pushTimer);
   __pushTimer = setTimeout(() => { __pushTimer = null; pushAllBranchesToCloud(); }, 3000);
 }
-async function pushBranchToCloud(branchId){
+async function pushBranchToCloud(branchId, opts){
+  opts = opts || {};
   const m = MASTER[branchId] || {};
   const cnt = Object.keys(m).length;
+  // 안전장치: 로컬이 클라우드보다 훨씬 작으면 자동 push 차단 (실수로 21K 가 5개로 덮어쓰는 사고 방지)
+  // opts.force=true 또는 수동 cloudSync 호출이면 우회
+  if (!opts.force) {
+    try {
+      const remoteRes = await fetch(RECV_FB_URL + '/receiving/master/' + branchId + '/count.json?t=' + Date.now(), { cache:'no-store' });
+      const remoteCnt = await remoteRes.json();
+      if (typeof remoteCnt === 'number' && remoteCnt > 20 && cnt < remoteCnt * 0.5) {
+        console.warn('[pushBranchToCloud] 차단됨 — ' + branchId + ': 로컬 ' + cnt + ' < 클라우드 ' + remoteCnt + ' 의 절반 미만');
+        return 'blocked';
+      }
+    } catch(e){ /* 카운트 조회 실패해도 push 는 시도 */ }
+  }
   const payload = {
     items: m,
     count: cnt,
@@ -665,7 +678,7 @@ function setSyncStatus(state, msg){
   }
 }
 async function cloudSync(){
-  // 수동 트리거: pull all 후 push current branch
+  // 수동 트리거: pull all 후 push current branch (수동이라 force=true 로 안전장치 우회)
   setSyncStatus('pulling');
   try {
     const pulled = await pullAllBranchesFromCloud(true);
@@ -673,7 +686,7 @@ async function cloudSync(){
     let pushed = 0;
     for (const b of Object.keys(MASTER)) {
       if (Object.keys(MASTER[b]).length > 0) {
-        if (await pushBranchToCloud(b)) pushed++;
+        if (await pushBranchToCloud(b, { force:true })) pushed++;
       }
     }
     setSyncStatus('ok');
