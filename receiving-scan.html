@@ -1270,7 +1270,26 @@ function renderMasterList(){
     const emptyMsg = all.length === 0
       ? ({ko:'이 지점 마스터 비어있음',en:'Master empty for this branch',es:'Maestro vacío'}[LANG]||'')
       : ({ko:'검색 결과 없음',en:'No matches',es:'Sin coincidencias'}[LANG]||'');
-    wrap.innerHTML = '<div class="empty-st" style="padding:20px"><div class="ic">📚</div><div class="msg">'+emptyMsg+'</div><div class="sub">'+({ko:'엑셀로 일괄 가져오기 권장',en:'Use Excel import',es:'Importe Excel'}[LANG]||'')+'</div></div>';
+    // 다른 지점에 데이터 있는지 안내 — 사용자가 "어제 자료 사라짐"으로 오해하지 않도록
+    let hint = '';
+    if (all.length === 0) {
+      const others = Object.keys(MASTER).filter(b => b !== branchId && Object.keys(MASTER[b] || {}).length > 0);
+      if (others.length) {
+        const curName = BRANCHES.find(x => x.id === branchId)?.[LANG] || branchId;
+        hint = '<div style="margin-top:14px;padding:12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;font-size:.85em">'
+             + '<div style="font-weight:700;color:#92400e;margin-bottom:8px">💡 ' + ({ko:'다른 지점에 데이터 있음',en:'Data exists in other branches',es:'Datos en otras sucursales'}[LANG]||'') + ':</div>'
+             + others.map(b => {
+                 const bn = BRANCHES.find(x => x.id === b)?.[LANG] || b;
+                 const cnt = Object.keys(MASTER[b]).length;
+                 return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;gap:8px;flex-wrap:wrap">'
+                      + '<span><b>' + escHtml(bn) + '</b>: ' + cnt + ' ' + ({ko:'개',en:'items',es:'ítems'}[LANG]||'') + '</span>'
+                      + '<button class="btn sec" style="padding:4px 10px;font-size:.78em" onclick="moveMaster(\''+b+'\',\''+branchId+'\')">📦 → ' + escHtml(curName) + ' ' + ({ko:'로 이동',en:'move',es:'mover'}[LANG]||'') + '</button>'
+                      + '</div>';
+               }).join('')
+             + '</div>';
+      }
+    }
+    wrap.innerHTML = '<div class="empty-st" style="padding:20px"><div class="ic">📚</div><div class="msg">'+emptyMsg+'</div><div class="sub">'+({ko:'엑셀로 일괄 가져오기 권장',en:'Use Excel import',es:'Importe Excel'}[LANG]||'')+'</div></div>' + hint;
     return;
   }
   wrap.innerHTML = filtered.slice(0, 200).map(b => {
@@ -1279,6 +1298,40 @@ function renderMasterList(){
   }).join('') + (filtered.length > 200 ? '<div style="padding:8px;text-align:center;color:#6b7280;font-size:.78em">+'+(filtered.length-200)+' '+({ko:'더',en:'more',es:'más'}[LANG]||'')+'</div>' : '');
 }
 window.renderMasterList = renderMasterList;
+// 한 지점의 모든 마스터를 다른 지점으로 이동 (또는 복사)
+function moveMaster(fromId, toId){
+  const fromName = BRANCHES.find(b => b.id === fromId)?.[LANG] || fromId;
+  const toName   = BRANCHES.find(b => b.id === toId)?.[LANG] || toId;
+  const fromMaster = MASTER[fromId] || {};
+  const cnt = Object.keys(fromMaster).length;
+  if (!cnt) { toast(({ko:'원본 지점이 비어있음',en:'Source empty',es:'Origen vacío'}[LANG]||''), 'err'); return; }
+  // 복사 vs 이동 선택
+  const choice = prompt(
+    ({ko:`${fromName} → ${toName}\n${cnt}개 항목\n\n어떻게 할까요?\n  1 = 복사 (양쪽에 보관)\n  2 = 이동 (원본 지점 삭제)\n  취소 = 닫기`,
+      en:`${fromName} → ${toName}\n${cnt} items\n\n  1 = Copy (keep in both)\n  2 = Move (delete source)`,
+      es:`${fromName} → ${toName}\n${cnt} ítems\n\n  1 = Copiar\n  2 = Mover`}[LANG]||''),
+    '1'
+  );
+  if (!choice) return;
+  if (choice !== '1' && choice !== '2') { toast(({ko:'1 또는 2 입력',en:'Enter 1 or 2',es:'1 o 2'}[LANG]||''), 'err'); return; }
+  const move = (choice === '2');
+  const toMaster = getBranchMaster(toId);
+  let copied = 0, overwritten = 0;
+  Object.keys(fromMaster).forEach(bc => {
+    if (toMaster[bc]) overwritten++;
+    toMaster[bc] = fromMaster[bc];
+    copied++;
+  });
+  if (move) delete MASTER[fromId];
+  rebuildMasterMaps();
+  saveMaster();
+  toast('✓ ' + copied + ' ' + ({ko:'개 ',en:' ',es:' '}[LANG]||'') + (move ? ({ko:'이동',en:'moved',es:'movidos'}[LANG]||'') : ({ko:'복사',en:'copied',es:'copiados'}[LANG]||'')) + (overwritten ? ' (' + overwritten + ' ' + ({ko:'덮어씀',en:'overwritten',es:'sobrescritos'}[LANG]||'') + ')' : ''), 'ok');
+  // 셀렉터를 대상 지점으로 변경하고 다시 렌더
+  const sel = document.getElementById('masterBranchSel');
+  if (sel) { sel.value = toId; }
+  renderMasterList();
+}
+window.moveMaster = moveMaster;
 // 컬럼 이름이 명시 안 됐을 때 — 내용으로 자동 감지.
 // barcode: 6~14자리 숫자가 가장 많은 컬럼
 // name: 한글·영문 글자 가장 많은 컬럼 (바코드 컬럼 제외)
