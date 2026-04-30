@@ -1670,11 +1670,33 @@ function toast(msg, kind){
 }
 
 //==================================================================
+// AUTO BOOT PULL — 앱 시작 시 클라우드에서 자동 동기화
+// 폰의 localStorage/IDB 가 OS 에 의해 비워졌어도 클라우드에서 복구
+//==================================================================
+async function autoBootPull(){
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  setSyncStatus('pulling');
+  try {
+    const n = await pullBranchFromCloud(BRANCH, false);
+    // 다른 지점도 백그라운드로 받음
+    pullAllBranchesFromCloud(false).catch(() => {});
+    setSyncStatus('ok');
+    if (n > 0) {
+      // 홈 화면이라면 다시 그리기
+      if (currentPage === 'home') renderSessions();
+      toast('☁ ' + ({ko:'클라우드에서 동기화됨',en:'Synced from cloud',es:'Sincronizado'}[LANG]||'') + ' (' + n + ')', 'ok');
+    }
+  } catch(e){ setSyncStatus('err'); }
+}
+
+//==================================================================
 // INIT
 //==================================================================
 loadAll();
 applyLang();
 goView('home');
+// 앱 시작 직후 클라우드에서 자동 pull (1초 후 — UI 먼저 그리고)
+setTimeout(autoBootPull, 1000);
 
 // Manual entry submit on Enter
 document.getElementById('manBarcode').addEventListener('keydown', e => { if (e.key === 'Enter') manualSubmit(); });
