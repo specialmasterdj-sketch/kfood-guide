@@ -195,10 +195,7 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
   <div class="sec-title" id="lblTodayHead">📅 오늘 입고</div>
   <div id="sessionList"></div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
-    <button class="btn block" onclick="openNewSessionSheet()">＋ <span id="lblNewSess">새 입고 시작</span></button>
-    <button class="btn sec block" onclick="openMasterSheet()">📚 <span id="lblMaster">상품 바코드</span></button>
-  </div>
+  <button class="btn block" onclick="openNewSessionSheet()" style="margin-top:14px">＋ <span id="lblNewSess">새 입고 시작</span></button>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
     <button class="btn sec block" onclick="goView('settings')">⚙️ <span id="lblSettings">설정</span></button>
     <button class="btn sec block" onclick="exportAllSessionsExcel()">📥 <span id="lblExportAll">전체 내보내기</span></button>
@@ -606,8 +603,9 @@ function loadAll(){
 }
 function saveMaster(){
   try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){}
-  // 변경 후 클라우드에 자동 푸시 (3초 debounce — import 끝까지 모음)
-  scheduleCloudPush();
+  // 클라우드 push 비활성화 — 마스터의 source-of-truth 는 POS COST 필터의
+  // /products/{branch} 이므로 이 앱에서 push 하면 안 됨 (덮어쓰기 사고 방지).
+  // 미등록 바코드 추가 같은 로컬 변경은 다음 POS 동기화 때 자연 갱신됨.
 }
 // 바코드 정규화 — Vela POS 가 체크 디지트(끝자리) 를 빼고 저장하는 경우 대응.
 // canonicalBC: 숫자만 + 앞자리 0 제거. 같은 상품의 여러 표기가 같은 canonical 이 되도록.
@@ -682,12 +680,43 @@ async function pushAllBranchesToCloud(){
   setSyncStatus(ok ? 'ok' : 'err');
 }
 async function pullBranchFromCloud(branchId, force){
+  // 1순위: POS COST 필터가 push 한 /products/{branch} 에서 읽음 — 상품조회·입고 스캔 같은 데이터
+  try {
+    const r1 = await fetch(RECV_FB_URL + '/products/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' });
+    const p = await r1.json();
+    if (p && Array.isArray(p.rows) && p.rows.length) {
+      const localTime = (__cloudMeta[branchId] || {}).updatedAt || 0;
+      const remoteTime = p.timestamp || 0;
+      if (!force && remoteTime && remoteTime <= localTime) return 0;
+      // lookup 형식 → receiving master 형식 변환
+      const items = {};
+      for (const row of p.rows) {
+        const bc = String(row.FULL_BARCODE || row.CODE || '').trim();
+        if (!bc) continue;
+        items[bc] = {
+          name: row.NAME || '',
+          code: row.CODE || row.VENDOR_CODE || row.ITEM_NUMBER || '',
+          vendor: row.VENDOR || '',
+          category: row.CATEGORY || '',
+          cost: row.COST || 0,
+          price: row.PRICE || 0
+        };
+      }
+      MASTER[branchId] = items;
+      rebuildMasterMaps();
+      try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){}
+      __cloudMeta[branchId] = { updatedAt: remoteTime || Date.now(), count: Object.keys(items).length };
+      try { localStorage.setItem('recv.cloudMeta.v1', JSON.stringify(__cloudMeta)); } catch(e){}
+      return Object.keys(items).length;
+    }
+  } catch(e){ console.warn('products pull failed', e); }
+  // 2순위: 옛 /receiving/master 경로 (이전 import 호환)
   try {
     const r = await fetch(RECV_FB_URL + '/receiving/master/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' });
     const d = await r.json();
     if (!d || !d.items) return 0;
     const localTime = (__cloudMeta[branchId] || {}).updatedAt || 0;
-    if (!force && d.updatedAt && d.updatedAt <= localTime) return 0; // 이미 최신
+    if (!force && d.updatedAt && d.updatedAt <= localTime) return 0;
     MASTER[branchId] = d.items;
     rebuildMasterMaps();
     try { localStorage.setItem(MASTER_KEY, JSON.stringify(MASTER)); } catch(e){}
