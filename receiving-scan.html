@@ -185,6 +185,13 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 
 <!-- ============= HOME ============= -->
 <div class="page" id="page-home">
+  <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:10px">
+    <div style="font-size:1.2em">🏬</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:.74em;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em" id="lblHomeBranch">지점</div>
+      <select id="homeBranchSel" onchange="onHomeBranchChange()" style="border:0;background:transparent;font-size:1em;font-weight:700;padding:2px 0;width:100%;color:#1a5c3a;-webkit-appearance:none"></select>
+    </div>
+  </div>
   <div class="sec-title" id="lblTodayHead">📅 오늘 입고</div>
   <div id="sessionList"></div>
 
@@ -453,6 +460,7 @@ let BRANCH = (function(){ try { return localStorage.getItem('recv.branch') || 'M
 
 const I18N = {
   topTitle:    {ko:'입고 스캔', en:'Receiving Scan', es:'Escaneo de entrada'},
+  lblHomeBranch:{ko:'지점', en:'Branch', es:'Sucursal'},
   lblTodayHead:{ko:'📅 오늘 입고', en:'📅 Today\'s Deliveries', es:'📅 Entregas de hoy'},
   lblNewSess:  {ko:'새 입고 시작', en:'New delivery', es:'Nueva entrega'},
   lblMaster:   {ko:'상품 바코드', en:'Product master', es:'Maestro productos'},
@@ -780,7 +788,29 @@ function statusOf(sess){
 function statusLabel(st){
   return { pending: { ko:'대기', en:'Pending', es:'Pendiente' }, active: { ko:'진행 중', en:'Active', es:'En curso' }, done: { ko:'완료', en:'Done', es:'Hecho' } }[st][LANG] || '';
 }
+function renderHomeBranchSel(){
+  const sel = document.getElementById('homeBranchSel');
+  if (!sel) return;
+  sel.innerHTML = BRANCHES.map(b => '<option value="'+b.id+'">'+(b[LANG]||b.ko)+'</option>').join('');
+  sel.value = BRANCH;
+}
+function onHomeBranchChange(){
+  const sel = document.getElementById('homeBranchSel');
+  if (!sel) return;
+  BRANCH = sel.value;
+  try { localStorage.setItem('recv.branch', BRANCH); } catch(e){}
+  saveAll();
+  renderSessions();
+  // 클라우드에서 새 지점 마스터 백그라운드 동기화
+  setSyncStatus('pulling');
+  pullBranchFromCloud(BRANCH, false).then(n => {
+    setSyncStatus('ok');
+    if (n > 0) toast('☁ ' + n + ' ' + ({ko:'개 받음',en:'pulled',es:'descargados'}[LANG]||''), 'ok');
+  }).catch(() => setSyncStatus('err'));
+}
+window.onHomeBranchChange = onHomeBranchChange;
 function renderSessions(){
+  renderHomeBranchSel();
   const today = todayKey();
   const list = SESSIONS.filter(s => s.branch === BRANCH).sort((a,b) => (b.created||0) - (a.created||0));
   const wrap = document.getElementById('sessionList');
