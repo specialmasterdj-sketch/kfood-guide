@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>김치마트 — 지점 지출 관리</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script src="./nav-sidebar.js?v=6" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;font-size:14px;-webkit-font-smoothing:antialiased;letter-spacing:-.01em}
+
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:11px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50;flex-wrap:wrap;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.topbar .brand{display:flex;align-items:center;gap:9px;font-weight:800;font-size:1.05em}
+.topbar .brand .logo{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-size:1.1em;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.topbar .spacer{flex:1}
+.topbar .lang{display:flex;gap:0;background:rgba(255,255,255,.15);border-radius:8px;padding:2px}
+.topbar .lang button{background:transparent;border:0;color:#fff;font-size:.78em;font-weight:700;padding:5px 10px;border-radius:6px;cursor:pointer}
+.topbar .lang button.active{background:#fff;color:#1a5c3a}
+.back-btn{background:rgba(255,255,255,.18);border:0;color:#fff;width:32px;height:32px;border-radius:8px;font-size:1em;cursor:pointer;display:none;align-items:center;justify-content:center}
+.back-btn.show{display:flex}
+
+.page{display:none;padding:14px;max-width:1100px;margin:0 auto}
+.page.active{display:block}
+
+.locked{padding:60px 28px;text-align:center;color:#6b7280}
+.locked .ic{font-size:3.5em;margin-bottom:8px}
+.locked .t{font-weight:800;font-size:1.1em;color:#1f2937;margin-bottom:6px}
+.locked .d{font-size:.9em;line-height:1.5}
+
+.branch-card{background:#fff;border-radius:12px;padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.branch-card .ic{font-size:1.2em}
+.branch-card .lbl{font-size:.74em;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.branch-card select{border:0;background:transparent;font-size:1em;font-weight:800;color:#1a5c3a;width:100%;padding:2px 0;-webkit-appearance:none}
+
+.tile-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+.tile{background:#fff;border-radius:14px;padding:18px 14px;box-shadow:0 1px 3px rgba(0,0,0,.06);text-align:center;cursor:pointer;border:2px solid transparent;transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:6px;color:inherit;text-decoration:none}
+.tile:active{transform:scale(.97)}
+.tile.primary{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;box-shadow:0 4px 14px rgba(26,92,58,.3)}
+.tile .ic{font-size:1.8em}
+.tile .nm{font-weight:800;font-size:.95em}
+.tile .ds{font-size:.74em;opacity:.85;margin-top:2px}
+
+.summary-card{background:#fff;border-radius:12px;padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.summary-card .hd{font-weight:800;font-size:.92em;margin-bottom:8px;color:#1f2937}
+.summary-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:.88em}
+.summary-row:last-child{border-bottom:0}
+.summary-row b{font-weight:800;color:#1a5c3a;font-variant-numeric:tabular-nums}
+
+.field{margin-bottom:11px}
+.field label{display:block;font-size:.78em;font-weight:700;color:#374151;margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%;border:1.5px solid #d1d5db;border-radius:9px;padding:10px 12px;font-size:.95em;font-family:inherit;background:#fff;-webkit-appearance:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:#1a5c3a;outline:none}
+.field textarea{resize:vertical;min-height:60px}
+.field .hint{font-size:.74em;color:#6b7280;margin-top:3px}
+.field .err{font-size:.78em;color:#dc2626;font-weight:700;margin-top:3px;display:none}
+.field .err.show{display:block}
+
+.btn{background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:11px 18px;font-weight:700;font-size:.95em;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;justify-content:center}
+.btn:active{transform:scale(.97)}
+.btn.block{width:100%}
+.btn.sec{background:#fff;border:1.5px solid #d1d5db;color:#374151}
+.btn.danger{background:#dc2626}
+.btn.warn{background:#f59e0b}
+
+.card{background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);margin-bottom:10px}
+
+.exp-item{background:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,.05);margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;border-left:4px solid #ccc;cursor:pointer}
+.exp-item:active{transform:scale(.99)}
+.exp-item.t-check{border-left-color:#0369a1}
+.exp-item.t-cash{border-left-color:#15803d}
+.exp-item.t-ach{border-left-color:#7c3aed}
+.exp-item.t-other{border-left-color:#64748b}
+.exp-item .ic{font-size:1.4em;flex-shrink:0}
+.exp-item .body{flex:1;min-width:0}
+.exp-item .head{display:flex;justify-content:space-between;gap:8px;margin-bottom:3px}
+.exp-item .vendor{font-weight:800;font-size:.95em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.exp-item .amt{font-weight:800;font-size:1.05em;color:#1f2937;flex-shrink:0;font-variant-numeric:tabular-nums}
+.exp-item .meta{font-size:.78em;color:#6b7280}
+.exp-item .badge{display:inline-block;font-size:.68em;font-weight:700;padding:2px 7px;border-radius:8px;background:#f3f4f6;color:#374151;margin-left:6px}
+.exp-item .badge.s-pending{background:#fef3c7;color:#92400e}
+.exp-item .badge.s-approved{background:#dcfce7;color:#166534}
+.exp-item .badge.s-rejected{background:#fee2e2;color:#991b1b}
+.exp-item .badge.s-paid{background:#dbeafe;color:#1e40af}
+
+.tabs{display:flex;gap:4px;background:#fff;border-radius:10px;padding:4px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.05);overflow-x:auto}
+.tabs button{flex:0 0 auto;background:transparent;border:0;padding:8px 12px;font-size:.82em;font-weight:700;color:#6b7280;border-radius:7px;cursor:pointer;white-space:nowrap}
+.tabs button.active{background:#1a5c3a;color:#fff}
+
+.bar-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:.85em}
+.bar-row .lbl{flex:0 0 100px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-row .bar-track{flex:1;height:18px;background:#f3f4f6;border-radius:5px;overflow:hidden;position:relative}
+.bar-row .bar-fill{height:100%;background:linear-gradient(90deg,#1a5c3a,#22c55e);border-radius:5px;transition:width .3s}
+.bar-row .v{flex:0 0 auto;font-weight:800;color:#1f2937;font-variant-numeric:tabular-nums;font-size:.82em}
+
+.empty-st{text-align:center;padding:40px 20px;color:#9ca3af}
+.empty-st .ic{font-size:3em;margin-bottom:8px}
+
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;justify-content:center;z-index:1000}
+.overlay.show{display:flex}
+.sheet{background:#fff;border-radius:18px 18px 0 0;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;padding:18px}
+.sheet h3{font-size:1.05em;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.actions{display:flex;gap:8px;margin-top:14px}
+.actions .btn{flex:1}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(60px);background:#1f2937;color:#fff;padding:10px 18px;border-radius:10px;font-size:.88em;font-weight:600;z-index:1500;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:#991b1b}
+.toast.ok{background:#15803d}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+@media(min-width:760px){
+  .tile-grid{grid-template-columns:repeat(4,1fr)}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="back-btn" id="backBtn" onclick="goBack()">←</button>
+  <div class="brand"><div class="logo">💵</div><span id="topTitle">지점 지출 관리</span></div>
+  <div class="spacer"></div>
+  <div class="lang">
+    <button data-l="ko" onclick="setLang('ko')">KO</button>
+    <button data-l="en" onclick="setLang('en')">EN</button>
+    <button data-l="es" onclick="setLang('es')">ES</button>
+  </div>
+</div>
+
+<!-- LOCK SCREEN -->
+<div class="page" id="page-lock">
+  <div class="locked">
+    <div class="ic">🔒</div>
+    <div class="t" id="lblLockTitle">매니저 전용</div>
+    <div class="d" id="lblLockDesc">이 앱은 매니저·오너 전용입니다.<br>채팅에서 본인 등록(이름·역할) 후 다시 열어주세요.</div>
+  </div>
+</div>
+
+<!-- HOME -->
+<div class="page" id="page-home">
+  <div class="branch-card">
+    <div class="ic">🏬</div>
+    <div style="flex:1;min-width:0">
+      <div class="lbl" id="lblBranch">지점</div>
+      <select id="branchSel" onchange="onBranchChange()"></select>
+    </div>
+  </div>
+
+  <div class="tile-grid">
+    <div class="tile primary" onclick="openEntry('check')"><div class="ic">📝</div><div class="nm" id="lblTileCheck">체크 발행</div><div class="ds" id="lblTileCheckDs">Check 입력</div></div>
+    <div class="tile" onclick="openEntry('cash')" style="background:#f0fdf4"><div class="ic">💵</div><div class="nm" id="lblTileCash">현금 지출</div><div class="ds" id="lblTileCashDs">Cash 입력</div></div>
+    <div class="tile" onclick="openEntry('ach')" style="background:#ede9fe"><div class="ic">🌐</div><div class="nm" id="lblTileAch">ACH / 온라인</div><div class="ds" id="lblTileAchDs">Online 결제</div></div>
+    <div class="tile" onclick="openEntry('other')" style="background:#fef3c7"><div class="ic">📋</div><div class="nm" id="lblTileOther">기타 지출</div><div class="ds" id="lblTileOtherDs">Other</div></div>
+  </div>
+
+  <div class="summary-card">
+    <div class="hd">📅 <span id="lblTodayLbl">오늘 지출</span> (<span id="todayBranchName">—</span>)</div>
+    <div id="todaySummary"></div>
+  </div>
+
+  <div class="tile-grid" style="grid-template-columns:1fr 1fr">
+    <button class="btn sec block" onclick="goView('list')">📋 <span id="lblTodayList">오늘 내역</span></button>
+    <button class="btn sec block" onclick="goView('report')">📊 <span id="lblReport">통계·리포트</span></button>
+  </div>
+</div>
+
+<!-- TODAY LIST -->
+<div class="page" id="page-list">
+  <div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div style="font-weight:800;font-size:.95em" id="listHd">📋 내역</div>
+    <div style="flex:1"></div>
+    <select id="listBranchFilter" onchange="renderList()" style="border:1.5px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.85em"></select>
+    <select id="listTypeFilter" onchange="renderList()" style="border:1.5px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.85em">
+      <option value="all" id="lblAllTypes">전체 종류</option>
+      <option value="check">체크</option>
+      <option value="cash">현금</option>
+      <option value="ach">ACH</option>
+      <option value="other">기타</option>
+    </select>
+    <select id="listDateFilter" onchange="renderList()" style="border:1.5px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.85em">
+      <option value="today" id="lblToday">오늘</option>
+      <option value="week" id="lblThisWeek">이번 주</option>
+      <option value="month" id="lblThisMonth">이번 달</option>
+      <option value="all" id="lblAllDates">전체</option>
+    </select>
+  </div>
+  <div id="listContent"></div>
+  <div class="row2" style="margin-top:10px">
+    <button class="btn sec block" onclick="exportListExcel()">📥 <span id="lblExportXlsx">엑셀 다운로드</span></button>
+    <button class="btn sec block" onclick="goView('home')">🏠 <span id="lblHome">홈</span></button>
+  </div>
+</div>
+
+<!-- REPORT / ANALYTICS -->
+<div class="page" id="page-report">
+  <div class="tabs">
+    <button class="active" data-tab="vendor" onclick="setReportTab('vendor',this)" id="lblTabVendor">회사별</button>
+    <button data-tab="month" onclick="setReportTab('month',this)" id="lblTabMonth">월별</button>
+    <button data-tab="week" onclick="setReportTab('week',this)" id="lblTabWeek">주간별</button>
+    <button data-tab="branch" onclick="setReportTab('branch',this)" id="lblTabBranch">지점간 비교</button>
+    <button data-tab="issuer" onclick="setReportTab('issuer',this)" id="lblTabIssuer">발행자별</button>
+  </div>
+  <div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div style="font-weight:800;font-size:.92em" id="reportHd">📊 통계</div>
+    <div style="flex:1"></div>
+    <select id="reportBranchFilter" onchange="renderReport()" style="border:1.5px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.85em"></select>
+    <select id="reportRangeFilter" onchange="renderReport()" style="border:1.5px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.85em">
+      <option value="month" id="lblRngMonth">이번 달</option>
+      <option value="3m" id="lblRng3m">최근 3개월</option>
+      <option value="ytd" id="lblRngYtd">올해 (YTD)</option>
+      <option value="all" id="lblRngAll">전체</option>
+    </select>
+  </div>
+  <div id="reportContent"></div>
+</div>
+
+<!-- ENTRY MODAL -->
+<div class="overlay" id="entryOv">
+  <div class="sheet">
+    <h3 id="entryTitle">📝 입력</h3>
+    <div class="row2">
+      <div class="field"><label id="lblFieldDate">날짜</label><input type="date" id="entryDate"></div>
+      <div class="field"><label id="lblFieldAmount">금액 ($)</label><input type="number" id="entryAmount" step="0.01" inputmode="decimal" placeholder="0.00"></div>
+    </div>
+    <div class="field" id="checkNumberField">
+      <label id="lblFieldCheckNum">체크 번호</label>
+      <input type="text" id="entryCheckNumber" inputmode="numeric" oninput="checkDuplicateCheckNum()" placeholder="예: 5946">
+      <div class="err" id="checkDupErr"></div>
+    </div>
+    <div class="field"><label id="lblFieldVendor">회사 / 벤더</label><input type="text" id="entryVendor" list="vendorList" placeholder="예: ASAMI FOODS" autocomplete="off"></div>
+    <datalist id="vendorList"></datalist>
+    <div class="field"><label id="lblFieldIssuer">발행자 / 사용자</label><input type="text" id="entryIssuer" placeholder="이니셜 또는 이름"></div>
+    <div class="field"><label id="lblFieldMemo">메모</label><textarea id="entryMemo" placeholder="선택"></textarea></div>
+    <div class="field">
+      <label><span id="lblFieldPhoto">📷 영수증 / 체크 사진</span> <span id="lblPhotoRequired" style="color:#dc2626;font-weight:700;display:none">(필수)</span></label>
+      <input type="file" id="entryPhoto" accept="image/*" capture="environment" onchange="onEntryPhotoSelected(event)">
+      <div id="entryPhotoPreview" style="margin-top:6px"></div>
+    </div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('entryOv')" id="lblCancel">취소</button>
+      <button class="btn" onclick="saveEntry()" id="lblSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="overlay" id="detailOv">
+  <div class="sheet">
+    <h3 id="detailTitle">상세</h3>
+    <div id="detailBody"></div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('detailOv')" id="lblClose">닫기</button>
+      <button class="btn warn" onclick="updateDetailStatus('approved')" id="lblApprove">✓ 승인</button>
+      <button class="btn danger" onclick="updateDetailStatus('rejected')" id="lblReject">✗ 거부</button>
+    </div>
+    <div class="row2" style="margin-top:8px">
+      <button class="btn sec" onclick="updateDetailStatus('paid')" id="lblPaid">💵 지급 완료</button>
+      <button class="btn sec" onclick="deleteDetail()" id="lblDelete">🗑 삭제</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE_BUCKET}/o`;
+
+const BRANCHES = [
+  { id:'MIAMI',          ko:'마이애미',          en:'Miami',          es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈',   en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',      ko:'할리우드',          en:'Hollywood',      es:'Hollywood' },
+  { id:'CORAL_SPRINGS',  ko:'코랄 스프링스',     en:'Coral Springs',  es:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스 올라스 (Fort Lauderdale)', en:'Las Olas (Ft Lauderdale)', es:'Las Olas (Ft. Lauderdale)' },
+  { id:'WEST_PALM',      ko:'웨스트 팜',         en:'West Palm',      es:'West Palm' },
+];
+const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
+
+const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이','SUN(ACCOUNTING DEP) KIM','SUN KIM'];
+const MGR_TOKENS = ['MANAGER','SUPERVISOR','OFFICE','OWNER','BOSS','매니저','점장','부매니저','오너','사장','대표','GERENTE','DUEÑO','DUENO','PROPIETARIO'];
+
+let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; }})();
+const VALID = { ko:1, en:1, es:1 };
+if (!VALID[LANG]) LANG = 'ko';
+let BRANCH = (function(){ try { return localStorage.getItem('expense.branch') || 'MIAMI'; } catch(e){ return 'MIAMI'; }})();
+let ME = null;
+
+let EXPENSES = [];        // 모든 지점 모든 expense
+let __unsubscribed = null;
+let CUR_TYPE = null;       // 입력 모달 진행 중 type
+let CUR_PHOTO = null;      // 입력 모달 사진 (dataUrl + blob)
+let CUR_DETAIL = null;     // 상세 모달 대상
+let REPORT_TAB = 'vendor';
+let currentPage = 'home';
+
+const I18N = {
+  topTitle:    {ko:'지점 지출 관리', en:'Branch Expense Log', es:'Gastos de Sucursal'},
+  lblBranch:   {ko:'지점', en:'Branch', es:'Sucursal'},
+  lblTodayHd:  {ko:'오늘 지출', en:'Today\'s expenses', es:'Gastos de hoy'},
+  lblTodayLbl: {ko:'오늘 지출', en:'Today', es:'Hoy'},
+  lblTodayList:{ko:'오늘 내역', en:'Today\'s list', es:'Lista de hoy'},
+  lblReport:   {ko:'통계·리포트', en:'Reports & Analytics', es:'Informes'},
+  lblTileCheck:{ko:'체크 발행', en:'Issue Check', es:'Emitir Cheque'},
+  lblTileCheckDs:{ko:'Check 입력', en:'Check entry', es:'Cheque'},
+  lblTileCash: {ko:'현금 지출', en:'Cash Expense', es:'Gasto en Efectivo'},
+  lblTileCashDs:{ko:'Cash 입력', en:'Cash entry', es:'Efectivo'},
+  lblTileAch:  {ko:'ACH / 온라인', en:'ACH / Online', es:'ACH / En línea'},
+  lblTileAchDs:{ko:'Online 결제', en:'Online payment', es:'Pago en línea'},
+  lblTileOther:{ko:'기타 지출', en:'Other Expense', es:'Otro Gasto'},
+  lblTileOtherDs:{ko:'Other', en:'Other', es:'Otro'},
+  lblTabVendor:{ko:'회사별', en:'By Vendor', es:'Por Proveedor'},
+  lblTabMonth: {ko:'월별', en:'Monthly', es:'Mensual'},
+  lblTabWeek:  {ko:'주간별', en:'Weekly', es:'Semanal'},
+  lblTabBranch:{ko:'지점간 비교', en:'Branch vs Branch', es:'Sucursal vs Sucursal'},
+  lblTabIssuer:{ko:'발행자별', en:'By Issuer', es:'Por Emisor'},
+  lblAllTypes: {ko:'전체 종류', en:'All types', es:'Todos los tipos'},
+  lblAllDates: {ko:'전체', en:'All', es:'Todo'},
+  lblToday:    {ko:'오늘', en:'Today', es:'Hoy'},
+  lblThisWeek: {ko:'이번 주', en:'This week', es:'Esta semana'},
+  lblThisMonth:{ko:'이번 달', en:'This month', es:'Este mes'},
+  lblRngMonth: {ko:'이번 달', en:'This month', es:'Este mes'},
+  lblRng3m:    {ko:'최근 3개월', en:'Last 3 months', es:'Últimos 3 meses'},
+  lblRngYtd:   {ko:'올해 (YTD)', en:'Year to date', es:'Año hasta hoy'},
+  lblRngAll:   {ko:'전체', en:'All', es:'Todo'},
+  lblExportXlsx:{ko:'엑셀 다운로드', en:'Export Excel', es:'Exportar Excel'},
+  lblHome:     {ko:'홈', en:'Home', es:'Inicio'},
+  lblFieldDate:{ko:'날짜', en:'Date', es:'Fecha'},
+  lblFieldAmount:{ko:'금액 ($)', en:'Amount ($)', es:'Monto ($)'},
+  lblFieldCheckNum:{ko:'체크 번호', en:'Check #', es:'Número de cheque'},
+  lblFieldVendor:{ko:'회사 / 벤더', en:'Company / Vendor', es:'Compañía / Proveedor'},
+  lblFieldIssuer:{ko:'발행자 / 사용자', en:'Issuer / User', es:'Emisor / Usuario'},
+  lblFieldMemo:{ko:'메모', en:'Memo', es:'Nota'},
+  lblFieldPhoto:{ko:'📷 영수증 / 체크 사진', en:'📷 Receipt / Check photo', es:'📷 Recibo / Foto'},
+  lblPhotoRequired:{ko:'(필수)', en:'(required)', es:'(requerido)'},
+  lblCancel:   {ko:'취소', en:'Cancel', es:'Cancelar'},
+  lblSave:     {ko:'저장', en:'Save', es:'Guardar'},
+  lblClose:    {ko:'닫기', en:'Close', es:'Cerrar'},
+  lblApprove:  {ko:'✓ 승인', en:'✓ Approve', es:'✓ Aprobar'},
+  lblReject:   {ko:'✗ 거부', en:'✗ Reject', es:'✗ Rechazar'},
+  lblPaid:     {ko:'💵 지급 완료', en:'💵 Paid', es:'💵 Pagado'},
+  lblDelete:   {ko:'🗑 삭제', en:'🗑 Delete', es:'🗑 Eliminar'},
+  lblLockTitle:{ko:'매니저 전용', en:'Managers only', es:'Solo Gerentes'},
+  lblLockDesc: {ko:'이 앱은 매니저·오너 전용입니다.<br>채팅에서 본인 등록(이름·역할) 후 다시 열어주세요.', en:'This app is for managers and owners only.<br>Register your name/role in Chat first.', es:'Solo para gerentes y dueños.<br>Registre nombre/rol en Chat.'},
+};
+function t(k){ const o = I18N[k]; return o ? (o[LANG]||o.ko) : k; }
+function applyLang(){
+  document.querySelectorAll('.lang button').forEach(b => b.classList.toggle('active', b.dataset.l === LANG));
+  Object.keys(I18N).forEach(k => { const el = document.getElementById(k); if (el) el.innerHTML = t(k); });
+  renderBranchSelectors();
+  if (currentPage === 'home') renderHome();
+  if (currentPage === 'list') renderList();
+  if (currentPage === 'report') renderReport();
+}
+window.setLang = function(l){
+  if (!VALID[l]) return;
+  LANG = l;
+  try {
+    localStorage.setItem('kimchi_lang', l);
+    localStorage.setItem('hub.lang', l);
+    localStorage.setItem('tasks.lang', l);
+  } catch(e){}
+  applyLang();
+};
+
+//================================================================
+// 권한 체크
+//================================================================
+function loadMe(){
+  try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
+}
+function hasAccess(me){
+  if (!me || !me.name) return false;
+  // 임원 이름 화이트리스트
+  const nm = (me.name||'').replace(/\s+/g,'').toUpperCase();
+  if (EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === nm)) return true;
+  // 매니저급 역할
+  const r = (me.role||'').toUpperCase();
+  return MGR_TOKENS.some(tk => r.includes(tk.toUpperCase()));
+}
+
+//================================================================
+// FIREBASE
+//================================================================
+async function loadAllExpenses(){
+  try {
+    const r = await fetch(`${FB_DB_URL}/expenses.json`, { cache:'no-store' });
+    const d = await r.json();
+    EXPENSES = [];
+    if (d) {
+      Object.keys(d).forEach(branchId => {
+        Object.keys(d[branchId] || {}).forEach(eid => {
+          const e = d[branchId][eid];
+          if (!e) return;
+          EXPENSES.push(Object.assign({ id: eid, branch: branchId }, e));
+        });
+      });
+    }
+    EXPENSES.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    if (currentPage === 'home') renderHome();
+    if (currentPage === 'list') renderList();
+    if (currentPage === 'report') renderReport();
+    refreshVendorDatalist();
+  } catch(e){ console.warn('loadAllExpenses failed', e); }
+}
+
+async function uploadReceiptPhoto(blob, branchId, expenseId){
+  const path = `expenses/${branchId}/${expenseId}.jpg`;
+  const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: blob });
+      if (r.ok) {
+        const meta = await r.json();
+        return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+      }
+      if (r.status === 404) break;
+      await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
+    } catch(e) {
+      await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
+    }
+  }
+  return null;
+}
+
+async function saveExpense(branchId, expense){
+  const expenseId = 'e_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+  const r = await fetch(`${FB_DB_URL}/expenses/${branchId}/${expenseId}.json`, {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(expense)
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return expenseId;
+}
+
+async function patchExpense(branchId, expenseId, patch){
+  await fetch(`${FB_DB_URL}/expenses/${branchId}/${expenseId}.json`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
+  });
+}
+
+async function deleteExpense(branchId, expenseId){
+  await fetch(`${FB_DB_URL}/expenses/${branchId}/${expenseId}.json`, { method:'DELETE' });
+}
+
+//================================================================
+// HELPERS
+//================================================================
+function todayKey(d){
+  d = d || new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function fmt$(n){ const v = Number(n)||0; return '$' + v.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escAttr(s){ return String(s||'').replace(/['"\\]/g,'\\$&'); }
+function typeIcon(t){ return { check:'📝', cash:'💵', ach:'🌐', other:'📋' }[t] || '📋'; }
+function typeLabel(t){ return { check:({ko:'체크',en:'Check',es:'Cheque'}[LANG]), cash:({ko:'현금',en:'Cash',es:'Efectivo'}[LANG]), ach:({ko:'ACH',en:'ACH',es:'ACH'}[LANG]), other:({ko:'기타',en:'Other',es:'Otro'}[LANG]) }[t] || t; }
+function statusLabel(s){ return { pending:({ko:'대기',en:'Pending',es:'Pendiente'}[LANG]), approved:({ko:'승인',en:'Approved',es:'Aprobado'}[LANG]), rejected:({ko:'거부',en:'Rejected',es:'Rechazado'}[LANG]), paid:({ko:'지급완료',en:'Paid',es:'Pagado'}[LANG]) }[s] || s; }
+function compressImage(file, maxDim, quality){
+  maxDim = maxDim || 1280; quality = quality || 0.78;
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > maxDim || h > maxDim) { const r = Math.min(maxDim/w, maxDim/h); w = Math.round(w*r); h = Math.round(h*r); }
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      c.toBlob(b => { const r = new FileReader(); r.onload = () => resolve({ dataUrl: r.result, blob: b }); r.readAsDataURL(b); }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ dataUrl:'', blob:null }); };
+    img.src = url;
+  });
+}
+function renderBranchSelectors(){
+  const opts = BRANCHES.map(b => `<option value="${b.id}">${b[LANG]||b.ko}</option>`).join('');
+  ['branchSel'].forEach(id => { const s = document.getElementById(id); if (s) { s.innerHTML = opts; s.value = BRANCH; }});
+  // List/Report 필터에는 '전체 지점' 추가
+  ['listBranchFilter','reportBranchFilter'].forEach(id => {
+    const s = document.getElementById(id); if (!s) return;
+    s.innerHTML = `<option value="all">${({ko:'전체 지점',en:'All branches',es:'Todas'}[LANG])}</option>` + opts;
+  });
+}
+
+//================================================================
+// HOME
+//================================================================
+function renderHome(){
+  document.getElementById('todayBranchName').textContent = (BRANCH_BY_ID[BRANCH]?.[LANG]) || BRANCH;
+  const today = todayKey();
+  const todayExp = EXPENSES.filter(e => e.date === today && e.branch === BRANCH);
+  const byType = { check:0, cash:0, ach:0, other:0 };
+  todayExp.forEach(e => { byType[e.type] = (byType[e.type]||0) + (Number(e.amount)||0); });
+  const total = byType.check + byType.cash + byType.ach + byType.other;
+  const el = document.getElementById('todaySummary');
+  el.innerHTML =
+    `<div class="summary-row"><span>📝 ${typeLabel('check')}</span><b>${fmt$(byType.check)}</b></div>` +
+    `<div class="summary-row"><span>💵 ${typeLabel('cash')}</span><b>${fmt$(byType.cash)}</b></div>` +
+    `<div class="summary-row"><span>🌐 ${typeLabel('ach')}</span><b>${fmt$(byType.ach)}</b></div>` +
+    `<div class="summary-row"><span>📋 ${typeLabel('other')}</span><b>${fmt$(byType.other)}</b></div>` +
+    `<div class="summary-row" style="border-top:2px solid #1a5c3a;margin-top:6px;padding-top:8px"><span style="font-weight:800">${({ko:'총합',en:'Total',es:'Total'}[LANG])}</span><b style="font-size:1.05em">${fmt$(total)}</b></div>` +
+    `<div class="summary-row" style="font-size:.78em;color:#6b7280;border:0;padding:4px 0"><span>${todayExp.length} ${({ko:'건',en:'entries',es:'registros'}[LANG])}</span></div>`;
+}
+window.onBranchChange = function(){
+  BRANCH = document.getElementById('branchSel').value;
+  try { localStorage.setItem('expense.branch', BRANCH); } catch(e){}
+  renderHome();
+};
+
+//================================================================
+// ENTRY
+//================================================================
+function openEntry(type){
+  CUR_TYPE = type;
+  CUR_PHOTO = null;
+  document.getElementById('entryDate').value = todayKey();
+  document.getElementById('entryAmount').value = '';
+  document.getElementById('entryCheckNumber').value = '';
+  document.getElementById('entryVendor').value = '';
+  document.getElementById('entryIssuer').value = ME && ME.name ? ME.name.split(' ').map(w => w[0]||'').join('').slice(0,3).toUpperCase() : '';
+  document.getElementById('entryMemo').value = '';
+  document.getElementById('entryPhoto').value = '';
+  document.getElementById('entryPhotoPreview').innerHTML = '';
+  document.getElementById('checkDupErr').classList.remove('show');
+  // 종류별 노출
+  document.getElementById('checkNumberField').style.display = (type === 'check') ? '' : 'none';
+  document.getElementById('lblPhotoRequired').style.display = (type === 'cash') ? '' : 'none';
+  // 제목
+  document.getElementById('entryTitle').textContent = typeIcon(type) + ' ' + (
+    type === 'check' ? ({ko:'체크 발행',en:'Issue Check',es:'Emitir Cheque'}[LANG]) :
+    type === 'cash'  ? ({ko:'현금 지출',en:'Cash Expense',es:'Gasto en Efectivo'}[LANG]) :
+    type === 'ach'   ? ({ko:'ACH / 온라인',en:'ACH / Online',es:'ACH / En línea'}[LANG]) :
+                       ({ko:'기타 지출',en:'Other Expense',es:'Otro Gasto'}[LANG])
+  );
+  document.getElementById('entryOv').classList.add('show');
+}
+window.openEntry = openEntry;
+window.onEntryPhotoSelected = async function(ev){
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) { CUR_PHOTO = null; return; }
+  const compressed = await compressImage(file);
+  CUR_PHOTO = compressed;
+  document.getElementById('entryPhotoPreview').innerHTML = `<img src="${compressed.dataUrl}" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid #e5e7eb">`;
+};
+window.checkDupliacteCheckNum = checkDuplicateCheckNum;  // legacy alias
+function checkDuplicateCheckNum(){
+  const n = (document.getElementById('entryCheckNumber').value || '').trim();
+  const errEl = document.getElementById('checkDupErr');
+  if (!n) { errEl.classList.remove('show'); return; }
+  const dup = EXPENSES.find(e => e.type === 'check' && String(e.checkNumber||'').trim() === n);
+  if (dup) {
+    const branchName = (BRANCH_BY_ID[dup.branch]?.[LANG]) || dup.branch;
+    errEl.innerHTML = '⚠️ ' + ({ko:'이미 사용된 체크 번호',en:'Already used check #',es:'Cheque ya usado'}[LANG]) + ': ' + escHtml(branchName) + ' · ' + escHtml(dup.date) + ' · ' + escHtml(dup.vendor || '');
+    errEl.classList.add('show');
+  } else {
+    errEl.classList.remove('show');
+  }
+}
+window.checkDuplicateCheckNum = checkDuplicateCheckNum;
+
+window.saveEntry = async function(){
+  const type = CUR_TYPE;
+  const date = document.getElementById('entryDate').value;
+  const amount = parseFloat(document.getElementById('entryAmount').value) || 0;
+  const checkNumber = document.getElementById('entryCheckNumber').value.trim();
+  const vendor = document.getElementById('entryVendor').value.trim();
+  const issuer = document.getElementById('entryIssuer').value.trim();
+  const memo = document.getElementById('entryMemo').value.trim();
+  if (!date) { toast(({ko:'날짜 필수',en:'Date required',es:'Fecha requerida'}[LANG]), 'err'); return; }
+  if (!amount || amount <= 0) { toast(({ko:'금액 입력',en:'Enter amount',es:'Ingrese monto'}[LANG]), 'err'); return; }
+  if (type === 'check' && !checkNumber) { toast(({ko:'체크 번호 필수',en:'Check # required',es:'Número requerido'}[LANG]), 'err'); return; }
+  if (type === 'check') {
+    const dup = EXPENSES.find(e => e.type === 'check' && String(e.checkNumber||'').trim() === checkNumber);
+    if (dup && !confirm('⚠️ ' + ({ko:'중복된 체크 번호입니다. 그래도 저장할까요?',en:'Duplicate check #. Save anyway?',es:'Cheque duplicado. ¿Guardar?'}[LANG]))) return;
+  }
+  if (type === 'cash' && !CUR_PHOTO) { toast(({ko:'현금 지출은 영수증 사진 필수',en:'Receipt photo required for cash',es:'Foto requerida'}[LANG]), 'err'); return; }
+  if (!vendor) { toast(({ko:'회사·메모 필수',en:'Vendor/memo required',es:'Proveedor requerido'}[LANG]), 'err'); return; }
+
+  const saveBtn = document.querySelector('#entryOv .btn:not(.sec)');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const expense = {
+      type, date, amount,
+      checkNumber: type === 'check' ? checkNumber : '',
+      vendor, issuer, memo,
+      photo: '', // will be set after upload
+      status: 'pending',
+      branch: BRANCH,
+      createdAt: Date.now(),
+      createdBy: ME?.name || '',
+      createdByBranch: ME?.branch || ''
+    };
+    const expenseId = await saveExpense(BRANCH, expense);
+    // 사진 업로드 (있으면)
+    if (CUR_PHOTO && CUR_PHOTO.blob) {
+      const url = await uploadReceiptPhoto(CUR_PHOTO.blob, BRANCH, expenseId);
+      if (url) {
+        await patchExpense(BRANCH, expenseId, { photo: url });
+        expense.photo = url;
+      }
+    }
+    EXPENSES.unshift(Object.assign({ id: expenseId, branch: BRANCH }, expense));
+    closeOv('entryOv');
+    toast('✓ ' + ({ko:'저장 완료',en:'Saved',es:'Guardado'}[LANG]), 'ok');
+    renderHome();
+    refreshVendorDatalist();
+  } catch(e) {
+    console.error(e);
+    toast('⚠ ' + ({ko:'저장 실패',en:'Save failed',es:'Error'}[LANG]) + ': ' + (e.message||''), 'err');
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+};
+
+function refreshVendorDatalist(){
+  const set = new Set();
+  EXPENSES.forEach(e => { if (e.vendor) set.add(e.vendor); });
+  document.getElementById('vendorList').innerHTML = Array.from(set).sort().map(v => `<option value="${escAttr(v)}">`).join('');
+}
+
+//================================================================
+// LIST
+//================================================================
+function renderList(){
+  const branchFilter = document.getElementById('listBranchFilter').value;
+  const typeFilter = document.getElementById('listTypeFilter').value;
+  const dateFilter = document.getElementById('listDateFilter').value;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay());
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  let filtered = EXPENSES.filter(e => {
+    if (branchFilter !== 'all' && e.branch !== branchFilter) return false;
+    if (typeFilter !== 'all' && e.type !== typeFilter) return false;
+    if (dateFilter !== 'all') {
+      const d = new Date(e.date + 'T12:00:00');
+      if (dateFilter === 'today' && d.toDateString() !== today.toDateString()) return false;
+      if (dateFilter === 'week' && d < weekStart) return false;
+      if (dateFilter === 'month' && d < monthStart) return false;
+    }
+    return true;
+  });
+  // 합계
+  const total = filtered.reduce((s,e) => s + (Number(e.amount)||0), 0);
+  const wrap = document.getElementById('listContent');
+  if (!filtered.length) {
+    wrap.innerHTML = '<div class="empty-st"><div class="ic">📋</div><div>' + ({ko:'내역 없음',en:'No entries',es:'Sin registros'}[LANG]) + '</div></div>';
+    return;
+  }
+  wrap.innerHTML = `<div class="card" style="font-size:.88em"><b>${filtered.length}</b> ${({ko:'건',en:'entries',es:'registros'}[LANG])} · <b style="color:#1a5c3a">${fmt$(total)}</b></div>` +
+    filtered.map(e => {
+      const branch = (BRANCH_BY_ID[e.branch]?.[LANG]) || e.branch;
+      const ck = e.type === 'check' ? ` · #${escHtml(e.checkNumber||'')}` : '';
+      const status = e.status || 'pending';
+      return `<div class="exp-item t-${e.type}" onclick="openDetail('${e.id}','${e.branch}')">`
+        + `<div class="ic">${typeIcon(e.type)}</div>`
+        + `<div class="body">`
+          + `<div class="head"><div class="vendor">${escHtml(e.vendor||'—')}<span class="badge s-${status}">${statusLabel(status)}</span></div><div class="amt">${fmt$(e.amount)}</div></div>`
+          + `<div class="meta">${escHtml(e.date)} · ${escHtml(branch)} · ${escHtml(e.issuer||'—')}${ck}${e.photo?' · 📷':''}</div>`
+          + (e.memo ? `<div class="meta" style="color:#374151;margin-top:2px">${escHtml(e.memo).slice(0,80)}</div>` : '')
+        + `</div></div>`;
+    }).join('');
+}
+window.renderList = renderList;
+window.openDetail = function(eid, branchId){
+  const e = EXPENSES.find(x => x.id === eid && x.branch === branchId);
+  if (!e) return;
+  CUR_DETAIL = e;
+  const branchName = (BRANCH_BY_ID[branchId]?.[LANG]) || branchId;
+  const ck = e.type === 'check' ? `<div><b>${({ko:'체크 번호',en:'Check #',es:'Núm. cheque'}[LANG])}:</b> ${escHtml(e.checkNumber||'')}</div>` : '';
+  const photo = e.photo ? `<img src="${e.photo}" style="max-width:100%;max-height:300px;border-radius:8px;margin:8px 0;border:1px solid #e5e7eb;cursor:pointer" onclick="window.open('${e.photo}','_blank')">` : '';
+  const memo = e.memo ? `<div style="background:#f9fafb;border-radius:8px;padding:8px;margin-top:6px;font-size:.85em">${escHtml(e.memo)}</div>` : '';
+  document.getElementById('detailTitle').innerHTML = typeIcon(e.type) + ' ' + escHtml(e.vendor||'—') + ' <span class="badge s-' + (e.status||'pending') + '" style="margin-left:6px">' + statusLabel(e.status||'pending') + '</span>';
+  document.getElementById('detailBody').innerHTML = `
+    <div style="font-size:.95em;line-height:1.7">
+      <div><b>${({ko:'금액',en:'Amount',es:'Monto'}[LANG])}:</b> <span style="color:#1a5c3a;font-weight:800;font-size:1.1em">${fmt$(e.amount)}</span></div>
+      <div><b>${({ko:'날짜',en:'Date',es:'Fecha'}[LANG])}:</b> ${escHtml(e.date)}</div>
+      <div><b>${({ko:'지점',en:'Branch',es:'Sucursal'}[LANG])}:</b> ${escHtml(branchName)}</div>
+      <div><b>${({ko:'종류',en:'Type',es:'Tipo'}[LANG])}:</b> ${typeLabel(e.type)}</div>
+      ${ck}
+      <div><b>${({ko:'발행자',en:'Issuer',es:'Emisor'}[LANG])}:</b> ${escHtml(e.issuer||'—')}</div>
+      <div><b>${({ko:'입력자',en:'Entered by',es:'Ingresado por'}[LANG])}:</b> ${escHtml(e.createdBy||'—')}</div>
+      ${memo}
+      ${photo}
+    </div>`;
+  document.getElementById('detailOv').classList.add('show');
+};
+window.updateDetailStatus = async function(status){
+  if (!CUR_DETAIL) return;
+  try {
+    await patchExpense(CUR_DETAIL.branch, CUR_DETAIL.id, { status, statusBy: ME?.name||'', statusAt: Date.now() });
+    CUR_DETAIL.status = status;
+    closeOv('detailOv');
+    toast('✓ ' + statusLabel(status), 'ok');
+    renderList();
+  } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
+};
+window.deleteDetail = async function(){
+  if (!CUR_DETAIL) return;
+  if (!confirm(({ko:'정말 삭제할까요?',en:'Really delete?',es:'¿Eliminar?'}[LANG]))) return;
+  try {
+    await deleteExpense(CUR_DETAIL.branch, CUR_DETAIL.id);
+    EXPENSES = EXPENSES.filter(e => !(e.id === CUR_DETAIL.id && e.branch === CUR_DETAIL.branch));
+    closeOv('detailOv');
+    toast('🗑 ' + ({ko:'삭제됨',en:'Deleted',es:'Eliminado'}[LANG]), 'ok');
+    renderList();
+    renderHome();
+  } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
+};
+
+window.exportListExcel = function(){
+  const branchFilter = document.getElementById('listBranchFilter').value;
+  const typeFilter = document.getElementById('listTypeFilter').value;
+  const dateFilter = document.getElementById('listDateFilter').value;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay());
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const filtered = EXPENSES.filter(e => {
+    if (branchFilter !== 'all' && e.branch !== branchFilter) return false;
+    if (typeFilter !== 'all' && e.type !== typeFilter) return false;
+    if (dateFilter !== 'all') {
+      const d = new Date(e.date + 'T12:00:00');
+      if (dateFilter === 'today' && d.toDateString() !== today.toDateString()) return false;
+      if (dateFilter === 'week' && d < weekStart) return false;
+      if (dateFilter === 'month' && d < monthStart) return false;
+    }
+    return true;
+  });
+  if (!filtered.length) { toast(({ko:'내역 없음',en:'No data',es:'Sin datos'}[LANG]), 'err'); return; }
+  const rows = filtered.map(e => ({
+    '날짜': e.date, '지점': BRANCH_BY_ID[e.branch]?.ko || e.branch, '종류': typeLabel(e.type),
+    '체크번호': e.checkNumber || '', '회사': e.vendor || '', '금액': e.amount || 0,
+    '발행자': e.issuer || '', '메모': e.memo || '', '상태': statusLabel(e.status||'pending'),
+    '입력자': e.createdBy || '', '사진': e.photo || ''
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), '지출내역');
+  XLSX.writeFile(wb, '지출내역_' + todayKey() + '.xlsx');
+};
+
+//================================================================
+// REPORT / ANALYTICS
+//================================================================
+window.setReportTab = function(tab, btnEl){
+  REPORT_TAB = tab;
+  document.querySelectorAll('#page-report .tabs button').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  renderReport();
+};
+function getReportRange(){
+  const v = document.getElementById('reportRangeFilter').value;
+  const today = new Date();
+  if (v === 'month') { const s = new Date(today.getFullYear(), today.getMonth(), 1); return { start: s, end: null, label: ({ko:'이번 달',en:'This month',es:'Este mes'}[LANG]) }; }
+  if (v === '3m') { const s = new Date(today); s.setMonth(s.getMonth()-3); return { start: s, end: null, label: ({ko:'최근 3개월',en:'Last 3mo',es:'Últimos 3m'}[LANG]) }; }
+  if (v === 'ytd') { const s = new Date(today.getFullYear(), 0, 1); return { start: s, end: null, label: ({ko:'올해',en:'YTD',es:'YTD'}[LANG]) }; }
+  return { start: null, end: null, label: ({ko:'전체',en:'All time',es:'Todo'}[LANG]) };
+}
+function getFilteredForReport(){
+  const branchFilter = document.getElementById('reportBranchFilter').value;
+  const { start, end } = getReportRange();
+  return EXPENSES.filter(e => {
+    if (branchFilter !== 'all' && e.branch !== branchFilter) return false;
+    if (start) { const d = new Date(e.date + 'T12:00:00'); if (d < start) return false; }
+    if (end) { const d = new Date(e.date + 'T12:00:00'); if (d > end) return false; }
+    return true;
+  });
+}
+function renderReport(){
+  const wrap = document.getElementById('reportContent');
+  const data = getFilteredForReport();
+  if (!data.length) { wrap.innerHTML = '<div class="empty-st"><div class="ic">📊</div><div>' + ({ko:'데이터 없음',en:'No data',es:'Sin datos'}[LANG]) + '</div></div>'; return; }
+  const total = data.reduce((s,e) => s + (Number(e.amount)||0), 0);
+  let html = '';
+  if (REPORT_TAB === 'vendor') html = renderVendorReport(data, total);
+  else if (REPORT_TAB === 'month') html = renderMonthReport(data, total);
+  else if (REPORT_TAB === 'week') html = renderWeekReport(data, total);
+  else if (REPORT_TAB === 'branch') html = renderBranchReport(data, total);
+  else if (REPORT_TAB === 'issuer') html = renderIssuerReport(data, total);
+  // 합계 카드
+  const summary = `<div class="card"><div class="hd" style="font-weight:800;font-size:.95em">${getReportRange().label} · <b style="color:#1a5c3a">${fmt$(total)}</b> · ${data.length} ${({ko:'건',en:'entries',es:'registros'}[LANG])}</div></div>`;
+  wrap.innerHTML = summary + html;
+}
+window.renderReport = renderReport;
+
+function groupBy(arr, keyFn){
+  const m = new Map();
+  arr.forEach(x => { const k = keyFn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); });
+  return m;
+}
+function barChart(items, maxLabel){
+  if (!items.length) return '';
+  const max = Math.max(...items.map(i => i.value)) || 1;
+  return items.map(i => {
+    const pct = Math.round(i.value / max * 100);
+    return `<div class="bar-row"><div class="lbl" title="${escAttr(i.label)}" style="${maxLabel?`flex:0 0 ${maxLabel}px`:''}">${escHtml(i.label)}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="v">${i.formatted || fmt$(i.value)}</div></div>`;
+  }).join('');
+}
+
+function renderVendorReport(data, total){
+  const map = groupBy(data, e => e.vendor || '(미입력)');
+  const items = Array.from(map.entries()).map(([vendor, list]) => ({
+    label: vendor,
+    value: list.reduce((s,e) => s + (Number(e.amount)||0), 0),
+    count: list.length
+  })).sort((a,b) => b.value - a.value);
+  return `<div class="card"><div style="font-weight:800;font-size:.92em;margin-bottom:8px">${({ko:'회사별 지출 (TOP 25)',en:'By Vendor (TOP 25)',es:'Por Proveedor'}[LANG])}</div>` +
+    barChart(items.slice(0, 25)) +
+    `</div><div class="card" style="font-size:.85em"><b>${({ko:'전체 회사',en:'Total vendors',es:'Total prov.'}[LANG])}: ${items.length}</b> · ${({ko:'TOP 5 비중',en:'TOP 5 share',es:'TOP 5'}[LANG])}: ${Math.round(items.slice(0,5).reduce((s,i)=>s+i.value,0)/total*100)}%</div>`;
+}
+
+function renderMonthReport(data, total){
+  const map = groupBy(data, e => e.date.slice(0, 7)); // YYYY-MM
+  const items = Array.from(map.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([m, list]) => ({
+    label: m,
+    value: list.reduce((s,e) => s + (Number(e.amount)||0), 0),
+    count: list.length
+  }));
+  return `<div class="card"><div style="font-weight:800;font-size:.92em;margin-bottom:8px">${({ko:'월별 추이',en:'Monthly trend',es:'Tendencia mensual'}[LANG])}</div>` +
+    barChart(items) + `</div>`;
+}
+function renderWeekReport(data, total){
+  // ISO 주차 — '2026-W18' 형태
+  function isoWeek(d){
+    const dt = new Date(d.getTime());
+    dt.setHours(0,0,0,0);
+    dt.setDate(dt.getDate() + 4 - (dt.getDay()||7));
+    const yearStart = new Date(dt.getFullYear(), 0, 1);
+    return dt.getFullYear() + '-W' + String(Math.ceil((((dt - yearStart) / 86400000) + 1) / 7)).padStart(2,'0');
+  }
+  const map = groupBy(data, e => isoWeek(new Date(e.date + 'T12:00:00')));
+  const items = Array.from(map.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([w, list]) => ({
+    label: w,
+    value: list.reduce((s,e) => s + (Number(e.amount)||0), 0)
+  }));
+  return `<div class="card"><div style="font-weight:800;font-size:.92em;margin-bottom:8px">${({ko:'주간별 추이 (ISO 주차)',en:'Weekly trend (ISO weeks)',es:'Tendencia semanal'}[LANG])}</div>` +
+    barChart(items) + `</div>`;
+}
+function renderBranchReport(data, total){
+  const map = groupBy(data, e => e.branch);
+  const items = Array.from(map.entries()).map(([b, list]) => ({
+    label: (BRANCH_BY_ID[b]?.[LANG]) || b,
+    value: list.reduce((s,e) => s + (Number(e.amount)||0), 0),
+    count: list.length
+  })).sort((a,b) => b.value - a.value);
+  // 종류별 breakdown
+  const byBranchType = {};
+  data.forEach(e => {
+    const k = e.branch;
+    if (!byBranchType[k]) byBranchType[k] = { check:0, cash:0, ach:0, other:0 };
+    byBranchType[k][e.type] = (byBranchType[k][e.type]||0) + (Number(e.amount)||0);
+  });
+  let table = `<div class="card" style="overflow-x:auto"><div style="font-weight:800;font-size:.92em;margin-bottom:8px">${({ko:'지점별 종류 분포',en:'By branch & type',es:'Por sucursal y tipo'}[LANG])}</div>`;
+  table += `<table style="width:100%;border-collapse:collapse;font-size:.82em"><thead><tr style="background:#f9fafb"><th style="text-align:left;padding:6px;border-bottom:2px solid #1a5c3a">${({ko:'지점',en:'Branch',es:'Sucursal'}[LANG])}</th><th style="text-align:right;padding:6px;border-bottom:2px solid #1a5c3a">📝</th><th style="text-align:right;padding:6px;border-bottom:2px solid #1a5c3a">💵</th><th style="text-align:right;padding:6px;border-bottom:2px solid #1a5c3a">🌐</th><th style="text-align:right;padding:6px;border-bottom:2px solid #1a5c3a">📋</th><th style="text-align:right;padding:6px;border-bottom:2px solid #1a5c3a">${({ko:'합계',en:'Total',es:'Total'}[LANG])}</th></tr></thead><tbody>`;
+  items.forEach(it => {
+    const bid = Object.keys(byBranchType).find(k => ((BRANCH_BY_ID[k]?.[LANG])||k) === it.label);
+    const t = byBranchType[bid] || { check:0,cash:0,ach:0,other:0 };
+    table += `<tr><td style="padding:6px;border-bottom:1px solid #f3f4f6;font-weight:600">${escHtml(it.label)}</td><td style="text-align:right;padding:6px;border-bottom:1px solid #f3f4f6;font-variant-numeric:tabular-nums">${fmt$(t.check)}</td><td style="text-align:right;padding:6px;border-bottom:1px solid #f3f4f6;font-variant-numeric:tabular-nums">${fmt$(t.cash)}</td><td style="text-align:right;padding:6px;border-bottom:1px solid #f3f4f6;font-variant-numeric:tabular-nums">${fmt$(t.ach)}</td><td style="text-align:right;padding:6px;border-bottom:1px solid #f3f4f6;font-variant-numeric:tabular-nums">${fmt$(t.other)}</td><td style="text-align:right;padding:6px;border-bottom:1px solid #f3f4f6;font-weight:800;color:#1a5c3a;font-variant-numeric:tabular-nums">${fmt$(it.value)}</td></tr>`;
+  });
+  table += '</tbody></table></div>';
+  return `<div class="card"><div style="font-weight:800;font-size:.92em;margin-bottom:8px">${({ko:'지점별 합계',en:'Total by branch',es:'Total por sucursal'}[LANG])}</div>` +
+    barChart(items, 100) + `</div>` + table;
+}
+function renderIssuerReport(data, total){
+  const map = groupBy(data, e => e.issuer || '(미입력)');
+  const items = Array.from(map.entries()).map(([issuer, list]) => ({
+    label: issuer,
+    value: list.reduce((s,e) => s + (Number(e.amount)||0), 0)
+  })).sort((a,b) => b.value - a.value);
+  return `<div class="card"><div style="font-weight:800;font-size:.92em;margin-bottom:8px">${({ko:'발행자별 사용 내역',en:'By issuer',es:'Por emisor'}[LANG])}</div>` +
+    barChart(items, 100) + `</div>`;
+}
+
+//================================================================
+// PAGE NAV
+//================================================================
+function goView(p){
+  currentPage = p;
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  document.getElementById('page-'+p)?.classList.add('active');
+  document.getElementById('backBtn').classList.toggle('show', p !== 'home' && p !== 'lock');
+  if (p === 'home') renderHome();
+  if (p === 'list') renderList();
+  if (p === 'report') renderReport();
+  window.scrollTo(0,0);
+}
+window.goView = goView;
+function goBack(){
+  if (currentPage === 'list' || currentPage === 'report') goView('home');
+  else if (currentPage === 'home') location.href = './hub.html';
+  else goView('home');
+}
+window.goBack = goBack;
+
+//================================================================
+// COMMON
+//================================================================
+function closeOv(id){ document.getElementById(id).classList.remove('show'); }
+window.closeOv = closeOv;
+let __toastT = 0;
+function toast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (kind||'');
+  if (__toastT) clearTimeout(__toastT);
+  __toastT = setTimeout(() => { t.className = 'toast'; }, 2000);
+}
+window.toast = toast;
+
+//================================================================
+// INIT
+//================================================================
+ME = loadMe();
+renderBranchSelectors();
+applyLang();
+if (!hasAccess(ME)) {
+  goView('lock');
+} else {
+  goView('home');
+  loadAllExpenses();
+  // 30초마다 갱신
+  setInterval(loadAllExpenses, 30000);
+}
+
+window.addEventListener('storage', e => {
+  if (e.key === 'chat.me') {
+    ME = loadMe();
+    if (hasAccess(ME) && currentPage === 'lock') { goView('home'); loadAllExpenses(); }
+  }
+});
+</script>
+</body>
+</html>
