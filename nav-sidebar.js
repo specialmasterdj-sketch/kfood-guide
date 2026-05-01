@@ -22,7 +22,7 @@
     { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa',  mgr: true },
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
-    { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html' },
+    { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html' },
     { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
     { ic: '📅', lbl: { ko:'유통기한 관리',  en:'Expiry tracker', es:'Caducidad' },        href: './expiry.html', highlight: true },
@@ -59,6 +59,9 @@
     .km-navside a { display: flex; align-items: center; gap: 10px; padding: 8px 14px; color: #374151; text-decoration: none; font-size: .88em; font-weight: 500; border-left: 3px solid transparent; transition: .1s; }
     .km-navside a:hover { background: #f4f6f9; color: #1a5c3a; }
     .km-navside a.active { background: #f0fdf4; color: #1a5c3a; border-left-color: #1a5c3a; font-weight: 700; }
+    .km-navside a.primary { background: linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff !important; font-weight: 900; font-size: 1.1em; margin: 6px 8px; border-radius: 10px; border-left: 0; padding: 12px 14px; box-shadow: 0 2px 8px rgba(26,92,58,.25); }
+    .km-navside a.primary:hover { background: linear-gradient(135deg,#15803d,#166534); color:#fff !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,92,58,.35); }
+    .km-navside a.primary .ic { font-size: 1.2em; }
     .km-navside a .ic { font-size: 1.05em; width: 22px; text-align: center; flex-shrink: 0; }
     .km-navside a .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .km-navtoggle { display: none; position: fixed; top: 8px; left: 8px; z-index: 1001; background: #1a5c3a; color: #fff; border: 0; border-radius: 8px; width: 38px; height: 38px; font-size: 1.3em; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
@@ -118,7 +121,11 @@
       const isActive = hrefFile && here === hrefFile;
       const tgt = it.target ? ` target="${it.target}"` : '';
       const hl = it.highlight ? ' style="font-weight:800;color:#1a5c3a"' : '';
-      html += `<a href="${it.href}"${tgt}${hl}${isActive ? ' class="active"' : ''}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
+      const cls = [];
+      if (isActive) cls.push('active');
+      if (it.primary) cls.push('primary');
+      const clsAttr = cls.length ? ` class="${cls.join(' ')}"` : '';
+      html += `<a href="${it.href}"${tgt}${hl}${clsAttr}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
     }
     aside.innerHTML = html;
   }
