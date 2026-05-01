@@ -134,10 +134,18 @@ a{color:inherit;text-decoration:none}
 .ts-sm{font-size:.68em;color:#9ca3af;margin-top:3px}
 .del-reply{position:absolute;top:4px;right:0;background:transparent;border:0;color:#9ca3af;font-size:.85em;cursor:pointer;padding:2px 6px;border-radius:4px}
 .del-reply:hover{color:#dc2626;background:#fee2e2}
-.reply-input{display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}
-.reply-input input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:.88em;font-family:inherit}
-.reply-input input:focus{outline:none;border-color:#1a5c3a}
-.reply-input button{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:.88em}
+.reply-input{display:flex;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb;align-items:center;flex-wrap:wrap}
+.reply-input input[type="text"]{flex:1 1 0;min-width:0;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:.88em;font-family:inherit}
+.reply-input input[type="text"]:focus{outline:none;border-color:#1a5c3a}
+.reply-input .send-reply{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:.88em;flex-shrink:0}
+.reply-input .reply-attach{background:#f4f6f9;border:0;border-radius:50%;width:32px;height:32px;font-size:.95em;cursor:pointer;flex-shrink:0;padding:0;line-height:1}
+.reply-input .reply-attach:hover{background:#e5e7eb}
+.reply-previews{display:flex;flex-wrap:wrap;gap:4px;width:100%;margin-top:6px}
+.reply-previews:empty{display:none}
+.reply-previews .pv{position:relative;width:50px;height:50px;border-radius:6px;overflow:hidden;background:#e5e7eb}
+.reply-previews .pv img{width:100%;height:100%;object-fit:cover}
+.reply-previews .pv .x{position:absolute;top:1px;right:1px;background:rgba(0,0,0,.6);color:#fff;border:0;border-radius:50%;width:16px;height:16px;font-size:.65em;cursor:pointer;padding:0;line-height:1;display:flex;align-items:center;justify-content:center}
+.reply .reply-photos{margin-top:4px}
 
 /* FORWARD */
 .fwd-btn{background:transparent;border:0;color:#0369a1;font-size:.8em;font-weight:600;cursor:pointer;padding:3px 8px;border-radius:6px;margin-top:6px;margin-left:4px}
@@ -554,6 +562,7 @@ let ROOMS = {};            // { roomId: { name, desc, lastMsg, lastTs, unread } 
 let ACTIVE_ROOM = localStorage.getItem('chat.activeRoom') || null;
 let MSGS = [];             // current room's messages
 let ATTACH = [];           // composer attachments [{dataUrl, blob}]
+let REPLY_ATTACH = {};     // per-message reply attachments: {parentMsgId: [{dataUrl, blob, file}, ...]}
 let __unsubMsgs = null;
 
 // ============ DEFAULT ROOMS ============
@@ -1113,6 +1122,10 @@ function renderMessages(){
     </div>`;
   }
   cont.innerHTML = html;
+  // 답글에 첨부됐으나 아직 안 보낸 사진 미리보기 복구 (다른 메시지 동기화로 재렌더링 시)
+  Object.keys(REPLY_ATTACH).forEach(pid => {
+    if (REPLY_ATTACH[pid] && REPLY_ATTACH[pid].length) renderReplyPreviews(pid);
+  });
   cont.scrollTop = cont.scrollHeight;
 }
 // 시간만 (HH:MM) — 시간은 항상 메시지 하단에 단독 표시
@@ -1333,21 +1346,35 @@ function renderReplies(m){
       const rdBadge = replyDateBadge ? ` <span class="date-badge">${escapeHtml(replyDateBadge)}</span>` : '';
       const mine = me && r.sender === me.name && r.senderBranch === me.branch;
       const delBtn = mine ? `<button class="del-reply" title="삭제" onclick="deleteReply('${m.id}','${id}')">✕</button>` : '';
+      const replyPhotosHtml = (r.photos && r.photos.length) ? (() => {
+        const n = r.photos.length;
+        const cls = n>=7 ? 'scroll' : 'n'+Math.min(n,6);
+        const all = JSON.stringify(r.photos).replace(/"/g,'&quot;');
+        return `<div class="photo-grid reply-photos ${cls}">${r.photos.map((u,i) => `<img src="${u}" loading="lazy" onclick="openLightbox(${all}, ${i})">`).join('')}</div>`;
+      })() : '';
       html += `<div class="reply">
         <div class="av-sm" style="background:${r.color || colorFor(r.sender||'?')}">${initialsOf(r.sender)}</div>
         <div class="reply-body">
           ${delBtn}
           <div class="who-sm">${escapeHtml(r.sender||'?')}${escapeHtml(branchTxt)}${rdBadge}</div>
-          <div class="text">${escapeHtml(r.text||'')}</div>
+          ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ''}
+          ${replyPhotosHtml}
           <div class="ts-sm">${t}</div>
         </div>
       </div>`;
     }
     if (me) {
       const ph = ({ko:'댓글 입력...',en:'Write a reply...',es:'Responder...'}[LANG] || '댓글 입력...');
+      const camTitle = ({ko:'카메라',en:'Camera',es:'Cámara'}[LANG] || '카메라');
+      const fileTitle = ({ko:'사진 첨부',en:'Attach photos',es:'Adjuntar fotos'}[LANG] || '사진 첨부');
       html += `<div class="reply-input">
+        <button type="button" class="reply-attach" title="${camTitle}" onclick="document.getElementById('reply-cam-${m.id}').click()">📷</button>
+        <button type="button" class="reply-attach" title="${fileTitle}" onclick="document.getElementById('reply-file-${m.id}').click()">📎</button>
+        <input type="file" id="reply-cam-${m.id}" accept="image/*" capture="environment" style="display:none" onchange="handleReplyFiles(event,'${m.id}')">
+        <input type="file" id="reply-file-${m.id}" accept="image/*" multiple style="display:none" onchange="handleReplyFiles(event,'${m.id}')">
         <input type="text" id="reply-${m.id}" placeholder="${ph}" onkeydown="if(event.key==='Enter'){event.preventDefault();sendReply('${m.id}');}" autocomplete="off">
-        <button type="button" onclick="sendReply('${m.id}')">↵</button>
+        <button type="button" class="send-reply" onclick="sendReply('${m.id}')">↵</button>
+        <div class="reply-previews" id="reply-previews-${m.id}"></div>
       </div>`;
     }
     html += '</div>';
@@ -1375,13 +1402,40 @@ function toggleReplies(msgId){
   }, 50);
 }
 window.toggleReplies = toggleReplies;
+async function handleReplyFiles(ev, parentMsgId){
+  const files = Array.from(ev.target.files || []);
+  if (!files.length) return;
+  ev.target.value = '';
+  REPLY_ATTACH[parentMsgId] = REPLY_ATTACH[parentMsgId] || [];
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue;
+    const compressed = await compressImage(f);
+    REPLY_ATTACH[parentMsgId].push(compressed);
+  }
+  renderReplyPreviews(parentMsgId);
+}
+function renderReplyPreviews(parentMsgId){
+  const host = document.getElementById('reply-previews-' + parentMsgId);
+  if (!host) return;
+  const list = REPLY_ATTACH[parentMsgId] || [];
+  host.innerHTML = list.map((a,i) => `<div class="pv"><img src="${a.dataUrl}"><button class="x" onclick="removeReplyAttach('${parentMsgId}', ${i})">✕</button></div>`).join('');
+}
+function removeReplyAttach(parentMsgId, idx){
+  const list = REPLY_ATTACH[parentMsgId] || [];
+  list.splice(idx, 1);
+  renderReplyPreviews(parentMsgId);
+}
+window.handleReplyFiles = handleReplyFiles;
+window.removeReplyAttach = removeReplyAttach;
+
 async function sendReply(parentMsgId){
   if (!ensureMe()) return;
   if (!ACTIVE_ROOM) return;
   const inp = document.getElementById('reply-' + parentMsgId);
   if (!inp) return;
   const text = inp.value.trim();
-  if (!text) return;
+  const attached = REPLY_ATTACH[parentMsgId] || [];
+  if (!text && attached.length === 0) return;
   inp.disabled = true;
   const ts = Date.now();
   const replyId = 'r' + ts + Math.floor(Math.random()*900);
@@ -1390,17 +1444,31 @@ async function sendReply(parentMsgId){
     senderBranch: me.branch,
     senderRole: me.role || '',
     color: me.color || colorFor(me.name),
-    text, ts
+    text, ts,
+    photos: []
   };
   try {
+    if (attached.length > 0) {
+      showStatus(`사진 업로드 중... 0 / ${attached.length}`);
+      for (let i = 0; i < attached.length; i++) {
+        const url = await uploadPhoto(attached[i], ACTIVE_ROOM, replyId, i);
+        reply.photos.push(url);
+        showStatus(`사진 업로드 중... ${i+1} / ${attached.length}`);
+      }
+      hideStatus();
+    }
     await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${parentMsgId}/replies/${replyId}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reply)
     });
     inp.value = '';
+    delete REPLY_ATTACH[parentMsgId];
+    const pv = document.getElementById('reply-previews-' + parentMsgId);
+    if (pv) pv.innerHTML = '';
     // 답글 보낸 후엔 펼친 상태 유지 (collapsed 플래그 제거)
     sessionStorage.removeItem('thread.collapsed.' + parentMsgId);
     sessionStorage.setItem('thread.openInput.' + parentMsgId, '1');
   } catch(e){
+    hideStatus();
     alert('답글 전송 실패: ' + (e.message||''));
   }
   inp.disabled = false;
