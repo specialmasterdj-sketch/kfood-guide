@@ -238,7 +238,8 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
     </div>
     <div class="field"><label id="lblFieldVendor">회사 / 벤더</label><input type="text" id="entryVendor" list="vendorList" placeholder="예: ASAMI FOODS" autocomplete="off"></div>
     <datalist id="vendorList"></datalist>
-    <div class="field"><label id="lblFieldIssuer">발행자 / 사용자</label><input type="text" id="entryIssuer" placeholder="이니셜 또는 이름"></div>
+    <div class="field"><label id="lblFieldIssuer">발행자 / 사용자</label><input type="text" id="entryIssuer" list="issuerList" placeholder="이니셜 또는 이름" autocomplete="off"></div>
+    <datalist id="issuerList"></datalist>
     <div class="field"><label id="lblFieldMemo">메모</label><textarea id="entryMemo" placeholder="선택"></textarea></div>
     <div class="field">
       <label><span id="lblFieldPhoto">📷 영수증 / 체크 사진</span> <span id="lblPhotoRequired" style="color:#dc2626;font-weight:700;display:none">(필수)</span></label>
@@ -412,6 +413,7 @@ async function loadAllExpenses(){
     if (currentPage === 'list') renderList();
     if (currentPage === 'report') renderReport();
     refreshVendorDatalist();
+    refreshIssuerDatalist();
   } catch(e){ console.warn('loadAllExpenses failed', e); }
 }
 
@@ -533,6 +535,9 @@ function openEntry(type){
   document.getElementById('entryPhoto').value = '';
   document.getElementById('entryPhotoPreview').innerHTML = '';
   document.getElementById('checkDupErr').classList.remove('show');
+  // 자동완성 datalist 새로고침 (이전에 입력한 회사·발행자 선택 가능)
+  refreshVendorDatalist();
+  refreshIssuerDatalist();
   // 종류별 노출
   document.getElementById('checkNumberField').style.display = (type === 'check') ? '' : 'none';
   document.getElementById('lblPhotoRequired').style.display = (type === 'cash') ? '' : 'none';
@@ -611,10 +616,14 @@ window.saveEntry = async function(){
       }
     }
     EXPENSES.unshift(Object.assign({ id: expenseId, branch: BRANCH }, expense));
+    // 회사·발행자 자동완성 캐시에 추가 (다음에 타이핑 없이 선택)
+    pushCache(VENDOR_CACHE_KEY, vendor);
+    pushCache(ISSUER_CACHE_KEY, issuer);
     closeOv('entryOv');
     toast('✓ ' + ({ko:'저장 완료',en:'Saved',es:'Guardado'}[LANG]), 'ok');
     renderHome();
     refreshVendorDatalist();
+    refreshIssuerDatalist();
   } catch(e) {
     console.error(e);
     toast('⚠ ' + ({ko:'저장 실패',en:'Save failed',es:'Error'}[LANG]) + ': ' + (e.message||''), 'err');
@@ -623,10 +632,36 @@ window.saveEntry = async function(){
   }
 };
 
+// 캐시 키 — Firebase 로드 전에도 자동완성 가능하도록 localStorage 에 백업
+const VENDOR_CACHE_KEY = 'expense.vendors';
+const ISSUER_CACHE_KEY = 'expense.issuers';
+const CACHE_MAX = 200;
+function loadCacheList(key){
+  try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch(e){ return []; }
+}
+function saveCacheList(key, arr){
+  try { localStorage.setItem(key, JSON.stringify(arr.slice(0, CACHE_MAX))); } catch(e){}
+}
+function pushCache(key, value){
+  const v = String(value || '').trim();
+  if (!v) return;
+  const arr = loadCacheList(key).filter(x => x.toUpperCase() !== v.toUpperCase());
+  arr.unshift(v);
+  saveCacheList(key, arr);
+}
 function refreshVendorDatalist(){
-  const set = new Set();
-  EXPENSES.forEach(e => { if (e.vendor) set.add(e.vendor); });
-  document.getElementById('vendorList').innerHTML = Array.from(set).sort().map(v => `<option value="${escAttr(v)}">`).join('');
+  const set = new Map(); // 대소문자 통합 키 → 첫 등장 표기 유지
+  loadCacheList(VENDOR_CACHE_KEY).forEach(v => { if (v) set.set(v.toUpperCase(), v); });
+  EXPENSES.forEach(e => { if (e.vendor) { const k = e.vendor.toUpperCase(); if (!set.has(k)) set.set(k, e.vendor); } });
+  const list = Array.from(set.values()).sort((a,b) => a.localeCompare(b));
+  document.getElementById('vendorList').innerHTML = list.map(v => `<option value="${escAttr(v)}">`).join('');
+}
+function refreshIssuerDatalist(){
+  const set = new Map();
+  loadCacheList(ISSUER_CACHE_KEY).forEach(v => { if (v) set.set(v.toUpperCase(), v); });
+  EXPENSES.forEach(e => { if (e.issuer) { const k = e.issuer.toUpperCase(); if (!set.has(k)) set.set(k, e.issuer); } });
+  const list = Array.from(set.values()).sort((a,b) => a.localeCompare(b));
+  document.getElementById('issuerList').innerHTML = list.map(v => `<option value="${escAttr(v)}">`).join('');
 }
 
 //================================================================
