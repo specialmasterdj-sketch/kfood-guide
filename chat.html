@@ -104,6 +104,8 @@ a{color:inherit;text-decoration:none}
 .photo-grid.n2{grid-template-columns:repeat(2,1fr);max-width:300px}
 .photo-grid.n3,.photo-grid.n4{grid-template-columns:repeat(2,1fr);max-width:300px}
 .photo-grid.n5,.photo-grid.n6{grid-template-columns:repeat(3,1fr);max-width:330px}
+.photo-grid.scroll{display:flex;gap:4px;overflow-x:auto;max-width:330px;padding-bottom:6px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+.photo-grid.scroll img{width:104px;height:104px;flex-shrink:0;border-radius:6px;scroll-snap-align:start}
 .photo-grid img{width:100%;height:120px;object-fit:cover;cursor:pointer;background:#e5e7eb;display:block}
 .photo-grid.n1 img{height:auto;max-height:300px}
 
@@ -1077,7 +1079,12 @@ function renderMessages(){
     const branchTxt = branch ? ' · ' + (branch[LANG] || branch.ko) : '';
     const time = fmtMsgTime(d);
     const photoHtml = (m.photos && m.photos.length)
-      ? `<div class="photo-grid n${Math.min(m.photos.length,6)}">${m.photos.map((u,i) => `<img src="${u}" onclick="openLightbox(${JSON.stringify(m.photos).replace(/"/g,'&quot;')}, ${i})">`).join('')}</div>`
+      ? (function(){
+          const n = m.photos.length;
+          const cls = n > 6 ? 'scroll' : 'n' + n;
+          const all = JSON.stringify(m.photos).replace(/"/g,'&quot;');
+          return `<div class="photo-grid ${cls}">${m.photos.map((u,i) => `<img src="${u}" loading="lazy" onclick="openLightbox(${all}, ${i})">`).join('')}</div>${n > 6 ? '<div style="font-size:.74em;color:#9ca3af;margin-top:2px">📷 '+n+'장 · 좌우로 넘기기</div>' : ''}`;
+        })()
       : '';
     const delBtn = mine ? `<button class="del" title="삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
     const rxnHtml = renderReactions(m);
@@ -1178,18 +1185,38 @@ function compressImage(file, maxDim, quality){
 // Try Firebase Storage REST first; if it 404s (Storage not enabled in
 // console) or otherwise fails, fall back to a small base64 data URL embedded
 // in RTDB so messages can still carry photos.
+// Storage 활성화 여부 캐시 (1회 probe 후 세션 동안 재사용)
+let __storageActive = null;
+async function probeStorage(){
+  if (__storageActive !== null) return __storageActive;
+  try {
+    const r = await fetch(FB_STORAGE_URL + '?prefix=__probe__&maxResults=1', { method:'GET' });
+    __storageActive = r.ok;
+  } catch(e){ __storageActive = false; }
+  return __storageActive;
+}
 async function uploadPhoto(att, roomId, msgId, idx){
   const path = `chat/${roomId}/${msgId}/${idx}.jpg`;
-  try {
-    const r = await fetch(`${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`,
-      { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: att.blob });
-    if (r.ok) {
-      const meta = await r.json();
-      return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+  const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`;
+  // Storage 가 활성화되어 있으면 최대 3회 재시도 (5xx / 네트워크 오류 대응)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob });
+      if (r.ok) {
+        __storageActive = true;
+        const meta = await r.json();
+        return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+      }
+      // 404 = Storage 미활성. 재시도 무의미. base64 fallback.
+      if (r.status === 404) { __storageActive = false; break; }
+      // 5xx 또는 기타 — 짧은 백오프 후 재시도
+      await new Promise(rs => setTimeout(rs, 400 * (attempt+1)));
+    } catch(e) {
+      // 네트워크 오류 — 재시도
+      await new Promise(rs => setTimeout(rs, 400 * (attempt+1)));
     }
-    // Fall through to base64 fallback on any error
-  } catch(e){}
-  // Base64 fallback: recompress more aggressively to keep RTDB payload small
+  }
+  // Base64 fallback — 폰 RTDB 페이로드 줄이기 위해 더 강하게 압축
   const small = att.file ? await compressImage(att.file, 720, 0.55) : att;
   return small.dataUrl;
 }
@@ -1206,10 +1233,13 @@ async function sendMessage(){
   if (!ACTIVE_ROOM) return;
   const text = document.getElementById('msgInput').value.trim();
   if (!text && ATTACH.length === 0) return;
-  // 임시 조치: Firebase Storage 활성화 전엔 사진이 base64 로 RTDB 에 박혀
-  // 한 번에 4장 이상은 모바일에서 timeout. 사용자에게 경고.
+  // 임시 조치: Storage 활성화 전엔 사진이 base64 로 RTDB 에 박혀 4장+ timeout 가능.
+  // probeStorage() 결과로 활성화 확인되면 경고 스킵 (자동 풀가동).
   if (ATTACH.length > 3) {
-    if (!confirm('⚠️ 사진이 ' + ATTACH.length + '장입니다.\n\n현재 Storage 활성화 전이라 4장 이상은 폰 신호가 약하면 실패할 수 있어요.\n\n3장 이하 분할 권장. 그래도 보낼까요?')) return;
+    const storageOn = await probeStorage();
+    if (!storageOn) {
+      if (!confirm('⚠️ 사진이 ' + ATTACH.length + '장입니다.\n\n현재 Storage 활성화 전이라 4장 이상은 폰 신호가 약하면 실패할 수 있어요.\n\n3장 이하 분할 권장. 그래도 보낼까요?')) return;
+    }
   }
   const sendBtn = document.getElementById('sendBtn');
   sendBtn.disabled = true;
