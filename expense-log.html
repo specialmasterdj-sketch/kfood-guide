@@ -661,22 +661,65 @@ window.saveEntry = async function(){
   }
 };
 
-// 캐시 키 — Firebase 로드 전에도 자동완성 가능하도록 localStorage 에 백업
+// 캐시 — 공유 풀 (Firebase) + 로컬 백업 (localStorage)
+// 한 지점이 입력하면 모든 지점에서 자동완성 옵션으로 즉시 노출.
 const VENDOR_CACHE_KEY = 'expense.vendors';
 const ISSUER_CACHE_KEY = 'expense.issuers';
-const CACHE_MAX = 200;
+const CACHE_MAX = 500;
+const FB_CACHE_VENDORS = `${FB_DB_URL}/expense-cache/vendors.json`;
+const FB_CACHE_ISSUERS = `${FB_DB_URL}/expense-cache/issuers.json`;
 function loadCacheList(key){
   try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch(e){ return []; }
 }
 function saveCacheList(key, arr){
   try { localStorage.setItem(key, JSON.stringify(arr.slice(0, CACHE_MAX))); } catch(e){}
 }
+// Firebase 키로 안전한 형태 (. # $ / [ ] 금지)
+function safeCacheKey(s){
+  return String(s||'').toUpperCase().trim().replace(/[.#$/\[\]]/g, '_').replace(/\s+/g, '_');
+}
 function pushCache(key, value){
   const v = String(value || '').trim();
   if (!v) return;
+  // 1) 로컬 (즉시)
   const arr = loadCacheList(key).filter(x => x.toUpperCase() !== v.toUpperCase());
   arr.unshift(v);
   saveCacheList(key, arr);
+  // 2) 클라우드 (다른 지점이 받게)
+  pushCacheCloud(key, v);
+}
+async function pushCacheCloud(key, value){
+  const url = (key === VENDOR_CACHE_KEY) ? FB_CACHE_VENDORS : FB_CACHE_ISSUERS;
+  const k = safeCacheKey(value);
+  if (!k) return;
+  try {
+    await fetch(url, { method: 'PATCH', body: JSON.stringify({ [k]: value }) });
+  } catch(e){ console.warn('[cache] cloud push failed', e); }
+}
+async function loadCacheCloud(){
+  try {
+    const [vR, iR] = await Promise.all([
+      fetch(FB_CACHE_VENDORS, { cache:'no-store' }),
+      fetch(FB_CACHE_ISSUERS, { cache:'no-store' })
+    ]);
+    const vO = await vR.json();
+    const iO = await iR.json();
+    if (vO && typeof vO === 'object') mergeIntoLocalCache(VENDOR_CACHE_KEY, Object.values(vO));
+    if (iO && typeof iO === 'object') mergeIntoLocalCache(ISSUER_CACHE_KEY, Object.values(iO));
+    refreshVendorDatalist();
+    refreshIssuerDatalist();
+  } catch(e){ console.warn('[cache] cloud load failed', e); }
+}
+function mergeIntoLocalCache(key, values){
+  const existing = loadCacheList(key);
+  const seen = new Map(existing.map(x => [x.toUpperCase(), x]));
+  let changed = false;
+  values.filter(Boolean).forEach(v => {
+    const u = String(v).toUpperCase();
+    if (!u || seen.has(u)) return;
+    existing.push(v); seen.set(u, v); changed = true;
+  });
+  if (changed) saveCacheList(key, existing);
 }
 function refreshVendorDatalist(){
   const set = new Map(); // 대소문자 통합 키 → 첫 등장 표기 유지
@@ -1005,8 +1048,9 @@ if (!hasAccess(ME)) {
 } else {
   goView('home');
   loadAllExpenses();
+  loadCacheCloud(); // 6 지점 공유 자동완성 풀 동기화
   // 30초마다 갱신
-  setInterval(loadAllExpenses, 30000);
+  setInterval(() => { loadAllExpenses(); loadCacheCloud(); }, 30000);
 }
 
 window.addEventListener('storage', e => {
