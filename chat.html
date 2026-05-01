@@ -1250,26 +1250,31 @@ async function probeStorage(){
 async function uploadPhoto(att, roomId, msgId, idx){
   const path = `chat/${roomId}/${msgId}/${idx}.jpg`;
   const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`;
-  // Storage 가 활성화되어 있으면 최대 3회 재시도 (5xx / 네트워크 오류 대응)
-  for (let attempt = 0; attempt < 3; attempt++) {
+  let lastErr = '';
+  // Storage 5회 재시도 (모바일 네트워크 일시 끊김 대응)
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
+      console.log('[uploadPhoto] attempt', attempt+1, 'idx=', idx);
       const r = await fetch(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob });
       if (r.ok) {
         __storageActive = true;
         const meta = await r.json();
         return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
       }
-      // 404 = Storage 미활성. 재시도 무의미. base64 fallback.
+      lastErr = 'HTTP ' + r.status;
+      // 404 = Storage 미활성 → base64 fallback
       if (r.status === 404) { __storageActive = false; break; }
-      // 5xx 또는 기타 — 짧은 백오프 후 재시도
-      await new Promise(rs => setTimeout(rs, 400 * (attempt+1)));
+      await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
     } catch(e) {
-      // 네트워크 오류 — 재시도
-      await new Promise(rs => setTimeout(rs, 400 * (attempt+1)));
+      lastErr = e?.message || 'network';
+      console.warn('[uploadPhoto] retry', attempt+1, lastErr);
+      await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
     }
   }
-  // Base64 fallback — 폰 RTDB 페이로드 줄이기 위해 더 강하게 압축
+  // Base64 fallback — 한 번만 사용. 사용자에게 알림
+  console.warn('[uploadPhoto] Storage 실패, base64 fallback. 마지막 오류:', lastErr);
   const small = att.file ? await compressImage(att.file, 720, 0.55) : att;
+  if (!small || !small.dataUrl) throw new Error('사진 처리 실패: ' + lastErr);
   return small.dataUrl;
 }
 
@@ -1281,8 +1286,9 @@ function showStatus(msg){
 function hideStatus(){ document.getElementById('uploadStatus').classList.remove('show'); }
 
 async function sendMessage(){
-  if (!ensureMe()) return;
-  if (!ACTIVE_ROOM) return;
+  console.log('[sendMessage] me=', me?.name, 'room=', ACTIVE_ROOM, 'attach=', ATTACH.length);
+  if (!ensureMe()) { console.warn('[sendMessage] ensureMe failed → openMeModal'); return; }
+  if (!ACTIVE_ROOM) { console.warn('[sendMessage] no ACTIVE_ROOM'); showStatus('❌ 채팅방을 먼저 선택하세요'); setTimeout(hideStatus, 3000); return; }
   const text = document.getElementById('msgInput').value.trim();
   if (!text && ATTACH.length === 0) return;
   // 2026-05-01: Storage 활성화됨 (kimchi-mart-order). 수량 경고 제거.
@@ -1351,7 +1357,11 @@ async function sendMessage(){
     const sender = (me && me.name) ? `${me.name} · ${me.branch}` : '(미등록)';
     const room = ACTIVE_ROOM || '(방 미선택)';
     const detail = e && (e.message || e.toString()) || 'unknown';
-    alert('전송 실패\n\n단계: ' + stage + '\n방: ' + room + '\n사용자: ' + sender + '\n오류: ' + detail + '\n\n다시 시도하거나 캐시 새로고침 후 시도하세요.');
+    // 시각적 status (alert 가 막히는 케이스 대비)
+    showStatus('❌ 전송 실패 (' + stage + '): ' + detail.slice(0, 80));
+    setTimeout(hideStatus, 6000);
+    // ATTACH 보존 — 사용자가 다시 시도 가능 (success path 만 ATTACH 비움)
+    alert('전송 실패\n\n단계: ' + stage + '\n방: ' + room + '\n사용자: ' + sender + '\n오류: ' + detail + '\n\n사진은 보존됩니다. 다시 시도하거나 캐시 새로고침 후 시도하세요.');
   } finally {
     sendBtn.disabled = false;
   }
