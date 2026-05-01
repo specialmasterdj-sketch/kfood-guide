@@ -1015,6 +1015,10 @@ function openRoom(id){
   }
   ACTIVE_ROOM = id;
   localStorage.setItem('chat.activeRoom', id);
+  // 이 방을 마지막으로 본 시각 기록 — 안 읽은 메시지 카운트의 기준
+  setLastVisit(id);
+  if (ROOMS[id]) ROOMS[id].unread = 0;
+  renderRooms();
   const r = ROOMS[id] || { name: id, desc: '' };
   const hdNm = roomLocalName(id, r);
   const hdDs = roomLocalDesc(id, r);
@@ -1302,6 +1306,8 @@ async function sendMessage(){
     document.getElementById('msgInput').style.height = 'auto';
     ATTACH = [];
     renderPreviews();
+    // 본인 보낸 메시지는 안 읽음에 포함 안 되도록 lastVisit 갱신
+    setLastVisit(ACTIVE_ROOM, ts + 1);
   } catch(e) {
     hideStatus();
     console.error('[sendMessage] failed at ' + stage, e);
@@ -1876,6 +1882,73 @@ function loadRoomsRest(){
     if (shouldAutoRestoreRoom() && !__unsubMsgs) openRoom(ACTIVE_ROOM);
   });
 }
+// ============ UNREAD COUNTS ============
+// msgId 형식: 'm' + 13자리 ts + 0~3자리 random — 첫 13자리에서 ts 추출
+function tsFromMsgId(id){
+  if (!id || id[0] !== 'm') return 0;
+  const n = parseInt(id.slice(1, 14), 10);
+  return isFinite(n) ? n : 0;
+}
+function getLastVisitMap(){
+  try { return JSON.parse(localStorage.getItem('chat.lastVisit') || '{}'); } catch(e){ return {}; }
+}
+function getLastVisit(roomId){
+  return getLastVisitMap()[roomId] || 0;
+}
+function setLastVisit(roomId, ts){
+  try {
+    const lv = getLastVisitMap();
+    lv[roomId] = ts || Date.now();
+    localStorage.setItem('chat.lastVisit', JSON.stringify(lv));
+  } catch(e){}
+}
+let __unreadFetching = false;
+async function refreshUnreadCounts(){
+  if (__unreadFetching) return;
+  __unreadFetching = true;
+  try {
+    const lv = getLastVisitMap();
+    // 모든 방에 대해 lastVisit 비어있으면 — 신규 사용자 — 현재 시각으로 초기화 (역사적 메시지 안 읽음 표시 안함)
+    const now = Date.now();
+    let lvChanged = false;
+    Object.keys(ROOMS).forEach(id => {
+      if (lv[id] === undefined) { lv[id] = now; lvChanged = true; }
+    });
+    if (lvChanged) {
+      try { localStorage.setItem('chat.lastVisit', JSON.stringify(lv)); } catch(e){}
+    }
+    // 각 방의 메시지 키 shallow GET → ts 추출 → lastVisit 이후 카운트
+    const ids = Object.keys(ROOMS);
+    await Promise.all(ids.map(async id => {
+      const r = ROOMS[id];
+      if (!r) return;
+      const last = lv[id] || 0;
+      // 활성 방은 항상 0
+      if (id === ACTIVE_ROOM) { r.unread = 0; return; }
+      // 방의 lastTs 가 last 이전이면 0 (빠른 패스)
+      if (r.lastTs && r.lastTs <= last) { r.unread = 0; return; }
+      try {
+        const res = await fetch(`${FB_DB_URL}/chat/messages/${id}.json?shallow=true`);
+        const obj = await res.json();
+        if (!obj) { r.unread = 0; return; }
+        let count = 0;
+        for (const k of Object.keys(obj)) {
+          const ts = tsFromMsgId(k);
+          if (ts > last) count++;
+        }
+        r.unread = count;
+      } catch(e) { r.unread = 0; }
+    }));
+    renderRooms();
+  } finally {
+    __unreadFetching = false;
+  }
+}
+// 30초마다 자동 갱신 (활성 탭만)
+setInterval(() => {
+  if (document.visibilityState === 'visible') refreshUnreadCounts();
+}, 30000);
+
 // 옛 SW 캐시 가진 폰이 자동으로 재생성하는 deprecated 방을 자동으로 지움
 const DEPRECATED_ROOMS = ['meat'];
 function cleanupDeprecatedRooms(){
@@ -1896,6 +1969,8 @@ function subscribeRooms(){
     cleanupDeprecatedRooms();
     ensureDefaultRooms();
     renderRooms();
+    // 안 읽은 카운트 갱신 (방 lastTs 변경 → 새 메시지 가능성)
+    refreshUnreadCounts();
     if (shouldAutoRestoreRoom() && ROOMS[ACTIVE_ROOM] && !__unsubMsgs) {
       // rooms loaded after page mount — open the previously active one (desktop only, once)
       openRoom(ACTIVE_ROOM);
