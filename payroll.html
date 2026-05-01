@@ -306,9 +306,9 @@ const PAYROLL_ROSTER_CPA = {
     { name:'DAIRIT ZAMBRANO',          rate:14, memo:'' },
     { name:'YAMILE MURGA',             rate:14, memo:'' },
     { name:'YELI ACEVEDO CASTILLO',    rate:14, memo:'' },
-    { name:'LIMBERKIN APARICIO',       rate:null, memo:'고정 $520' },
-    { name:'ERICA GARCIA',             rate:null, memo:'고정 $520' },
-    { name:'CHRISTOPHER TORREZ',       rate:null, memo:'고정 $520' }
+    { name:'LIMBERKIN APARICIO',       rate:null, defaultAmount:520, memo:'고정 $520 (수정 가능)' },
+    { name:'ERICA GARCIA',             rate:null, defaultAmount:520, memo:'고정 $520 (수정 가능)' },
+    { name:'CHRISTOPHER TORREZ',       rate:null, defaultAmount:520, memo:'고정 $520 (수정 가능)' }
   ],
   CORAL_SPRINGS: [
     { name:'Guadalupe Salinas Gonzales',          rate:null, memo:'TAX 적용' },
@@ -823,17 +823,37 @@ function prefillFromRoster(){
   DATA.rows = roster.map(r => {
     const row = {
       name: r.name, hours: null, rate: r.rate==null?null:r.rate,
-      current: 0, memo: r.memo || ''
+      current: r.defaultAmount != null ? r.defaultAmount : 0,
+      memo: r.memo || ''
     };
     if (r.ssn) row.ssn = r.ssn;
     return row;
   });
+}
+// ROSTER defaultAmount 적용 — 기존 row 가 current=0/null 이면 default 로 채움.
+// 사용자가 명시적으로 다른 값 (예: $600, 휴가시 $0 입력 후 저장) 으로 수정한 row 는 그대로 유지.
+function applyRosterDefaults(){
+  const roster = (TYPE==='cpa' ? PAYROLL_ROSTER_CPA : PAYROLL_ROSTER)[BRANCH];
+  if (!roster || !DATA.rows) return false;
+  let changed = false;
+  for (const row of DATA.rows){
+    const r = roster.find(x => x.name === row.name);
+    if (!r) continue;
+    if (r.defaultAmount != null && (row.current == null || row.current === 0)){
+      row.current = r.defaultAmount;
+      changed = true;
+    }
+    // memo 도 빈 값이면 ROSTER memo 로 (수정 가능 안내 노출)
+    if (r.memo && !row.memo){ row.memo = r.memo; changed = true; }
+  }
+  return changed;
 }
 function loadReport(){
   const local = (() => { try { return JSON.parse(localStorage.getItem(fbKey()) || 'null'); } catch(_){ return null; } })();
   DATA = local || { rows: [], total: 0, sig: '', sigDate: '' };
   const wasEmpty = !DATA.rows || !DATA.rows.length;
   if (wasEmpty) prefillFromRoster();
+  applyRosterDefaults();
   renderHeader(); renderRows();
   // Pull remote — remote은 lastChangedAt가 있으면 무조건 우선 (저장된 데이터)
   fetch(FB_DB_URL + '/' + fbKey() + '.json?t=' + Date.now(), {cache:'no-store'})
@@ -844,6 +864,7 @@ function loadReport(){
       // 로컬이 단지 roster prefill 상태면 remote가 어떻든 받기
       if (remoteNewer || wasEmpty){
         DATA = remote;
+        applyRosterDefaults();
         localStorage.setItem(fbKey(), JSON.stringify(DATA));
         renderRows();
       }
