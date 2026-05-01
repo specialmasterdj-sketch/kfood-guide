@@ -77,6 +77,7 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
 .exp-item:active{transform:scale(.99)}
 .exp-item.t-check{border-left-color:#0369a1}
 .exp-item.t-cash{border-left-color:#15803d}
+.exp-item.t-card{border-left-color:#ea580c}
 .exp-item.t-ach{border-left-color:#7c3aed}
 .exp-item.t-other{border-left-color:#64748b}
 .exp-item .ic{font-size:1.4em;flex-shrink:0}
@@ -119,7 +120,7 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
 @media(min-width:760px){
-  .tile-grid{grid-template-columns:repeat(4,1fr)}
+  .tile-grid{grid-template-columns:repeat(5,1fr)}
 }
 </style>
 </head>
@@ -158,6 +159,7 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
   <div class="tile-grid">
     <div class="tile primary" onclick="openEntry('check')"><div class="ic">📝</div><div class="nm" id="lblTileCheck">체크 발행</div><div class="ds" id="lblTileCheckDs">Check 입력</div></div>
     <div class="tile" onclick="openEntry('cash')" style="background:#f0fdf4"><div class="ic">💵</div><div class="nm" id="lblTileCash">현금 지출</div><div class="ds" id="lblTileCashDs">Cash 입력</div></div>
+    <div class="tile" onclick="openEntry('card')" style="background:#fff7ed"><div class="ic">💳</div><div class="nm" id="lblTileCard">회사 카드</div><div class="ds" id="lblTileCardDs">Corp Card</div></div>
     <div class="tile" onclick="openEntry('ach')" style="background:#ede9fe"><div class="ic">🌐</div><div class="nm" id="lblTileAch">ACH / 온라인</div><div class="ds" id="lblTileAchDs">Online 결제</div></div>
     <div class="tile" onclick="openEntry('other')" style="background:#fef3c7"><div class="ic">📋</div><div class="nm" id="lblTileOther">기타 지출</div><div class="ds" id="lblTileOtherDs">Other</div></div>
   </div>
@@ -183,6 +185,7 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
       <option value="all" id="lblAllTypes">전체 종류</option>
       <option value="check">체크</option>
       <option value="cash">현금</option>
+      <option value="card">회사카드</option>
       <option value="ach">ACH</option>
       <option value="other">기타</option>
     </select>
@@ -317,6 +320,8 @@ const I18N = {
   lblTileCheckDs:{ko:'Check 입력', en:'Check entry', es:'Cheque'},
   lblTileCash: {ko:'현금 지출', en:'Cash Expense', es:'Gasto en Efectivo'},
   lblTileCashDs:{ko:'Cash 입력', en:'Cash entry', es:'Efectivo'},
+  lblTileCard: {ko:'회사 카드', en:'Corp Card', es:'Tarjeta Corp'},
+  lblTileCardDs:{ko:'카드 결제', en:'Card payment', es:'Pago con tarjeta'},
   lblTileAch:  {ko:'ACH / 온라인', en:'ACH / Online', es:'ACH / En línea'},
   lblTileAchDs:{ko:'Online 결제', en:'Online payment', es:'Pago en línea'},
   lblTileOther:{ko:'기타 지출', en:'Other Expense', es:'Otro Gasto'},
@@ -465,8 +470,8 @@ function todayKey(d){
 function fmt$(n){ const v = Number(n)||0; return '$' + v.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
 function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escAttr(s){ return String(s||'').replace(/['"\\]/g,'\\$&'); }
-function typeIcon(t){ return { check:'📝', cash:'💵', ach:'🌐', other:'📋' }[t] || '📋'; }
-function typeLabel(t){ return { check:({ko:'체크',en:'Check',es:'Cheque'}[LANG]), cash:({ko:'현금',en:'Cash',es:'Efectivo'}[LANG]), ach:({ko:'ACH',en:'ACH',es:'ACH'}[LANG]), other:({ko:'기타',en:'Other',es:'Otro'}[LANG]) }[t] || t; }
+function typeIcon(t){ return { check:'📝', cash:'💵', card:'💳', ach:'🌐', other:'📋' }[t] || '📋'; }
+function typeLabel(t){ return { check:({ko:'체크',en:'Check',es:'Cheque'}[LANG]), cash:({ko:'현금',en:'Cash',es:'Efectivo'}[LANG]), card:({ko:'회사카드',en:'Corp Card',es:'Tarjeta Corp'}[LANG]), ach:({ko:'ACH',en:'ACH',es:'ACH'}[LANG]), other:({ko:'기타',en:'Other',es:'Otro'}[LANG]) }[t] || t; }
 function statusLabel(s){ return { pending:({ko:'대기',en:'Pending',es:'Pendiente'}[LANG]), approved:({ko:'승인',en:'Approved',es:'Aprobado'}[LANG]), rejected:({ko:'거부',en:'Rejected',es:'Rechazado'}[LANG]), paid:({ko:'지급완료',en:'Paid',es:'Pagado'}[LANG]) }[s] || s; }
 function compressImage(file, maxDim, quality){
   maxDim = maxDim || 1280; quality = quality || 0.78;
@@ -502,13 +507,14 @@ function renderHome(){
   document.getElementById('todayBranchName').textContent = (BRANCH_BY_ID[BRANCH]?.[LANG]) || BRANCH;
   const today = todayKey();
   const todayExp = EXPENSES.filter(e => e.date === today && e.branch === BRANCH);
-  const byType = { check:0, cash:0, ach:0, other:0 };
+  const byType = { check:0, cash:0, card:0, ach:0, other:0 };
   todayExp.forEach(e => { byType[e.type] = (byType[e.type]||0) + (Number(e.amount)||0); });
-  const total = byType.check + byType.cash + byType.ach + byType.other;
+  const total = byType.check + byType.cash + byType.card + byType.ach + byType.other;
   const el = document.getElementById('todaySummary');
   el.innerHTML =
     `<div class="summary-row"><span>📝 ${typeLabel('check')}</span><b>${fmt$(byType.check)}</b></div>` +
     `<div class="summary-row"><span>💵 ${typeLabel('cash')}</span><b>${fmt$(byType.cash)}</b></div>` +
+    `<div class="summary-row"><span>💳 ${typeLabel('card')}</span><b>${fmt$(byType.card)}</b></div>` +
     `<div class="summary-row"><span>🌐 ${typeLabel('ach')}</span><b>${fmt$(byType.ach)}</b></div>` +
     `<div class="summary-row"><span>📋 ${typeLabel('other')}</span><b>${fmt$(byType.other)}</b></div>` +
     `<div class="summary-row" style="border-top:2px solid #1a5c3a;margin-top:6px;padding-top:8px"><span style="font-weight:800">${({ko:'총합',en:'Total',es:'Total'}[LANG])}</span><b style="font-size:1.05em">${fmt$(total)}</b></div>` +
@@ -540,11 +546,12 @@ function openEntry(type){
   refreshIssuerDatalist();
   // 종류별 노출
   document.getElementById('checkNumberField').style.display = (type === 'check') ? '' : 'none';
-  document.getElementById('lblPhotoRequired').style.display = (type === 'cash') ? '' : 'none';
+  document.getElementById('lblPhotoRequired').style.display = (type === 'cash' || type === 'card') ? '' : 'none';
   // 제목
   document.getElementById('entryTitle').textContent = typeIcon(type) + ' ' + (
     type === 'check' ? ({ko:'체크 발행',en:'Issue Check',es:'Emitir Cheque'}[LANG]) :
     type === 'cash'  ? ({ko:'현금 지출',en:'Cash Expense',es:'Gasto en Efectivo'}[LANG]) :
+    type === 'card'  ? ({ko:'회사 카드',en:'Corp Card',es:'Tarjeta Corp'}[LANG]) :
     type === 'ach'   ? ({ko:'ACH / 온라인',en:'ACH / Online',es:'ACH / En línea'}[LANG]) :
                        ({ko:'기타 지출',en:'Other Expense',es:'Otro Gasto'}[LANG])
   );
@@ -589,7 +596,7 @@ window.saveEntry = async function(){
     const dup = EXPENSES.find(e => e.type === 'check' && String(e.checkNumber||'').trim() === checkNumber);
     if (dup && !confirm('⚠️ ' + ({ko:'중복된 체크 번호입니다. 그래도 저장할까요?',en:'Duplicate check #. Save anyway?',es:'Cheque duplicado. ¿Guardar?'}[LANG]))) return;
   }
-  if (type === 'cash' && !CUR_PHOTO) { toast(({ko:'현금 지출은 영수증 사진 필수',en:'Receipt photo required for cash',es:'Foto requerida'}[LANG]), 'err'); return; }
+  if ((type === 'cash' || type === 'card') && !CUR_PHOTO) { toast(({ko:'영수증 사진 필수',en:'Receipt photo required',es:'Foto requerida'}[LANG]), 'err'); return; }
   if (!vendor) { toast(({ko:'회사·메모 필수',en:'Vendor/memo required',es:'Proveedor requerido'}[LANG]), 'err'); return; }
 
   const saveBtn = document.querySelector('#entryOv .btn:not(.sec)');
