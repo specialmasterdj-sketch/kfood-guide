@@ -1757,12 +1757,24 @@ function loadRoomsRest(){
     if (shouldAutoRestoreRoom() && !__unsubMsgs) openRoom(ACTIVE_ROOM);
   });
 }
+// 옛 SW 캐시 가진 폰이 자동으로 재생성하는 deprecated 방을 자동으로 지움
+const DEPRECATED_ROOMS = ['meat'];
+function cleanupDeprecatedRooms(){
+  for (const id of DEPRECATED_ROOMS) {
+    if (ROOMS[id]) {
+      delete ROOMS[id];
+      fetch(`${FB_DB_URL}/chat/rooms/${id}.json`, { method:'DELETE' }).catch(()=>{});
+      fetch(`${FB_DB_URL}/chat/messages/${id}.json`, { method:'DELETE' }).catch(()=>{});
+    }
+  }
+}
 function subscribeRooms(){
   if (!window.__fb) { loadRoomsRest(); return; }
   const { db, ref, onValue } = window.__fb;
   onValue(ref(db, 'chat/rooms'), snap => {
     const d = snap.val() || {};
     Object.entries(d).forEach(([id, r]) => { ROOMS[id] = Object.assign(ROOMS[id]||{}, r); });
+    cleanupDeprecatedRooms();
     ensureDefaultRooms();
     renderRooms();
     if (shouldAutoRestoreRoom() && ROOMS[ACTIVE_ROOM] && !__unsubMsgs) {
