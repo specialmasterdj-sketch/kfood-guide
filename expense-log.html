@@ -249,10 +249,8 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
     <datalist id="vendorList"></datalist>
     <div class="field">
       <label id="lblFieldIssuer">발행자 / 사용자</label>
-      <input type="text" id="entryIssuer" list="issuerList" placeholder="이니셜 또는 이름" autocomplete="off" oninput="updateSaveToggle('issuer')">
-      <label class="save-toggle" id="entryIssuerSaveLbl" style="display:none;font-size:.85em;color:#15803d;font-weight:700;margin-top:6px;cursor:pointer;align-items:center;gap:6px">
-        <input type="checkbox" id="entryIssuerSaveCb" checked style="width:18px;height:18px;-webkit-appearance:auto;appearance:auto;accent-color:#15803d;cursor:pointer;flex-shrink:0;padding:0;margin:0;border:1.5px solid #d1d5db"> <span id="lblSaveIssuer">📌 다음에도 쓰려면 저장 목록에 추가</span>
-      </label>
+      <input type="text" id="entryIssuer" list="issuerList" placeholder="이니셜 또는 이름" autocomplete="off">
+      <div style="font-size:.74em;color:#6b7280;margin-top:4px" id="hintIssuerSrc">📋 현재 지점 매니저 · 오너 (스케줄표 기준)</div>
     </div>
     <datalist id="issuerList"></datalist>
     <div class="field"><label id="lblFieldMemo">메모</label><textarea id="entryMemo" placeholder="선택"></textarea></div>
@@ -538,6 +536,7 @@ window.onBranchChange = function(){
   BRANCH = document.getElementById('branchSel').value;
   try { localStorage.setItem('expense.branch', BRANCH); } catch(e){}
   renderHome();
+  refreshIssuerDatalist(); // 지점별 매니저/오너 발행자 풀 새로고침
 };
 
 //================================================================
@@ -558,10 +557,9 @@ function openEntry(type){
   // 자동완성 datalist 새로고침 (이전에 입력한 회사·발행자 선택 가능)
   refreshVendorDatalist();
   refreshIssuerDatalist();
-  // 저장 토글 reset (default 켜짐) — vendor·issuer 둘 다 일관되게 평가
+  // vendor 저장 토글 reset (issuer 는 schedules master — 토글 없음)
   document.getElementById('entryVendorSaveCb').checked = true;
-  document.getElementById('entryIssuerSaveCb').checked = true;
-  setTimeout(() => { updateSaveToggle('vendor'); updateSaveToggle('issuer'); }, 0);
+  setTimeout(() => updateSaveToggle('vendor'), 0);
   // 종류별 노출
   document.getElementById('checkNumberField').style.display = (type === 'check') ? '' : 'none';
   document.getElementById('lblPhotoRequired').style.display = (type === 'cash' || type === 'card') ? '' : 'none';
@@ -641,11 +639,8 @@ window.saveEntry = async function(){
       }
     }
     EXPENSES.unshift(Object.assign({ id: expenseId, branch: BRANCH }, expense));
-    // 회사·발행자 자동완성 캐시에 추가 — 토글이 켜져 있을 때만 (또는 토글이 안 보이는 = 이미 캐시됨 케이스도 갱신)
-    const saveVendor = document.getElementById('entryVendorSaveCb').checked;
-    const saveIssuer = document.getElementById('entryIssuerSaveCb').checked;
-    if (saveVendor) pushCache(VENDOR_CACHE_KEY, vendor);
-    if (saveIssuer) pushCache(ISSUER_CACHE_KEY, issuer);
+    // 회사 자동완성 캐시 — 토글이 켜져 있으면 (issuer 는 schedules master 라 캐시 안 함)
+    if (document.getElementById('entryVendorSaveCb').checked) pushCache(VENDOR_CACHE_KEY, vendor);
     closeOv('entryOv');
     toast('✓ ' + ({ko:'저장 완료',en:'Saved',es:'Guardado'}[LANG]), 'ok');
     renderHome();
@@ -696,15 +691,14 @@ async function pushCacheCloud(key, value){
 }
 async function loadCacheCloud(){
   try {
-    const [vR, iR] = await Promise.all([
-      fetch(FB_CACHE_VENDORS, { cache:'no-store' }),
-      fetch(FB_CACHE_ISSUERS, { cache:'no-store' })
-    ]);
+    // vendor 만 클라우드 풀 (전 지점 공유), issuer 는 schedules master
+    const vR = await fetch(FB_CACHE_VENDORS, { cache:'no-store' });
     const vO = await vR.json();
-    const iO = await iR.json();
     if (vO && typeof vO === 'object') mergeIntoLocalCache(VENDOR_CACHE_KEY, Object.values(vO));
-    if (iO && typeof iO === 'object') mergeIntoLocalCache(ISSUER_CACHE_KEY, Object.values(iO));
     refreshVendorDatalist();
+    // 스케줄 캐시 무효화 → 다음 호출 시 새로 fetch
+    SCHED_CACHE.owners = null;
+    SCHED_CACHE.byBranch = {};
     refreshIssuerDatalist();
   } catch(e){ console.warn('[cache] cloud load failed', e); }
 }
@@ -726,24 +720,51 @@ function refreshVendorDatalist(){
   const list = Array.from(set.values()).sort((a,b) => a.localeCompare(b));
   document.getElementById('vendorList').innerHTML = list.map(v => `<option value="${escAttr(v)}">`).join('');
 }
-function refreshIssuerDatalist(){
-  const set = new Map();
-  loadCacheList(ISSUER_CACHE_KEY).forEach(v => { if (v) set.set(v.toUpperCase(), v); });
-  EXPENSES.forEach(e => { if (e.issuer) { const k = e.issuer.toUpperCase(); if (!set.has(k)) set.set(k, e.issuer); } });
-  const list = Array.from(set.values()).sort((a,b) => a.localeCompare(b));
-  document.getElementById('issuerList').innerHTML = list.map(v => `<option value="${escAttr(v)}">`).join('');
+// 발행자 = 현재 지점 매니저/부매니저 + 전체 오너 (스케줄표 기준)
+const SCHED_CACHE = { owners: null, byBranch: {} };
+const ISSUER_MGR_TOKENS = ['MANAGER','매니저','GERENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','부매니저','GERENTE ASISTENTE','OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO'];
+function isIssuerRole(role){
+  const r = String(role||'').toUpperCase();
+  return ISSUER_MGR_TOKENS.some(t => r.includes(t.toUpperCase()));
 }
-// "저장 목록에 추가" 토글: 캐시에 이미 있으면 숨김(저장 불필요), 그 외 표시(default 켜짐).
-// 빈 값이라도 표시 — 사용자가 입력 전부터 저장 의도 확인 가능 (발행자·회사 일관)
+async function fetchBranchManagers(branch){
+  if (SCHED_CACHE.byBranch[branch]) return SCHED_CACHE.byBranch[branch];
+  try {
+    const r = await fetch(`${FB_DB_URL}/schedules/${branch}/employees.json`, { cache:'no-store' });
+    const arr = (await r.json()) || [];
+    const names = arr.filter(e => isIssuerRole(e?.role)).map(e => e?.name).filter(Boolean);
+    SCHED_CACHE.byBranch[branch] = names;
+    return names;
+  } catch(e){ console.warn('[issuer] branch fetch failed', e); return []; }
+}
+async function fetchOwners(){
+  if (SCHED_CACHE.owners) return SCHED_CACHE.owners;
+  try {
+    const r = await fetch(`${FB_DB_URL}/schedules/_global/owners.json`, { cache:'no-store' });
+    const arr = (await r.json()) || [];
+    const names = arr.map(o => o?.name).filter(Boolean);
+    SCHED_CACHE.owners = names;
+    return names;
+  } catch(e){ console.warn('[issuer] owners fetch failed', e); return []; }
+}
+async function refreshIssuerDatalist(){
+  const [owners, mgrs] = await Promise.all([fetchOwners(), fetchBranchManagers(BRANCH)]);
+  // 중복 제거 (대소문자 무시), 오너 우선
+  const seen = new Map();
+  [...owners, ...mgrs].forEach(n => { const k = n.toUpperCase(); if (!seen.has(k)) seen.set(k, n); });
+  const list = Array.from(seen.values()).sort((a,b) => a.localeCompare(b));
+  document.getElementById('issuerList').innerHTML = list.map(v => `<option value="${escAttr(v)}">`).join('');
+  // 캐시도 갱신 (offline backup)
+  saveCacheList(ISSUER_CACHE_KEY, list);
+}
+// "저장 목록에 추가" 토글 (vendor 만): 캐시에 이미 있으면 숨김, 그 외 표시(default 켜짐).
 window.updateSaveToggle = function(which){
-  const cfg = which === 'vendor'
-    ? { input:'entryVendor', lbl:'entryVendorSaveLbl', key: VENDOR_CACHE_KEY }
-    : { input:'entryIssuer', lbl:'entryIssuerSaveLbl', key: ISSUER_CACHE_KEY };
-  const v = (document.getElementById(cfg.input).value || '').trim();
-  const lblEl = document.getElementById(cfg.lbl);
+  if (which !== 'vendor') return; // issuer 는 schedules master — 토글 없음
+  const v = (document.getElementById('entryVendor').value || '').trim();
+  const lblEl = document.getElementById('entryVendorSaveLbl');
   if (!v) { lblEl.style.display = 'flex'; return; }
-  const cached = loadCacheList(cfg.key).some(x => x.toUpperCase() === v.toUpperCase())
-              || EXPENSES.some(e => (e[which]||'').toUpperCase() === v.toUpperCase());
+  const cached = loadCacheList(VENDOR_CACHE_KEY).some(x => x.toUpperCase() === v.toUpperCase())
+              || EXPENSES.some(e => (e.vendor||'').toUpperCase() === v.toUpperCase());
   lblEl.style.display = cached ? 'none' : 'flex';
 };
 
