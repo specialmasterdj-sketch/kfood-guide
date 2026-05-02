@@ -52,11 +52,11 @@
     body { margin-left: ${W}px !important; }
     .km-navside { position: fixed; top: 0; left: 0; bottom: 0; width: ${W}px; background: linear-gradient(180deg,#ffffff 0%,#fafbfc 100%); border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; z-index: 1000; font-family: 'Inter','Pretendard','Segoe UI','Malgun Gothic',-apple-system,BlinkMacSystemFont,Arial,sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -.01em; }
     .km-navside .km-brand { display:flex; align-items:center; gap:10px; padding: 12px 14px 12px; border-bottom: 1px solid #f3f4f6; margin-bottom: 0; }
-    .km-navside .km-brand .logo { width:32px; height:32px; border-radius:9px; background:linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:1em; box-shadow: 0 2px 6px rgba(26,92,58,.25); }
-    .km-navside .km-brand .nm { font-weight:800; color:#1a5c3a; font-size:1em; letter-spacing:-.02em; }
-    .km-navside .km-backbtn { display:flex; align-items:center; gap:7px; padding:10px 14px; color:#1a5c3a; font-size:.85em; font-weight:700; cursor:pointer; border:none; background:none; width:100%; text-align:left; border-bottom:1px solid #f3f4f6; font-family:inherit; text-decoration:none; margin-bottom:4px; }
+    .km-navside .km-brand .logo { width:32px; height:32px; border-radius:9px; background:linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.92em; box-shadow: 0 2px 6px rgba(26,92,58,.25); }
+    .km-navside .km-brand .nm { font-weight:800; color:#1a5c3a; font-size:.92em; letter-spacing:-.01em; }
+    .km-navside .km-backbtn { display:flex; align-items:center; gap:7px; padding:10px 14px; color:#1a5c3a; font-size:.92em; font-weight:700; cursor:pointer; border:none; background:none; width:100%; text-align:left; border-bottom:1px solid #f3f4f6; font-family:inherit; text-decoration:none; margin-bottom:4px; letter-spacing:-.01em; }
     .km-navside .km-backbtn:hover { background:#f0fdf4; }
-    .km-navside .km-sec { padding: 14px 14px 6px; font-size: .68em; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: .12em; }
+    .km-navside .km-sec { padding: 14px 14px 6px; font-size: .92em; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: -.01em; }
     .km-navside a { display: flex; align-items: center; gap: 12px; padding: 9px 14px; color: #1f2937; text-decoration: none; font-size: .92em; font-weight: 600; border-left: 3px solid transparent; transition: all .15s ease; letter-spacing: -.01em; }
     .km-navside a:hover { background: #f0fdf4; color: #1a5c3a; transform: translateX(2px); }
     .km-navside a.active { background: #dcfce7; color: #1a5c3a; border-left-color: #1a5c3a; font-weight: 800; }
