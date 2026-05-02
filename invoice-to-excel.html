@@ -131,6 +131,40 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* MULTI-PAGE NOTE */
 .page-note{font-size:11px;color:#aaa;text-align:right;margin-top:5px}
+
+/* ===== PRINT (PDF 같이 깔끔한 인쇄) ===== */
+@media print {
+  @page { size: letter portrait; margin: 12mm 10mm; }
+  /* 1) 본문 외 UI 모두 숨김 */
+  .km-navside, .km-navtoggle, .navside, .topbar, .lang-toggle,
+  .card:not(#result-card), .brow, .sbar, .col-toggles,
+  #ref-card, #ref-ed-card, #upload-card, #vendor-card,
+  button, .btn, .lang-btn, .file-input, input[type="file"],
+  #status, #progress, .page-note,
+  .hint, .tip, .alert, .toast, .toast-wrap,
+  .ct-actions, .ct-tools, .col-vis-row { display: none !important; }
+  /* 2) 페이지 / 본문 여백 0 — page margin 만 사용 */
+  body, html { background:#fff !important; margin:0 !important; padding:0 !important; color:#000 !important; }
+  body > *:not(.print-host) { /* 다른 모든 요소 숨김은 위에서 처리 — 여기는 fallback */ }
+  /* 3) 결과 카드만 풀폭 표시 */
+  #result-card { display: block !important; box-shadow: none !important; border: 0 !important; padding: 0 !important; margin: 0 !important; max-width: none !important; width: 100% !important; }
+  /* 4) 인쇄용 헤더 (vendor + 인보이스 메타) — print-only */
+  .print-header { display: block !important; margin-bottom: 8mm; padding-bottom: 4mm; border-bottom: 2px solid #000; }
+  .print-header h1 { font-size: 18pt; font-weight: 800; margin: 0 0 2mm 0; }
+  .print-header .meta { font-size: 9pt; color: #444; }
+  /* 5) 테이블 — compact 한 인쇄용 */
+  table.grid { width: 100% !important; border-collapse: collapse !important; font-size: 8.5pt !important; }
+  table.grid th, table.grid td { border: 1px solid #888 !important; padding: 2mm 1.5mm !important; text-align: left !important; vertical-align: top !important; word-break: break-word; }
+  table.grid thead th { background: #f3f4f6 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  table.grid tbody tr { page-break-inside: avoid; }
+  /* 컬럼 너비 자동 — 너무 좁으면 줄바꿈 */
+  table.grid td { max-width: 60mm; }
+  /* 6) 인쇄용 푸터 (페이지 번호) */
+  .print-footer { display: block !important; text-align: right; font-size: 8pt; color: #666; margin-top: 4mm; }
+  /* 7) 색상 강제 적용 */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+.print-header, .print-footer { display: none; }
 </style>
 </head>
 <body>
@@ -309,6 +343,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
   <!-- RESULT GRID -->
   <div class="card hidden fin" id="result-card">
+    <!-- 인쇄 전용 헤더 (화면에선 숨김, 인쇄 시 표시) -->
+    <div class="print-header">
+      <h1 id="print-vendor-title">인보이스 추출 결과</h1>
+      <div class="meta" id="print-vendor-meta"></div>
+    </div>
     <div class="ct" data-t="result_title">✏️ 추출 결과 확인 · 수정</div>
     <div class="tip" data-t="result_tip">셀을 클릭하면 직접 수정할 수 있습니다. 컬럼 제목도 수정 가능합니다.</div>
 
@@ -320,7 +359,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="btn btn-g" onclick="downloadExcel()" style="flex:1.5" data-t="save_excel_btn">📥 엑셀로 저장 (.xlsx)</button>
       <button class="btn btn-g" onclick="sendToCompare()" style="flex:1.5;background:#2e8b57" data-t="to_compare_btn">🔗 가격 비교로 넘기기 →</button>
       <button class="btn btn-o" onclick="archivePDFs()" title="업로드한 PDF를 표준 파일명으로 다시 다운로드 → 아카이브 폴더로 옮기세요" data-t="archive_pdf_btn">📂 PDF 저장</button>
-      <button class="btn btn-o" onclick="window.print()" data-t="print_btn">🖨 프린트</button>
+      <button class="btn btn-o" onclick="printResults()" data-t="print_btn">🖨 프린트</button>
       <button class="btn btn-o" onclick="addRow()" data-t="add_row_btn">＋ 행 추가</button>
       <button class="btn btn-gray" onclick="clearAll()" data-t="clear_btn">🗑 초기화</button>
     </div>
@@ -3473,6 +3512,25 @@ function sendToCompare(){
 }
 
 /* ===================== EXCEL DOWNLOAD ===================== */
+// 인쇄 — 헤더에 vendor + 인보이스 메타 자동 채움 후 window.print()
+function printResults(){
+  if (!ROWS || !ROWS.length) { toast('데이터가 없습니다'); return; }
+  try {
+    const vLabel = (typeof VENDORS_PARSER !== 'undefined' && VENDORS_PARSER[currentVendor])
+      ? VENDORS_PARSER[currentVendor].name : currentVendor;
+    const titleEl = document.getElementById('print-vendor-title');
+    const metaEl = document.getElementById('print-vendor-meta');
+    if (titleEl) titleEl.textContent = '🏢 ' + vLabel + ' — 인보이스 추출';
+    if (metaEl) {
+      const today = new Date();
+      const dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+      metaEl.innerHTML = '총 ' + ROWS.length + '개 항목 · 인쇄일 ' + dateStr +
+        (typeof currentBranch !== 'undefined' && currentBranch ? ' · 지점 ' + currentBranch : '');
+    }
+  } catch(e) { console.warn('[print] header fill failed', e); }
+  setTimeout(() => window.print(), 50);
+}
+window.printResults = printResults;
 function downloadExcel(){
   if(!ROWS.length){toast('데이터가 없습니다');return;}
 
