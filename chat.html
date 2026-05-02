@@ -280,6 +280,7 @@ a{color:inherit;text-decoration:none}
   <aside class="rooms" id="roomsBar">
     <div class="rooms-h">
       <h2 data-t="rooms_title">채팅방</h2>
+      <button class="add" onclick="openDmPicker()" title="1:1 비공개 시작 / Start 1:1" style="background:#1d4ed8;margin-right:4px">💬 1:1</button>
       <button class="add" onclick="openRoomModal()" data-t="rooms_new">＋ 새 방</button>
     </div>
     <div class="rooms-search">
@@ -598,14 +599,33 @@ const DEFAULT_ROOMS = [
   { id:'supply_req',    name:{ko:'비품 요청',               en:'Supply Request',              es:'Solicitud de Insumos'},       desc:{ko:'비품·소모품 요청',           en:'Supply & consumable requests', es:'Solicitud de suministros'}, icon:'🧺' },
 ];
 function roomLocalName(id, r){
+  // DM 룸: 본인이 아닌 상대 이름을 표시 (members 에서 추출)
+  if (id && id.startsWith('dm__') && r && Array.isArray(r.members)){
+    const myKey = normName(me?.name || '');
+    const other = r.members.find(n => normName(n) !== myKey);
+    return (other || r.name || '1:1');
+  }
   const dr = DEFAULT_ROOMS.find(x => x.id === id);
   if (dr && typeof dr.name === 'object') return dr.name[LANG] || dr.name.ko;
   return r.name || '';
 }
 function roomLocalDesc(id, r){
+  if (id && id.startsWith('dm__')) return '💬 1:1';
   const dr = DEFAULT_ROOMS.find(x => x.id === id);
   if (dr && typeof dr.desc === 'object') return dr.desc[LANG] || dr.desc.ko;
   return r.desc || '';
+}
+// 1:1 (DM) 룸 ID 생성 — 두 이름 정규화·알파벳순 정렬해서 양쪽 같은 ID
+function normName(s){ return String(s||'').trim().replace(/\s+/g,'_').replace(/[^A-Za-z0-9_가-힣]/g,'').toUpperCase(); }
+function mkDmRoomId(a, b){
+  const x = normName(a), y = normName(b);
+  if (!x || !y) return '';
+  return 'dm__' + [x,y].sort().join('__');
+}
+function isMyDmRoom(id, r){
+  if (!id || !id.startsWith('dm__') || !r || !Array.isArray(r.members)) return false;
+  const myKey = normName(me?.name || '');
+  return r.members.some(n => normName(n) === myKey);
 }
 const ROOM_ICONS = {general:'📢', need_overstock:'📦', managers:'👔', payroll:'💵', closing:'🌙', kfood_eval:'🍚', produce:'🥬', grocery_eval:'🛒', meat:'🥩', sushi:'🍱', expired:'⚠️', supply_req:'🧺'};
 function roomIconFor(id, name){
@@ -927,6 +947,8 @@ function renderRooms(){
       // 권한 체크 (통과 못하면 숨김, 검색 무관)
       if (id === 'payroll' && !canAccessPayrollRoom()) return false;
       if (id === 'managers' && !me?.isManager) return false;
+      // 1:1 (DM) 룸: 본인이 members 에 포함된 경우만 표시
+      if (id.startsWith('dm__') && !isMyDmRoom(id, r)) return false;
       // 검색 필터 — 모든 방에 동등 적용
       if (ROOM_QUERY) {
         const nm = roomLocalName(id, r);
@@ -958,7 +980,8 @@ function renderRooms(){
     return /eval|평가|evaluation/i.test(nm);
   }
   const evalItems = items.filter(([id, r]) => isEvalRoom(id, r));
-  const otherItems = items.filter(([id, r]) => !isEvalRoom(id, r));
+  const dmItems = items.filter(([id, r]) => id.startsWith('dm__'));
+  const otherItems = items.filter(([id, r]) => !isEvalRoom(id, r) && !id.startsWith('dm__'));
   function renderRoomItem([id, r]){
     const active = id === ACTIVE_ROOM ? ' active' : '';
     const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
@@ -978,6 +1001,10 @@ function renderRooms(){
   if (evalItems.length > 0) {
     const evalLabel = ({ko:'📊 평가 (Evaluation)', en:'📊 Evaluation', es:'📊 Evaluación'}[LANG] || '📊 평가');
     html += `<div class="rooms-section-hd">${evalLabel}</div>` + evalItems.map(renderRoomItem).join('');
+  }
+  if (dmItems.length > 0) {
+    const dmLabel = ({ko:'💬 1:1 비공개', en:'💬 1:1 Direct', es:'💬 1:1 Privado'}[LANG] || '💬 1:1');
+    html += `<div class="rooms-section-hd" style="background:#eff6ff;color:#1d4ed8;border-top-color:#1d4ed8;border-bottom-color:#bfdbfe">${dmLabel}</div>` + dmItems.map(renderRoomItem).join('');
   }
   list.innerHTML = html;
 }
@@ -1005,6 +1032,87 @@ function openRoomModal(){
   document.getElementById('roomDesc').value = '';
   document.getElementById('roomOverlay').classList.add('show');
 }
+// ============ 1:1 DM ============
+window.openDmPicker = async function(){
+  if (!ensureMe()) return;
+  // 직원 풀: 본인 지점 직원 + 전 지점 OWNER (스케줄표 기준)
+  const lang = LANG || 'ko';
+  const labels = {
+    title: lang==='ko'?'1:1 채팅 — 상대 선택':lang==='es'?'1:1 — Selecciona contacto':'1:1 — Pick a contact',
+    desc:  lang==='ko'?'선택한 사람과만 보이는 비공개 채팅이 시작됩니다.':lang==='es'?'Chat privado solo entre ustedes dos.':'Private chat — only the two of you can see it.',
+    pickPh: lang==='ko'?'— 직원 선택 —':lang==='es'?'— Selecciona —':'— Pick —',
+    typePh: lang==='ko'?'또는 이름 직접 입력 (스케줄에 없을 때)':lang==='es'?'O escribe el nombre':'Or type a name',
+    cancel: lang==='ko'?'취소':lang==='es'?'Cancelar':'Cancel',
+    start: lang==='ko'?'시작':lang==='es'?'Iniciar':'Start',
+    loading: lang==='ko'?'로드 중…':lang==='es'?'Cargando…':'Loading…'
+  };
+  const host = document.getElementById('modal-host') || (function(){
+    const el = document.createElement('div'); el.id='modal-host'; document.body.appendChild(el); return el;
+  })();
+  host.innerHTML = `
+    <div class="overlay show" id="dmPickerOverlay" style="display:flex;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:center;justify-content:center;padding:14px" onclick="if(event.target===this){this.remove()}">
+      <div class="modal" style="background:#fff;border-radius:14px;padding:20px;max-width:380px;width:100%">
+        <h3 style="font-size:1.05em;font-weight:800;margin-bottom:6px">${escapeHtml(labels.title)}</h3>
+        <p style="color:#6b7280;font-size:.85em;margin-bottom:12px">${escapeHtml(labels.desc)}</p>
+        <select id="dmEmpSelect" class="input" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:10px;font-size:.95em;margin-bottom:8px">
+          <option value="">${escapeHtml(labels.loading)}</option>
+        </select>
+        <input id="dmEmpCustom" placeholder="${escapeHtml(labels.typePh)}" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:10px;font-size:.95em">
+        <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+          <button class="btn" style="background:#fff;border:1px solid #d1d5db;color:#374151;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer" onclick="document.getElementById('dmPickerOverlay').remove()">${escapeHtml(labels.cancel)}</button>
+          <button class="btn" style="background:#1d4ed8;color:#fff;border:0;border-radius:8px;padding:8px 16px;font-weight:800;cursor:pointer" onclick="startDmFromPicker()">${escapeHtml(labels.start)}</button>
+        </div>
+      </div>
+    </div>`;
+  // 직원 목록 fetch (현재 지점 매니저+직원 + 전 지점 OWNER)
+  try {
+    const myBranch = me?.branch || 'MIAMI';
+    const [empRes, ownRes] = await Promise.all([
+      fetch(FB_DB_URL + '/schedules/' + myBranch + '/employees.json'),
+      fetch(FB_DB_URL + '/schedules/_global/owners.json')
+    ]);
+    const emps = (await empRes.json()) || [];
+    const owners = (await ownRes.json()) || [];
+    const meKey = normName(me?.name || '');
+    const all = [...owners.map(o=>({name:o?.name, role:o?.role||'OWNER'})), ...emps.map(e=>({name:e?.name, role:e?.role||''}))]
+      .filter(x => x.name && normName(x.name) !== meKey);
+    // 중복 제거
+    const seen = new Set();
+    const unique = all.filter(x => { const k = normName(x.name); if (seen.has(k)) return false; seen.add(k); return true; });
+    unique.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+    const sel = document.getElementById('dmEmpSelect');
+    if (sel) {
+      sel.innerHTML = `<option value="">${escapeHtml(labels.pickPh)}</option>` +
+        unique.map(x => `<option value="${escapeHtml(x.name)}">${escapeHtml(x.name)}${x.role ? ' ('+escapeHtml(x.role)+')':''}</option>`).join('');
+    }
+  } catch(e){ console.warn('[dm] employee fetch failed', e); }
+};
+window.startDmFromPicker = function(){
+  const sel = document.getElementById('dmEmpSelect');
+  const inp = document.getElementById('dmEmpCustom');
+  const otherName = (inp?.value || sel?.value || '').trim();
+  if (!otherName) { alert('상대를 선택하거나 이름을 입력하세요'); return; }
+  if (normName(otherName) === normName(me?.name || '')) { alert('본인과는 1:1 시작 불가'); return; }
+  const id = mkDmRoomId(me.name, otherName);
+  if (!id) { alert('이름이 잘못됐습니다'); return; }
+  // 룸 메타 저장 (private + members)
+  const meta = {
+    name: otherName,
+    private: true,
+    members: [me.name, otherName],
+    created: Date.now()
+  };
+  ROOMS[id] = Object.assign(ROOMS[id]||{}, meta);
+  if (window.__fb) {
+    const { db, ref, update } = window.__fb;
+    try { update(ref(db, 'chat/rooms/' + id), meta); } catch(_){}
+  } else {
+    fetch(FB_DB_URL + '/chat/rooms/' + id + '.json', { method:'PATCH', body: JSON.stringify(meta) }).catch(()=>{});
+  }
+  document.getElementById('dmPickerOverlay')?.remove();
+  renderRooms();
+  openRoom(id);
+};
 function createRoom(){
   const name = document.getElementById('roomName').value.trim();
   if (!name) return;
