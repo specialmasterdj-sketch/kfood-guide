@@ -193,6 +193,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="eastland">Eastland</option>
         <option value="welluck">Well Luck</option>
         <option value="walong">Walong</option>
+        <option value="haitai">HAITAI</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -538,6 +539,11 @@ const VENDORS_PARSER = {
     // QTY UM NAME ...), so reuse parseWellLuck. If a real Walong PDF
     // shows different field positions we'll fork a dedicated parser.
     parse: rows => parseWellLuck(rows)
+  },
+  haitai: {
+    name: 'HAITAI',
+    detect: text => /HAITAI\s+INC|HAITAI\s+CHICAGO|해태\)/i.test(text),
+    parse: rows => parseHaitai(rows)
   },
   generic: {
     name: 'Generic / fallback',
@@ -2827,6 +2833,72 @@ function parseWellLuck(rows){
       casePrice:  uPrice,
       qty:        parseInt(qty, 10) || '',
       unit:       um.toUpperCase(),
+      total:      amount,
+    });
+  }
+  return out;
+}
+
+// HAITAI INC. (Chicago Branch) invoices.
+// Per-row layout (PDF text 추출 결과):
+//   "<NO> <ITEM6-7> <BARCODE12-13> <ORDER_QTY> <INV_QTY> <ENG_DESC>"
+//   "<KO_DESC> <SIZE> <UNIT_PRICE> <EACH_PRICE> <AMOUNT>"  (다음 줄)
+// 필수 추출: vendorCode (ITEM), barcode, name (description), eaPrice (EACH_PRICE)
+function parseHaitai(rows){
+  const out = [];
+  const seenItems = new Set();
+  // 라인 시작 패턴: NO ITEM BARCODE ORDER_QTY INV_QTY 영문설명
+  // ITEM 은 6-7자리, BARCODE 는 12-13자리 숫자
+  const HDR_RE = /^\s*(\d{1,3})\s+(\d{6,7})\s+(\d{12,13})\s+(\d+)\s+(\d+)\s+(.+)$/;
+  // 사이즈 패턴: 8x900G, 12x300G, 5x(8x150G), 24x(20x12G), 1x13.23LB 등
+  const SIZE_RE = /(\d+\s*x\s*\(?\s*[\d.,]+\s*x?\s*[\d.,]*\s*[A-Z]+\s*\)?)|(\d+\s*x\s*[\d.,]+(?:G|KG|LB|OZ|GAL|EA|T))/i;
+  // 라인 끝 가격 3개 (UNIT EACH AMOUNT — 모두 소수점 2자리)
+  const PRICE_RE = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/;
+
+  for (let i = 0; i < rows.length; i++){
+    const row = rows[i];
+    const text = (row.items || []).map(it => it.text || '').join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const m = text.match(HDR_RE);
+    if (!m) continue;
+    const [, , item, barcode, oqty, iqty, rest] = m;
+    if (seenItems.has(item)) continue;
+
+    // 다음 1-2 줄까지 합쳐서 size + 가격 추출 (한글 설명이 다음 줄에 있는 경우 흔함)
+    let combined = rest;
+    for (let j = 1; j <= 2 && i + j < rows.length; j++){
+      const nxt = (rows[i+j].items || []).map(it => it.text || '').join(' ').replace(/\s+/g, ' ').trim();
+      if (HDR_RE.test(nxt)) break;  // 다음 상품 라인 시작 — 중단
+      combined += ' ' + nxt;
+    }
+
+    const sm = combined.match(SIZE_RE);
+    const size = sm ? sm[0].trim() : '';
+    const pm = combined.match(PRICE_RE);
+    if (!pm) continue;  // 가격 없으면 스킵 (FREIGHT, PALLET 등 비상품)
+    const casePrice = parseFloat(pm[1].replace(/,/g,''));
+    const eaPrice   = parseFloat(pm[2].replace(/,/g,''));
+    const amount    = parseFloat(pm[3].replace(/,/g,''));
+
+    // 이름 = combined 에서 size 와 가격 제거 + 한글/영문 모두 보존
+    let name = combined;
+    if (sm) name = name.replace(SIZE_RE, '');
+    name = name.replace(PRICE_RE, '').replace(/\s+/g, ' ').trim();
+
+    // EA pack count: size "8x900G" 의 첫 숫자 (eaPrice 검증용)
+    let eaPack = 1;
+    const sp = size.match(/^(\d+)\s*x/i);
+    if (sp) eaPack = parseInt(sp[1], 10) || 1;
+
+    seenItems.add(item);
+    out.push({
+      vendorCode: item,                              // 제품번호
+      barcode:    barcode,                            // 바코드
+      name:       (name + (size ? ' (' + size + ')' : '')).trim(),  // 이름 (size 포함)
+      eaPrice:    eaPrice,                            // 개별 단가 ★ COST 비교 핵심
+      casePrice:  casePrice,                          // 박스 단가
+      qty:        parseInt(iqty, 10) || 0,
+      unit:       'CS',
       total:      amount,
     });
   }
