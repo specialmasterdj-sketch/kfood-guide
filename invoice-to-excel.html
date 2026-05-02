@@ -2892,19 +2892,21 @@ function parseHaitai(rows){
   allText = allText.replace(/\s+/g, ' ').trim();
   console.log('[parseHaitai] text length:', allText.length, 'first 400:', allText.slice(0,400));
 
-  // ITEM(6-7) + ORDER_QTY(1-3) + INV_QTY(1-3) anchor — 각 라인의 시작점
-  // (?<!\d) — 앞에 숫자가 없어야 (BARCODE 12-13자리 중 일부 매치 방지)
-  // 뒤에 영문/한글 description 또는 가격 — BARCODE 다음 한글이라 매치 안 되도록
-  const ANCHOR_RE = /(?<!\d)(\d{6,7})\s+(\d{1,3})\s+(\d{1,3})\s+(?=[A-Za-z가-힣<])/g;
+  // ITEM(6-7) + ORDER_QTY(1-3) + INV_QTY(1-3) + description 시작 (영문/한글)
+  // lookbehind/lookahead 사용 안 함 (iOS Safari 16 이하 호환성).
+  // BARCODE 안 매치 차단은 매치 후 prev char 직접 검사 (아래 루프).
+  const ANCHOR_RE = /(\d{6,7})\s+(\d{1,3})\s+(\d{1,3})\s+([A-Za-z가-힣])/g;
   // 가격 3개 (UNIT EACH AMOUNT, 모두 X.XX)
   const PRICE_RE = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/;
   // BARCODE: 12-13자리 숫자
   const BARCODE_RE = /\b(\d{12,13})\b/;
 
-  // 모든 anchor 위치 수집
+  // 모든 anchor 위치 수집 — BARCODE 안 매치 차단 (prev char 직접 검사)
   const anchors = [];
   let m;
   while ((m = ANCHOR_RE.exec(allText)) !== null){
+    // negative lookbehind 직접 검사: 매치 직전 글자가 숫자면 BARCODE 내부 — skip
+    if (m.index > 0 && /\d/.test(allText[m.index - 1])) continue;
     anchors.push({ item: m[1], oqty: m[2], iqty: m[3], pos: m.index, end: ANCHOR_RE.lastIndex });
   }
   console.log('[parseHaitai] anchors:', anchors.length);
