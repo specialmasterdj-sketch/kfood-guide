@@ -81,18 +81,19 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;
 
 <!-- 입고 스캔 검수는 HUB 안에서만 접근 (apps.html 첫 화면에서 숨김) -->
 
-<a class="app-card" href="./hub.html">
-<div class="app-icon" style="background:#E8F5E9">🏢</div>
+<!-- 가장 자주 쓰는 앱 — Chat 을 첫 카드로. HUB 는 사이드바 메뉴에서 접근. -->
+<a class="app-card" href="./chat.html" id="chat-card-link" style="position:relative">
+<div class="app-icon" style="background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff">💬</div>
 <div class="app-info">
-<div class="app-name" data-t="hub_name">김치마트 HUB</div>
-<div class="app-desc" data-t="hub_desc">통합 대시보드 · 공지 · 시프트 · 태스크 · 출퇴근 (Connecteam 스타일)</div>
+<div class="app-name" data-t="chat_name">Chat 채팅</div>
+<div class="app-desc" data-t="chat_desc">매니저·직원 메시지 · 사진 · 1:1 비공개 · 안 읽은 알림</div>
 </div>
-<span class="app-badge" style="background:#1a5c3a;color:#fff">HUB</span>
+<span class="app-badge" id="chat-unread-badge" style="background:#dc2626;color:#fff;font-size:.85em;padding:6px 11px;font-weight:800;display:none;min-width:24px;text-align:center">0</span>
 </a>
 
 <!-- 주간 스케줄·온도 관리·유통기한 관리는 HUB 안에서만 접근 (apps.html 첫 화면에서 숨김) -->
 
-<!-- 채팅·공지 카드는 김치마트 HUB 안에서만 접근 (apps.html 첫 화면에서 숨김) -->
+<!-- 공지 카드는 김치마트 HUB 안에서만 접근 (apps.html 첫 화면에서 숨김) -->
 
 <a class="app-card" href="./vendor-order-center.html">
 <div class="app-icon" style="background:#E8F5E9">🏪</div>
@@ -429,6 +430,72 @@ document.addEventListener('DOMContentLoaded', function() {
     sidebar.style.height = 'calc(100vh - ' + h + 'px)';
   }
 });
+
+// ============ Chat 카드 안 읽은 글 수 (chat.html 의 lastVisit + tsFromMsgId 로직 동일) ============
+(function(){
+  var FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  var MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER'];
+  function loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me')||'null'); } catch(e){ return null; } }
+  function isManager(me){ if (!me||!me.role) return false; var r=String(me.role).toUpperCase(); return MGR_TOKENS.some(function(t){return r.includes(t.toUpperCase());}); }
+  function normName(s){ return String(s||'').trim().replace(/\s+/g,'_').replace(/[^A-Za-z0-9_가-힣]/g,'').toUpperCase(); }
+  function tsFromMsgId(id){ if (!id || id[0] !== 'm') return 0; var n = parseInt(id.slice(1,14),10); return isFinite(n) ? n : 0; }
+  function lastVisitMap(){ try { return JSON.parse(localStorage.getItem('chat.lastVisit')||'{}'); } catch(e){ return {}; } }
+  function setBadge(n){
+    var b = document.getElementById('chat-unread-badge');
+    if (!b) return;
+    if (n <= 0) { b.style.display = 'none'; return; }
+    b.style.display = '';
+    b.textContent = n > 99 ? '99+' : String(n);
+  }
+  async function refreshChatUnread(){
+    try {
+      var me = loadMe();
+      var roomsRes = await fetch(FB + '/chat/rooms.json', { cache:'no-store' });
+      var rooms = (await roomsRes.json()) || {};
+      var lv = lastVisitMap();
+      var meKey = normName(me && me.name);
+      var mgr = isManager(me);
+      var roomIds = Object.keys(rooms).filter(function(id){
+        var r = rooms[id] || {};
+        // 권한 체크
+        if (id === 'payroll' || id === 'managers') return mgr;
+        // DM 룸: 본인이 members 에 있을 때만
+        if (id.indexOf('dm__') === 0) {
+          if (!Array.isArray(r.members)) return false;
+          return r.members.some(function(n){ return normName(n) === meKey; });
+        }
+        return true;
+      });
+      // 신규 사용자: lastVisit 비어있으면 현재 시각으로 초기화 (역사적 메시지 무시)
+      var lvChanged = false, now = Date.now();
+      roomIds.forEach(function(id){ if (lv[id] === undefined) { lv[id] = now; lvChanged = true; } });
+      if (lvChanged) { try { localStorage.setItem('chat.lastVisit', JSON.stringify(lv)); } catch(e){} }
+      // 각 룸 메시지 키 shallow GET → ts 비교 → 안읽음 카운트
+      var counts = await Promise.all(roomIds.map(async function(id){
+        var r = rooms[id] || {};
+        var last = lv[id] || 0;
+        if (r.lastTs && r.lastTs <= last) return 0;
+        try {
+          var msgRes = await fetch(FB + '/chat/messages/' + id + '.json?shallow=true');
+          var obj = await msgRes.json();
+          if (!obj) return 0;
+          var n = 0;
+          for (var k in obj) { if (tsFromMsgId(k) > last) n++; }
+          return n;
+        } catch(e){ return 0; }
+      }));
+      var total = counts.reduce(function(s,n){ return s + n; }, 0);
+      setBadge(total);
+    } catch(e){ console.warn('[apps] chat unread fetch failed', e); }
+  }
+  // 초기 1회 + 30초마다
+  refreshChatUnread();
+  setInterval(function(){ if (document.visibilityState === 'visible') refreshChatUnread(); }, 30000);
+  // 페이지가 다시 보이면 즉시 갱신 (다른 탭에서 채팅 보고 돌아온 경우)
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') refreshChatUnread(); });
+  // chat.html 에서 lastVisit 변경 시 즉시 반영
+  window.addEventListener('storage', function(e){ if (e.key === 'chat.lastVisit') refreshChatUnread(); });
+})();
 </script>
 </body>
 </html>
