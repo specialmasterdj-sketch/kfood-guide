@@ -208,6 +208,7 @@ html,body{overflow-x:hidden;max-width:100vw}
       </tr>
     </tfoot>
   </table>
+  <datalist id="empNameList"></datalist>
 
   <div class="row-actions print-hide">
     <button class="btn secondary editor-only" onclick="toggleAddRow()">＋ 직원 추가</button>
@@ -217,7 +218,7 @@ html,body{overflow-x:hidden;max-width:100vw}
     <button class="btn secondary" onclick="window.print()">🖨 인쇄</button>
   </div>
   <div class="add-row-form" id="addRowForm">
-    <input type="text" class="name-input" id="addName" placeholder="이름">
+    <input type="text" list="empNameList" class="name-input" id="addName" placeholder="이름 (스케줄에서 선택 가능)">
     <input type="number" step="0.5" class="num-input" id="addHours" placeholder="Hours">
     <input type="number" step="0.01" class="num-input" id="addRate" placeholder="Rate">
     <input type="number" step="0.01" class="num-input" id="addCurrent" placeholder="Current">
@@ -691,9 +692,10 @@ function renderRows(){
   // SSN 컬럼은 어느 행에라도 ssn 필드가 있으면 표시
   const showSSN = (DATA.rows||[]).some(r => r.ssn != null && r.ssn !== '');
   document.querySelectorAll('.ssn-col').forEach(el => el.style.display = showSSN ? '' : 'none');
+  refreshEmpNameList();
   tbody.innerHTML = (DATA.rows||[]).map((r, i) => `
     <tr>
-      <td class="name"><input value="${escapeAttr(r.name||'')}" oninput="updateRow(${i},'name',this.value)" ${ed?'':'disabled'}></td>
+      <td class="name"><input list="empNameList" value="${escapeAttr(r.name||'')}" oninput="updateRow(${i},'name',this.value)" ${ed?'':'disabled'} placeholder="${ed?'스케줄 직원에서 선택 또는 입력':''}"></td>
       ${showSSN ? `<td class="ssn-col"><input value="${escapeAttr(r.ssn||'')}" oninput="updateRow(${i},'ssn',this.value)" ${ed?'':'disabled'}></td>` : ''}
       <td class="num"><input type="number" step="0.5" value="${r.hours==null?'':r.hours}" oninput="updateRow(${i},'hours',this.value);recalc(${i})" ${ed?'':'disabled'}></td>
       <td class="num"><input type="number" step="0.01" value="${r.rate==null?'':r.rate}" placeholder="" oninput="updateRow(${i},'rate',this.value);recalc(${i})" ${ed?'':'disabled'}></td>
@@ -709,6 +711,31 @@ function renderRows(){
   sigEl.value = DATA.sig || '';
   dateEl.value = DATA.sigDate || fmtDate(endOfWeek(WEEK));
   sigEl.disabled = !ed; dateEl.disabled = !ed;
+}
+function refreshEmpNameList(){
+  const dl = document.getElementById('empNameList');
+  if (!dl) return;
+  // 스케줄 직원 우선, 그 다음 오너, 마지막에 페이롤 기존 이름. 대소문자 다른 중복은 먼저 본 버전 유지.
+  const seen = new Map(); // normalized → display
+  const add = (name) => {
+    if (!name) return;
+    const norm = String(name).trim().toLowerCase().replace(/\s+/g,' ');
+    if (!seen.has(norm)) seen.set(norm, name);
+  };
+  try {
+    const raw = localStorage.getItem('shifts.' + BRANCH);
+    if (raw){
+      const d = JSON.parse(raw);
+      (d.employees||[]).forEach(e => add(e && e.name));
+    }
+  } catch(_){}
+  try {
+    const g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
+    (g && g.owners || []).forEach(o => add(o && o.name));
+  } catch(_){}
+  (DATA.rows||[]).forEach(r => add(r && r.name));
+  const sorted = Array.from(seen.values()).sort((a,b) => a.localeCompare(b));
+  dl.innerHTML = sorted.map(n => `<option value="${escapeAttr(n)}">`).join('');
 }
 function escapeAttr(s){ return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function formatNum(n){
