@@ -580,18 +580,9 @@ const VENDORS_PARSER = {
     parse: rows => parseWellLuck(rows)
   },
   haitai: {
-    name: 'HAITAI (수동 추출)',
+    name: 'HAITAI',
     detect: text => /HAITAI\s+INC|HAITAI\s+CHICAGO|해태\)/i.test(text),
-    // HAITAI PDF 는 폰트 인코딩 + column-major 텍스트 흐름 이슈로 자동 추출 시
-    // EACH PRICE 가 한 행씩 misalign. 잘못된 데이터로 COST 비교 위험 차단.
-    // 안내 toast 후 빈 결과 반환 — 매니저가 수동 엑셀 사용하도록 유도.
-    parse: rows => {
-      try {
-        toast('⚠ HAITAI 인보이스는 PDF 인코딩 한계로 자동 추출 부정확 (가격 misalign). \\n수동 추출본 사용 권장: kimchi-invoice-system/HAITAI_PSI121374.xlsx');
-      } catch(_){}
-      console.warn('[parseHaitai] HAITAI 자동 추출 비활성 — 매니저에게 수동 엑셀 사용 안내');
-      return [];
-    }
+    parse: rows => parseHaitai(rows)
   },
   generic: {
     name: 'Generic / fallback',
@@ -2888,21 +2879,67 @@ function parseWellLuck(rows){
 }
 
 // HAITAI INC. (Chicago Branch) invoices.
-// PDF 텍스트 다양한 흐름 (row 별 / 한 줄 stream / OCR) 모두 처리.
-// 3단계 fallback: 엄격 → 느슨 → generic
+// PDF 텍스트 추출 결과가 column-major 라 row 별 매칭 깨짐 → ItemCode 와 가격을
+// 별도 sequence 로 추출 후 1:1 매칭. FREIGHT/PALLET (EACH=0) 자동 skip 으로 정렬 보정.
+// 사용자 핵심 요구: 제품번호 · 바코드 · EACH PRICE 정확 매칭 (COST 비교용).
 function parseHaitai(rows){
-  // 1단계: 엄격 (ITEM + BARCODE + 2 QTY 연속)
-  let result = parseHaitaiStrict(rows);
-  if (result.length >= 5) { console.log('[parseHaitai] strict OK:', result.length); return result; }
-  // 2단계: 느슨 (ITEM + 가격 3개, BARCODE 없어도 OK)
-  console.log('[parseHaitai] strict yielded', result.length, '— trying loose');
-  const loose = parseHaitaiLoose(rows);
-  if (loose.length > result.length) result = loose;
-  if (result.length >= 3) { console.log('[parseHaitai] loose OK:', result.length); return result; }
-  // 3단계: generic fallback
-  console.log('[parseHaitai] loose yielded', result.length, '— falling back to generic');
-  const generic = parseInvoiceRows(rows);
-  return (generic.length > result.length) ? generic : result;
+  // 모든 텍스트 한 줄로 합침
+  let allText = '';
+  for (const row of rows){
+    const t = (row.items || []).map(it => it.text || '').join(' ');
+    if (t) allText += ' ' + t;
+  }
+  allText = allText.replace(/\s+/g, ' ').trim();
+  console.log('[parseHaitai] text length:', allText.length, 'first 300:', allText.slice(0,300));
+
+  // 1) ItemCode sequence: ITEM(6-7) 직후 BARCODE(12-13) 패턴 — 라인 식별 anchor
+  const ITEM_RE = /(\d{6,7})\s+(\d{12,13})\b/g;
+  const items = [];
+  let m;
+  while ((m = ITEM_RE.exec(allText)) !== null){
+    items.push({ item: m[1], barcode: m[2] });
+  }
+  console.log('[parseHaitai] ItemCodes found:', items.length);
+
+  // 2) 가격 sequence: 연속 3개 X.XX (UNIT EACH AMOUNT)
+  const PRICE_RE = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
+  const prices = [];
+  let p;
+  while ((p = PRICE_RE.exec(allText)) !== null){
+    const u = parseFloat(p[1].replace(/,/g,''));
+    const e = parseFloat(p[2].replace(/,/g,''));
+    const a = parseFloat(p[3].replace(/,/g,''));
+    if (!isFinite(u) || !isFinite(e) || !isFinite(a)) continue;
+    // FREIGHT/PALLET 류 (UNIT > 0 but EACH = 0): ItemCode 없는 비상품 — skip
+    if (e === 0 && u > 0) continue;
+    // 비현실적 가격 (EACH > UNIT * 2): 잘못된 매칭 skip
+    if (e > 0 && u > 0 && e > u * 2) continue;
+    prices.push({ unit: u, each: e, amount: a });
+  }
+  console.log('[parseHaitai] Prices (after FREIGHT skip):', prices.length);
+
+  // 3) 1:1 매칭 (ItemCode i ↔ Price i)
+  const out = [];
+  const seen = new Set();
+  const n = Math.min(items.length, prices.length);
+  for (let i = 0; i < n; i++){
+    const it = items[i];
+    if (seen.has(it.item)) continue;
+    seen.add(it.item);
+    const pr = prices[i];
+    out.push({
+      vendorCode: it.item,                    // 제품번호 ★
+      barcode:    it.barcode,                  // 바코드 ★
+      name:       '(PDF 인코딩 한계 — 제품번호+바코드로 식별)',  // 영문 description 추출 불가
+      eaPrice:    pr.each,                     // EACH PRICE ★ COST 비교 핵심
+      casePrice:  pr.unit,
+      qty:        1,
+      unit:       'CS',
+      total:      pr.amount,
+    });
+  }
+  console.log('[parseHaitai] extracted (1:1 matched):', out.length);
+  return out;
 }
 
 function parseHaitaiStrict(rows){
