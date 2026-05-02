@@ -60,9 +60,9 @@
     .km-navside a { display: flex; align-items: center; gap: 12px; padding: 9px 14px; color: #1f2937; text-decoration: none; font-size: .92em; font-weight: 600; border-left: 3px solid transparent; transition: all .15s ease; letter-spacing: -.01em; }
     .km-navside a:hover { background: #f0fdf4; color: #1a5c3a; transform: translateX(2px); }
     .km-navside a.active { background: #dcfce7; color: #1a5c3a; border-left-color: #1a5c3a; font-weight: 800; }
-    .km-navside a.primary { background: linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff !important; font-weight: 900; font-size: 1.1em; margin: 6px 8px; border-radius: 10px; border-left: 0; padding: 12px 14px; box-shadow: 0 2px 8px rgba(26,92,58,.25); }
+    .km-navside a.primary { background: linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff !important; font-weight: 800; font-size: .92em; margin: 6px 8px; border-radius: 10px; border-left: 0; padding: 9px 14px; box-shadow: 0 2px 8px rgba(26,92,58,.25); }
     .km-navside a.primary:hover { background: linear-gradient(135deg,#15803d,#166534); color:#fff !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,92,58,.35); }
-    .km-navside a.primary .ic { font-size: 1.2em; }
+    .km-navside a.primary .ic { font-size: 1.05em; }
     .km-navside a .ic { font-size: 1.05em; width: 22px; text-align: center; flex-shrink: 0; }
     .km-navside a .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .km-navtoggle { display: none; position: fixed; top: 8px; left: 8px; z-index: 1001; background: #1a5c3a; color: #fff; border: 0; border-radius: 8px; width: 38px; height: 38px; font-size: 1.3em; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
