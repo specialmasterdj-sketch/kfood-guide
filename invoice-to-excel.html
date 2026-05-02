@@ -2840,68 +2840,123 @@ function parseWellLuck(rows){
 }
 
 // HAITAI INC. (Chicago Branch) invoices.
-// PDF 텍스트 흐름 (row 별 또는 한 줄 stream 모두) 양쪽 처리.
-// 핵심 패턴: ITEM(6-7) + BARCODE(12-13) + ORDER_QTY + INV_QTY 가 연속 나타남.
-// 필수 추출 (COST 비교용): vendorCode, barcode, name, eaPrice.
+// PDF 텍스트 다양한 흐름 (row 별 / 한 줄 stream / OCR) 모두 처리.
+// 3단계 fallback: 엄격 → 느슨 → generic
 function parseHaitai(rows){
-  const out = [];
-  const seenItems = new Set();
+  // 1단계: 엄격 (ITEM + BARCODE + 2 QTY 연속)
+  let result = parseHaitaiStrict(rows);
+  if (result.length >= 5) { console.log('[parseHaitai] strict OK:', result.length); return result; }
+  // 2단계: 느슨 (ITEM + 가격 3개, BARCODE 없어도 OK)
+  console.log('[parseHaitai] strict yielded', result.length, '— trying loose');
+  const loose = parseHaitaiLoose(rows);
+  if (loose.length > result.length) result = loose;
+  if (result.length >= 3) { console.log('[parseHaitai] loose OK:', result.length); return result; }
+  // 3단계: generic fallback
+  console.log('[parseHaitai] loose yielded', result.length, '— falling back to generic');
+  const generic = parseInvoiceRows(rows);
+  return (generic.length > result.length) ? generic : result;
+}
 
-  // 모든 row 텍스트를 한 줄 stream 으로 합침 — row 단위 가정 회피
+function parseHaitaiStrict(rows){
+  const out = [];
+  const seen = new Set();
   let allText = '';
   for (const row of rows){
     const t = (row.items || []).map(it => it.text || '').join(' ');
     if (t) allText += ' ' + t;
   }
   allText = allText.replace(/\s+/g, ' ').trim();
-  console.log('[parseHaitai] total text length:', allText.length);
+  console.log('[parseHaitai/strict] text length:', allText.length, 'first 200:', allText.slice(0,200));
 
-  // ITEM(6-7자리) + BARCODE(12-13자리) + ORDER_QTY + INV_QTY 연속 패턴
-  // (NO 컬럼은 가변이라 무시 — ITEM 부터 매칭)
   const ITEM_RE = /(\d{6,7})\s+(\d{12,13})\s+(\d{1,4})\s+(\d{1,4})\s+/g;
-  // 가격 3개 (UNIT EACH AMOUNT — 모두 소수점 2자리)
   const PRICE_RE = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/;
-  // 사이즈 패턴: 8x900G, 5x(8x150G), 24x(20x11.8G), 1x13.23LB 등
   const SIZE_RE = /(\d+\s*x\s*\(?\s*[\d.,]+\s*x?\s*[\d.,]*\s*(?:G|KG|LB|OZ|GAL|EA|T)\s*\)?)|(\d+\s*x\s*[\d.,]+(?:G|KG|LB|OZ|GAL|EA|T))/i;
 
-  // 모든 매치 위치 수집 → 인접 매치 사이 세그먼트로 description+price 분리
   const matches = [];
   let m;
   while ((m = ITEM_RE.exec(allText)) !== null){
-    matches.push({ item: m[1], barcode: m[2], oqty: m[3], iqty: m[4], end: ITEM_RE.lastIndex });
+    matches.push({ item: m[1], barcode: m[2], iqty: m[4], end: ITEM_RE.lastIndex });
   }
-  console.log('[parseHaitai] matched candidates:', matches.length);
+  console.log('[parseHaitai/strict] candidates:', matches.length);
 
   for (let k = 0; k < matches.length; k++){
     const cur = matches[k];
-    if (seenItems.has(cur.item)) continue;
+    if (seen.has(cur.item)) continue;
     const next = matches[k+1];
-    const segment = allText.slice(cur.end, next ? next.end - (next.item.length + next.barcode.length + next.oqty.length + next.iqty.length + 4) : Math.min(cur.end + 600, allText.length));
+    const segment = allText.slice(cur.end, next ? next.end - 30 : Math.min(cur.end + 600, allText.length));
     const pm = segment.match(PRICE_RE);
     if (!pm) continue;
     const sm = segment.match(SIZE_RE);
-    const size = sm ? sm[0].trim() : '';
-
-    // name = price 앞부분 → size 제거 → 정리
     let name = segment.slice(0, pm.index).trim();
     if (sm && sm.index < pm.index) name = name.replace(SIZE_RE, '');
     name = name.replace(/\s+/g, ' ').trim();
-    // 너무 짧거나 숫자만이면 스킵
     if (name.length < 3) continue;
-
-    seenItems.add(cur.item);
+    seen.add(cur.item);
     out.push({
-      vendorCode: cur.item,                                          // 제품번호
-      barcode:    cur.barcode,                                        // 바코드
-      name:       (name + (size ? ' (' + size + ')' : '')).trim(),    // 이름 (영+한+사이즈)
-      eaPrice:    parseFloat(pm[2].replace(/,/g,'')),                 // 개별 단가 ★ COST 비교 핵심
-      casePrice:  parseFloat(pm[1].replace(/,/g,'')),                 // 박스 단가
-      qty:        parseInt(cur.iqty, 10) || 0,
-      unit:       'CS',
-      total:      parseFloat(pm[3].replace(/,/g,'')),
+      vendorCode: cur.item,
+      barcode: cur.barcode,
+      name: (name + (sm ? ' (' + sm[0].trim() + ')' : '')).trim(),
+      eaPrice: parseFloat(pm[2].replace(/,/g,'')),
+      casePrice: parseFloat(pm[1].replace(/,/g,'')),
+      qty: parseInt(cur.iqty, 10) || 0,
+      unit: 'CS',
+      total: parseFloat(pm[3].replace(/,/g,'')),
     });
   }
-  console.log('[parseHaitai] extracted:', out.length, 'items');
+  return out;
+}
+
+// 느슨한 파서 — BARCODE 없어도 OK. ITEM + 가격 3개 패턴만으로 매치.
+// PDF 의 BARCODE 컬럼이 이미지로만 있고 숫자가 garbage 로 추출된 케이스 대비.
+function parseHaitaiLoose(rows){
+  const out = [];
+  const seen = new Set();
+  let allText = '';
+  for (const row of rows){
+    const t = (row.items || []).map(it => it.text || '').join(' ');
+    if (t) allText += ' ' + t;
+  }
+  allText = allText.replace(/\s+/g, ' ').trim();
+
+  // ITEM(6-7) + ... + 가격 3개 (UNIT EACH AMOUNT) 패턴 — 한 라인 안에서
+  // (?:.{1,200}?) 는 ITEM 과 가격 사이의 BARCODE/QTY/DESC/SIZE 모두 흡수
+  const LOOSE_RE = /(\d{6,7})\s+(.{5,250}?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?=\s|$)/g;
+  const SIZE_RE = /(\d+\s*x\s*\(?\s*[\d.,]+\s*x?\s*[\d.,]*\s*(?:G|KG|LB|OZ|GAL|EA|T)\s*\)?)|(\d+\s*x\s*[\d.,]+(?:G|KG|LB|OZ|GAL|EA|T))/i;
+  const BARCODE_IN_MIDDLE = /\b(\d{12,13})\b/;
+
+  let m;
+  while ((m = LOOSE_RE.exec(allText)) !== null){
+    const item = m[1];
+    if (seen.has(item)) continue;
+    const middle = m[2];
+    const casePrice = parseFloat(m[3].replace(/,/g,''));
+    const eaPrice = parseFloat(m[4].replace(/,/g,''));
+    const amount = parseFloat(m[5].replace(/,/g,''));
+    // 가격 sanity: eaPrice 는 0 보다 크고 casePrice 보다 작거나 같아야 (상식)
+    if (eaPrice <= 0 || eaPrice > casePrice * 1.5) continue;
+    // middle 에서 BARCODE / SIZE 분리
+    const bm = middle.match(BARCODE_IN_MIDDLE);
+    const sm = middle.match(SIZE_RE);
+    let name = middle;
+    if (bm) name = name.replace(bm[0], '');
+    if (sm) name = name.replace(SIZE_RE, '');
+    // 시작 부분 QTY 두 개 (ORDER INV) 제거
+    name = name.replace(/^\s*\d+\s+\d+\s+/, '');
+    name = name.replace(/\s+/g, ' ').trim();
+    if (name.length < 3) continue;
+    seen.add(item);
+    out.push({
+      vendorCode: item,
+      barcode: bm ? bm[1] : '',
+      name: (name + (sm ? ' (' + sm[0].trim() + ')' : '')).trim(),
+      eaPrice: eaPrice,
+      casePrice: casePrice,
+      qty: 1,
+      unit: 'CS',
+      total: amount,
+    });
+  }
+  console.log('[parseHaitai/loose] extracted:', out.length);
   return out;
 }
 
