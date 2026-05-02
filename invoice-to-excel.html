@@ -2902,9 +2902,19 @@ function parseHaitai(rows){
   // BARCODE: 12-13자리 숫자
   const BARCODE_RE = /\b(\d{12,13})\b/;
 
+  // 전체 stream 의 BARCODE sequence 미리 추출 (ItemCode 와 동일 순서로 등장)
+  const HT_BC_ALL = /\b(\d{12,13})\b/g;
+  const allBarcodes = [];
+  let bcM;
+  while ((bcM = HT_BC_ALL.exec(allText)) !== null){
+    allBarcodes.push(bcM[1]);
+  }
+  console.log('[parseHaitai] all barcodes in stream:', allBarcodes.length);
+
   const out = [];
   const seen = new Set();
   let m;
+  let lineIdx = 0;
   while ((m = HT_LINE_RE.exec(allText)) !== null){
     const u = parseFloat(m[1].replace(/,/g,''));
     const e = parseFloat(m[2].replace(/,/g,''));
@@ -2913,10 +2923,15 @@ function parseHaitai(rows){
     if (seen.has(item)) continue;
     // 비현실적 가격 (EACH > UNIT * 2) skip
     if (e > 0 && u > 0 && e > u * 2) continue;
-    // ITEM 직후 ~250자 안에서 BARCODE 추출 (한글 라인에 있음)
+    // BARCODE 추출:
+    //   1차: ITEM 직후 ~500자 안에서 검색
+    //   2차: BARCODE sequence 의 lineIdx 번째 (1:1 매칭 fallback)
     const segStart = m.index + m[0].length;
-    const segment = allText.slice(segStart, segStart + 250);
-    const bm = segment.match(HT_BC_RE);
+    const segment = allText.slice(segStart, segStart + 500);
+    let bm = segment.match(HT_BC_RE);
+    if (!bm && lineIdx < allBarcodes.length){
+      bm = [null, allBarcodes[lineIdx]];
+    }
     seen.add(item);
     out.push({
       vendorCode: item,                        // 제품번호 ★
