@@ -2879,66 +2879,65 @@ function parseWellLuck(rows){
 }
 
 // HAITAI INC. (Chicago Branch) invoices.
-// PDF 텍스트 추출 결과가 column-major 라 row 별 매칭 깨짐 → ItemCode 와 가격을
-// 별도 sequence 로 추출 후 1:1 매칭. FREIGHT/PALLET (EACH=0) 자동 skip 으로 정렬 보정.
-// 사용자 핵심 요구: 제품번호 · 바코드 · EACH PRICE 정확 매칭 (COST 비교용).
+// PDF.js 추출 결과 분석: ITEM 과 BARCODE 는 다른 row (ITEM은 영문 desc 라인,
+// BARCODE 12자리는 한글 desc 라인). 그래서 ITEM+BARCODE 인접 매칭은 실패.
+// 해결: ITEM(6-7) + ORDER_QTY + INV_QTY 패턴을 anchor 로 segment 분리 후,
+// 각 segment 안에서 가격 3개 + BARCODE 12-13자리 따로 추출. 1:1 align.
 function parseHaitai(rows){
-  // 모든 텍스트 한 줄로 합침
   let allText = '';
   for (const row of rows){
     const t = (row.items || []).map(it => it.text || '').join(' ');
     if (t) allText += ' ' + t;
   }
   allText = allText.replace(/\s+/g, ' ').trim();
-  console.log('[parseHaitai] text length:', allText.length, 'first 300:', allText.slice(0,300));
+  console.log('[parseHaitai] text length:', allText.length, 'first 400:', allText.slice(0,400));
 
-  // 1) ItemCode sequence: ITEM(6-7) 직후 BARCODE(12-13) 패턴 — 라인 식별 anchor
-  const ITEM_RE = /(\d{6,7})\s+(\d{12,13})\b/g;
-  const items = [];
+  // ITEM(6-7) + ORDER_QTY(1-3) + INV_QTY(1-3) anchor — 각 라인의 시작점
+  const ANCHOR_RE = /(\d{6,7})\s+(\d{1,3})\s+(\d{1,3})\s+/g;
+  // 가격 3개 (UNIT EACH AMOUNT, 모두 X.XX)
+  const PRICE_RE = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/;
+  // BARCODE: 12-13자리 숫자
+  const BARCODE_RE = /\b(\d{12,13})\b/;
+
+  // 모든 anchor 위치 수집
+  const anchors = [];
   let m;
-  while ((m = ITEM_RE.exec(allText)) !== null){
-    items.push({ item: m[1], barcode: m[2] });
+  while ((m = ANCHOR_RE.exec(allText)) !== null){
+    anchors.push({ item: m[1], oqty: m[2], iqty: m[3], pos: m.index, end: ANCHOR_RE.lastIndex });
   }
-  console.log('[parseHaitai] ItemCodes found:', items.length);
+  console.log('[parseHaitai] anchors:', anchors.length);
 
-  // 2) 가격 sequence: 연속 3개 X.XX (UNIT EACH AMOUNT)
-  const PRICE_RE = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
-  const prices = [];
-  let p;
-  while ((p = PRICE_RE.exec(allText)) !== null){
-    const u = parseFloat(p[1].replace(/,/g,''));
-    const e = parseFloat(p[2].replace(/,/g,''));
-    const a = parseFloat(p[3].replace(/,/g,''));
-    if (!isFinite(u) || !isFinite(e) || !isFinite(a)) continue;
-    // FREIGHT/PALLET 류 (UNIT > 0 but EACH = 0): ItemCode 없는 비상품 — skip
-    if (e === 0 && u > 0) continue;
-    // 비현실적 가격 (EACH > UNIT * 2): 잘못된 매칭 skip
-    if (e > 0 && u > 0 && e > u * 2) continue;
-    prices.push({ unit: u, each: e, amount: a });
-  }
-  console.log('[parseHaitai] Prices (after FREIGHT skip):', prices.length);
-
-  // 3) 1:1 매칭 (ItemCode i ↔ Price i)
   const out = [];
   const seen = new Set();
-  const n = Math.min(items.length, prices.length);
-  for (let i = 0; i < n; i++){
-    const it = items[i];
-    if (seen.has(it.item)) continue;
-    seen.add(it.item);
-    const pr = prices[i];
+  for (let k = 0; k < anchors.length; k++){
+    const cur = anchors[k];
+    if (seen.has(cur.item)) continue;
+    const next = anchors[k+1];
+    // segment = 현재 anchor 이후 ~ 다음 anchor 시작 (또는 끝까지 600자)
+    const segment = allText.slice(cur.end, next ? next.pos : Math.min(cur.end + 600, allText.length));
+    const pm = segment.match(PRICE_RE);
+    if (!pm) continue;
+    const u = parseFloat(pm[1].replace(/,/g,''));
+    const e = parseFloat(pm[2].replace(/,/g,''));
+    const a = parseFloat(pm[3].replace(/,/g,''));
+    // 비상품 (모두 0 또는 PALLET 류) skip
+    if (u === 0 && e === 0 && a === 0) continue;
+    // 비현실적 (EACH > UNIT * 2) skip
+    if (e > 0 && u > 0 && e > u * 2) continue;
+    const bm = segment.match(BARCODE_RE);
+    seen.add(cur.item);
     out.push({
-      vendorCode: it.item,                    // 제품번호 ★
-      barcode:    it.barcode,                  // 바코드 ★
-      name:       '(PDF 인코딩 한계 — 제품번호+바코드로 식별)',  // 영문 description 추출 불가
-      eaPrice:    pr.each,                     // EACH PRICE ★ COST 비교 핵심
-      casePrice:  pr.unit,
-      qty:        1,
+      vendorCode: cur.item,                    // 제품번호 ★
+      barcode:    bm ? bm[1] : '',              // 바코드 ★ (한글 라인에서 자동 추출)
+      name:       '(PDF 인코딩 한계 — 제품번호+바코드로 식별)',
+      eaPrice:    e,                            // EACH PRICE ★ COST 비교 핵심
+      casePrice:  u,
+      qty:        parseInt(cur.iqty, 10) || 0,
       unit:       'CS',
-      total:      pr.amount,
+      total:      a,
     });
   }
-  console.log('[parseHaitai] extracted (1:1 matched):', out.length);
+  console.log('[parseHaitai] extracted:', out.length);
   return out;
 }
 
