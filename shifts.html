@@ -721,8 +721,9 @@ function saveBranchData(d, opts){
 let DATA = loadBranchData();
 
 // ========= ACCESS CONTROL =========
-// 편집 가능 역할: BOSS/OWNER, MANAGER, ASSISTANT MANAGER (다국어 변형 포함)
+// 편집 가능 역할: BOSS/OWNER, 전무 (Executive Director), MANAGER, ASSISTANT MANAGER (다국어 변형 포함)
 const EDITOR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+  '전무','상무','이사','EXECUTIVE','DIRECTOR',
   'MANAGER','GERENTE','매니저','점장',
   'ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','부매니저','GERENTE ASISTENTE'];
 function _meIdentity(){
@@ -736,8 +737,9 @@ function findMyRole(){
   if (!me || !me.name) return null;
   var myN = _normName(me.name);
   if (!myN) return null;
-  // 1. 전 지점 공통 OWNER
-  if ((GLOBAL.owners || []).some(function(o){ return _normName(o.name) === myN; })) return 'OWNER';
+  // 1. 전 지점 공통 OWNER (또는 등록된 role — 예: 전무)
+  var go = (GLOBAL.owners || []).find(function(o){ return _normName(o.name) === myN; });
+  if (go) return go.role || 'OWNER';
   // 2. 현재 지점 employees
   var emp = DATA.employees.find(function(e){ return _normName(e.name) === myN; });
   if (emp) return emp.role;
@@ -758,7 +760,7 @@ function findMyRole(){
 // 현재 지점에서 편집 권한 있는 사람 목록 (에러 메시지용)
 function listCurrentEditors(){
   var arr = [];
-  (GLOBAL.owners||[]).forEach(function(o){ arr.push(o.name + ' (OWNER · 전 지점)'); });
+  (GLOBAL.owners||[]).forEach(function(o){ arr.push(o.name + ' (' + (o.role || 'OWNER') + ' · 전 지점)'); });
   (DATA.employees||[]).forEach(function(e){
     if (canEditRole(e.role)) arr.push(e.name + ' (' + e.role + ')');
   });
@@ -814,7 +816,8 @@ function refreshMeRoleDisplay(){
 }
 function lookupRoleFor(name, branchId){
   if (!name) return null;
-  if ((GLOBAL.owners||[]).some(function(o){ return o.name === name; })) return 'OWNER';
+  var go = (GLOBAL.owners||[]).find(function(o){ return o.name === name; });
+  if (go) return go.role || 'OWNER';
   // 검색 우선순위: 지정 지점 → 다른 지점들
   var order = [branchId].concat(BRANCHES.map(function(b){return b.id;}).filter(function(b){return b!==branchId;}));
   for (var i=0;i<order.length;i++){
@@ -841,7 +844,7 @@ function populateMeNames(){
     } catch(e){ emps = []; fromCache = false; }
   }
   // 글로벌 OWNER도 포함
-  var globalOwners = (GLOBAL.owners || []).map(function(o){ return Object.assign({}, o, {role:'OWNER'}); });
+  var globalOwners = (GLOBAL.owners || []).map(function(o){ return Object.assign({}, o, {role: o.role || 'OWNER'}); });
   function renderOpts(list){
     var all = globalOwners.concat(list).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
     nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(function(e){
