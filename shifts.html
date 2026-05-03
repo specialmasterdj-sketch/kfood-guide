@@ -760,7 +760,11 @@ function findMyRole(){
 // 현재 지점에서 편집 권한 있는 사람 목록 (에러 메시지용)
 function listCurrentEditors(){
   var arr = [];
-  (GLOBAL.owners||[]).forEach(function(o){ arr.push(o.name + ' (' + (o.role || 'OWNER') + ' · 전 지점)'); });
+  (GLOBAL.owners||[]).forEach(function(o){
+    if (o.visibleBranches && Array.isArray(o.visibleBranches) && o.visibleBranches.indexOf(BRANCH) < 0) return;
+    var scope = o.visibleBranches ? '제한 지점' : '전 지점';
+    arr.push(o.name + ' (' + (o.role || 'OWNER') + ' · ' + scope + ')');
+  });
   (DATA.employees||[]).forEach(function(e){
     if (canEditRole(e.role)) arr.push(e.name + ' (' + e.role + ')');
   });
@@ -844,7 +848,10 @@ function populateMeNames(){
     } catch(e){ emps = []; fromCache = false; }
   }
   // 글로벌 OWNER도 포함
-  var globalOwners = (GLOBAL.owners || []).map(function(o){ return Object.assign({}, o, {role: o.role || 'OWNER'}); });
+  // visibleBranches 가 있으면 해당 지점에서만 노출 (없으면 전 지점 노출)
+  var globalOwners = (GLOBAL.owners || [])
+    .filter(function(o){ return !o.visibleBranches || (Array.isArray(o.visibleBranches) && o.visibleBranches.indexOf(branchId) >= 0); })
+    .map(function(o){ return Object.assign({}, o, {role: o.role || 'OWNER'}); });
   function renderOpts(list){
     var all = globalOwners.concat(list).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
     nsel.innerHTML = '<option value="">— 직접 입력 —</option>' + all.map(function(e){
