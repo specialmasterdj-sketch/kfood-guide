@@ -280,6 +280,7 @@ a{color:inherit;text-decoration:none}
   <aside class="rooms" id="roomsBar">
     <div class="rooms-h">
       <h2 data-t="rooms_title">채팅방</h2>
+      <button class="add" onclick="openHRInquiryModal()" title="HR 건의 보내기 / Submit HR Inquiry" style="background:#7c3aed;margin-right:4px">📨 HR 건의</button>
       <button class="add" onclick="openDmPicker()" title="1:1 비공개 시작 / Start 1:1" style="background:#1d4ed8;margin-right:4px">💬 1:1</button>
       <button class="add" onclick="openRoomModal()" data-t="rooms_new">＋ 새 방</button>
     </div>
@@ -420,6 +421,42 @@ a{color:inherit;text-decoration:none}
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeOverlay('roomOverlay')">취소</button>
       <button class="btn" onclick="createRoom()">방 만들기</button>
+    </div>
+  </div>
+</div>
+
+<!-- HR 건의 모달 (누구나 작성 → OWNER · 전무만 열람) -->
+<div class="overlay" id="hrOverlay">
+  <div class="modal" style="max-width:480px">
+    <h3>📨 HR 인사·급여 건의</h3>
+    <p style="font-size:.86em;color:#6b7280;margin-bottom:14px;line-height:1.45">
+      OWNER 두 분과 전무님만 열람 가능합니다.<br>
+      익명 옵션 선택 시 이름이 표시되지 않습니다 (지점만 표시).
+    </p>
+    <div class="field-row">
+      <label>주제</label>
+      <select id="hrSubject" style="padding:8px 10px;border-radius:8px;border:1px solid #d1d5db">
+        <option value="급여">💵 급여 / 페이롤</option>
+        <option value="인사">👥 인사 / 배치</option>
+        <option value="휴가">🏖 휴가 / 결근</option>
+        <option value="근무환경">🏪 근무 환경</option>
+        <option value="대인관계">🤝 동료·상사 관계</option>
+        <option value="기타">📝 기타</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <label>내용</label>
+      <textarea id="hrMessage" rows="6" style="padding:10px;border-radius:8px;border:1px solid #d1d5db;font-family:inherit;resize:vertical;width:100%" placeholder="자세한 내용을 적어주세요."></textarea>
+    </div>
+    <div class="field-row">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500">
+        <input type="checkbox" id="hrAnonymous">
+        <span>익명으로 보내기 (이름 비공개)</span>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="closeOverlay('hrOverlay')">취소</button>
+      <button class="btn" onclick="submitHRInquiry()" style="background:#7c3aed">📨 보내기</button>
     </div>
   </div>
 </div>
@@ -597,6 +634,7 @@ const DEFAULT_ROOMS = [
   { id:'sushi',         name:{ko:'스시 평가',               en:'Sushi Evaluation Room',       es:'Sushi Evaluation Room'},      desc:{ko:'스시 / 키친 평가',           en:'Sushi / Kitchen evaluation',  es:'Evaluación de sushi'}, icon:'🍱' },
   { id:'expired',       name:{ko:'유통기한/파손',           en:'Expired-Damaged',             es:'Vencidos y Dañados'},         desc:{ko:'유통기한/파손 보고',         en:'Expiry & damage report',      es:'Reporte de vencidos/dañados'}, icon:'⚠️' },
   { id:'supply_req',    name:{ko:'비품 요청',               en:'Supply Request',              es:'Solicitud de Insumos'},       desc:{ko:'비품·소모품 요청',           en:'Supply & consumable requests', es:'Solicitud de suministros'}, icon:'🧺' },
+  { id:'hr_inquiries',  name:{ko:'HR 인사·급여 건의',       en:'HR Inquiries',                es:'Consultas de RH'},            desc:{ko:'OWNER · 전무만 열람 (누구나 제출)', en:'OWNER · Exec only — anyone submits', es:'Solo OWNER · Ejecutivo'}, icon:'📋', executiveOnly:true },
 ];
 function roomLocalName(id, r){
   // DM 룸: 본인이 아닌 상대 이름을 표시 (members 에서 추출)
@@ -862,6 +900,64 @@ function canAccessPayrollRoom(){
   const r = me.role.toUpperCase();
   return PAYROLL_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase()));
 }
+// HR 룸: OWNER 와 전무(임원)만 열람. 누구나 제출(submitHRInquiry) 가능.
+const HR_ACCESS_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+  '전무','상무','이사','EXECUTIVE','DIRECTOR'];
+function canAccessHRRoom(){
+  if (!me) return false;
+  const r = (me.role || '').toUpperCase();
+  if (HR_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase()))) return true;
+  if (isExecNameStr(me.name)) return true;  // B.H.K 이름 화이트리스트
+  return false;
+}
+// HR 건의 작성 모달 — 본인 등록 안 된 사용자도 지점/이름만 입력하면 보낼 수 있게 자동 안내
+function openHRInquiryModal(){
+  if (!me || !me.name){
+    if (confirm('HR 건의를 보내려면 본인 등록(이름·지점)이 필요합니다.\n\n지금 등록할까요?')) {
+      if (typeof openMeModal === 'function') openMeModal();
+    }
+    return;
+  }
+  document.getElementById('hrMessage').value = '';
+  document.getElementById('hrAnonymous').checked = false;
+  document.getElementById('hrOverlay').classList.add('show');
+}
+async function submitHRInquiry(){
+  const subject = document.getElementById('hrSubject').value;
+  const text = document.getElementById('hrMessage').value.trim();
+  const anon = document.getElementById('hrAnonymous').checked;
+  if (!text){ alert('내용을 입력하세요'); return; }
+  if (!me || !me.name){ alert('본인 등록 후 다시 시도하세요'); return; }
+  const ts = Date.now();
+  const msgId = 'hr' + ts + Math.floor(Math.random()*900);
+  const msg = {
+    sender: anon ? '(익명)' : me.name,
+    senderBranch: me.branch || '',
+    senderRole: anon ? '' : (me.role || ''),
+    isManager: anon ? false : !!me.isManager,
+    color: anon ? '#9ca3af' : (me.color || colorFor(me.name)),
+    text: '【' + subject + '】\n' + text,
+    ts,
+    photos: [],
+    hrSubject: subject,
+    hrAnonymous: anon
+  };
+  try {
+    const r = await fetch(`${FB_DB_URL}/chat/messages/hr_inquiries/${msgId}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    // 룸 메타 lastMsg 갱신 (목록 표시용 — 열람권한자에게만 보임)
+    fetch(`${FB_DB_URL}/chat/rooms/hr_inquiries.json`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg: '【' + subject + '】 ' + text.slice(0, 60), lastTs: ts })
+    }).catch(()=>{});
+    closeOverlay('hrOverlay');
+    alert('✅ HR에 건의가 전달되었습니다.\nOWNER 두 분과 전무님이 확인합니다.' + (anon ? '\n(익명)' : ''));
+  } catch (e){
+    alert('보내기 실패: ' + e.message);
+  }
+}
 async function saveMe(){
   const branchId = document.getElementById('meBranch').value;
   const sel = document.getElementById('meName_select');
@@ -947,6 +1043,7 @@ function renderRooms(){
       // 권한 체크 (통과 못하면 숨김, 검색 무관)
       if (id === 'payroll' && !canAccessPayrollRoom()) return false;
       if (id === 'managers' && !me?.isManager) return false;
+      if (id === 'hr_inquiries' && !canAccessHRRoom()) return false;
       // 1:1 (DM) 룸: 본인이 members 에 포함된 경우만 표시
       if (id.startsWith('dm__') && !isMyDmRoom(id, r)) return false;
       // 검색 필터 — 모든 방에 동등 적용
@@ -1015,14 +1112,20 @@ function ensureDefaultRooms(){
     if (!ROOMS[r.id]) {
       const koName = typeof r.name === 'object' ? r.name.ko : r.name;
       const koDesc = typeof r.desc === 'object' ? r.desc.ko : r.desc;
-      ROOMS[r.id] = { name: koName, desc: koDesc, managersOnly: !!r.managersOnly };
+      ROOMS[r.id] = { name: koName, desc: koDesc, managersOnly: !!r.managersOnly, executiveOnly: !!r.executiveOnly };
       const payload = { name: koName, desc: koDesc, created: Date.now() };
       if (r.managersOnly) payload.managersOnly = true;
+      if (r.executiveOnly) payload.executiveOnly = true;
       set(ref(db, 'chat/rooms/' + r.id), payload).catch(()=>{});
-    } else if (r.managersOnly && !ROOMS[r.id].managersOnly) {
-      // 기존 방에 managersOnly 플래그가 빠져있으면 부착
-      ROOMS[r.id].managersOnly = true;
-      try { update(ref(db, 'chat/rooms/' + r.id), { managersOnly:true }); } catch(_){}
+    } else {
+      if (r.managersOnly && !ROOMS[r.id].managersOnly) {
+        ROOMS[r.id].managersOnly = true;
+        try { update(ref(db, 'chat/rooms/' + r.id), { managersOnly:true }); } catch(_){}
+      }
+      if (r.executiveOnly && !ROOMS[r.id].executiveOnly) {
+        ROOMS[r.id].executiveOnly = true;
+        try { update(ref(db, 'chat/rooms/' + r.id), { executiveOnly:true }); } catch(_){}
+      }
     }
   }
   renderRooms();
