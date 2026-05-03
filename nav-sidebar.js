@@ -23,6 +23,7 @@
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true },
+    { ic: '📨', lbl: { ko:'HR 건의',      en:'HR Inquiry',     es:'Consulta RH' },        href: './chat.html?openHR=1' },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html', badge: 'updates' },
     { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
     { ic: '📅', lbl: { ko:'유통기한 관리',  en:'Expiry tracker', es:'Caducidad' },        href: './expiry.html', highlight: true },
