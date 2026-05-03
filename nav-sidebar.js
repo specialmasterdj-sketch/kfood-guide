@@ -23,7 +23,7 @@
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true },
-    { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html' },
+    { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html', badge: 'updates' },
     { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
     { ic: '📅', lbl: { ko:'유통기한 관리',  en:'Expiry tracker', es:'Caducidad' },        href: './expiry.html', highlight: true },
     { ic: '🌡', lbl: { ko:'온도 관리',       en:'Temp tracker',   es:'Temperatura' },     href: './temp.html', highlight: true },
@@ -65,6 +65,8 @@
     .km-navside a.primary .ic { font-size: 1.05em; }
     .km-navside a .ic { font-size: 1.05em; width: 22px; text-align: center; flex-shrink: 0; }
     .km-navside a .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .km-navside a .badge { background:#dc2626; color:#fff; border-radius:10px; font-size:.7em; padding:1px 7px; font-weight:800; margin-left:auto; flex-shrink:0; min-width:18px; text-align:center; box-shadow:0 1px 3px rgba(220,38,38,.4); }
+    .km-navside a.primary .badge { background:#fff; color:#dc2626; box-shadow:0 1px 3px rgba(0,0,0,.15) }
     .km-navtoggle { display: none; position: fixed; top: 8px; left: 8px; z-index: 1001; background: #1a5c3a; color: #fff; border: 0; border-radius: 8px; width: 38px; height: 38px; font-size: 1.3em; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
     @media (max-width: 760px) {
       body { margin-left: 0 !important; }
@@ -126,7 +128,8 @@
       if (isActive) cls.push('active');
       if (it.primary) cls.push('primary');
       const clsAttr = cls.length ? ` class="${cls.join(' ')}"` : '';
-      html += `<a href="${it.href}"${tgt}${hl}${clsAttr}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
+      const badgeAttr = it.badge ? ` data-badge-key="${it.badge}"` : '';
+      html += `<a href="${it.href}"${tgt}${hl}${clsAttr}${badgeAttr}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
     }
     aside.innerHTML = html;
   }
@@ -156,4 +159,62 @@
   }
   if (document.body) mount();
   else document.addEventListener('DOMContentLoaded', mount);
+
+  // ============ 안 읽은 항목 배지 (공지/Updates) ============
+  const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  function setBadge(key, count){
+    const el = aside.querySelector('a[data-badge-key="' + key + '"]');
+    if (!el) return;
+    let badge = el.querySelector('.badge');
+    if (!count || count <= 0) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'badge';
+      el.appendChild(badge);
+    }
+    badge.textContent = count > 99 ? '99+' : String(count);
+  }
+  let __updatesPollTimer = null;
+  async function refreshUpdatesBadge(){
+    try {
+      // 현재 페이지가 updates.html 이면 배지 항상 0
+      if (here === 'updates.html') { setBadge('updates', 0); return; }
+      const res = await fetch(FB_DB + '/updates.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const d = await res.json();
+      if (!d) { setBadge('updates', 0); return; }
+      let lastSeenTs = 0;
+      try { lastSeenTs = parseInt(localStorage.getItem('updates.lastSeenTs') || '0', 10) || 0; } catch(e){}
+      let me = null;
+      try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+      let count = 0;
+      Object.values(d).forEach(u => {
+        if (!u || !u.ts || u.ts <= lastSeenTs) return;
+        // 본인이 작성한 글은 제외 (이미 본 거니까)
+        if (me && u.author === me.name && u.authorBranch === me.branch) return;
+        // audience 필터 — 'all' 또는 본인 지점 매치
+        if (u.audience && u.audience !== 'all' && me && u.audience !== me.branch) return;
+        count++;
+      });
+      setBadge('updates', count);
+    } catch(e){}
+  }
+  function startUpdatesPolling(){
+    refreshUpdatesBadge();
+    if (__updatesPollTimer) clearInterval(__updatesPollTimer);
+    __updatesPollTimer = setInterval(refreshUpdatesBadge, 30000);  // 30s
+  }
+  // 페이지에서 updates 다 봤다는 신호 받으면 즉시 배지 0
+  window.addEventListener('km-updates-seen', () => setBadge('updates', 0));
+  window.addEventListener('storage', e => { if (e.key === 'updates.lastSeenTs') refreshUpdatesBadge(); });
+  // 초기 + 페이지 다시 보이면 새로고침
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshUpdatesBadge(); });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startUpdatesPolling);
+  } else {
+    startUpdatesPolling();
+  }
 })();
