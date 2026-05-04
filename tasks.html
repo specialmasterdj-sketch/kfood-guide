@@ -559,6 +559,8 @@ button{font-family:inherit;cursor:pointer}
       <div class="info">
         <div class="lbl" id="dashStoreLbl">현재 매장</div>
         <div class="nm" id="dashStoreNm">-</div>
+        <select id="dashBranchSel" onchange="dashSetBranch(this.value)" style="display:none;margin-top:4px;font-size:.92em;font-weight:800;color:#0f172a;border:1.5px solid rgba(15,23,42,.10);border-radius:9px;padding:6px 12px;background:#fff;cursor:pointer;font-family:inherit;letter-spacing:-.005em;outline:0">
+        </select>
       </div>
       <div class="mgr">
         <div class="av" id="dashMgrAv">?</div>
@@ -1881,17 +1883,57 @@ function dashStatusText(score){
   if (score >= 50) return '⚠️ 주의 — 미완료/지연 있음';
   return '🚨 위험 — 즉시 점검 필요';
 }
+// 매니저/오너 — 매장 자유 선택 (전무 B.H.K 등 EXECUTIVE 도 포함)
+let DASH_BRANCH = null;
+function dashSetBranch(b){
+  DASH_BRANCH = b;
+  try { localStorage.setItem('tasks.dashBranch', b); } catch(e){}
+  renderDashboard();
+}
+window.dashSetBranch = dashSetBranch;
+
 function renderDashboard(){
-  // 매장 + 매니저
-  const branchObj = BRANCHES.find(b => b.id === BRANCH);
-  const branchName = branchObj ? (branchObj[LANG] || branchObj.ko) : (BRANCH || '-');
-  const dashStoreNm = document.getElementById('dashStoreNm'); if (dashStoreNm) dashStoreNm.textContent = branchName;
+  // 1) 매장 결정: 매니저/오너는 dropdown 으로 선택 가능
+  const isMgr = me && (isManager(me.role) || isOwner());
+  const myBranch = (me && me.branch && me.branch !== '*') ? me.branch : null;
+  // dropdown 초기화 — DASH_BRANCH > localStorage > myBranch > 첫 매장
+  if (!DASH_BRANCH) {
+    let saved = '';
+    try { saved = localStorage.getItem('tasks.dashBranch') || ''; } catch(e){}
+    DASH_BRANCH = saved || myBranch || (BRANCHES[0] && BRANCHES[0].id) || '';
+  }
+  const activeBranch = DASH_BRANCH;
+  const branchObj = BRANCHES.find(b => b.id === activeBranch);
+  const branchName = branchObj ? (branchObj[LANG] || branchObj.ko) : (activeBranch || '-');
+
+  // dropdown UI — 매니저/오너만 보임, 일반 직원은 단일 매장 텍스트
+  const dashStoreNm = document.getElementById('dashStoreNm');
+  const dashBranchSel = document.getElementById('dashBranchSel');
+  if (isMgr && dashBranchSel) {
+    if (dashStoreNm) dashStoreNm.style.display = 'none';
+    dashBranchSel.style.display = '';
+    if (dashBranchSel.options.length === 0) {
+      dashBranchSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">${(b[LANG]||b.ko)}</option>`).join('');
+    }
+    dashBranchSel.value = activeBranch;
+  } else {
+    if (dashStoreNm) { dashStoreNm.style.display = ''; dashStoreNm.textContent = branchName; }
+    if (dashBranchSel) dashBranchSel.style.display = 'none';
+  }
+
+  // 매니저 정보
   const dashMgrNm = document.getElementById('dashMgrNm'); if (dashMgrNm) dashMgrNm.textContent = (me && me.name) || '매니저';
   const dashMgrAv = document.getElementById('dashMgrAv'); if (dashMgrAv) dashMgrAv.textContent = ((me && me.name) || '?').slice(0,1).toUpperCase();
 
-  // 오늘 업무 (assigned today)
+  // 오늘 업무 (assigned today) — 선택된 매장만
   const todayKey = new Date().toISOString().slice(0,10);
-  const todayTasks = (TASKS || []).filter(t => (t.assignedDate || '').slice(0,10) === todayKey);
+  const todayTasks = (TASKS || []).filter(t => {
+    const dateOk = (t.assignedDate || '').slice(0,10) === todayKey;
+    if (!dateOk) return false;
+    // 매니저는 activeBranch 만, 일반 직원은 본인 자료만 (branch 필터 안 함)
+    if (isMgr && t.branchId && t.branchId !== activeBranch) return false;
+    return true;
+  });
   const total = todayTasks.length;
   const completed = todayTasks.filter(t => t.status === 'completed').length;
   const pending = todayTasks.filter(t => t.status !== 'completed').length;
