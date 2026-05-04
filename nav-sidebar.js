@@ -38,6 +38,10 @@
     { ic: '📄', lbl: { ko:'인보이스',       en:'Invoices',       es:'Facturas' },         href: './invoice-to-excel.html' },
     { ic: '💸', lbl: { ko:'지점 지출',      en:'Branch Expenses', es:'Gastos de Sucursal' }, href: './expense-log.html', mgr: true },
 
+    { sec: { ko:'고객 멤버십', en:'Customer Rewards', es:'Lealtad' } },
+    { ic: '💎', lbl: { ko:'멤버십 앱',     en:'Rewards App',  es:'App de Lealtad' },     href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/login.html', target: '_blank' },
+    { ic: '🔄', lbl: { ko:'POS 동기화',    en:'POS Sync',     es:'Sincronización POS' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/pos-import.html', target: '_blank', mgr: true },
+
     { sec: { ko:'트레이닝', en:'Training', es:'Capacitación' } },
     { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/' },
     { ic: '🍱', lbl: { ko:'K-Food 가이드',  en:'K-Food Guide',     es:'Guía K-Food' },          href: 'https://specialmasterdj-sketch.github.io/kfood-guide/' },
