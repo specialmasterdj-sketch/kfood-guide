@@ -68,14 +68,82 @@
     .km-navside a .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .km-navside a .badge { background:#dc2626; color:#fff; border-radius:10px; font-size:.7em; padding:1px 7px; font-weight:800; margin-left:auto; flex-shrink:0; min-width:18px; text-align:center; box-shadow:0 1px 3px rgba(220,38,38,.4); }
     .km-navside a.primary .badge { background:#fff; color:#dc2626; box-shadow:0 1px 3px rgba(0,0,0,.15) }
-    .km-navtoggle { display: none; position: fixed; top: 8px; left: 8px; z-index: 1001; background: #1a5c3a; color: #fff; border: 0; border-radius: 8px; width: 38px; height: 38px; font-size: 1.3em; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
-    @media (max-width: 760px) {
-      body { margin-left: 0 !important; }
-      .km-navside { transform: translateX(-100%); transition: transform .2s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
-      .km-navside.open { transform: translateX(0); }
-      .km-navtoggle { display: block; }
+    .km-navtoggle {
+      display: none;
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 8px);
+      left: calc(env(safe-area-inset-left, 0px) + 8px);
+      z-index: 2147483647;
+      background: #1a5c3a;
+      color: #fff;
+      border: 0;
+      border-radius: 10px;
+      width: 42px;
+      height: 42px;
+      font-size: 1.35em;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35), 0 0 0 2px rgba(255,255,255,.7);
+      -webkit-tap-highlight-color: rgba(255,255,255,.25);
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: manipulation;
+      pointer-events: auto;
+      padding: 0;
+      font-family: inherit;
+      font-weight: 700;
     }
-    @media print { .km-navside, .km-navtoggle { display: none !important; } body { margin-left: 0 !important; } }
+    .km-navtoggle:active { transform: scale(0.94); background: #15803d; }
+    .km-navlang {
+      display: none;
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 8px);
+      right: calc(env(safe-area-inset-right, 0px) + 8px);
+      z-index: 2147483647;
+      background: rgba(255,255,255,.95);
+      border-radius: 21px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3), 0 0 0 2px rgba(26,92,58,.3);
+      padding: 3px;
+      gap: 2px;
+      align-items: center;
+    }
+    .km-navlang button {
+      background: transparent;
+      border: 0;
+      color: #1a5c3a;
+      font-weight: 700;
+      font-size: .78em;
+      padding: 6px 10px;
+      border-radius: 18px;
+      cursor: pointer;
+      font-family: inherit;
+      -webkit-tap-highlight-color: rgba(26,92,58,.2);
+      touch-action: manipulation;
+      min-width: 34px;
+      letter-spacing: .02em;
+    }
+    .km-navlang button.active {
+      background: #1a5c3a;
+      color: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+    .km-navbackdrop {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 2147483645;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .km-navbackdrop.show { display: block; }
+    @media (max-width: 760px) {
+      body { margin-left: 0 !important; padding-top: 60px !important; }
+      .km-navside { transform: translateX(-100%); transition: transform .25s ease; box-shadow: 2px 0 18px rgba(0,0,0,.25); z-index: 2147483646; }
+      .km-navside.open { transform: translateX(0); }
+      .km-navtoggle { display: flex; align-items: center; justify-content: center; }
+      .km-navlang { display: flex; }
+    }
+    @media print { .km-navside, .km-navtoggle, .km-navlang, .km-navbackdrop { display: none !important; } body { margin-left: 0 !important; padding-top: 0 !important; } }
   `;
 
   const style = document.createElement('style');
@@ -140,12 +208,38 @@
   toggle.className = 'km-navtoggle';
   toggle.type = 'button';
   toggle.innerHTML = '☰';
-  toggle.setAttribute('aria-label', '메뉴');
-  toggle.onclick = () => aside.classList.toggle('open');
+  toggle.setAttribute('aria-label', 'Menu');
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'km-navbackdrop';
+  backdrop.setAttribute('aria-hidden', 'true');
+
+  function openSide(){
+    aside.classList.add('open');
+    backdrop.classList.add('show');
+    toggle.setAttribute('aria-expanded', 'true');
+  }
+  function closeSide(){
+    aside.classList.remove('open');
+    backdrop.classList.remove('show');
+    toggle.setAttribute('aria-expanded', 'false');
+  }
+  function toggleSide(e){
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    if (aside.classList.contains('open')) closeSide();
+    else openSide();
+  }
+  // Use both click and touchend so iOS doesn't drop the tap when other handlers exist
+  toggle.addEventListener('click', toggleSide);
+  toggle.addEventListener('touchend', toggleSide, { passive: false });
+  backdrop.addEventListener('click', closeSide);
+  backdrop.addEventListener('touchend', closeSide, { passive: true });
   // close on link tap (mobile)
   aside.addEventListener('click', e => {
-    if (e.target.closest('a') && window.innerWidth <= 760) aside.classList.remove('open');
+    if (e.target.closest('a') && window.innerWidth <= 760) closeSide();
   });
+  // close on Esc
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSide(); });
 
   // Re-render when language OR identity changes
   window.addEventListener('storage', e => { if (LANG_KEYS.includes(e.key) || e.key === 'chat.me') renderInner(); });
@@ -154,9 +248,59 @@
   // Re-render after page's own inline scripts have run (they set kimchi_lang before DOMContentLoaded)
   document.addEventListener('DOMContentLoaded', renderInner);
 
+  // ============ FLOATING LANG SWITCHER (mobile) ============
+  const langBar = document.createElement('div');
+  langBar.className = 'km-navlang';
+  langBar.setAttribute('role', 'group');
+  langBar.setAttribute('aria-label', 'Language');
+  function renderLangBar(){
+    const cur = currentLang();
+    langBar.innerHTML =
+      ['ko','en','es'].map(L =>
+        `<button type="button" data-lang="${L}" class="${cur===L?'active':''}">${L.toUpperCase()}</button>`
+      ).join('');
+  }
+  function setLangAll(L){
+    if (!['ko','en','es'].includes(L)) return;
+    // Write all known lang keys so every page in the suite picks it up
+    try {
+      localStorage.setItem('kimchi_lang', L);
+      localStorage.setItem('hub.lang', L);
+      localStorage.setItem('tasks.lang', L);
+      localStorage.setItem('km-lang', L);
+      localStorage.setItem('lang', L);
+      localStorage.setItem('chat.lang', L);
+    } catch(e) {}
+    renderInner();
+    renderLangBar();
+    // Notify the hosting page (some pages listen for this to retranslate)
+    try { window.dispatchEvent(new CustomEvent('km-lang-changed', { detail:{ lang:L } })); } catch(e) {}
+    // Many pages set a data-lang attr or have applyLang() — try common entry points
+    if (typeof window.setLang === 'function')   { try { window.setLang(L); } catch(e){} }
+    if (typeof window.applyLang === 'function') { try { window.applyLang(L); } catch(e){} }
+    if (typeof window.changeLang === 'function'){ try { window.changeLang(L); } catch(e){} }
+  }
+  renderLangBar();
+  langBar.addEventListener('click', e => {
+    const b = e.target.closest('button[data-lang]');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    setLangAll(b.dataset.lang);
+  });
+  langBar.addEventListener('touchend', e => {
+    const b = e.target.closest('button[data-lang]');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    setLangAll(b.dataset.lang);
+  }, { passive: false });
+  window.addEventListener('storage', e => { if (LANG_KEYS.includes(e.key)) renderLangBar(); });
+  window.addEventListener('km-lang-changed', renderLangBar);
+
   function mount(){
     document.body.appendChild(aside);
+    document.body.appendChild(backdrop);
     document.body.appendChild(toggle);
+    document.body.appendChild(langBar);
   }
   if (document.body) mount();
   else document.addEventListener('DOMContentLoaded', mount);
