@@ -474,10 +474,20 @@ button{cursor:pointer}
     <div class="total" id="reportTotalLbl">총 손실 금액</div>
     <b id="reportTotalVal">$0</b>
   </div>
+  <!-- 범위: 현재 지점 vs 전지점 통합 -->
+  <div class="report-tabs" id="scopeTabs" style="margin-bottom:8px">
+    <button class="active" data-s="branch" onclick="setReportScope('branch',this)" id="scopeBranchBtn">📍 현재 지점</button>
+    <button data-s="all" onclick="setReportScope('all',this)" id="scopeAllBtn">🏢 전지점 통합</button>
+  </div>
   <div class="report-tabs" id="reportTabs">
     <button class="active" data-r="day" onclick="setReportRange('day',this)">일간</button>
     <button data-r="week" onclick="setReportRange('week',this)">주간</button>
     <button data-r="month" onclick="setReportRange('month',this)">월간</button>
+  </div>
+  <!-- 지점별 비교 — 전지점 모드에서만 표시 -->
+  <div class="bar-chart" id="reportByBranchSection" style="display:none">
+    <h4 id="reportByBranchTitle">지점별 손실</h4>
+    <div id="reportByBranch"></div>
   </div>
   <div class="bar-chart">
     <h4 id="reportByCatTitle">카테고리별 손실</h4>
@@ -637,6 +647,7 @@ button{cursor:pointer}
   <div class="sheet">
     <h3>📦 <span id="detailTitleHdr">상품 정보</span></h3>
     <div class="detail-photo" id="detailPhoto">📷</div>
+    <div id="detailBranchTag" style="display:none;font-size:.78em;color:#1a5c3a;font-weight:700;background:#dcfce7;padding:3px 10px;border-radius:8px;margin-bottom:8px;width:fit-content"></div>
     <div class="detail-name" id="detailName">—</div>
     <div class="detail-meta">
       <div class="dm-row"><label id="detLblExpiry">유통기한</label><span id="detailExpiry">—</span></div>
@@ -744,6 +755,12 @@ const I18N = {
   rangeMonth:{ko:'월간',en:'Month',es:'Mes'},
   reportByCatTitle:{ko:'카테고리별 손실',en:'Loss by category',es:'Pérdida por categoría'},
   reportTopTitle:{ko:'상품 TOP 10 손실',en:'Top 10 loss items',es:'Top 10 artículos'},
+  reportByBranchTitle:{ko:'지점별 손실',en:'Loss by store',es:'Pérdida por tienda'},
+  scopeBranch:{ko:'📍 현재 지점',en:'📍 This store',es:'📍 Esta tienda'},
+  scopeAll:{ko:'🏢 전지점 통합',en:'🏢 All stores',es:'🏢 Todas'},
+  fetchingAll:{ko:'📡 전지점 데이터 가져오는 중…',en:'📡 Loading all stores…',es:'📡 Cargando tiendas…'},
+  fetchAllError:{ko:'⚠️ {n}개 지점 로드 실패',en:'⚠️ {n} store(s) failed',es:'⚠️ {n} tienda(s) fallaron'},
+  noData:{ko:'데이터 없음',en:'No data',es:'Sin datos'},
   navHome:{ko:'홈',en:'Home',es:'Inicio'},
   navCheck:{ko:'체크',en:'Check',es:'Revisar'},
   navList:{ko:'알림',en:'Alerts',es:'Alertas'},
@@ -885,6 +902,9 @@ let PRODUCTS = []; // current branch
 let CHECK_FILTER = 'unchecked';   // unchecked | done | all
 let LIST_FILTER = 'over';          // over | d1 | d3 | all
 let REPORT_RANGE = 'day';
+let REPORT_SCOPE = 'branch';      // 'branch' = 현재 매장만 / 'all' = 6지점 통합
+let __ALL_BRANCH_DATA = null;     // { MIAMI:[...], HOLLYWOOD:[...], ... } — 한 번 fetch 후 캐시
+let __ALL_BRANCH_FETCHING = false;
 let STAFF_RANGE = 'day';
 let SETTINGS = JSON.parse(localStorage.getItem('expiry.settings') || '{"danger":1,"warn":3,"early":10,"alertTime":"09:00"}');
 // 구버전 사용자 마이그레이션 — early 누락 시 기본값 10
@@ -962,6 +982,9 @@ function applyLang(){
   setText('reportTotalLbl', t('reportTotalLbl'));
   setText('reportByCatTitle', t('reportByCatTitle'));
   setText('reportTopTitle', t('reportTopTitle'));
+  setText('reportByBranchTitle', t('reportByBranchTitle'));
+  setText('scopeBranchBtn', t('scopeBranch'));
+  setText('scopeAllBtn', t('scopeAll'));
   ['navHome','navCheck','navList','navReport','navMore'].forEach(k => setText(k, t(k)));
   setText('addTitle', t('addTitle'));
   setText('lblName', t('lblName'));
@@ -1519,7 +1542,14 @@ function _detailFmtDate(ts){
   return d.toLocaleDateString(localeMap[LANG]||'ko-KR', { year:'2-digit', month:'short', day:'numeric' });
 }
 function openProductDetail(id){
-  const p = PRODUCTS.find(x => x.id === id);
+  // 현재 지점 PRODUCTS 우선. 못 찾으면 전지점 캐시에서 검색 (리포트 ALL 모드용).
+  let p = PRODUCTS.find(x => x.id === id);
+  if (!p && __ALL_BRANCH_DATA) {
+    for (const arr of Object.values(__ALL_BRANCH_DATA)) {
+      const f = arr.find(x => x.id === id);
+      if (f) { p = f; break; }
+    }
+  }
   if (!p) return;
   __DETAIL_ID = id;
   const d = dayDiff(p.expiry);
@@ -1540,6 +1570,18 @@ function openProductDetail(id){
       </div>
       <div class="dd-badge ${ddCls}">${lbl}</div>`;
   }
+  // 다른 지점 상품일 때만 출처 표시 (전지점 리포트 → TOP 10 클릭 케이스)
+  const tagEl = $('detailBranchTag');
+  if (tagEl) {
+    if (p._branch && p._branch !== BRANCH) {
+      const srcBranch = BRANCHES.find(b => b.id === p._branch);
+      const name = srcBranch ? (srcBranch[LANG] || srcBranch.ko) : p._branch;
+      tagEl.textContent = '🏢 ' + name;
+      tagEl.style.display = 'inline-block';
+    } else {
+      tagEl.style.display = 'none';
+    }
+  }
   setText('detailName', p.name || t('detDash'));
   setText('detailExpiry', p.expiry || t('detDash'));
   setText('detailQty', (p.qty != null ? p.qty : 1) + ' ' + t('unitItem'));
@@ -1558,6 +1600,15 @@ function openProductDetail(id){
   $('detailBtnNormal').classList.toggle('active', p.status === 'active');
   $('detailBtnWarn').classList.toggle('active', p.status === 'discounted');
   $('detailBtnDanger').classList.toggle('active', p.status === 'discarded');
+  // 다른 지점 상품은 읽기 전용 (현재 지점에서 다른 지점 데이터 수정 방지)
+  const isOther = p._branch && p._branch !== BRANCH;
+  ['detailBtnNormal','detailBtnWarn','detailBtnDanger','detailBtnDelete'].forEach(bid => {
+    const btn = $(bid);
+    if (!btn) return;
+    btn.disabled = !!isOther;
+    btn.style.opacity = isOther ? '.4' : '';
+    btn.style.cursor = isOther ? 'not-allowed' : '';
+  });
   $('detailOv').classList.add('show');
 }
 function detailMark(kind){
@@ -1842,6 +1893,42 @@ function renderAlertList(){
 function setListFilter(f){ LIST_FILTER = f; renderAlertList(); }
 window.setListFilter = setListFilter;
 
+// 6지점 폐기 데이터를 한 번에 fetch — REPORT_SCOPE='all' 진입 시 호출.
+async function fetchAllBranchProducts(){
+  if (__ALL_BRANCH_FETCHING) return __ALL_BRANCH_DATA;
+  __ALL_BRANCH_FETCHING = true;
+  showUploadStatus(t('fetchingAll'));
+  const out = {};
+  let failed = 0;
+  await Promise.all(BRANCHES.map(async b => {
+    try {
+      const r = await fetch(`${FB_DB_URL}/expiry/${b.id}/products.json`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const v = await r.json();
+      out[b.id] = v ? Object.entries(v).map(([id, p]) => Object.assign({ id, _branch:b.id }, p)) : [];
+    } catch(e) {
+      console.warn('[fetchAllBranch]', b.id, e);
+      out[b.id] = [];
+      failed++;
+    }
+  }));
+  __ALL_BRANCH_DATA = out;
+  __ALL_BRANCH_FETCHING = false;
+  hideUploadStatus();
+  if (failed > 0) showToast(t('fetchAllError', { n: failed }), true);
+  return out;
+}
+async function setReportScope(scope, btn){
+  REPORT_SCOPE = scope;
+  document.querySelectorAll('#scopeTabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (scope === 'all' && !__ALL_BRANCH_DATA) {
+    await fetchAllBranchProducts();
+  }
+  renderReport();
+}
+window.setReportScope = setReportScope;
+
 function renderReport(){
   const now = new Date();
   let from;
@@ -1849,9 +1936,30 @@ function renderReport(){
   else if (REPORT_RANGE === 'week') { from = new Date(now); from.setDate(now.getDate()-7); }
   else { from = new Date(now); from.setMonth(now.getMonth()-1); }
   const fromMs = from.getTime();
-  const discarded = PRODUCTS.filter(p => p.status === 'discarded' && p.discardedAt && p.discardedAt >= fromMs);
+  // 데이터 소스 — branch / all
+  const sourceProducts = (REPORT_SCOPE === 'all' && __ALL_BRANCH_DATA)
+    ? Object.values(__ALL_BRANCH_DATA).flat()
+    : PRODUCTS.map(p => Object.assign({ _branch:BRANCH }, p));
+  const discarded = sourceProducts.filter(p => p.status === 'discarded' && p.discardedAt && p.discardedAt >= fromMs);
   const total = discarded.reduce((s,p) => s + (p.cost || p.price || 0)*(p.qty||1), 0);
   $('reportTotalVal').textContent = '$' + Math.round(total);
+  // 지점별 손실 — 전지점 모드에서만
+  const byBranchSec = $('reportByBranchSection');
+  if (REPORT_SCOPE === 'all') {
+    byBranchSec.style.display = '';
+    const byBranch = {};
+    discarded.forEach(p => {
+      const b = p._branch || BRANCH;
+      byBranch[b] = (byBranch[b] || 0) + (p.cost || p.price || 0)*(p.qty||1);
+    });
+    const branchRows = BRANCHES.map(b => [b, byBranch[b.id] || 0]).sort((a,b) => b[1] - a[1]);
+    const maxB = branchRows.length && branchRows[0][1] ? branchRows[0][1] : 1;
+    $('reportByBranch').innerHTML = branchRows.every(r => r[1] === 0)
+      ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">${t('noData')}</div>`
+      : branchRows.map(([b, v]) => `<div class="bar-row"><div class="lbl">${escHtml(b[LANG]||b.ko)}</div><div class="bar"><div class="f" style="width:${v/maxB*100}%"></div></div><div class="val">$${Math.round(v)}</div></div>`).join('');
+  } else {
+    byBranchSec.style.display = 'none';
+  }
   // Category breakdown
   const byCat = {};
   discarded.forEach(p => {
@@ -1861,7 +1969,7 @@ function renderReport(){
   const catRows = Object.entries(byCat).sort((a,b) => b[1] - a[1]);
   const max = catRows.length ? catRows[0][1] : 1;
   $('reportByCat').innerHTML = catRows.length === 0
-    ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">데이터 없음</div>`
+    ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">${t('noData')}</div>`
     : catRows.map(([c, v]) => `<div class="bar-row"><div class="lbl">${escHtml(c)}</div><div class="bar"><div class="f" style="width:${v/max*100}%"></div></div><div class="val">$${Math.round(v)}</div></div>`).join('');
   // TOP 10 — 같은 이름 묶고 가장 최근 폐기 항목의 id 보존 (클릭 시 디테일 모달용)
   const byProd = {};
@@ -1875,7 +1983,7 @@ function renderReport(){
   const topRows = Object.entries(byProd).sort((a,b) => b[1].total - a[1].total).slice(0,10);
   const maxP = topRows.length ? topRows[0][1].total : 1;
   $('reportTop').innerHTML = topRows.length === 0
-    ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">데이터 없음</div>`
+    ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">${t('noData')}</div>`
     : topRows.map(([n, e]) => {
         const cntLbl = e.count > 1 ? ` <span style="color:#9ca3af;font-weight:700;font-size:.85em">×${e.count}</span>` : '';
         return `<div class="bar-row clickable" onclick="openProductDetail('${e.latestId}')" title="${escHtml(n)} — ${e.count}건">
