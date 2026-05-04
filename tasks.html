@@ -811,6 +811,9 @@ button{font-family:inherit;cursor:pointer}
       <input type="file" id="aLocCamera" accept="image/*" capture="environment" style="display:none" onchange="handleLocFiles(event)">
       <input type="file" id="aLocFile" accept="image/*" multiple style="display:none" onchange="handleLocFiles(event)">
       <div id="aLocPreviews" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"></div>
+      <!-- 사진에 대한 지시 내용 (인라인 메모) -->
+      <textarea id="aLocNote" placeholder="📝 이 사진에 대한 지시 내용 (예: 이 자리 우유 보충, 정리, 사진 기준으로 진열)"
+        style="width:100%;margin-top:8px;border:1.5px solid rgba(8,145,178,.25);border-radius:9px;padding:10px 12px;font-size:.92em;font-family:inherit;background:#f0fdff;color:#0f172a;resize:vertical;min-height:64px;outline:0"></textarea>
     </div>
 
     <div class="field"><label>추가 메모 (선택)</label><textarea id="aNote" placeholder="예: 우유 코너 우선 점검"></textarea></div>
@@ -2357,15 +2360,18 @@ function renderTaskCard(t){
   else if (status === 'in_progress' || (t.startedAt && !t.completedAt)) actions = `<button class="btn" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.report[LANG]}</button>`;
   else actions = `<button class="btn warn" onclick="startTask('${t.id}','${t.branchId}')">${labels.start[LANG]}</button> <button class="btn sec" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.quick[LANG]}</button>`;
   const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
-  // 📍 매니저 장소 사진 — 직원이 어디 작업할지 정확히 보이게
-  const locPhotosHtml = (t.locationPhotos && t.locationPhotos.length) ? `
-    <div style="background:linear-gradient(135deg,#ecfeff,#cffafe);border:1px solid rgba(8,145,178,.20);border-radius:11px;padding:10px 12px;margin-top:9px">
+  // 📍 매니저 장소 사진 + 지시 내용 — 직원이 어디 무엇 할지 정확히 보이게
+  const hasLocPhotos = t.locationPhotos && t.locationPhotos.length;
+  const hasLocNote = t.locationNote && String(t.locationNote).trim();
+  const locPhotosHtml = (hasLocPhotos || hasLocNote) ? `
+    <div style="background:linear-gradient(135deg,#ecfeff,#cffafe);border:1px solid rgba(8,145,178,.20);border-radius:11px;padding:11px 13px;margin-top:9px">
       <div style="font-size:.78em;font-weight:800;color:#0e7490;margin-bottom:7px;display:flex;align-items:center;gap:5px">
         📍 작업 장소 (매니저 지정)
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${hasLocPhotos ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:${hasLocNote?'9px':'0'}">
         ${t.locationPhotos.map(u => `<img src="${u}" onclick="openLb('${u}')" style="width:78px;height:78px;border-radius:9px;object-fit:cover;cursor:zoom-in;border:1.5px solid rgba(8,145,178,.25)">`).join('')}
-      </div>
+      </div>` : ''}
+      ${hasLocNote ? `<div style="background:rgba(255,255,255,.65);border:1px solid rgba(8,145,178,.18);border-radius:8px;padding:8px 11px;font-size:.86em;color:#0f172a;line-height:1.5;font-weight:600;letter-spacing:-.005em">📝 ${escHtml(t.locationNote)}</div>` : ''}
     </div>` : '';
   const memoHtml = dispMemo ? `<div class="task-memo"><b>${labels.memo[LANG]}:</b> ${escHtml(dispMemo)}</div>` : '';
   const noteHtml = dispNote ? `<div class="task-memo" style="background:#fef3c7;color:#92400e">${escHtml(dispNote)}</div>` : '';
@@ -3045,8 +3051,9 @@ function renderReport(){
 // ================= ASSIGN =================
 async function openAssignModal(){
   if (!me || !(isManager(me.role) || isOwner())) { alert('매니저만 사용 가능합니다.'); return; }
-  // 매니저 장소 사진 초기화
-  LOC_PHOTOS = []; LOC_PHOTO_URLS = []; renderLocPreviews();
+  // 매니저 장소 사진 + 지시 내용 초기화
+  LOC_PHOTOS = []; LOC_PHOTO_URLS = []; window.LOC_NOTE = null; renderLocPreviews();
+  const _locNote = document.getElementById('aLocNote'); if (_locNote) _locNote.value = '';
   document.getElementById('aName').value = '';
   await populateTaskTemplates();
   const tpl = document.getElementById('aNameTpl'); if (tpl) tpl.value = '';
@@ -3085,6 +3092,9 @@ async function sendAssign(){
   if (LOC_PHOTOS.length && sendBtn0) { sendBtn0.disabled = true; sendBtn0.textContent = '📷 사진 업로드 중…'; }
   const tempId = 'tmp_' + Date.now();
   LOC_PHOTO_URLS = await uploadLocPhotos(tempId);
+  // 사진에 대한 지시 내용 (인라인 메모)
+  const locNoteEl = document.getElementById('aLocNote');
+  window.LOC_NOTE = (locNoteEl && locNoteEl.value || '').trim() || null;
   // Picked items from the new multi-check list (any category)
   const pickedItems = Array.from(document.querySelectorAll('.task-pick:checked')).map(cb => ({ name: cb.dataset.name, cat: cb.dataset.cat }));
   // For 캐셔 4교대 mode, the dedicated stage UI handles its own checklist below.
@@ -3146,6 +3156,7 @@ async function sendAssign(){
           category: cat,
           requirePhoto: photo,
           locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
+          locationNote: window.LOC_NOTE || null,
           assignedTo: stageAssignee,
           from: me.name, fromRole: me.role,
           createdAt: Date.now(),
