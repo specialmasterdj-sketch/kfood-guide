@@ -449,6 +449,16 @@ a{color:inherit;text-decoration:none}
       <textarea id="hrMessage" rows="6" style="padding:10px;border-radius:8px;border:1px solid #d1d5db;font-family:inherit;resize:vertical;width:100%" placeholder="자세한 내용을 적어주세요." data-t-ph="hr_msg_ph"></textarea>
     </div>
     <div class="field-row">
+      <label data-t="hr_attach_lbl">📎 사진 / 파일 (선택)</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="btn secondary" style="padding:6px 12px;font-size:.9em" onclick="document.getElementById('hrCameraInput').click()" data-t="hr_attach_cam">📷 카메라</button>
+        <button type="button" class="btn secondary" style="padding:6px 12px;font-size:.9em" onclick="document.getElementById('hrFileInput').click()" data-t="hr_attach_file">📁 갤러리</button>
+        <input type="file" id="hrCameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleHRFiles(event)">
+        <input type="file" id="hrFileInput" accept="image/*" multiple style="display:none" onchange="handleHRFiles(event)">
+      </div>
+      <div class="previews" id="hrPreviews" style="margin-top:8px"></div>
+    </div>
+    <div class="field-row">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500">
         <input type="checkbox" id="hrAnonymous">
         <span data-t="hr_anon_chk">익명으로 보내기 (이름 비공개)</span>
@@ -566,6 +576,11 @@ const CHAT_T = {
   hr_anon_label:    { ko:'(익명)',           en:'(Anonymous)',       es:'(Anónimo)' },
   hr_send_ok:       { ko:'✅ HR에 건의가 전달되었습니다.\nOWNER 두 분 · 전무 · HR 매니저가 확인합니다.', en:'✅ Your HR inquiry was submitted.\nReviewed by Two OWNERS · Executive · HR Manager.', es:'✅ Su consulta de RH fue enviada.\nRevisada por Dos OWNERS · Ejecutivo · Gerente de RH.' },
   hr_send_fail:     { ko:'보내기 실패: ',    en:'Send failed: ',     es:'Error al enviar: ' },
+  hr_attach_lbl:    { ko:'📎 사진 / 파일 (선택)', en:'📎 Photos / Files (optional)', es:'📎 Fotos / Archivos (opcional)' },
+  hr_attach_cam:    { ko:'📷 카메라',        en:'📷 Camera',          es:'📷 Cámara' },
+  hr_attach_file:   { ko:'📁 갤러리',        en:'📁 Gallery',         es:'📁 Galería' },
+  hr_uploading:     { ko:'사진 업로드 중… (%d/%d)', en:'Uploading photo… (%d/%d)', es:'Subiendo foto… (%d/%d)' },
+  hr_sending:       { ko:'전송 중…',         en:'Sending…',          es:'Enviando…' },
 };
 let LANG = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || 'en';
 function setLang(l) {
@@ -655,6 +670,7 @@ let ROOMS = {};            // { roomId: { name, desc, lastMsg, lastTs, unread } 
 let ACTIVE_ROOM = localStorage.getItem('chat.activeRoom') || null;
 let MSGS = [];             // current room's messages
 let ATTACH = [];           // composer attachments [{dataUrl, blob}]
+let HR_ATTACH = [];        // HR inquiry modal attachments [{dataUrl, blob, file}]
 let REPLY_ATTACH = {};     // per-message reply attachments: {parentMsgId: [{dataUrl, blob, file}, ...]}
 let __unsubMsgs = null;
 
@@ -960,42 +976,80 @@ function openHRInquiryModal(){
   }
   document.getElementById('hrMessage').value = '';
   document.getElementById('hrAnonymous').checked = false;
+  HR_ATTACH = [];
+  renderHRPreviews();
   document.getElementById('hrOverlay').classList.add('show');
 }
+async function handleHRFiles(ev){
+  const files = Array.from(ev.target.files || []);
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue;
+    const compressed = await compressImage(f);
+    HR_ATTACH.push(compressed);
+  }
+  ev.target.value = '';
+  renderHRPreviews();
+}
+function renderHRPreviews(){
+  const wrap = document.getElementById('hrPreviews');
+  if (!wrap) return;
+  wrap.innerHTML = HR_ATTACH.map((a, i) => `
+    <div class="pv"><img src="${a.dataUrl}"><button class="x" type="button" onclick="removeHRAttach(${i})">✕</button></div>
+  `).join('');
+}
+function removeHRAttach(i){ HR_ATTACH.splice(i, 1); renderHRPreviews(); }
+
 async function submitHRInquiry(){
   const subject = document.getElementById('hrSubject').value;  // value 는 한국어로 고정 (DB 일관성)
   const text = document.getElementById('hrMessage').value.trim();
   const anon = document.getElementById('hrAnonymous').checked;
-  if (!text){ alert(_hrT('hr_need_msg')); return; }
+  if (!text && HR_ATTACH.length === 0){ alert(_hrT('hr_need_msg')); return; }
   if (!me || !me.name){ alert(_hrT('hr_need_login')); return; }
   const ts = Date.now();
   const msgId = 'hr' + ts + Math.floor(Math.random()*900);
   const anonLabel = _hrT('hr_anon_label') || '(익명)';
-  const msg = {
-    sender: anon ? anonLabel : me.name,
-    senderBranch: me.branch || '',
-    senderRole: anon ? '' : (me.role || ''),
-    isManager: anon ? false : !!me.isManager,
-    color: anon ? '#9ca3af' : (me.color || colorFor(me.name)),
-    text: '【' + subject + '】\n' + text,
-    ts,
-    photos: [],
-    hrSubject: subject,
-    hrAnonymous: anon
-  };
+
+  // 사진 업로드 — composer 와 동일한 uploadPhoto() 재사용 (Storage REST + base64 fallback)
+  const photos = [];
   try {
+    if (HR_ATTACH.length){
+      const tpl = _hrT('hr_uploading') || '사진 업로드 중… (%d/%d)';
+      for (let i = 0; i < HR_ATTACH.length; i++){
+        showStatus(tpl.replace('%d', i+1).replace('%d', HR_ATTACH.length));
+        const url = await uploadPhoto(HR_ATTACH[i], 'hr_inquiries', msgId, i);
+        photos.push(url);
+      }
+    }
+    showStatus(_hrT('hr_sending') || '전송 중…');
+    const msg = {
+      sender: anon ? anonLabel : me.name,
+      senderBranch: me.branch || '',
+      senderRole: anon ? '' : (me.role || ''),
+      isManager: anon ? false : !!me.isManager,
+      color: anon ? '#9ca3af' : (me.color || colorFor(me.name)),
+      text: text ? ('【' + subject + '】\n' + text) : ('【' + subject + '】'),
+      ts,
+      photos,
+      hrSubject: subject,
+      hrAnonymous: anon
+    };
     const r = await fetch(`${FB_DB_URL}/chat/messages/hr_inquiries/${msgId}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     // 룸 메타 lastMsg 갱신 (목록 표시용 — 열람권한자에게만 보임)
+    const previewText = text ? text.slice(0, 60) : (photos.length ? `📷 ${photos.length}` : '');
     fetch(`${FB_DB_URL}/chat/rooms/hr_inquiries.json`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ lastMsg: '【' + subject + '】 ' + text.slice(0, 60), lastTs: ts })
+      body: JSON.stringify({ lastMsg: '【' + subject + '】 ' + previewText, lastTs: ts })
     }).catch(()=>{});
+    HR_ATTACH = [];
+    renderHRPreviews();
+    hideStatus();
     closeOverlay('hrOverlay');
     alert(_hrT('hr_send_ok') + (anon ? '\n' + anonLabel : ''));
   } catch (e){
+    hideStatus();
     alert(_hrT('hr_send_fail') + e.message);
   }
 }
