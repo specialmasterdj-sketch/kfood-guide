@@ -2651,11 +2651,12 @@ let LOC_PHOTOS = [];
 let LOC_PHOTO_URLS = [];
 async function handleLocFiles(ev){
   const files = Array.from(ev.target.files || []);
-  for (const f of files) {
-    if (!f.type.startsWith('image/')) continue;
-    const compressed = await compressImage(f);
-    LOC_PHOTOS.push(compressed);
-  }
+  // 압축 병렬 처리 — 큰 사진 여러 장도 빠르게
+  const compressTasks = files
+    .filter(f => f.type.startsWith('image/'))
+    .map(f => compressImage(f, 1024, 0.78));  // 1280→1024 / 0.82→0.78 (장소 식별용은 충분, 업로드 ↑)
+  const results = await Promise.all(compressTasks);
+  results.forEach(c => LOC_PHOTOS.push(c));
   ev.target.value = '';
   renderLocPreviews();
 }
@@ -2675,38 +2676,32 @@ async function uploadLocPhotos(taskId){
   if (!LOC_PHOTOS.length) return [];
   const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
   const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
-  const urls = [];
-  for (let i = 0; i < LOC_PHOTOS.length; i++) {
-    const att = LOC_PHOTOS[i];
+  // 한 장씩 업로드하는 helper — Promise.all 로 병렬 호출
+  const uploadOne = async (att, i) => {
     const path = 'tasks-loc/' + (me.branch || 'X') + '/' + taskId + '/' + i + '.jpg';
     const url = FB_STORAGE_URL + '?name=' + encodeURIComponent(path) + '&uploadType=media';
-    let lastErr = '';
-    let uploaded = false;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const r = await fetch(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob });
         if (r.ok) {
           const meta = await r.json();
-          urls.push(FB_STORAGE_URL + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || ''));
-          uploaded = true; break;
+          return FB_STORAGE_URL + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || '');
         }
-        lastErr = 'HTTP ' + r.status;
         if (r.status === 404) break;
-        await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
+        await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
       } catch(e) {
-        lastErr = e?.message || 'network';
-        await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
+        await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
       }
     }
-    if (!uploaded) {
-      // base64 fallback (smaller)
-      try {
-        const small = await compressImage(att.file || att.blob, 720, 0.55);
-        urls.push(small.dataUrl);
-      } catch(e) { console.warn('[loc-photo] fallback failed', lastErr); }
-    }
-  }
-  return urls;
+    // base64 fallback (smaller)
+    try {
+      const small = await compressImage(att.file || att.blob, 720, 0.55);
+      return small.dataUrl;
+    } catch(e) { console.warn('[loc-photo] fallback failed', e); return null; }
+  };
+  // ⚡ 병렬 업로드 — N 장이 동시에 업로드되어 시간 단축
+  const results = await Promise.all(LOC_PHOTOS.map((att, i) => uploadOne(att, i)));
+  return results.filter(u => u);
 }
 window.handleLocFiles = handleLocFiles;
 window.removeLocPhoto = removeLocPhoto;
