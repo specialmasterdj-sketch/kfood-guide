@@ -52,12 +52,13 @@
   const css = `
     body { margin-left: ${W}px !important; }
     .km-navside { position: fixed; top: 0; left: 0; bottom: 0; width: ${W}px; background: linear-gradient(180deg,#ffffff 0%,#fafbfc 100%); border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; z-index: 1000; font-family: 'Inter','Pretendard','Segoe UI','Malgun Gothic',-apple-system,BlinkMacSystemFont,Arial,sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -.01em; }
-    .km-navside .km-brand { display:flex; align-items:center; gap:10px; padding: 12px 14px 12px; border-bottom: 1px solid #f3f4f6; margin-bottom: 0; text-decoration:none; color:inherit; cursor:pointer; transition: background .15s; border-radius:0; }
+    .km-navside .km-brand { display:flex; align-items:center; justify-content:flex-start; gap:0; padding: 14px 16px; border-bottom: 1px solid #f3f4f6; margin-bottom: 0; text-decoration:none; color:inherit; cursor:pointer; transition: background .15s; border-radius:0; }
     .km-navside .km-brand:hover { background:#f0fdf4; }
-    .km-navside .km-brand:hover .logo { transform:scale(1.06) rotate(-3deg); transition:transform .2s; }
-    .km-navside .km-brand .logo { width:34px; height:34px; border-radius:10px; background:radial-gradient(circle at 30% 25%, #22c55e 0%, #16a34a 35%, #14532d 100%); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:1em; font-style:italic; letter-spacing:-.04em; box-shadow: 0 4px 12px rgba(22,163,74,.30), inset 0 1px 0 rgba(255,255,255,.20), inset 0 -1px 0 rgba(0,0,0,.08); transition: transform .2s; position:relative; }
-    .km-navside .km-brand .logo::after { content:''; position:absolute; top:5px; right:5px; width:5px; height:5px; border-radius:50%; background:#dc2626; box-shadow:0 0 0 2px rgba(255,255,255,.55), 0 0 6px rgba(220,38,38,.35); }
-    .km-navside .km-brand .nm { font-weight:800; color:#1a5c3a; font-size:.92em; letter-spacing:-.01em; }
+    .km-navside .km-brand:hover .km-brand-logo { transform:scale(1.04); transition:transform .25s cubic-bezier(.2,.8,.2,1); }
+    .km-navside .km-brand-logo { height:30px; width:auto; max-width:155px; object-fit:contain; display:block; transition: transform .25s cubic-bezier(.2,.8,.2,1); filter: drop-shadow(0 1px 1px rgba(15,23,42,.10)); }
+    /* legacy fallback if HTML still uses .logo / .nm */
+    .km-navside .km-brand .logo { width:32px; height:32px; border-radius:9px; background:linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.92em; box-shadow: 0 2px 6px rgba(26,92,58,.25); transition: transform .2s; flex-shrink:0; }
+    .km-navside .km-brand .nm { font-weight:800; color:#1a5c3a; font-size:.92em; letter-spacing:-.01em; margin-left:10px; }
     .km-navside .km-backbtn { display:flex; align-items:center; gap:7px; padding:10px 14px; color:#1a5c3a; font-size:.92em; font-weight:700; cursor:pointer; border:none; background:none; width:100%; text-align:left; border-bottom:1px solid #f3f4f6; font-family:inherit; text-decoration:none; margin-bottom:4px; letter-spacing:-.01em; }
     .km-navside .km-backbtn:hover { background:#f0fdf4; }
     .km-navside .km-sec { padding: 14px 14px 6px; font-size: .92em; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: -.01em; }
@@ -183,7 +184,7 @@
       ? `<a class="km-backbtn" href="./apps.html" onclick="event.preventDefault();if(history.length>1)history.back();else location.href='./apps.html'">${backLbl}</a>`
       : '';
     const homeTitle = pickLbl({ ko:'첫 화면으로', en:'Go to home', es:'Ir al inicio' });
-    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}"><div class="logo">K</div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></a>${backHtml}`;
+    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}" aria-label="${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}"><img class="km-brand-logo" src="./pwa-assets/kimchi-text-logo.png" alt="KIMCHI"></a>${backHtml}`;
     for (let i = 0; i < visible.length; i++) {
       const it = visible[i];
       if (it.sec) {
