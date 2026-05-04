@@ -764,6 +764,13 @@ function _meIdentity(){
 // 역할은 chat.me에 저장된 값을 신뢰하지 않고, 스케줄(employees + global owners)에서 자동 조회.
 // 자칭 OWNER로 등록해도 매니저가 실제 OWNER 그룹에 넣어주지 않으면 편집 권한 없음.
 function _normName(s){ return String(s||'').toLowerCase().replace(/[\s.\-_]/g,''); }
+// B.H.K 등 임원은 owners에 등록되어 있어도 OWNER 가 아닌 '전무' 로 표기.
+// 실제 오너(DJ, Sun) 가 보면 혼동/실례 방지.
+function _execRole(name, savedRole){
+  var nm = _normName(name);
+  if (nm === 'bhk' || nm === '비에이치케이') return '전무';
+  return savedRole || 'OWNER';
+}
 function findMyRole(){
   var me = _meIdentity();
   if (!me || !me.name) return null;
@@ -771,7 +778,7 @@ function findMyRole(){
   if (!myN) return null;
   // 1. 전 지점 공통 OWNER (또는 등록된 role — 예: 전무)
   var go = (GLOBAL.owners || []).find(function(o){ return _normName(o.name) === myN; });
-  if (go) return go.role || 'OWNER';
+  if (go) return _execRole(go.name, go.role);
   // 2. 현재 지점 employees
   var emp = DATA.employees.find(function(e){ return _normName(e.name) === myN; });
   if (emp) return emp.role;
@@ -795,7 +802,7 @@ function listCurrentEditors(){
   (GLOBAL.owners||[]).forEach(function(o){
     if (o.visibleBranches && Array.isArray(o.visibleBranches) && o.visibleBranches.indexOf(BRANCH) < 0) return;
     var scope = o.visibleBranches ? '제한 지점' : '전 지점';
-    arr.push(o.name + ' (' + (o.role || 'OWNER') + ' · ' + scope + ')');
+    arr.push(o.name + ' (' + _execRole(o.name, o.role) + ' · ' + scope + ')');
   });
   (DATA.employees||[]).forEach(function(e){
     if (canEditRole(e.role)) arr.push(e.name + ' (' + e.role + ')');

@@ -858,6 +858,16 @@ function openMeModal(){
   document.getElementById('meAdminLink').style.display = isManagerVerified() ? '' : 'none';
   document.getElementById('meOverlay').classList.add('show');
 }
+// 임원 이름 (B.H.K)은 GLOBAL.owners 에 OWNER 권한으로 등록되어도
+// 표시는 '전무'로 — 실제 OWNER 가 아니므로 혼동/실례 방지.
+// (cf. EXECUTIVE_NAMES 정의는 line 955)
+function _ownerRole(name){
+  const nm = String(name||'').replace(/\s+/g,'').toUpperCase();
+  const execList = ['B.H.K','BHK','BHK','비에이치케이'].map(s => s.replace(/\s+/g,'').replace(/\./g,'').toUpperCase());
+  const nmClean = nm.replace(/\./g,'');
+  if (execList.some(e => e === nmClean)) return '전무';
+  return 'OWNER';
+}
 function renderMeNames(){
   const branchId = document.getElementById('meBranch').value;
   let employees = [];
@@ -869,7 +879,7 @@ function renderMeNames(){
   let globalOwners = [];
   try {
     const g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
-    if (g && g.owners) globalOwners = g.owners.map(o => Object.assign({}, o, {role:'OWNER'}));
+    if (g && g.owners) globalOwners = g.owners.map(o => Object.assign({}, o, {role: _ownerRole(o.name)}));
   } catch(e){}
   // Firebase REST 보강 (employees + global)
   if (employees.length === 0) {
@@ -883,7 +893,7 @@ function renderMeNames(){
   if (globalOwners.length === 0) {
     fetch(`${FB_DB_URL}/schedules/_global.json`).then(r => r.json()).then(d => {
       if (d && d.owners){
-        globalOwners = d.owners.map(o => Object.assign({}, o, {role:'OWNER'}));
+        globalOwners = d.owners.map(o => Object.assign({}, o, {role: _ownerRole(o.name)}));
         try { localStorage.setItem('shifts.global', JSON.stringify(d)); } catch(e){}
         renderMeNamesList(globalOwners.concat(employees), branchId);
       }
