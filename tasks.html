@@ -733,6 +733,18 @@ button{font-family:inherit;cursor:pointer}
 <div class="overlay" id="assignOv">
   <div class="modal">
     <h3>📨 새 업무 지시</h3>
+
+    <!-- ⚡ 특별 지시 모드 토글 — 사진 찍어 직접 적어 보내기 -->
+    <div id="quickModeToggle" onclick="toggleQuickMode()"
+      style="background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border:1.5px solid #f59e0b;border-radius:12px;padding:11px 14px;margin-bottom:14px;cursor:pointer;display:flex;align-items:center;gap:11px;transition:.18s">
+      <div id="quickModeIcon" style="width:36px;height:36px;border-radius:10px;background:#fff;border:1.5px solid #f59e0b;display:flex;align-items:center;justify-content:center;font-size:1.2em;flex-shrink:0">⚡</div>
+      <div style="flex:1;min-width:0">
+        <div id="quickModeTitle" style="font-size:.95em;font-weight:800;color:#78350f;letter-spacing:-.005em">⚡ 특별 지시 모드 (사진 + 메모만)</div>
+        <div id="quickModeDesc" style="font-size:.76em;color:#92400e;margin-top:2px;font-weight:600">탭하면 카테고리/체크리스트 우회 → 빠른 발송</div>
+      </div>
+      <div id="quickModeChip" style="background:#fff;color:#92400e;border:1px solid #f59e0b;border-radius:14px;padding:5px 12px;font-size:.74em;font-weight:800;flex-shrink:0">OFF</div>
+    </div>
+
     <div class="field"><label>① 담당자</label>
       <select id="aTo"><option value="">— 직원 선택 —</option></select>
       <div class="hint">또는 본 지점 전체에 배정 가능</div>
@@ -3067,6 +3079,8 @@ async function openAssignModal(){
   // 매니저 장소 사진 + 지시 내용 초기화
   LOC_PHOTOS = []; LOC_PHOTO_URLS = []; window.LOC_NOTE = null; renderLocPreviews();
   const _locNote = document.getElementById('aLocNote'); if (_locNote) _locNote.value = '';
+  // 특별 지시 모드 초기화 (default OFF)
+  if (QUICK_MODE) { QUICK_MODE = true; toggleQuickMode(); } // OFF 로 복귀
   document.getElementById('aName').value = '';
   await populateTaskTemplates();
   const tpl = document.getElementById('aNameTpl'); if (tpl) tpl.value = '';
@@ -3093,7 +3107,91 @@ async function openAssignModal(){
   } catch(e){}
   document.getElementById('assignOv').classList.add('show');
 }
+// ⚡ 특별 지시 모드 — 카테고리/체크리스트 우회, 사진+메모만 빠른 발송
+let QUICK_MODE = false;
+function toggleQuickMode(){
+  QUICK_MODE = !QUICK_MODE;
+  const chip = document.getElementById('quickModeChip');
+  const title = document.getElementById('quickModeTitle');
+  const desc = document.getElementById('quickModeDesc');
+  const icon = document.getElementById('quickModeIcon');
+  const toggle = document.getElementById('quickModeToggle');
+  // 카테고리/체크리스트/단계/데드라인/업무명 영역 toggle
+  const fieldsToHide = ['aCat','aDeadline','aName','aTaskCheckList','aChecklist','aSaveTpl','aNameTpl','aDisplayPlace','aDisplayPlaceCustom','cashierStagesField','deadlineField','taskNameField','aChecklistCount'];
+  // 그 영역의 부모 .field 도 같이
+  const labels = document.querySelectorAll('#assignOv .field');
+  labels.forEach(f => {
+    const inputs = f.querySelectorAll('input, select, textarea');
+    if (Array.from(inputs).some(el => fieldsToHide.includes(el.id))) {
+      f.style.display = QUICK_MODE ? 'none' : '';
+    }
+  });
+  // 카테고리 셀렉트는 ② 라벨 + 그 부모 .field 도 같이
+  const catField = document.getElementById('aCat')?.closest('.field');
+  if (catField) catField.style.display = QUICK_MODE ? 'none' : '';
+  const dlField = document.getElementById('deadlineField');
+  if (dlField) dlField.style.display = QUICK_MODE ? 'none' : '';
+  const tnField = document.getElementById('taskNameField');
+  if (tnField) tnField.style.display = QUICK_MODE ? 'none' : '';
+  const csField = document.getElementById('cashierStagesField');
+  if (csField) csField.style.display = 'none'; // quick mode 에선 항상 숨김
+  // 토글 시각 변화
+  if (QUICK_MODE) {
+    if (chip) { chip.textContent = 'ON'; chip.style.background = '#f59e0b'; chip.style.color = '#fff'; }
+    if (title) title.textContent = '⚡ 특별 지시 모드 — 활성화됨';
+    if (desc) desc.textContent = '담당자 + 사진/메모만 입력하고 보내기';
+    if (icon) { icon.style.background = '#f59e0b'; icon.style.color = '#fff'; icon.style.borderColor = 'transparent'; }
+    if (toggle) toggle.style.background = 'linear-gradient(135deg,#fb923c 0%,#f97316 100%)';
+  } else {
+    if (chip) { chip.textContent = 'OFF'; chip.style.background = '#fff'; chip.style.color = '#92400e'; }
+    if (title) title.textContent = '⚡ 특별 지시 모드 (사진 + 메모만)';
+    if (desc) desc.textContent = '탭하면 카테고리/체크리스트 우회 → 빠른 발송';
+    if (icon) { icon.style.background = '#fff'; icon.style.color = '#000'; icon.style.borderColor = '#f59e0b'; }
+    if (toggle) toggle.style.background = 'linear-gradient(135deg,#fef3c7 0%,#fde68a 100%)';
+  }
+}
+window.toggleQuickMode = toggleQuickMode;
+
 async function sendAssign(){
+  // ⚡ 특별 지시 모드: 카테고리/체크리스트 우회 — 단순 task 1개 발송
+  if (QUICK_MODE) {
+    const to = document.getElementById('aTo').value;
+    if (!to) { alert('담당자 선택 필요'); return; }
+    const sendBtnQ = document.querySelector('#assignOv .btn:not(.sec)');
+    const noteText = (document.getElementById('aLocNote')?.value || document.getElementById('aNote')?.value || '').trim();
+    if (!LOC_PHOTOS.length && !noteText) {
+      alert('사진 또는 지시 내용 1개 이상 필요');
+      return;
+    }
+    if (sendBtnQ) { sendBtnQ.disabled = true; sendBtnQ.textContent = '⚡ 빠른 발송 중…'; }
+    const tempId = 'q_' + Date.now();
+    const photoUrls = await uploadLocPhotos(tempId);
+    const path = 'tasks/'+me.branch+'/'+todayStr();
+    const ref = window.__fb.push(window.__fb.ref(window.__fb.db, path));
+    const taskName = noteText ? ('🚨 ' + noteText.slice(0, 40)) : '🚨 특별 지시';
+    const taskNameTr = await translateMulti(taskName);
+    const noteTr = noteText ? await translateMulti(noteText) : null;
+    await window.__fb.set(ref, {
+      name: taskName,
+      nameTr: taskNameTr,
+      deadline: null,
+      category: '특별 지시',
+      requirePhoto: true,
+      locationPhotos: photoUrls && photoUrls.length ? photoUrls : null,
+      locationNote: noteText || null,
+      assignedTo: to,
+      from: me.name, fromRole: me.role,
+      createdAt: Date.now(),
+      note: noteText || null,
+      noteTr,
+      isQuickAssign: true,
+    });
+    closeOv('assignOv');
+    showToast('⚡ 특별 지시 전송 완료', to + ' 에게');
+    if (sendBtnQ) { sendBtnQ.disabled = false; sendBtnQ.textContent = '📨 보내기'; }
+    return;
+  }
+
   let name = document.getElementById('aName').value.trim();
   const to = document.getElementById('aTo').value;
   const deadline = document.getElementById('aDeadline').value;
