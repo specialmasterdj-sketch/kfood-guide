@@ -182,7 +182,7 @@
       ? `<a class="km-backbtn" href="./apps.html" onclick="event.preventDefault();if(history.length>1)history.back();else location.href='./apps.html'">${backLbl}</a>`
       : '';
     const homeTitle = pickLbl({ ko:'첫 화면으로', en:'Go to home', es:'Ir al inicio' });
-    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}"><div class="logo">K</div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></a>${backHtml}`;
+    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}"><div class="logo"><img src="./pwa-assets/icon-192.png" alt="" loading="eager"></div><div class="nm">${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}</div></a>${backHtml}`;
     for (let i = 0; i < visible.length; i++) {
       const it = visible[i];
       if (it.sec) {
