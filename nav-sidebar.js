@@ -249,6 +249,25 @@
   document.addEventListener('DOMContentLoaded', renderInner);
 
   // ============ FLOATING LANG SWITCHER (mobile) ============
+  // Suppress floating switcher when the host page already provides one
+  // (avoid duplicate ko/en/es buttons in the upper area)
+  function pageAlreadyHasLangSwitcher(){
+    const sels = [
+      '[data-lang="ko"]', '[data-lang="en"]', '[data-lang="es"]',
+      '[onclick*="setLang"]', '[onclick*="changeLang"]', '[onclick*="applyLang"]',
+      '.lang-btn', '.lang-pill button', '.langSwitcher button'
+    ];
+    for (const sel of sels) {
+      const list = document.querySelectorAll(sel);
+      for (const el of list) {
+        // skip our own (km-navlang) elements
+        if (el.closest && el.closest('.km-navlang')) continue;
+        return true;
+      }
+    }
+    return false;
+  }
+
   const langBar = document.createElement('div');
   langBar.className = 'km-navlang';
   langBar.setAttribute('role', 'group');
@@ -300,7 +319,9 @@
     document.body.appendChild(aside);
     document.body.appendChild(backdrop);
     document.body.appendChild(toggle);
-    document.body.appendChild(langBar);
+    if (!pageAlreadyHasLangSwitcher()) {
+      document.body.appendChild(langBar);
+    }
   }
   if (document.body) mount();
   else document.addEventListener('DOMContentLoaded', mount);
