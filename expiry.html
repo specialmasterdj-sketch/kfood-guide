@@ -1160,11 +1160,12 @@ async function uploadAddPhoto(){
       await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
     }
   }
-  // base64 fallback — RTDB가 비대해지지 않게 720px / 0.55q 로 작게 재압축
+  // base64 fallback — RTDB 비대화 방지 위해 480px / 0.45q (~30KB) 로 작게 재압축.
+  // 6지점 동시 업로드 + Storage 미활성 시 RTDB 가 빨리 부풀지 않게.
   console.warn('[uploadAddPhoto] Storage 실패, base64 fallback. 마지막 오류:', lastErr);
   showUploadStatus(t('uploadingFallback'));
   try {
-    const small = await compressImg(__ADD_PHOTO_DATA.blob, 720, 0.55);
+    const small = await compressImg(__ADD_PHOTO_DATA.blob, 480, 0.45);
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -1353,6 +1354,18 @@ async function deleteProduct(id, name){
   showToast((LANG==='en')?'🗑 Deleted':(LANG==='es')?'🗑 Eliminado':'🗑 삭제됨');
 }
 window.deleteProduct = deleteProduct;
+// 사진 URL 에서 Storage 객체명 추출 후 DELETE.
+// 6지점 누적 방지 — 폐기 처리 시 사진을 즉시 정리. (실패해도 무시: 사용자 액션은 성공으로 처리)
+async function deletePhotoFromStorage(photoUrl){
+  if (!photoUrl || photoUrl.startsWith('data:')) return; // base64 fallback 은 RTDB 에서만 제거됨
+  try {
+    // 형식: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media&token=...
+    const m = photoUrl.match(/\/o\/([^?]+)/);
+    if (!m) return;
+    await fetch(`${FB_STORAGE_URL}/${m[1]}`, { method:'DELETE' });
+  } catch(e) { console.warn('[deletePhotoFromStorage]', e); }
+}
+
 async function markStatus(id, kind){
   const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
   const path = 'expiry/'+BRANCH+'/products/'+id;
@@ -1361,7 +1374,15 @@ async function markStatus(id, kind){
     lastCheckedAt: Date.now(),
     lastCheckedBy: me?.name || '미등록',
   };
-  if (kind === 'danger') upd.discardedAt = Date.now();
+  if (kind === 'danger') {
+    upd.discardedAt = Date.now();
+    // 폐기 시 사진 정리 — Storage 영구 누적 방지
+    const product = PRODUCTS.find(p => p.id === id);
+    if (product?.photo) {
+      deletePhotoFromStorage(product.photo); // 비동기 fire-and-forget
+      upd.photo = null;
+    }
+  }
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
   showToast(t('marked'));
   // ✅ 정상 체크 후 홈으로 — 다음 체크 작업 빠르게 시작할 수 있도록
@@ -1417,7 +1438,7 @@ function renderRecentRow(){
     const cls = d <= 0 ? 'danger' : (d <= SETTINGS.warn ? 'warn' : '');
     const lbl = ddayLabel(d);
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const inner = p.photo ? `<img src="${p.photo}">` : escHtml(initials);
+    const inner = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : escHtml(initials);
     return `<div class="ph-tile ${cls}" onclick="filterAndGo('all')">
       <div class="img">${inner}</div>
       <div class="dd">${lbl}</div>
@@ -1490,7 +1511,7 @@ function renderCheckList(){
     const lbl = ddayLabel(d);
     const cls = kind==='d0'?'danger':(kind==='d1'?'warn':(kind==='d3'?'warn':'normal'));
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const thumbContent = p.photo ? `<img src="${p.photo}">` : initials;
+    const thumbContent = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : initials;
     const activeNorm = p.status==='active'?'active':'';
     const activeWarn = p.status==='discounted'?'active':'';
     const activeDanger = p.status==='discarded'?'active':'';
@@ -1727,7 +1748,7 @@ function renderReceive(){
     const lbl = ddayLabel(d);
     const cls = kind==='d0'?'danger':(kind==='d1'?'warn':(kind==='d3'?'warn':'normal'));
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const thumbContent = p.photo ? `<img src="${p.photo}">` : initials;
+    const thumbContent = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : initials;
     const ts = new Date(p.receivedAt || p.addedAt);
     const timeStr = ts.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     return `<div class="item ${cls}">
