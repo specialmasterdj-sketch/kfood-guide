@@ -22,7 +22,7 @@
     { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa',  mgr: true },
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
-    { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true },
+    { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true, badge: 'chat' },
     { ic: '📨', lbl: { ko:'HR 건의',      en:'HR Inquiry',     es:'Consulta RH' },        href: './chat.html?openHR=1' },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html', badge: 'updates' },
     { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
@@ -65,13 +65,14 @@
     .km-navside a { display: flex; align-items: center; gap: 12px; padding: 9px 14px; color: #1f2937; text-decoration: none; font-size: .92em; font-weight: 600; border-left: 3px solid transparent; transition: all .15s ease; letter-spacing: -.01em; }
     .km-navside a:hover { background: #f0fdf4; color: #1a5c3a; transform: translateX(2px); }
     .km-navside a.active { background: #dcfce7; color: #1a5c3a; border-left-color: #1a5c3a; font-weight: 800; }
-    .km-navside a.primary { background: linear-gradient(135deg,#1a5c3a,#2e7d32); color:#fff !important; font-weight: 800; font-size: .92em; margin: 6px 8px; border-radius: 10px; border-left: 0; padding: 9px 14px; box-shadow: 0 2px 8px rgba(26,92,58,.25); }
-    .km-navside a.primary:hover { background: linear-gradient(135deg,#15803d,#166534); color:#fff !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,92,58,.35); }
+    /* 50% 강도 — 옅은 민트 그라디언트 + 진한 텍스트 (강조 톤 다운) */
+    .km-navside a.primary { background: linear-gradient(135deg,#86efac,#6ee7b7); color:#14532d !important; font-weight: 800; font-size: .92em; margin: 6px 8px; border-radius: 10px; border-left: 0; padding: 9px 14px; box-shadow: 0 1px 4px rgba(26,92,58,.18); }
+    .km-navside a.primary:hover { background: linear-gradient(135deg,#6ee7b7,#4ade80); color:#14532d !important; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(26,92,58,.25); }
     .km-navside a.primary .ic { font-size: 1.05em; }
     .km-navside a .ic { font-size: 1.05em; width: 22px; text-align: center; flex-shrink: 0; }
     .km-navside a .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .km-navside a .badge { background:#dc2626; color:#fff; border-radius:10px; font-size:.7em; padding:1px 7px; font-weight:800; margin-left:auto; flex-shrink:0; min-width:18px; text-align:center; box-shadow:0 1px 3px rgba(220,38,38,.4); }
-    .km-navside a.primary .badge { background:#fff; color:#dc2626; box-shadow:0 1px 3px rgba(0,0,0,.15) }
+    .km-navside a.primary .badge { background:#dc2626; color:#fff; box-shadow:0 1px 3px rgba(220,38,38,.45) }
     .km-navtoggle {
       display: none;
       position: fixed;
@@ -381,11 +382,99 @@
   // 페이지에서 updates 다 봤다는 신호 받으면 즉시 배지 0
   window.addEventListener('km-updates-seen', () => setBadge('updates', 0));
   window.addEventListener('storage', e => { if (e.key === 'updates.lastSeenTs') refreshUpdatesBadge(); });
-  // 초기 + 페이지 다시 보이면 새로고침
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshUpdatesBadge(); });
+
+  // ============ 안 읽은 채팅 메시지 배지 ============
+  // chat.html 의 lastVisit 맵을 읽어 각 방의 메시지 키 timestamp 와 비교
+  const EXEC_NAMES = ['B.H.K','BHK','B H K','비에이치케이'];
+  const MGR_TOKENS_CHAT = ['OWNER','BOSS','MANAGER','매니저','점장','대표','사장','오너','GERENTE'];
+  function isExecName(me){
+    if (!me || !me.name) return false;
+    const nm = String(me.name).replace(/\s+/g,'').toUpperCase();
+    return EXEC_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === nm);
+  }
+  function isManagerLevel(me){
+    if (!me) return false;
+    if (isExecName(me)) return true;
+    const r = String(me.role || '').toUpperCase();
+    return MGR_TOKENS_CHAT.some(t => r.includes(t));
+  }
+  let __chatPollTimer = null;
+  async function refreshChatBadge(){
+    try {
+      if (here === 'chat.html') { setBadge('chat', 0); return; }
+      let me = null;
+      try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+      if (!me) { setBadge('chat', 0); return; }
+
+      // 방 목록
+      const rRes = await fetch(FB_DB + '/chat/rooms.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!rRes.ok) return;
+      const rooms = await rRes.json() || {};
+
+      // lastVisit 맵
+      let lv = {};
+      try { lv = JSON.parse(localStorage.getItem('chat.lastVisit') || '{}'); } catch(e){}
+
+      // 신규 방은 현재 시각으로 초기화 (역사적 메시지 안 읽음 표시 안 함)
+      const now = Date.now();
+      const ids = Object.keys(rooms);
+      let lvChanged = false;
+      ids.forEach(id => {
+        if (lv[id] === undefined) { lv[id] = now; lvChanged = true; }
+      });
+      if (lvChanged) {
+        try { localStorage.setItem('chat.lastVisit', JSON.stringify(lv)); } catch(e){}
+      }
+
+      const exec = isExecName(me);
+      const mgr  = isManagerLevel(me);
+
+      // 각 방 메시지 shallow GET → ts 추출 → lastVisit 이후 카운트
+      const counts = await Promise.all(ids.map(async id => {
+        const r = rooms[id] || {};
+        // 본인이 못 보는 방은 제외
+        if (r.executiveOnly && !exec) return 0;
+        if (r.managersOnly && !mgr) return 0;
+        const last = lv[id] || 0;
+        try {
+          const res = await fetch(FB_DB + '/chat/messages/' + id + '.json?shallow=true');
+          if (!res.ok) return 0;
+          const obj = await res.json();
+          if (!obj) return 0;
+          let count = 0;
+          for (const k of Object.keys(obj)) {
+            if (!k || k[0] !== 'm') continue;
+            const ts = parseInt(k.slice(1, 14), 10);
+            if (isFinite(ts) && ts > last) count++;
+          }
+          return count;
+        } catch(e) { return 0; }
+      }));
+      const total = counts.reduce((a,b) => a + b, 0);
+      setBadge('chat', total);
+    } catch(e){}
+  }
+  function startChatPolling(){
+    refreshChatBadge();
+    if (__chatPollTimer) clearInterval(__chatPollTimer);
+    __chatPollTimer = setInterval(refreshChatBadge, 30000);  // 30s
+  }
+  // chat.html 에서 방 진입 시 lastVisit 갱신 → storage event 로 즉시 반영
+  window.addEventListener('storage', e => {
+    if (e.key === 'chat.lastVisit' || e.key === 'chat.me') refreshChatBadge();
+  });
+
+  // 초기 + 페이지 다시 보이면 두 배지 모두 새로고침
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshUpdatesBadge();
+      refreshChatBadge();
+    }
+  });
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', startUpdatesPolling);
+    document.addEventListener('DOMContentLoaded', () => { startUpdatesPolling(); startChatPolling(); });
   } else {
     startUpdatesPolling();
+    startChatPolling();
   }
 })();
