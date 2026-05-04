@@ -130,6 +130,8 @@ button{cursor:pointer}
 .detail-meta .dm-row label{display:block;font-size:.7em;color:#9ca3af;font-weight:700;margin-bottom:2px;text-transform:uppercase;letter-spacing:.03em}
 .detail-meta .dm-row span{font-size:.92em;color:#1f2937;font-weight:700;word-break:break-all}
 .detail-meta .dm-row.full{grid-column:1 / -1}
+.dm-edit-btn{background:#f3f4f6;border:0;border-radius:5px;padding:2px 6px;font-size:.78em;cursor:pointer;margin-left:5px;line-height:1;opacity:.55;transition:.15s;vertical-align:middle}
+.dm-edit-btn:hover{background:#dcfce7;opacity:1;transform:scale(1.12)}
 .detail-actions-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
 .da-btn{padding:13px 8px;border-radius:11px;font-size:.95em;font-weight:800;cursor:pointer;border:1.5px solid;background:#fff;font-family:inherit;transition:.12s}
 .da-btn.normal{border-color:#22c55e;color:#16a34a}
@@ -659,6 +661,11 @@ button{cursor:pointer}
       <div class="dm-row full"><label id="detLblAddedBy">등록</label><span id="detailAddedBy">—</span></div>
       <div class="dm-row full"><label id="detLblLastCheck">최근 체크</label><span id="detailLastCheck">—</span></div>
     </div>
+    <!-- 같은 이름 다른 폐기 기록 — 매니저가 cost/qty 이상치 찾기용 -->
+    <div id="detailRelated" style="display:none;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px;margin-bottom:12px">
+      <div style="font-size:.78em;color:#92400e;font-weight:800;margin-bottom:8px" id="detailRelatedTitle">📋 폐기 이력</div>
+      <div id="detailRelatedList"></div>
+    </div>
     <div class="detail-section-lbl"><span id="detSectMark">유통기한 처리</span></div>
     <div class="detail-actions-row">
       <button class="da-btn normal" id="detailBtnNormal" onclick="detailMark('normal')">
@@ -880,6 +887,14 @@ const I18N = {
   detDeleted:{ko:'🗑 삭제됨',en:'🗑 Deleted',es:'🗑 Eliminado'},
   detDash:{ko:'—',en:'—',es:'—'},
   detUnregistered:{ko:'미등록',en:'Unregistered',es:'No registrado'},
+  // 인라인 수정 (✏️)
+  clickToEdit:{ko:'✏️ 클릭해서 수정',en:'✏️ Click to edit',es:'✏️ Click para editar'},
+  editPromptHint:{ko:'새 값 입력:',en:'Enter new value:',es:'Ingrese nuevo valor:'},
+  editSaved:{ko:'✅ 수정됨',en:'✅ Updated',es:'✅ Actualizado'},
+  editFailed:{ko:'수정 실패: ',en:'Update failed: ',es:'Error al actualizar: '},
+  invalidNumber:{ko:'숫자를 입력하세요',en:'Please enter a number',es:'Ingrese un número'},
+  readOnlyOther:{ko:'🔒 다른 지점은 읽기 전용',en:'🔒 Other store is read-only',es:'🔒 Otra tienda solo lectura'},
+  detRelatedTitle:{ko:'📋 같은 상품 폐기 이력 ({n}건)',en:'📋 Same item discard history ({n})',es:'📋 Historial de descartes ({n})'},
 };
 function t(key,vars){
   const o = I18N[key]; if(!o) return key;
@@ -1583,18 +1598,50 @@ function openProductDetail(id){
     }
   }
   setText('detailName', p.name || t('detDash'));
+  // 수정 버튼 — 같은 지점 상품에만 노출 (다른 지점은 읽기 전용)
+  const isOtherForEdit = p._branch && p._branch !== BRANCH;
+  const editBtn = (field) => isOtherForEdit ? '' :
+    `<button class="dm-edit-btn" onclick="event.stopPropagation();editDetailField('${field}')" title="${t('clickToEdit')}">✏️</button>`;
   setText('detailExpiry', p.expiry || t('detDash'));
-  setText('detailQty', (p.qty != null ? p.qty : 1) + ' ' + t('unitItem'));
+  setHTML('detailQty', (p.qty != null ? p.qty : 1) + ' ' + t('unitItem') + ' ' + editBtn('qty'));
   setText('detailCat', p.category || t('detDash'));
   setText('detailBarcode', p.barcode || t('detDash'));
-  setText('detailPrice', '$' + (p.price || 0).toFixed(2));
-  setText('detailCost', '$' + (p.cost || 0).toFixed(2));
+  setHTML('detailPrice', '$' + (p.price || 0).toFixed(2) + ' ' + editBtn('price'));
+  setHTML('detailCost', '$' + (p.cost || 0).toFixed(2) + ' ' + editBtn('cost'));
   const addedBy = p.addedBy || t('detUnregistered');
   setText('detailAddedBy', `${addedBy} · ${_detailFmtDate(p.addedAt)}`);
   if (p.lastCheckedAt) {
     setText('detailLastCheck', `${p.lastCheckedBy || t('detUnregistered')} · ${_detailFmtDate(p.lastCheckedAt)}`);
   } else {
     setText('detailLastCheck', t('detDash'));
+  }
+  // 같은 이름 다른 폐기 이력 표시 (매니저용 — TOP10 클릭 시 cost/qty 이상치 진단)
+  const relatedSec = $('detailRelated');
+  if (relatedSec && p.name) {
+    const source = (REPORT_SCOPE === 'all' && __ALL_BRANCH_DATA)
+      ? Object.values(__ALL_BRANCH_DATA).flat()
+      : PRODUCTS.map(pp => Object.assign({}, pp, { _branch: pp._branch || BRANCH }));
+    const related = source.filter(x => x.name === p.name && x.status === 'discarded' && x.id !== __DETAIL_ID)
+      .sort((a,b) => (b.discardedAt||0) - (a.discardedAt||0));
+    if (related.length > 0) {
+      relatedSec.style.display = '';
+      setText('detailRelatedTitle', t('detRelatedTitle', { n: related.length + (p.status === 'discarded' ? 1 : 0) }));
+      $('detailRelatedList').innerHTML = related.map(r => {
+        const lossOne = (r.cost || r.price || 0) * (r.qty || 1);
+        const dt = r.discardedAt ? _detailFmtDate(r.discardedAt) : '—';
+        const bObj = BRANCHES.find(b => b.id === (r._branch || BRANCH));
+        const branchName = bObj ? (bObj[LANG] || bObj.ko) : (r._branch || BRANCH);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 4px;border-bottom:1px solid rgba(146,64,14,.12);cursor:pointer" onclick="openProductDetail('${r.id}')">
+          <div style="min-width:0;flex:1">
+            <div style="color:#374151;font-weight:700;font-size:.86em">${escHtml(branchName)} · ${dt}</div>
+            <div style="color:#9ca3af;font-size:.76em;margin-top:1px">qty: ${r.qty||1} · cost: $${(r.cost||0).toFixed(2)} · price: $${(r.price||0).toFixed(2)}</div>
+          </div>
+          <div style="color:#dc2626;font-weight:800;font-size:.92em;flex-shrink:0">$${lossOne.toFixed(0)} ›</div>
+        </div>`;
+      }).join('');
+    } else {
+      relatedSec.style.display = 'none';
+    }
   }
   // 현재 상태에 따라 버튼 active 표시
   $('detailBtnNormal').classList.toggle('active', p.status === 'active');
@@ -1634,6 +1681,46 @@ async function detailDelete(){
 window.openProductDetail = openProductDetail;
 window.detailMark = detailMark;
 window.detailDelete = detailDelete;
+
+// 디테일 모달에서 qty / cost / price 직접 수정 — TOP 10 손실 이상치 (예: $243) 정정용
+async function editDetailField(field){
+  if (!__DETAIL_ID) return;
+  let p = PRODUCTS.find(x => x.id === __DETAIL_ID);
+  if (!p && __ALL_BRANCH_DATA) {
+    for (const arr of Object.values(__ALL_BRANCH_DATA)) {
+      const f = arr.find(x => x.id === __DETAIL_ID);
+      if (f) { p = f; break; }
+    }
+  }
+  if (!p) return;
+  if (p._branch && p._branch !== BRANCH) {
+    showToast(t('readOnlyOther') || '🔒 다른 지점은 읽기 전용', true);
+    return;
+  }
+  const labels = { qty: t('lblQty'), cost: t('lblCost'), price: t('lblPrice') };
+  const cur = p[field] != null ? p[field] : 0;
+  const v = prompt(labels[field] + '\n\n' + (t('editPromptHint') || '새 값:'), cur);
+  if (v == null) return;
+  const num = parseFloat(v);
+  if (isNaN(num) || num < 0) { alert(t('invalidNumber') || '숫자를 입력하세요'); return; }
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/products/'+__DETAIL_ID), { [field]: num });
+    // 로컬 PRODUCTS 즉시 갱신
+    const idx = PRODUCTS.findIndex(x => x.id === __DETAIL_ID);
+    if (idx >= 0) PRODUCTS[idx][field] = num;
+    // 전지점 캐시 같이 갱신
+    if (__ALL_BRANCH_DATA && __ALL_BRANCH_DATA[BRANCH]) {
+      const i2 = __ALL_BRANCH_DATA[BRANCH].findIndex(x => x.id === __DETAIL_ID);
+      if (i2 >= 0) __ALL_BRANCH_DATA[BRANCH][i2][field] = num;
+    }
+    openProductDetail(__DETAIL_ID);
+    showToast(t('editSaved') || '✅ 수정됨');
+    renderAll();
+  } catch(e) {
+    alert((t('editFailed') || '수정 실패: ') + (e?.message || e));
+  }
+}
+window.editDetailField = editDetailField;
 
 // ============== Mark item ==============
 async function deleteProduct(id, name){
