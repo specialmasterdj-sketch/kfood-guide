@@ -323,6 +323,10 @@ button{cursor:pointer}
 .bar-row .bar{flex:1;height:18px;background:#f3f4f6;border-radius:5px;overflow:hidden;position:relative}
 .bar-row .bar .f{height:100%;background:linear-gradient(90deg,#fee2e2,#dc2626);border-radius:5px}
 .bar-row .val{flex:0 0 70px;text-align:right;font-size:.82em;font-weight:700;color:#dc2626}
+.bar-row.clickable{cursor:pointer;border-radius:8px;padding:6px 8px;margin:0 -8px;transition:.12s;border:1px solid transparent}
+.bar-row.clickable:hover{background:#fef2f2;border-color:#fecaca}
+.bar-row.clickable .lbl::after{content:' ›';color:#dc2626;font-weight:800;opacity:0;transition:.12s}
+.bar-row.clickable:hover .lbl::after{opacity:.8}
 
 /* === TOAST === */
 .toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:12px 20px;border-radius:24px;font-size:.92em;font-weight:600;z-index:300;box-shadow:0 4px 18px rgba(0,0,0,.18);display:none;max-width:90vw}
@@ -1859,16 +1863,27 @@ function renderReport(){
   $('reportByCat').innerHTML = catRows.length === 0
     ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">데이터 없음</div>`
     : catRows.map(([c, v]) => `<div class="bar-row"><div class="lbl">${escHtml(c)}</div><div class="bar"><div class="f" style="width:${v/max*100}%"></div></div><div class="val">$${Math.round(v)}</div></div>`).join('');
-  // TOP 10
+  // TOP 10 — 같은 이름 묶고 가장 최근 폐기 항목의 id 보존 (클릭 시 디테일 모달용)
   const byProd = {};
   discarded.forEach(p => {
-    byProd[p.name] = (byProd[p.name] || 0) + (p.cost || p.price || 0)*(p.qty||1);
+    if (!byProd[p.name]) byProd[p.name] = { total:0, latestId:p.id, latestTs:p.discardedAt||0, count:0 };
+    const e = byProd[p.name];
+    e.total += (p.cost || p.price || 0)*(p.qty||1);
+    e.count += 1;
+    if ((p.discardedAt||0) > e.latestTs) { e.latestTs = p.discardedAt||0; e.latestId = p.id; }
   });
-  const topRows = Object.entries(byProd).sort((a,b) => b[1] - a[1]).slice(0,10);
-  const maxP = topRows.length ? topRows[0][1] : 1;
+  const topRows = Object.entries(byProd).sort((a,b) => b[1].total - a[1].total).slice(0,10);
+  const maxP = topRows.length ? topRows[0][1].total : 1;
   $('reportTop').innerHTML = topRows.length === 0
     ? `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">데이터 없음</div>`
-    : topRows.map(([n, v]) => `<div class="bar-row"><div class="lbl">${escHtml(n).slice(0,12)}</div><div class="bar"><div class="f" style="width:${v/maxP*100}%"></div></div><div class="val">$${Math.round(v)}</div></div>`).join('');
+    : topRows.map(([n, e]) => {
+        const cntLbl = e.count > 1 ? ` <span style="color:#9ca3af;font-weight:700;font-size:.85em">×${e.count}</span>` : '';
+        return `<div class="bar-row clickable" onclick="openProductDetail('${e.latestId}')" title="${escHtml(n)} — ${e.count}건">
+          <div class="lbl">${escHtml(n).slice(0,12)}${cntLbl}</div>
+          <div class="bar"><div class="f" style="width:${e.total/maxP*100}%"></div></div>
+          <div class="val">$${Math.round(e.total)}</div>
+        </div>`;
+      }).join('');
 }
 function setReportRange(r, btn){
   REPORT_RANGE = r;
