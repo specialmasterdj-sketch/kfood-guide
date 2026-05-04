@@ -1933,32 +1933,46 @@ function renderDashboard(){
   const dashMgrNm = document.getElementById('dashMgrNm'); if (dashMgrNm) dashMgrNm.textContent = (me && me.name) || '매니저';
   const dashMgrAv = document.getElementById('dashMgrAv'); if (dashMgrAv) dashMgrAv.textContent = ((me && me.name) || '?').slice(0,1).toUpperCase();
 
-  // 오늘 업무 (assigned today) — 선택된 매장만
-  const todayKey = new Date().toISOString().slice(0,10);
+  // 오늘 업무 — TASKS 는 이미 today 경로에서 fetch 되어 있음 (날짜 필터 불필요)
+  // 매니저는 activeBranch 만, 일반 직원은 모두 표시
   const todayTasks = (TASKS || []).filter(t => {
-    const dateOk = (t.assignedDate || '').slice(0,10) === todayKey;
-    if (!dateOk) return false;
-    // 매니저는 activeBranch 만, 일반 직원은 본인 자료만 (branch 필터 안 함)
     if (isMgr && t.branchId && t.branchId !== activeBranch) return false;
     return true;
   });
-  const total = todayTasks.length;
-  const completed = todayTasks.filter(t => t.status === 'completed').length;
-  const pending = todayTasks.filter(t => t.status !== 'completed').length;
-  const delayed = todayTasks.filter(t => {
-    if (t.status === 'completed') return false;
+  // task 자체 status 필드는 없고 computeStatus() 가 동적 계산. 또는 checklist 모두 done 일 때 완료.
+  function _isDone(t){
+    if (t.completedAt) return true;
+    if (t.status === 'completed') return true;
+    if (Array.isArray(t.checklist) && t.checklist.length && t.checklist.every(c => c && c.done)) return true;
+    return false;
+  }
+  function _isDelayed(t){
+    if (_isDone(t)) return false;
     if (!t.deadline) return false;
-    const dl = new Date(t.deadline).getTime();
-    return Date.now() > dl;
-  }).length;
-  // 보고: 완료된 업무 중 사진 첨부된 것 수
-  const reports = todayTasks.filter(t => t.status === 'completed' && Array.isArray(t.completionPhotos) && t.completionPhotos.length > 0).length;
+    // deadline 은 "HH:MM" 형식. 오늘 그 시간이 지났는지.
+    const m = String(t.deadline).match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return false;
+    const now = new Date();
+    const dl = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(m[1],10), parseInt(m[2],10));
+    return Date.now() > dl.getTime();
+  }
+  const total = todayTasks.length;
+  const completed = todayTasks.filter(_isDone).length;
+  const pending = todayTasks.filter(t => !_isDone(t)).length;
+  const delayed = todayTasks.filter(_isDelayed).length;
+  // 보고: 완료된 업무 중 사진 첨부된 것 수 (checklist 의 photos 포함)
+  function _hasReportPhotos(t){
+    if (Array.isArray(t.completionPhotos) && t.completionPhotos.length) return true;
+    if (Array.isArray(t.checklist) && t.checklist.some(c => Array.isArray(c.photos) && c.photos.length)) return true;
+    return false;
+  }
+  const reports = todayTasks.filter(t => _isDone(t) && _hasReportPhotos(t)).length;
 
   // 점수 계산: 100 시작, 미완료 -5, 지연 -10, 보고 누락(완료했는데 사진 X) -3
   let score = 100;
   score -= pending * 5;
   score -= delayed * 10;
-  const completedNoPhoto = todayTasks.filter(t => t.status === 'completed' && (!t.completionPhotos || t.completionPhotos.length === 0)).length;
+  const completedNoPhoto = todayTasks.filter(t => _isDone(t) && !_hasReportPhotos(t)).length;
   score -= completedNoPhoto * 3;
   if (score < 0) score = 0;
   if (score > 100) score = 100;
@@ -2005,29 +2019,33 @@ function renderDashboard(){
   // 진행중 업무 미니 리스트 (최대 4개)
   const miniWrap = document.getElementById('dashTasksMini');
   if (miniWrap) {
-    const inProgress = todayTasks.filter(t => t.status !== 'completed').slice(0, 4);
+    const inProgress = todayTasks.filter(t => !_isDone(t)).slice(0, 4);
     if (inProgress.length === 0) {
       miniWrap.innerHTML = `
         <div class="dash-empty">
           <div class="emoji">🥬</div>
-          <div class="ttl">오늘 진행중 업무 없음</div>
-          <div class="sub">+ 업무 지시 버튼으로 새 업무를 보내세요</div>
+          <div class="ttl">${total === 0 ? '오늘 진행중 업무 없음' : '✨ 오늘 모든 업무 완료!'}</div>
+          <div class="sub">${total === 0 ? '+ 업무 지시 버튼으로 새 업무를 보내세요' : '직원들 수고했음 — 점수 ' + Math.max(0, 100 - completedNoPhoto*3) + 'pt'}</div>
         </div>`;
     } else {
       miniWrap.innerHTML = inProgress.map(t => {
-        const who = t.assigneeName || t.assignee || '-';
-        const dl = t.deadline ? new Date(t.deadline) : null;
-        const dlText = dl ? `${String(dl.getHours()).padStart(2,'0')}:${String(dl.getMinutes()).padStart(2,'0')}` : '';
-        const isDelayed = dl && Date.now() > dl.getTime();
+        const who = t.assignedTo || t.assigneeName || t.assignee || '-';
+        const dl = t.deadline || '';
+        const isDelayed = _isDelayed(t);
         const dlCls = isDelayed ? 'delayed' : 'in_progress';
+        // 체크리스트 진행률
+        const cl = Array.isArray(t.checklist) ? t.checklist : null;
+        const clDone = cl ? cl.filter(c => c && c.done).length : 0;
+        const clTotal = cl ? cl.length : 0;
+        const clText = cl && clTotal > 0 ? ` · ✓ ${clDone}/${clTotal}` : '';
         return `<div class="task-card ${dlCls}" onclick="switchTab('mgr')">
           <div class="task-row">
-            <div class="task-name">${(t.title || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>
+            <div class="task-name">${escHtml(t.name || t.title || '-')}${clText}</div>
           </div>
           <div class="task-meta">
-            <span class="from">👤 ${who}</span>
-            ${dlText ? `<span class="deadline">⏰ ${dlText}${isDelayed ? ' (지연)' : ''}</span>` : ''}
-            ${t.photoRequired ? `<span class="photo-req">📷 사진 필수</span>` : ''}
+            <span class="from">👤 ${escHtml(who)}</span>
+            ${dl ? `<span class="deadline">⏰ ${dl}${isDelayed ? ' (지연)' : ''}</span>` : ''}
+            ${t.requirePhoto ? `<span class="photo-req">📷 사진 필수</span>` : ''}
           </div>
         </div>`;
       }).join('');
