@@ -1355,11 +1355,11 @@ async function deleteProduct(id, name){
 }
 window.deleteProduct = deleteProduct;
 // 사진 URL 에서 Storage 객체명 추출 후 DELETE.
-// 6지점 누적 방지 — 폐기 처리 시 사진을 즉시 정리. (실패해도 무시: 사용자 액션은 성공으로 처리)
+// 폐기 사진은 증거·패턴 분석 가치가 있어 자동 삭제 안 함 — 매니저용 수동 정리 메뉴
+// 만들 때 재사용 가능하게 함수만 보존. 5년 누적 시 ~$1.5/월 수준이라 보존이 합리적.
 async function deletePhotoFromStorage(photoUrl){
-  if (!photoUrl || photoUrl.startsWith('data:')) return; // base64 fallback 은 RTDB 에서만 제거됨
+  if (!photoUrl || photoUrl.startsWith('data:')) return;
   try {
-    // 형식: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media&token=...
     const m = photoUrl.match(/\/o\/([^?]+)/);
     if (!m) return;
     await fetch(`${FB_STORAGE_URL}/${m[1]}`, { method:'DELETE' });
@@ -1374,15 +1374,8 @@ async function markStatus(id, kind){
     lastCheckedAt: Date.now(),
     lastCheckedBy: me?.name || '미등록',
   };
-  if (kind === 'danger') {
-    upd.discardedAt = Date.now();
-    // 폐기 시 사진 정리 — Storage 영구 누적 방지
-    const product = PRODUCTS.find(p => p.id === id);
-    if (product?.photo) {
-      deletePhotoFromStorage(product.photo); // 비동기 fire-and-forget
-      upd.photo = null;
-    }
-  }
+  // 폐기 사진은 보존 (증거·패턴 분석 가치). discardedAt 만 기록.
+  if (kind === 'danger') upd.discardedAt = Date.now();
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
   showToast(t('marked'));
   // ✅ 정상 체크 후 홈으로 — 다음 체크 작업 빠르게 시작할 수 있도록
