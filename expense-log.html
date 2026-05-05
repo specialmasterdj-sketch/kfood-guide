@@ -281,6 +281,13 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
       <button class="btn sec" onclick="updateDetailStatus('paid')" id="lblPaid">💵 지급 완료</button>
       <button class="btn sec" onclick="deleteDetail()" id="lblDelete">🗑 삭제</button>
     </div>
+    <div style="margin-top:8px;padding-top:10px;border-top:1px solid #e5e7eb">
+      <label style="font-size:.82em;color:#6b7280;font-weight:700;display:block;margin-bottom:4px" id="lblMoveTo">📍 다른 지점으로 이동</label>
+      <div style="display:flex;gap:6px">
+        <select id="moveBranchSel" style="flex:1;border:1.5px solid #d1d5db;border-radius:9px;padding:8px 10px;font-size:.92em;font-family:inherit;background:#fff"></select>
+        <button class="btn sec" onclick="moveDetailToBranch()" id="lblMoveBtn" style="flex:0 0 auto">이동</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -370,6 +377,8 @@ const I18N = {
   lblReject:   {ko:'✗ 거부', en:'✗ Reject', es:'✗ Rechazar'},
   lblPaid:     {ko:'💵 지급 완료', en:'💵 Paid', es:'💵 Pagado'},
   lblDelete:   {ko:'🗑 삭제', en:'🗑 Delete', es:'🗑 Eliminar'},
+  lblMoveTo:   {ko:'📍 다른 지점으로 이동', en:'📍 Move to another branch', es:'📍 Mover a otra sucursal'},
+  lblMoveBtn:  {ko:'이동', en:'Move', es:'Mover'},
   lblLockTitle:{ko:'매니저 전용', en:'Managers only', es:'Solo Gerentes'},
   lblLockDesc: {ko:'이 앱은 매니저·오너 전용입니다.<br>채팅에서 본인 등록(이름·역할) 후 다시 열어주세요.', en:'This app is for managers and owners only.<br>Register your name/role in Chat first.', es:'Solo para gerentes y dueños.<br>Registre nombre/rol en Chat.'},
 };
@@ -833,7 +842,51 @@ window.openDetail = function(eid, branchId){
       ${memo}
       ${photo}
     </div>`;
+  // Populate the 'move to another branch' dropdown — exclude current branch
+  const sel = document.getElementById('moveBranchSel');
+  if (sel) {
+    sel.innerHTML = BRANCHES
+      .filter(b => b.id !== branchId)
+      .map(b => `<option value="${b.id}">${(b[LANG]||b.en||b.id)}</option>`).join('');
+  }
   document.getElementById('detailOv').classList.add('show');
+};
+
+window.moveDetailToBranch = async function(){
+  if (!CUR_DETAIL) return;
+  const newBranch = document.getElementById('moveBranchSel').value;
+  if (!newBranch || newBranch === CUR_DETAIL.branch) {
+    toast(({ko:'다른 지점을 선택하세요',en:'Pick a different branch',es:'Elige otra sucursal'}[LANG]), 'err');
+    return;
+  }
+  const newName = (BRANCH_BY_ID[newBranch]?.[LANG]) || newBranch;
+  if (!confirm(({ko:`${newName}(으)로 이동할까요?`,en:`Move to ${newName}?`,es:`¿Mover a ${newName}?`}[LANG]))) return;
+  try {
+    // Build payload: keep the original record, just change branch + add audit fields
+    const moved = Object.assign({}, CUR_DETAIL, {
+      branch: newBranch,
+      movedFrom: CUR_DETAIL.branch,
+      movedAt: Date.now(),
+      movedBy: (ME && ME.name) || ''
+    });
+    delete moved.id;   // id stays the same as the RTDB key
+    // Write to new branch first, then delete from old (so we never lose data
+    // mid-move if the network drops)
+    await fetch(`${FB_DB_URL}/expenses/${newBranch}/${CUR_DETAIL.id}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(moved)
+    });
+    await deleteExpense(CUR_DETAIL.branch, CUR_DETAIL.id);
+    // Update local cache
+    EXPENSES = EXPENSES.map(e =>
+      (e.id === CUR_DETAIL.id && e.branch === CUR_DETAIL.branch)
+        ? Object.assign({}, e, { branch: newBranch, movedFrom: e.branch })
+        : e
+    );
+    closeOv('detailOv');
+    toast('✓ ' + ({ko:'지점 이동됨',en:'Moved',es:'Movido'}[LANG]) + ' → ' + newName, 'ok');
+    renderList();
+    renderHome();
+  } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
 };
 window.updateDetailStatus = async function(status){
   if (!CUR_DETAIL) return;
