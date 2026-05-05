@@ -375,13 +375,18 @@
       try { lastSeenTs = parseInt(localStorage.getItem('updates.lastSeenTs') || '0', 10) || 0; } catch(e){}
       let me = null;
       try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+      const isMgr = !!(me && me.isManager);
       let count = 0;
       Object.values(d).forEach(u => {
         if (!u || !u.ts || u.ts <= lastSeenTs) return;
         // 본인이 작성한 글은 제외 (이미 본 거니까)
         if (me && u.author === me.name && u.authorBranch === me.branch) return;
-        // audience 필터 — 'all' 또는 본인 지점 매치
-        if (u.audience && u.audience !== 'all' && me && u.audience !== me.branch) return;
+        // audience 가시성 — updates.html 의 visibleUpdates() 와 일치시킴
+        if (u.audience === 'managers' && !isMgr) return;
+        if (u.audience && u.audience !== 'all' && u.audience !== 'managers' && me && u.audience !== me.branch) {
+          // 다른 지점 전용 글 — 매니저 외엔 카운트하지 않음
+          if (!isMgr) return;
+        }
         count++;
       });
       setBadge('updates', count);
