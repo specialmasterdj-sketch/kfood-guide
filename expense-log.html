@@ -166,9 +166,11 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
   </div>
 
   <div class="summary-card">
-    <div class="hd">📅 <span id="lblTodayLbl">오늘 지출</span> (<span id="todayBranchName">—</span>)</div>
+    <div class="hd">📅 <span id="lblTodayLbl">이번 달 지출</span> (<span id="todayBranchName">—</span>)</div>
     <div id="todaySummary"></div>
   </div>
+
+  <div id="homeList" style="margin-top:8px"></div>
 
   <div class="tile-grid" style="grid-template-columns:1fr 1fr">
     <button class="btn sec block" onclick="goView('list')">📋 <span id="lblTodayList">오늘 내역</span></button>
@@ -330,8 +332,8 @@ let currentPage = 'home';
 const I18N = {
   topTitle:    {ko:'지점 지출 관리', en:'Branch Expense Log', es:'Gastos de Sucursal'},
   lblBranch:   {ko:'지점', en:'Branch', es:'Sucursal'},
-  lblTodayHd:  {ko:'오늘 지출', en:'Today\'s expenses', es:'Gastos de hoy'},
-  lblTodayLbl: {ko:'오늘 지출', en:'Today', es:'Hoy'},
+  lblTodayHd:  {ko:'이번 달 지출', en:"This month's expenses", es:'Gastos del mes'},
+  lblTodayLbl: {ko:'이번 달 지출', en:'This month', es:'Este mes'},
   lblTodayList:{ko:'오늘 내역', en:'Today\'s list', es:'Lista de hoy'},
   lblReport:   {ko:'통계·리포트', en:'Reports & Analytics', es:'Informes'},
   lblTileCheck:{ko:'체크 발행', en:'Issue Check', es:'Emitir Cheque'},
@@ -527,20 +529,73 @@ function renderBranchSelectors(){
 //================================================================
 function renderHome(){
   document.getElementById('todayBranchName').textContent = (BRANCH_BY_ID[BRANCH]?.[LANG]) || BRANCH;
-  const today = todayKey();
-  const todayExp = EXPENSES.filter(e => e.date === today && e.branch === BRANCH);
+
+  // ── This month (YYYY-MM prefix) instead of just today ───────────
+  const now = new Date();
+  const monthPrefix = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const monthExp = EXPENSES.filter(e => e.branch === BRANCH && (e.date || '').startsWith(monthPrefix));
+
   const byType = { check:0, cash:0, card:0, ach:0, other:0 };
-  todayExp.forEach(e => { byType[e.type] = (byType[e.type]||0) + (Number(e.amount)||0); });
+  monthExp.forEach(e => { byType[e.type] = (byType[e.type]||0) + (Number(e.amount)||0); });
   const total = byType.check + byType.cash + byType.card + byType.ach + byType.other;
-  const el = document.getElementById('todaySummary');
-  el.innerHTML =
+
+  document.getElementById('todaySummary').innerHTML =
     `<div class="summary-row"><span>📝 ${typeLabel('check')}</span><b>${fmt$(byType.check)}</b></div>` +
     `<div class="summary-row"><span>💵 ${typeLabel('cash')}</span><b>${fmt$(byType.cash)}</b></div>` +
     `<div class="summary-row"><span>💳 ${typeLabel('card')}</span><b>${fmt$(byType.card)}</b></div>` +
     `<div class="summary-row"><span>🌐 ${typeLabel('ach')}</span><b>${fmt$(byType.ach)}</b></div>` +
     `<div class="summary-row"><span>📋 ${typeLabel('other')}</span><b>${fmt$(byType.other)}</b></div>` +
     `<div class="summary-row" style="border-top:2px solid #1a5c3a;margin-top:6px;padding-top:8px"><span style="font-weight:800">${({ko:'총합',en:'Total',es:'Total'}[LANG])}</span><b style="font-size:1.05em">${fmt$(total)}</b></div>` +
-    `<div class="summary-row" style="font-size:.78em;color:#6b7280;border:0;padding:4px 0"><span>${todayExp.length} ${({ko:'건',en:'entries',es:'registros'}[LANG])}</span></div>`;
+    `<div class="summary-row" style="font-size:.78em;color:#6b7280;border:0;padding:4px 0"><span>${monthExp.length} ${({ko:'건',en:'entries',es:'registros'}[LANG])}</span></div>`;
+
+  // ── Month list grouped by date (newest day first), entry order asc within each day
+  const list = document.getElementById('homeList');
+  if (!list) return;
+  if (monthExp.length === 0) {
+    list.innerHTML = `<div class="card" style="text-align:center;color:#9ca3af;font-size:.9em;padding:24px">${({ko:'이번 달 입력 내역이 없습니다',en:'No entries this month yet',es:'Sin registros este mes'}[LANG])}</div>`;
+    return;
+  }
+  const grouped = {};
+  monthExp.forEach(e => { (grouped[e.date] = grouped[e.date] || []).push(e); });
+  Object.keys(grouped).forEach(d => grouped[d].sort((a, b) => (a.createdAt||0) - (b.createdAt||0)));
+  const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+  const dayLabel = (iso) => {
+    const d = new Date(iso + 'T00:00:00');
+    const w = ({ko:['일','월','화','수','목','금','토'],en:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],es:['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']}[LANG])[d.getDay()];
+    return iso + '  (' + w + ')';
+  };
+  list.innerHTML = dates.map(d => {
+    const dayTotal = grouped[d].reduce((s, e) => s + (Number(e.amount)||0), 0);
+    const items = grouped[d].map((e, idx) => {
+      const t = new Date(e.createdAt || 0);
+      const tStr = e.createdAt ? (String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0')) : '';
+      return `
+        <div class="exp-item t-${e.type}" onclick="openDetail('${e.id}','${e.branch}')">
+          <div class="ic">${typeIcon(e.type)}</div>
+          <div class="body">
+            <div class="head">
+              <div style="font-weight:700;font-size:.92em">${escHtml(e.vendor || '—')}</div>
+              <b style="color:#1a5c3a">${fmt$(e.amount)}</b>
+            </div>
+            <div style="font-size:.76em;color:#6b7280">
+              <span style="font-weight:700;color:#374151">#${idx+1}</span>
+              ${tStr ? ' · ' + tStr : ''}
+              ${e.checkNumber ? ' · ' + ({ko:'체크',en:'Check',es:'Cheque'}[LANG]) + ' ' + escHtml(e.checkNumber) : ''}
+              ${e.issuer ? ' · ' + escHtml(e.issuer) : ''}
+              ${e.status && e.status !== 'pending' ? ' · ' + statusLabel(e.status) : ''}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+    return `
+      <div class="card" style="padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:.86em;font-weight:800;color:#374151;margin-bottom:6px">
+          <span>📆 ${dayLabel(d)}</span>
+          <span style="color:#1a5c3a">${fmt$(dayTotal)} <span style="color:#9ca3af;font-weight:600;font-size:.9em">· ${grouped[d].length}</span></span>
+        </div>
+        ${items}
+      </div>`;
+  }).join('');
 }
 window.onBranchChange = function(){
   BRANCH = document.getElementById('branchSel').value;
