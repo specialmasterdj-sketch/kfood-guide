@@ -44,6 +44,7 @@
     { ic: '🎁', lbl: { ko:'주간 특가 등록', en:'Weekly Deals', es:'Ofertas Semanales' },  href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-deals.html', target: '_blank', mgr: true },
     { ic: '📢', lbl: { ko:'손님 알림 발송', en:'Notify Members', es:'Notificar Clientes' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-notify.html', target: '_blank', mgr: true },
     { ic: '📊', lbl: { ko:'추천 통계',     en:'Referral Stats',es:'Estadísticas Referidos' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-referrals.html', target: '_blank', mgr: true },
+    { ic: '🧾', lbl: { ko:'카운터 도구',   en:'Counter Tool',  es:'Herramienta de Caja' },     href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/counter.html' },
 
     { sec: { ko:'트레이닝', en:'Training', es:'Capacitación' } },
     { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/' },
