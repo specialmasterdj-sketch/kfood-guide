@@ -1115,33 +1115,73 @@ function onBranchChange(){
   subscribe();
 }
 
-// ============== Firebase subscribe ==============
+// ============== Data sync ==============
+// SDK onValue subscriptions hang on networks/PWAs where the WebSocket
+// upgrade is unreliable. We fall back to REST polling using the helper
+// from fb-auth-fetch.js (which appends ?auth=<id-token> automatically).
+// Initial paint is REST-fast; SDK is added on top when it manages to
+// connect, for free live updates.
 let unsub = null;
 let unsubSettings = null;
-function subscribe(){
-  if (!window.__fb) { setTimeout(subscribe, 500); return; }
-  if (unsub) { try{unsub();}catch(e){} unsub=null; }
-  if (unsubSettings) { try{unsubSettings();}catch(e){} unsubSettings=null; }
-  const path = 'expiry/' + BRANCH + '/products';
-  unsub = window.__fb.onValue(window.__fb.ref(window.__fb.db, path), snap => {
-    const v = snap.val() || {};
+let __pollTimer = null;
+async function fetchProductsRest(){
+  try {
+    const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+    const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+    const r = await fetch(`https://kimchi-mart-order-default-rtdb.firebaseio.com/expiry/${BRANCH}/products.json${authQ}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = (await r.json()) || {};
     PRODUCTS = Object.entries(v).map(([id, p]) => Object.assign({ id }, p));
     renderAll();
-  });
-  // Per-branch settings — sync across all devices for the same store
-  const sPath = 'expiry/' + BRANCH + '/settings';
-  unsubSettings = window.__fb.onValue(window.__fb.ref(window.__fb.db, sPath), snap => {
-    const v = snap.val();
+  } catch (e) {}
+}
+async function fetchSettingsRest(){
+  try {
+    const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+    const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+    const r = await fetch(`https://kimchi-mart-order-default-rtdb.firebaseio.com/expiry/${BRANCH}/settings.json${authQ}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = await r.json();
     if (v && typeof v === 'object') {
       SETTINGS = Object.assign({ danger:1, warn:3, early:10, alertTime:'09:00' }, v);
-      if (SETTINGS.early == null) SETTINGS.early = 10;  // 구버전 RTDB 데이터 마이그레이션
+      if (SETTINGS.early == null) SETTINGS.early = 10;
       localStorage.setItem('expiry.settings', JSON.stringify(SETTINGS));
       renderAll();
     }
-  });
+  } catch (e) {}
 }
+function subscribe(){
+  // 1) REST first — works regardless of WebSocket health
+  fetchProductsRest();
+  fetchSettingsRest();
+  // 2) Poll every 30s so other devices' edits show up within ~30s
+  if (__pollTimer) clearInterval(__pollTimer);
+  __pollTimer = setInterval(() => { fetchProductsRest(); }, 30000);
+  // 3) Best-effort SDK live updates on top — silently no-op if it never connects
+  if (!window.__fb) return;
+  if (unsub) { try{unsub();}catch(e){} unsub=null; }
+  if (unsubSettings) { try{unsubSettings();}catch(e){} unsubSettings=null; }
+  try {
+    unsub = window.__fb.onValue(window.__fb.ref(window.__fb.db, 'expiry/' + BRANCH + '/products'), snap => {
+      const v = snap.val() || {};
+      PRODUCTS = Object.entries(v).map(([id, p]) => Object.assign({ id }, p));
+      renderAll();
+    });
+    unsubSettings = window.__fb.onValue(window.__fb.ref(window.__fb.db, 'expiry/' + BRANCH + '/settings'), snap => {
+      const v = snap.val();
+      if (v && typeof v === 'object') {
+        SETTINGS = Object.assign({ danger:1, warn:3, early:10, alertTime:'09:00' }, v);
+        if (SETTINGS.early == null) SETTINGS.early = 10;
+        localStorage.setItem('expiry.settings', JSON.stringify(SETTINGS));
+        renderAll();
+      }
+    });
+  } catch (e) {}
+}
+// Wait for auth token before first REST poll so the URL has ?auth=
+window.addEventListener('fb-auth-ready', subscribe);
 window.addEventListener('fb-ready', subscribe);
-setTimeout(() => { if (!unsub) subscribe(); }, 1500);
+setTimeout(() => { if (PRODUCTS.length === 0) subscribe(); }, 2000);
 
 // ============== Lookup from POS products ==============
 // pos-cost-filter pushes the branch's POS catalog to products/{BRANCH}.rows;
