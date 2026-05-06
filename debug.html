@@ -7,19 +7,18 @@
 <style>
   body { font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; padding: 20px; max-width: 700px; margin: 0 auto; background: #fff; }
   h1 { color: #1a5c3a; margin-bottom: 8px; }
-  .row { padding: 14px 18px; margin: 8px 0; border-radius: 12px; font-size: 1em; }
+  .row { padding: 10px 14px; margin: 6px 0; border-radius: 10px; font-size: .94em; }
   .ok { background: #dcfce7; color: #14532d; }
   .err { background: #fee2e2; color: #7f1d1d; }
+  .warn { background: #fef3c7; color: #78350f; }
   .info { background: #f3f4f6; color: #374151; }
   .label { font-weight: 700; }
-  .meta { font-size: .82em; opacity: .7; margin-top: 4px; }
-  pre { background: #fff; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: .82em; }
+  .meta { font-size: .8em; opacity: .8; margin-top: 3px; word-break: break-word; }
 </style>
 </head>
 <body>
   <h1>🔍 김치마트 매니저앱 진단</h1>
-  <p style="color:#6b7280">시간이 좀 걸려요. 결과 다 나올 때까지 기다려주세요.</p>
-
+  <p style="color:#6b7280;font-size:.9em">최대 60초. 결과 다 나올 때까지 기다려주세요.</p>
   <div id="results"></div>
 
 <script type="module">
@@ -40,65 +39,94 @@ function add(kind, label, body) {
   results.appendChild(div);
 }
 
-// Wait for auth state
-add('info', '⏳ 인증 상태 확인 중...');
+// Wrap get() with a 6-second timeout so a hanging read can't stall the
+// rest of the diagnostic. If a path hangs that itself is useful info.
+function timed(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT after ' + ms + 'ms')), ms))
+  ]);
+}
+
 const user = await new Promise(res => {
   const unsub = onAuthStateChanged(auth, u => { unsub(); res(u); });
   setTimeout(() => res(null), 5000);
 });
 
 if (!user) {
-  add('err', '❌ 로그인 안 됨', '이 PC/폰에서 Firebase 로그인 필요. auth.html 로 가서 로그인하세요.');
+  add('err', '❌ 로그인 안 됨', 'auth.html 로 가서 먼저 로그인하세요.');
 } else {
   add('ok', '✅ 로그인 됨', `이메일: ${user.email}<br>UID: ${user.uid}`);
 
-  // Get user profile
+  // Try fetching ID token
   try {
-    const snap = await get(ref(db, 'users/' + user.uid));
-    if (snap.exists()) {
-      const p = snap.val();
-      add('ok', '✅ 사용자 프로필 있음', `이름: ${p.name || '(없음)'}<br>역할: ${p.role || '(없음)'}<br>지점: ${p.branch || '(없음)'}<br>상태: ${p.status || '(없음)'}`);
+    const tok = await timed(user.getIdToken(), 5000);
+    add('ok', '✅ ID 토큰 받음', `길이: ${tok.length}자`);
+  } catch (e) {
+    add('err', '❌ ID 토큰 실패', e.message);
+  }
+
+  // Try direct REST fetch with token (bypasses SDK)
+  try {
+    const tok = await user.getIdToken();
+    const r = await timed(fetch(`${cfg.databaseURL}/expiry/HOLLYWOOD/products.json?shallow=true&auth=${encodeURIComponent(tok)}`), 8000);
+    if (r.ok) {
+      const d = await r.json();
+      const count = d ? Object.keys(d).length : 0;
+      add('ok', `✅ REST fetch (with token): ${count}개 항목`, '경로: expiry/HOLLYWOOD/products');
     } else {
-      add('err', '❌ 사용자 프로필 없음', '/users/' + user.uid + ' 에 데이터 없음. auth.html 로그인이 프로필 생성 못 한 듯.');
+      add('err', `❌ REST fetch ${r.status} ${r.statusText}`, '토큰은 있는데 권한 거절. 규칙 미배포 의심.');
     }
   } catch (e) {
-    add('err', '❌ 프로필 읽기 실패: ' + e.message);
+    add('err', '❌ REST fetch 실패', e.message);
   }
 
-  // Test expiry data for each branch
-  for (const branch of ['MIAMI','HOLLYWOOD','PEMBROKE_PINES','CORAL_SPRINGS','LASOLAS','WEST_PALM']) {
+  // Try SDK get for /users/{uid}
+  try {
+    const snap = await timed(get(ref(db, 'users/' + user.uid)), 8000);
+    if (snap.exists()) {
+      const p = snap.val();
+      add('ok', '✅ /users/{uid} 읽기 OK', `이름: ${p.name||'?'} · 역할: ${p.role||'?'} · 지점: ${p.branch||'?'} · 상태: ${p.status||'?'}`);
+    } else {
+      add('warn', '⚠️ /users/{uid} 비어있음', '인증은 됐는데 사용자 프로필 레코드 없음. auth.html 한 번 더 들어가서 자동 생성 유도.');
+    }
+  } catch (e) {
+    add('err', '❌ SDK /users 읽기 실패', e.message);
+  }
+
+  // Try each branch's expiry data via SDK
+  for (const branch of ['HOLLYWOOD','MIAMI','PEMBROKE_PINES','CORAL_SPRINGS','LASOLAS','WEST_PALM']) {
     try {
-      const snap = await get(ref(db, 'expiry/' + branch + '/products'));
+      const snap = await timed(get(ref(db, 'expiry/' + branch + '/products')), 6000);
       if (snap.exists()) {
-        const prods = snap.val();
-        const count = Object.keys(prods).length;
-        add('ok', `✅ ${branch} expiry: ${count}개 상품 있음`);
+        const count = Object.keys(snap.val()).length;
+        add('ok', `✅ ${branch} expiry: ${count}개 상품`);
       } else {
-        add('info', `· ${branch} expiry: 데이터 없음`);
+        add('info', `· ${branch} expiry: 비어있음`);
       }
     } catch (e) {
-      add('err', `❌ ${branch} expiry 읽기 실패`, e.message);
+      add('err', `❌ ${branch} expiry 실패`, e.message);
     }
   }
 
-  // Test schedule data
-  for (const branch of ['MIAMI','HOLLYWOOD']) {
+  // Schedule
+  for (const branch of ['HOLLYWOOD','MIAMI']) {
     try {
-      const snap = await get(ref(db, 'schedules/' + branch));
+      const snap = await timed(get(ref(db, 'schedules/' + branch)), 6000);
       if (snap.exists()) {
         const d = snap.val();
         const empCount = (d.employees || []).length;
         add('ok', `✅ ${branch} schedules: 직원 ${empCount}명`);
       } else {
-        add('info', `· ${branch} schedules: 데이터 없음`);
+        add('info', `· ${branch} schedules: 비어있음`);
       }
     } catch (e) {
-      add('err', `❌ ${branch} schedules 읽기 실패`, e.message);
+      add('err', `❌ ${branch} schedules 실패`, e.message);
     }
   }
 }
 
-add('info', '진단 끝', '이 화면 캡처해서 보여주세요.');
+add('info', '✓ 진단 끝 — 이 화면 캡처해주세요');
 </script>
 </body>
 </html>
