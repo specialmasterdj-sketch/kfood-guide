@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>김치마트 — 진단</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; padding: 20px; max-width: 700px; margin: 0 auto; background: #fff; }
+  h1 { color: #1a5c3a; margin-bottom: 8px; }
+  .row { padding: 14px 18px; margin: 8px 0; border-radius: 12px; font-size: 1em; }
+  .ok { background: #dcfce7; color: #14532d; }
+  .err { background: #fee2e2; color: #7f1d1d; }
+  .info { background: #f3f4f6; color: #374151; }
+  .label { font-weight: 700; }
+  .meta { font-size: .82em; opacity: .7; margin-top: 4px; }
+  pre { background: #fff; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: .82em; }
+</style>
+</head>
+<body>
+  <h1>🔍 김치마트 매니저앱 진단</h1>
+  <p style="color:#6b7280">시간이 좀 걸려요. 결과 다 나올 때까지 기다려주세요.</p>
+
+  <div id="results"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+const app = initializeApp(cfg);
+const auth = getAuth(app);
+const db = getDatabase(app);
+
+const results = document.getElementById('results');
+function add(kind, label, body) {
+  const div = document.createElement('div');
+  div.className = 'row ' + kind;
+  div.innerHTML = `<div class="label">${label}</div>` + (body ? `<div class="meta">${body}</div>` : '');
+  results.appendChild(div);
+}
+
+// Wait for auth state
+add('info', '⏳ 인증 상태 확인 중...');
+const user = await new Promise(res => {
+  const unsub = onAuthStateChanged(auth, u => { unsub(); res(u); });
+  setTimeout(() => res(null), 5000);
+});
+
+if (!user) {
+  add('err', '❌ 로그인 안 됨', '이 PC/폰에서 Firebase 로그인 필요. auth.html 로 가서 로그인하세요.');
+} else {
+  add('ok', '✅ 로그인 됨', `이메일: ${user.email}<br>UID: ${user.uid}`);
+
+  // Get user profile
+  try {
+    const snap = await get(ref(db, 'users/' + user.uid));
+    if (snap.exists()) {
+      const p = snap.val();
+      add('ok', '✅ 사용자 프로필 있음', `이름: ${p.name || '(없음)'}<br>역할: ${p.role || '(없음)'}<br>지점: ${p.branch || '(없음)'}<br>상태: ${p.status || '(없음)'}`);
+    } else {
+      add('err', '❌ 사용자 프로필 없음', '/users/' + user.uid + ' 에 데이터 없음. auth.html 로그인이 프로필 생성 못 한 듯.');
+    }
+  } catch (e) {
+    add('err', '❌ 프로필 읽기 실패: ' + e.message);
+  }
+
+  // Test expiry data for each branch
+  for (const branch of ['MIAMI','HOLLYWOOD','PEMBROKE_PINES','CORAL_SPRINGS','LASOLAS','WEST_PALM']) {
+    try {
+      const snap = await get(ref(db, 'expiry/' + branch + '/products'));
+      if (snap.exists()) {
+        const prods = snap.val();
+        const count = Object.keys(prods).length;
+        add('ok', `✅ ${branch} expiry: ${count}개 상품 있음`);
+      } else {
+        add('info', `· ${branch} expiry: 데이터 없음`);
+      }
+    } catch (e) {
+      add('err', `❌ ${branch} expiry 읽기 실패`, e.message);
+    }
+  }
+
+  // Test schedule data
+  for (const branch of ['MIAMI','HOLLYWOOD']) {
+    try {
+      const snap = await get(ref(db, 'schedules/' + branch));
+      if (snap.exists()) {
+        const d = snap.val();
+        const empCount = (d.employees || []).length;
+        add('ok', `✅ ${branch} schedules: 직원 ${empCount}명`);
+      } else {
+        add('info', `· ${branch} schedules: 데이터 없음`);
+      }
+    } catch (e) {
+      add('err', `❌ ${branch} schedules 읽기 실패`, e.message);
+    }
+  }
+}
+
+add('info', '진단 끝', '이 화면 캡처해서 보여주세요.');
+</script>
+</body>
+</html>
