@@ -258,6 +258,24 @@ onAuthStateChanged(auth, async (user) => {
       approvedBy: boot ? 'bootstrap' : null,
     };
     try { await set(userRef, profile); } catch(e){ showError('계정 생성 실패: ' + e.message); }
+  } else {
+    // Existing record — if the user is a bootstrap admin (added to the
+    // hardcoded list later, or whose role is missing), upgrade them to
+    // approved on-the-fly so they don't get stuck on "매니저 승인 대기".
+    const existing = snap.val() || {};
+    const boot = bootstrapFor(user.email);
+    if (boot && (existing.status !== 'approved' || !existing.role)) {
+      try {
+        await set(userRef, Object.assign({}, existing, {
+          status: 'approved',
+          role: boot.role,
+          branch: boot.branch,
+          name: existing.name || boot.name,
+          approvedAt: existing.approvedAt || Date.now(),
+          approvedBy: existing.approvedBy || 'bootstrap-upgrade',
+        }));
+      } catch (e) { console.warn('bootstrap-upgrade failed:', e); }
+    }
   }
   // Subscribe so manager approval applies live
   if (__unsub) { try{__unsub();}catch(e){} }
