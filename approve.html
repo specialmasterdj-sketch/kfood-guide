@@ -6,9 +6,10 @@
 <title>김치마트 — 직원 승인</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <script src="./nav-sidebar.js?v=17" defer></script>
 <script src="./back-nav.js?v=1"></script>
-<script type="module" src="./auth-gate.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=2"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;padding-bottom:40px}
@@ -265,10 +266,30 @@ function onAuthReady(profile){
   }
   document.getElementById('mainWrap').style.display = '';
   document.getElementById('noAccess').style.display = 'none';
-  onValue(ref(db, 'users'), (snap) => {
-    USERS = snap.val() || {};
-    render();
-  });
+
+  // REST primary (works regardless of WebSocket health) + SDK best-effort
+  // for live updates. Without this, the page renders empty on networks
+  // where the SDK's WebSocket can't connect.
+  async function loadUsersRest(){
+    try {
+      const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+      const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+      const r = await fetch(cfg.databaseURL + '/users.json' + authQ, { cache:'no-store' });
+      if (r.ok) {
+        USERS = (await r.json()) || {};
+        render();
+      }
+    } catch (_) {}
+  }
+  loadUsersRest();
+  setInterval(loadUsersRest, 30000);
+  // SDK live updates if WebSocket connects:
+  try {
+    onValue(ref(db, 'users'), (snap) => {
+      USERS = snap.val() || {};
+      render();
+    });
+  } catch (_) {}
 }
 
 if (window.__currentUser) onAuthReady(window.__currentUser);
