@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v328';
+const CACHE = 'kmtools-v329';
 
 const CORE = [
   './',
@@ -48,6 +48,16 @@ self.addEventListener('activate', e => {
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then(clients => {
+        // Once the new SW takes over, kick every open page to reload so
+        // they pick up the latest HTML/JS without the user having to do
+        // a hard refresh manually. Stale auth banners and old fetches
+        // disappear on the next paint.
+        for (const c of clients) {
+          try { c.postMessage({ type: 'sw-updated' }); } catch (_) {}
+        }
+      })
   );
 });
 

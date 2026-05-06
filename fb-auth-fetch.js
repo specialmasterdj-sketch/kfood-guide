@@ -55,3 +55,19 @@ window.fetch = async function (input, init) {
 onAuthStateChanged(auth, () => {
   try { window.dispatchEvent(new Event('fb-auth-ready')); } catch (_) {}
 });
+
+// When the service worker activates a new version it posts {type:'sw-updated'}
+// to every open client. Reload the page once so the user sees the new HTML/JS
+// immediately instead of having to close + reopen the PWA. Guarded with a
+// session flag so two SW activations in a row don't loop.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e && e.data && e.data.type === 'sw-updated') {
+      try {
+        if (sessionStorage.getItem('__swReloaded') === '1') return;
+        sessionStorage.setItem('__swReloaded', '1');
+      } catch (_) {}
+      location.reload();
+    }
+  });
+}
