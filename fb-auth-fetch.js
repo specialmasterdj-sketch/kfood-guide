@@ -21,8 +21,22 @@ const cfg = {
 const app = getApps().length ? getApp() : initializeApp(cfg);
 const auth = getAuth(app);
 
+// Wait for the very first auth-state callback before letting any RTDB
+// fetch fire. Without this guard, page-load fetches race the IndexedDB
+// token restore and silently 401 — the user sees an empty page even
+// though they're signed in. The promise resolves on the first
+// onAuthStateChanged tick (with or without a user) so unauthenticated
+// pages aren't blocked indefinitely.
+let __authReadyResolve;
+const __authReady = new Promise(res => { __authReadyResolve = res; });
+let __authResolved = false;
+
 async function getIdToken() {
   try {
+    if (!__authResolved) await Promise.race([
+      __authReady,
+      new Promise(res => setTimeout(res, 3000))   // 3s safety net
+    ]);
     const u = auth.currentUser;
     if (u) return await u.getIdToken();
   } catch (e) {}
@@ -52,7 +66,11 @@ window.fetch = async function (input, init) {
 
 // Pages can listen for this to retry initial fetches once the token
 // has been restored from IndexedDB (auth state isn't ready synchronously).
+// Also flips the __authReady gate so any fetch that started early
+// can stop waiting and use the now-known auth state.
 onAuthStateChanged(auth, () => {
+  __authResolved = true;
+  if (__authReadyResolve) { __authReadyResolve(); __authReadyResolve = null; }
   try { window.dispatchEvent(new Event('fb-auth-ready')); } catch (_) {}
 });
 
