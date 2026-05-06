@@ -1196,8 +1196,22 @@ async function saveMe(){
     } catch(e){}
   }
 
-  // PIN 인증: 매니저급 역할 OR 임원 이름(B.H.K 등) 은 PIN 필수
-  if (requiresPin(role, name)) {
+  // PIN 인증: 매니저급 역할 OR 임원 이름(B.H.K 등) 은 옛날 PIN 시스템.
+  // 이제는 Firebase Auth가 본인 인증을 대신 처리하니, 인증된 사용자
+  // 본인이 이미 그 역할로 승인됐다면 PIN 단계 자체를 건너뜀.
+  // (auth.html이 manager@miamikimchi.com 등 공유 계정도 BOOTSTRAP_ADMINS
+  // 에서 자동 승인 처리. 거기서 통과한 사람이 chat 에서 또 PIN 묻는 건
+  // 이중 인증이라 거슬리고 PIN 잊은 직원이 막힘.)
+  let __fbAuthBypassesPin = false;
+  try {
+    const fbUser = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
+    if (fbUser) {
+      // 같은 origin 의 다른 페이지(auth.html)가 set 해 둔 chat.me 의 role/name 신뢰
+      const stored = JSON.parse(localStorage.getItem('chat.me') || 'null');
+      if (stored && stored.role && stored.isManager) __fbAuthBypassesPin = true;
+    }
+  } catch (_) {}
+  if (!__fbAuthBypassesPin && requiresPin(role, name)) {
     // 입력창이 안 보이는 상태면 한 번 더 표시 후 종료 (사용자가 PIN 입력 가능하도록)
     const row = document.getElementById('mePinRow');
     if (row && row.style.display === 'none') {
