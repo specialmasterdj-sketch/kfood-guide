@@ -1489,15 +1489,23 @@ function render(){
   // 권한은 GLOBAL.owners 등록 그대로 유지 (line 736 에서 OWNER 권한 부여).
   // (이전 코드: groups['OWNER'] 에 GLOBAL.owners prepend → row 표시됨)
 
-  // empty state
+  // empty state — only show "loading" briefly (max 4s) so the UI can't get
+  // stuck on the spinner if Firebase reads keep failing (e.g. 401 from
+  // unauthorized-domain). After that, fall back to the regular empty-state
+  // text or — if we know we're offline — a "Firebase 연결 안됨" hint.
   if (DATA.employees.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
     empty.style.gridColumn = '1 / -1';
-    // While cold-start retries are still running, show "loading" instead of "add employees"
-    empty.textContent = (typeof __coldRetries !== 'undefined' && __coldRetries > 0)
-      ? '⏳ 스케줄을 불러오는 중...'
-      : lt('empty_grid');
+    const earlyLoad = (typeof __coldRetries !== 'undefined' && __coldRetries > 3);
+    if (earlyLoad) {
+      empty.textContent = '⏳ 스케줄을 불러오는 중...';
+    } else if (typeof window.__offlineMode !== 'undefined' && window.__offlineMode) {
+      empty.innerHTML = '⚠️ Firebase 연결 안됨 — 캐시된 데이터 없음. ' +
+        '<br><small style="color:#666">＋ 직원 버튼으로 임시로 추가 가능 (이 PC에만 저장됨)</small>';
+    } else {
+      empty.textContent = lt('empty_grid');
+    }
     grid.appendChild(empty);
   }
 
@@ -2528,6 +2536,24 @@ function applyRemote(remote){
   return false;
 }
 
+// Banner shown when Firebase reads keep returning 401/403 (e.g. user is
+// logged out, GitHub Pages domain not yet authorized in Firebase Console).
+// Exists so the UI is never silently stuck — the user knows it's a known
+// auth problem rather than data loss.
+function showOfflineBanner() {
+  if (document.getElementById('__offlineBanner')) return;
+  const b = document.createElement('div');
+  b.id = '__offlineBanner';
+  b.style.cssText = 'background:#fef3c7;color:#78350f;padding:10px 18px;font-size:13px;font-weight:600;border-bottom:1px solid #fbbf24;display:flex;align-items:center;gap:10px;justify-content:center;line-height:1.4;flex-wrap:wrap';
+  b.innerHTML =
+    '⚠️ Firebase 인증 끊김 — 캐시된 데이터로 보고 있어요. ' +
+    '<small style="font-weight:400;color:#92400e">' +
+    '사장님 폰의 2단계 인증으로 Firebase Console에서 도메인 승인 필요. ' +
+    '(<code>specialmasterdj-sketch.github.io</code> 추가)' +
+    '</small>';
+  document.body.insertBefore(b, document.body.firstChild);
+}
+
 // REST-based fetch — works even if the ES-module Firebase SDK is blocked
 // (corporate proxy, locked-down WebView, file:// origin, etc.)
 async function syncFetchRest(){
@@ -2537,7 +2563,19 @@ async function syncFetchRest(){
   const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
   const authQ = tok ? '&auth=' + encodeURIComponent(tok) : '';
   fetch(FB_DB_URL + '/schedules/' + branch + '.json?t=' + Date.now() + authQ, { cache:'no-store' })
-    .then(r => r.ok ? r.json() : null)
+    .then(r => {
+      if (r.status === 401 || r.status === 403) {
+        // Auth problem — flip to offline mode and re-render once so the empty
+        // state stops showing "loading" forever.
+        if (!window.__offlineMode) {
+          window.__offlineMode = true;
+          showOfflineBanner();
+          render();
+        }
+        return null;
+      }
+      return r.ok ? r.json() : null;
+    })
     .then(remote => {
       if (BRANCH !== branch) return;     // user switched branches mid-fetch
       // If remote has data but local is empty, force-apply even if dedup would skip.
