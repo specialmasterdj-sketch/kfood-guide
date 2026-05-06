@@ -32,6 +32,7 @@
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getDatabase, ref, onValue, set } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
   const firebaseConfig = {
     apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
     authDomain: "kimchi-mart-order.firebaseapp.com",
@@ -42,7 +43,25 @@
     appId: "1:640942647201:web:1e3421fb55c89155230de0"
   };
   const app = initializeApp(firebaseConfig);
-  window.__fb = { db: getDatabase(app), ref, onValue, set };
+  const auth = getAuth(app);
+  // Attach a helper that returns a fresh ID token for the current user.
+  // Firebase rules require auth!=null on /schedules/*, so plain REST fetches
+  // need ?auth=<token> appended. The SDK does this automatically; our
+  // fallback REST path didn't, which is why the schedule looked empty even
+  // when chat (SDK only) was working fine.
+  window.__getAuthToken = async function () {
+    try {
+      const u = auth.currentUser;
+      if (u) return await u.getIdToken();
+    } catch (e) {}
+    return null;
+  };
+  window.__fb = { db: getDatabase(app), ref, onValue, set, auth };
+  // Re-fire fb-ready once we know the auth state — REST fetches that need
+  // a token can wait for this rather than the bare SDK-loaded event.
+  onAuthStateChanged(auth, () => {
+    window.dispatchEvent(new Event('fb-auth-ready'));
+  });
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 <style>
@@ -901,7 +920,11 @@ function populateMeNames(){
   // 다른 지점인데 캐시 비어있으면 Firebase REST 에서 가져와 dropdown 재구성 + 캐시 저장
   if (branchId !== BRANCH && !fromCache && typeof FB_DB_URL === 'string') {
     nsel.innerHTML = '<option value="">불러오는 중…</option>';
-    fetch(FB_DB_URL + '/schedules/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' })
+    (async () => {
+      const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+      const authQ = tok ? '&auth=' + encodeURIComponent(tok) : '';
+      return fetch(FB_DB_URL + '/schedules/' + branchId + '.json?t=' + Date.now() + authQ, { cache:'no-store' });
+    })()
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(d){
         // 사용자가 그 사이 다른 지점 선택했으면 결과 무시
@@ -974,16 +997,20 @@ let GLOBAL = (function(){
   try { return JSON.parse(localStorage.getItem('shifts.global') || '{"owners":[]}'); }
   catch(e){ return {owners:[]}; }
 })();
-function saveGlobal(){
+async function saveGlobal(){
   GLOBAL.lastChangedAt = Date.now();
   localStorage.setItem('shifts.global', JSON.stringify(GLOBAL));
-  fetch(FB_DB_URL + '/schedules/_global.json', {
+  const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+  const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+  fetch(FB_DB_URL + '/schedules/_global.json' + authQ, {
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(GLOBAL)
   }).then(()=>updateSyncDot('synced')).catch(()=>updateSyncDot('offline'));
 }
-function fetchGlobal(){
-  fetch(FB_DB_URL + '/schedules/_global.json?t=' + Date.now(), {cache:'no-store'})
+async function fetchGlobal(){
+  const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+  const authQ = tok ? '&auth=' + encodeURIComponent(tok) : '';
+  fetch(FB_DB_URL + '/schedules/_global.json?t=' + Date.now() + authQ, {cache:'no-store'})
     .then(r => r.ok ? r.json() : null)
     .then(d => {
       if (!d) return;
@@ -2503,10 +2530,13 @@ function applyRemote(remote){
 
 // REST-based fetch — works even if the ES-module Firebase SDK is blocked
 // (corporate proxy, locked-down WebView, file:// origin, etc.)
-function syncFetchRest(){
+async function syncFetchRest(){
   const branch = BRANCH;
-  // Cache-busting query string so PWA WebViews don't hand back a stale response
-  fetch(FB_DB_URL + '/schedules/' + branch + '.json?t=' + Date.now(), { cache:'no-store' })
+  // Cache-busting query string so PWA WebViews don't hand back a stale response.
+  // Append the user's Firebase ID token so RTDB rules (auth != null) accept it.
+  const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+  const authQ = tok ? '&auth=' + encodeURIComponent(tok) : '';
+  fetch(FB_DB_URL + '/schedules/' + branch + '.json?t=' + Date.now() + authQ, { cache:'no-store' })
     .then(r => r.ok ? r.json() : null)
     .then(remote => {
       if (BRANCH !== branch) return;     // user switched branches mid-fetch
@@ -2531,11 +2561,13 @@ function syncFetchRest(){
     })
     .catch(() => updateSyncDot('offline'));
 }
-function syncPushRest(){
+async function syncPushRest(){
   const branch = BRANCH;
   const payload = JSON.parse(JSON.stringify(DATA));
   __lastFbSnapshot = JSON.stringify(payload);
-  fetch(FB_DB_URL + '/schedules/' + branch + '.json', {
+  const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+  const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+  fetch(FB_DB_URL + '/schedules/' + branch + '.json' + authQ, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -2583,6 +2615,15 @@ function syncPushBranch(){
 
 window.addEventListener('fb-ready', () => {
   syncSubscribeBranch();
+});
+
+// Auth tokens take a moment to resolve from IndexedDB on cold start.
+// Re-fetch once auth is ready so the REST path's ?auth=<token> is populated
+// (otherwise the first fetch fires without a token and silently returns
+// "Permission denied", leaving the UI empty).
+window.addEventListener('fb-auth-ready', () => {
+  syncFetchRest();
+  fetchGlobal();
 });
 
 // If the SDK never loaded after 2.5s, kick off REST sync anyway.
