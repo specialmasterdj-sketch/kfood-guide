@@ -2565,17 +2565,21 @@ async function syncFetchRest(){
   fetch(FB_DB_URL + '/schedules/' + branch + '.json?t=' + Date.now() + authQ, { cache:'no-store' })
     .then(r => {
       if (r.status === 401 || r.status === 403) {
-        // Auth problem — flip to offline mode and re-render once so the empty
-        // state stops showing "loading" forever.
-        if (!window.__offlineMode) {
+        // Cold-start auth lag often causes one or two 401s before the
+        // token finishes loading from IndexedDB — don't show the banner
+        // on the very first failure. Count failures, only flip to
+        // offline mode after 3 consecutive auth errors. fb-auth-ready
+        // listener below will retry once the token is available.
+        window.__authFailCount = (window.__authFailCount || 0) + 1;
+        if (window.__authFailCount >= 3 && !window.__offlineMode) {
           window.__offlineMode = true;
           showOfflineBanner();
           render();
         }
         return null;
       }
-      // Fetch succeeded — clear any stale "offline" banner from a previous
-      // 401 (e.g. first cold-start fetch fired before the auth token loaded).
+      // Fetch succeeded — clear failure counter + any stale banner.
+      window.__authFailCount = 0;
       if (window.__offlineMode) {
         window.__offlineMode = false;
         const b = document.getElementById('__offlineBanner');
