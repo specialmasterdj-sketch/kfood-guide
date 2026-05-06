@@ -58,6 +58,18 @@ h1{font-size:1.4em;font-weight:800;color:#1a5c3a;text-align:center;margin-bottom
       <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="">
       <span id="googleBtnText">Google 계정으로 로그인</span>
     </button>
+    <div style="display:flex;align-items:center;gap:10px;margin:14px 0;color:#9ca3af;font-size:.82em">
+      <span style="flex:1;height:1px;background:#e5e7eb"></span>
+      <span id="orLabel">또는</span>
+      <span style="flex:1;height:1px;background:#e5e7eb"></span>
+    </div>
+    <input id="emEmail" type="email" placeholder="manager@miamikimchi.com" autocomplete="email"
+      style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:8px;box-sizing:border-box">
+    <input id="emPwd" type="password" placeholder="비밀번호 / Password" autocomplete="current-password"
+      style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:10px;box-sizing:border-box">
+    <button class="gbtn" id="emBtn" onclick="doEmailSignIn()" style="background:#1a5c3a;color:#fff;border-color:#1a5c3a;justify-content:center">
+      <span id="emBtnText">이메일로 로그인</span>
+    </button>
     <div class="error" id="err"></div>
     <div class="note" id="firstHint">
       <b id="firstHintTitle">처음 사용?</b><br>
@@ -86,7 +98,7 @@ h1{font-size:1.4em;font-weight:800;color:#1a5c3a;text-align:center;margin-bottom
 
 <script type="module">
 import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { getDatabase, ref, get, set, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 
 const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
@@ -168,6 +180,23 @@ function renderProfile(){
 }
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
+window.doEmailSignIn = async function(){
+  const email = (document.getElementById('emEmail').value || '').trim();
+  const pwd = document.getElementById('emPwd').value || '';
+  if (!email || !pwd) { showError('이메일과 비밀번호를 입력하세요.'); return; }
+  const btn = document.getElementById('emBtn');
+  btn.disabled = true;
+  show('loadingView');
+  try {
+    await signInWithEmailAndPassword(auth, email, pwd);
+    // onAuthStateChanged below takes over from here
+  } catch (e) {
+    btn.disabled = false;
+    show('signinView');
+    showError(t('signinErr') + (e.code || e.message || 'unknown'));
+  }
+};
+
 window.doGoogleSignIn = async function(){
   const btn = document.getElementById('googleBtn');
   btn.disabled = true;
@@ -235,6 +264,22 @@ onAuthStateChanged(auth, async (user) => {
   __unsub = onValue(userRef, (snap2) => {
     __currentProfile = snap2.val();
     if (!__currentProfile) return;
+    // Sync chat.me so other pages' sidebar gates pick up the role
+    // (manager-only links, payroll access, etc) without a separate
+    // "Select Your Name" step. Branch defaults to MIAMI when '*'.
+    try {
+      const branch = (__currentProfile.branch && __currentProfile.branch !== '*')
+        ? __currentProfile.branch
+        : (localStorage.getItem('hub.branch') || 'MIAMI');
+      const chatMe = {
+        name: __currentProfile.name || user.displayName || user.email.split('@')[0],
+        branch,
+        role: __currentProfile.role || '',
+        isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER'].includes(String(__currentProfile.role || '').toUpperCase())
+      };
+      localStorage.setItem('chat.me', JSON.stringify(chatMe));
+      try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_) {}
+    } catch(_) {}
     show('statusView');
     renderProfile();
     // Auto-enter as soon as approved (covers both initial bootstrap and live approval)
