@@ -123,6 +123,24 @@ function watchProfile(user){
         approvedBy: boot ? 'bootstrap' : null,
       };
       try { await set(r, profile); } catch(e){ console.warn('create user record failed', e); }
+    } else {
+      // Existing record — if email is in BOOTSTRAP_ADMINS but the record
+      // is still pending or missing role/branch (e.g. created before the
+      // bootstrap entry was added), upgrade it in place. Without this,
+      // pages like approve.html that gate on profile.role keep rejecting.
+      const boot = bootstrapFor(user.email);
+      if (boot && (profile.status !== 'approved' || !profile.role || !profile.branch)) {
+        const upgraded = Object.assign({}, profile, {
+          status: 'approved',
+          role: profile.role || boot.role,
+          branch: profile.branch || boot.branch,
+          name: profile.name || boot.name,
+          approvedAt: profile.approvedAt || Date.now(),
+          approvedBy: profile.approvedBy || 'bootstrap-upgrade',
+        });
+        try { await set(r, upgraded); profile = upgraded; }
+        catch(e){ console.warn('bootstrap-upgrade failed', e); }
+      }
     }
     profile.uid = user.uid;
     if (profile.status === 'approved') {
