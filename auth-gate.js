@@ -82,11 +82,17 @@ function syncToChatMe(profile){
   if (!profile) return;
   try {
     const existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
+    // Preserve a personal name set via 'Select Your Name' on shared
+    // accounts — otherwise every login overwrites it with the generic
+    // profile name ('Staff' / 'Manager'), making chat posts unattributable.
+    const isSharedProfileName = profile.name === 'Staff' || profile.name === 'Manager';
+    const personalName = existing.name && !['Staff','Manager'].includes(existing.name) ? existing.name : null;
+    const finalName = (isSharedProfileName && personalName) ? personalName : (profile.name || existing.name);
     const next = {
       ...existing,
       uid: profile.uid,
       email: profile.email,
-      name: profile.name || existing.name,
+      name: finalName,
       role: profile.role || existing.role,
       branch: profile.branch === '*' ? (existing.branch || 'HOLLYWOOD') : (profile.branch || existing.branch),
       photoURL: profile.photoURL || existing.photoURL,

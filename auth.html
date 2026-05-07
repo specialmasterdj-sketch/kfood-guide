@@ -285,16 +285,35 @@ onAuthStateChanged(auth, async (user) => {
     // Sync chat.me so other pages' sidebar gates pick up the role
     // (manager-only links, payroll access, etc) without a separate
     // "Select Your Name" step. Branch defaults to MIAMI when '*'.
+    //
+    // PRESERVE PERSONAL NAME: shared accounts (staff@/manager@) have a
+    // generic profile name like "Staff" or "Manager". If a staff member
+    // has already set their real name via the "Select Your Name" dialog,
+    // don't overwrite it on every login — chat messages would all show
+    // as "Staff" otherwise. Same for branch when the staff is at a
+    // specific store but the shared profile says branch:'*'.
     try {
-      const branch = (__currentProfile.branch && __currentProfile.branch !== '*')
+      const existing = (() => { try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_) { return null; } })();
+      const profileName = __currentProfile.name || user.displayName || user.email.split('@')[0];
+      const isSharedAccount = (user.email === 'staff@miamikimchi.com' || user.email === 'manager@miamikimchi.com');
+      // If user has an existing personal chat.me name and is on a shared
+      // account, keep their personal name. Otherwise use the profile name.
+      const name = (isSharedAccount && existing && existing.name && existing.name !== 'Staff' && existing.name !== 'Manager')
+        ? existing.name
+        : profileName;
+      const profileBranch = (__currentProfile.branch && __currentProfile.branch !== '*')
         ? __currentProfile.branch
-        : (localStorage.getItem('hub.branch') || 'MIAMI');
-      const chatMe = {
-        name: __currentProfile.name || user.displayName || user.email.split('@')[0],
+        : null;
+      const branch = profileBranch
+        || (existing && existing.branch)
+        || localStorage.getItem('hub.branch')
+        || 'MIAMI';
+      const chatMe = Object.assign({}, existing || {}, {
+        name,
         branch,
-        role: __currentProfile.role || '',
+        role: __currentProfile.role || (existing && existing.role) || '',
         isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER'].includes(String(__currentProfile.role || '').toUpperCase())
-      };
+      });
       localStorage.setItem('chat.me', JSON.stringify(chatMe));
       try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_) {}
     } catch(_) {}
