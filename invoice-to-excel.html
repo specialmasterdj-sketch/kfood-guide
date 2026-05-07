@@ -1570,7 +1570,12 @@ async function extractImage(file, onProgress){
 
   let items = bestItems;
 
-  // --- BONUS: coord-based parser on best PSM output — keep whichever wins ---
+  // --- Coord-based parser via parseByVendor ---
+  // For multi-column invoices like Wismettac/Nishimoto, the X-coordinate
+  // clustering parser is far more accurate than the line-based fallback —
+  // line-based regex picks numbers in OCR-output order which scrambles
+  // QTY / Price / Total / EA columns. Prefer the vendor-specific parser
+  // when one is explicitly selected or auto-detected.
   try {
     const allItems = [];
     if(data.lines && data.lines.length){
@@ -1587,7 +1592,19 @@ async function extractImage(file, onProgress){
     if(allItems.length){
       const altRows = clusterRows(allItems);
       const altItems = parseByVendor(altRows);
-      if(altItems.length > items.length) items = altItems;
+
+      // Prefer coord-based result when:
+      //   (1) it returned ANY rows AND the user explicitly picked a vendor, OR
+      //   (2) auto-mode and it found more rows than the line-based fallback.
+      // The explicit-vendor case overrides count comparison because line-based
+      // can wrongly produce MORE rows by treating header/footer text as data
+      // (with garbage QTY/price columns).
+      const explicitVendor = currentVendor && currentVendor !== 'auto'
+                             && VENDORS_PARSER[currentVendor];
+      const preferAlt = explicitVendor
+        ? altItems.length >= 1
+        : altItems.length > items.length;
+      if (preferAlt) items = altItems;
     }
   } catch(e) { /* ignore — fall back to primary */ }
 
