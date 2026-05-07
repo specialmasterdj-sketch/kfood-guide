@@ -1604,10 +1604,13 @@ async function extractImage(file, onProgress){
  *   CG)Tempura Udon Noodle 10/15.02oz       8801759020750
  */
 function parseImageText(data){
-  // Item code: 1-4 letter-ish prefix + 3-6 digits + optional trailing letter.
-  // The trailing letter handles variants like "CS1102E", "KD1073A".
+  // Item code: two formats supported.
+  //   Seoul Trading: 1-4 letter prefix + 3-6 digits + optional trailing letter
+  //                  ("CS1102E", "KD1073A", "EC5265")
+  //   Wismettac:     4-6 digits + REQUIRED trailing letter
+  //                  ("01044F", "12345A") — distinguishes from prices/barcodes
   // OCR-confused 0/1/5/8 inside the letter prefix are normalised in normIC.
-  const IC      = /(?:^|[^A-Z0-9])([A-Z][A-Z0158]{0,3}\d{3,6}[A-Z]?)(?=[^A-Z0-9]|$)/;
+  const IC      = /(?:^|[^A-Z0-9])(\d{4,6}[A-Z]|[A-Z][A-Z0158]{0,3}\d{3,6}[A-Z]?)(?=[^A-Z0-9]|$)/;
   const PRICE   = /\b\d{1,5}[.,]\d{2}\b/g;
   const BARCODE = /\b\d{10,14}\b/;
 
@@ -1630,7 +1633,9 @@ function parseImageText(data){
 
   // Correct common OCR confusions inside an item code's letter prefix.
   // Ex: "L83003" → "LB3003", "E05265" → "EO5265" (then OCR may have meant "EC").
+  // Wismettac codes (digits-first, e.g. "01044F") need no normalisation.
   const normIC = raw => {
+    if(/^\d{4,6}[A-Z]$/.test(raw)) return raw;          // Wismettac: leave as-is
     const m = raw.match(/^([A-Z][A-Z0158]{0,3})(\d{3,6})([A-Z]?)$/);
     if(!m) return raw;
     const prefix = m[1]
@@ -1642,7 +1647,9 @@ function parseImageText(data){
   const buildPrimary = (icRaw, primaryText, priceNums) => {
     const ic = normIC(icRaw);
 
-    const qum = primaryText.match(/\b(\d{1,3})\s*(C\s*S|EA|BX|PK|CASE)\b/i);
+    // QTY can be integer ("1 CS") for Seoul Trading or decimal ("1.00 CS") for Wismettac.
+    // Capture the integer part only — fractional cases are non-existent in this data.
+    const qum = primaryText.match(/\b(\d{1,3})(?:\.\d+)?\s*(C\s*S|EA|BX|PK|CASE)\b/i);
     const qty  = qum ? qum[1] : '';
     const unit = qum ? qum[2].replace(/\s+/g,'').toUpperCase() : '';
 
