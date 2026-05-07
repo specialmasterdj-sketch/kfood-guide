@@ -1447,8 +1447,17 @@ window.openDmPicker = async function(){
     const emps = (await empRes.json()) || [];
     const owners = (await ownRes.json()) || [];
     const meKey = normName(me?.name || '');
-    const all = [...owners.map(o=>({name:o?.name, role:o?.role||'OWNER'})), ...emps.map(e=>({name:e?.name, role:e?.role||''}))]
+    const raw = [...owners.map(o=>({name:o?.name, role:o?.role||'OWNER'})), ...emps.map(e=>({name:e?.name, role:e?.role||''}))]
       .filter(x => x.name && normName(x.name) !== meKey);
+    // OWNER/EXECUTIVE 에게 DM 가능 여부: 본인이 매니저급 이상이어야 함
+    const iAmManager = me && isManagerRole(me.role);
+    const all = raw.filter(x => {
+      const tr = (x.role||'').toUpperCase();
+      const isTarget_owner = /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(tr);
+      const isTarget_exec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === (x.name||'').replace(/\s+/g,'').toUpperCase());
+      if ((isTarget_owner || isTarget_exec) && !iAmManager) return false;
+      return true;
+    });
     // 중복 제거
     const seen = new Set();
     const unique = all.filter(x => { const k = normName(x.name); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -1466,6 +1475,19 @@ window.startDmFromPicker = function(){
   const otherName = (inp?.value || sel?.value || '').trim();
   if (!otherName) { alert('상대를 선택하거나 이름을 입력하세요'); return; }
   if (normName(otherName) === normName(me?.name || '')) { alert('본인과는 1:1 시작 불가'); return; }
+  // OWNER/EXECUTIVE 에게 DM: 매니저급 이상만 가능
+  if (!isManagerRole(me?.role)) {
+    const otherUpper = (otherName||'').replace(/\s+/g,'').toUpperCase();
+    const isTargetExec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherUpper);
+    // 스케줄에서 상대 역할 확인
+    const selOpt = document.getElementById('dmEmpSelect')?.selectedOptions?.[0];
+    const selText = selOpt ? selOpt.textContent : '';
+    const isTargetOwner = /OWNER|BOSS|오너|사장|대표/i.test(selText);
+    if (isTargetExec || isTargetOwner) {
+      const msg = ({ko:'이 분에게는 매니저급 이상만 1:1 메시지를 보낼 수 있습니다.',en:'Only managers and above can send DMs to this person.',es:'Solo gerentes+ pueden enviar mensajes directos a esta persona.'})[LANG]||'';
+      alert(msg); return;
+    }
+  }
   const id = mkDmRoomId(me.name, otherName);
   if (!id) { alert('이름이 잘못됐습니다'); return; }
   // 룸 메타 저장 (private + members)
