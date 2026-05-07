@@ -1316,17 +1316,28 @@ function renderRooms(){
     }
     return;
   }
-  // 평가(Evaluation) 방을 별도 섹션으로 모음 — 매장 직원이 자주 쓰는 동일 카테고리
-  // 이름에 'eval/평가/evaluation' 매치 OR 명시 ID 목록 매치
+  // Work Hub 방 — 지점별 고정 순서
+  const WORKHUB_ORDER = ['lasolas','hollywood_work_hub','miami_work_hub','pembroke_pines_work_hub','coral_springs_work_hub'];
+  function isWorkHub(id, r){
+    if (WORKHUB_ORDER.includes(id)) return true;
+    const nm = roomLocalName(id, r) + ' ' + (r.name||'') + ' ' + id;
+    return /work.?hub/i.test(nm);
+  }
+  // 평가(Evaluation) 방을 별도 섹션으로 모음
   const EVAL_EXTRA_IDS = ['closing'];
   function isEvalRoom(id, r){
     if (EVAL_EXTRA_IDS.includes(id)) return true;
     const nm = roomLocalName(id, r) + ' ' + (r.name||'') + ' ' + id;
     return /eval|평가|evaluation/i.test(nm);
   }
-  const evalItems = items.filter(([id, r]) => isEvalRoom(id, r));
+  const hubItems = items.filter(([id, r]) => isWorkHub(id, r));
+  hubItems.sort((a, b) => {
+    const ai = WORKHUB_ORDER.indexOf(a[0]), bi = WORKHUB_ORDER.indexOf(b[0]);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+  const evalItems = items.filter(([id, r]) => isEvalRoom(id, r) && !isWorkHub(id, r));
   const dmItems = items.filter(([id, r]) => id.startsWith('dm__'));
-  const otherItems = items.filter(([id, r]) => !isEvalRoom(id, r) && !id.startsWith('dm__'));
+  const otherItems = items.filter(([id, r]) => !isEvalRoom(id, r) && !id.startsWith('dm__') && !isWorkHub(id, r));
   function renderRoomItem([id, r]){
     const active = id === ACTIVE_ROOM ? ' active' : '';
     const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
@@ -1342,7 +1353,12 @@ function renderRooms(){
       ${unread}
     </div>`;
   }
-  let html = otherItems.map(renderRoomItem).join('');
+  let html = '';
+  if (hubItems.length > 0) {
+    const hubLabel = ({ko:'🏪 지점 Work Hub', en:'🏪 Store Work Hub', es:'🏪 Hub de Tienda'}[LANG] || '🏪 지점 Work Hub');
+    html += `<div class="rooms-section-hd" style="background:#f0fdf4;color:#15803d;border-top-color:#16a34a;border-bottom-color:#bbf7d0">${hubLabel}</div>` + hubItems.map(renderRoomItem).join('');
+  }
+  html += otherItems.map(renderRoomItem).join('');
   if (evalItems.length > 0) {
     const evalLabel = ({ko:'📊 평가 (Evaluation)', en:'📊 Evaluation', es:'📊 Evaluación'}[LANG] || '📊 평가');
     html += `<div class="rooms-section-hd">${evalLabel}</div>` + evalItems.map(renderRoomItem).join('');
