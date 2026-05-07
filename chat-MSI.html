@@ -535,7 +535,7 @@ a{color:inherit;text-decoration:none}
   <div class="modal" style="max-width:480px">
     <h3 data-t="hr_modal_title">📨 HR 인사·급여 건의</h3>
     <p style="font-size:.86em;color:#6b7280;margin-bottom:14px;line-height:1.45">
-      <b style="color:#374151" data-t="hr_who">HR 매니저와 외부 관계자</b><span data-t="hr_only_read">만 열람 가능합니다.</span><br>
+      <b style="color:#374151" data-t="hr_who">OWNER 두 분 · 전무 · HR 매니저</b><span data-t="hr_only_read">만 열람 가능합니다.</span><br>
       <span data-t="hr_anon_note">익명 옵션 선택 시 이름이 표시되지 않습니다 (지점만 표시).</span>
     </p>
     <div class="field-row">
@@ -806,7 +806,7 @@ const DEFAULT_ROOMS = [
   { id:'sushi',         name:{ko:'스시 평가',               en:'Sushi Evaluation Room',       es:'Sala de Evaluación de Sushi'},desc:{ko:'스시 / 키친 평가',           en:'Sushi / Kitchen evaluation',  es:'Evaluación de sushi / cocina'}, icon:'🍱' },
   { id:'expired',       name:{ko:'유통기한/파손',           en:'Expired-Damaged',             es:'Vencidos y Dañados'},         desc:{ko:'유통기한/파손 보고',         en:'Expiry & damage report',      es:'Reporte de vencidos/dañados'}, icon:'⚠️' },
   { id:'supply_req',    name:{ko:'비품 요청',               en:'Supply Request',              es:'Solicitud de Insumos'},       desc:{ko:'비품·소모품 요청',           en:'Supply & consumable requests', es:'Solicitud de suministros'}, icon:'🧺' },
-  { id:'hr_inquiries',  name:{ko:'HR 인사·급여 건의',       en:'HR Inquiries',                es:'Consultas de RH'},            desc:{ko:'HR 매니저와 외부 관계자만 열람 (누구나 제출)', en:'HR Manager and external HR partner only — anyone submits', es:'Solo Gerente de RH y socio externo de RH'}, icon:'📋', executiveOnly:true },
+  { id:'hr_inquiries',  name:{ko:'HR 인사·급여 건의',       en:'HR Inquiries',                es:'Consultas de RH'},            desc:{ko:'OWNER · 전무 · HR 매니저만 열람 (누구나 제출)', en:'OWNER · Exec · HR Manager only — anyone submits', es:'Solo OWNER · Ejecutivo · Gerente RH'}, icon:'📋', executiveOnly:true },
 ];
 function roomLocalName(id, r){
   // DM 룸: 본인이 아닌 상대 이름을 표시 (members 에서 추출)
@@ -1316,34 +1316,17 @@ function renderRooms(){
     }
     return;
   }
-  // Work Hub 방 — 지점별 고정 순서
-  const WORKHUB_ORDER = ['lasolas','hollywood_work_hub','miami_work_hub','pembroke_pines_work_hub','coral_springs_work_hub'];
-  function isWorkHub(id, r){
-    if (WORKHUB_ORDER.includes(id)) return true;
-    const nm = roomLocalName(id, r) + ' ' + (r.name||'') + ' ' + id;
-    return /work.?hub/i.test(nm);
-  }
-  // 평가(Evaluation) 방을 별도 섹션으로 모음
+  // 평가(Evaluation) 방을 별도 섹션으로 모음 — 매장 직원이 자주 쓰는 동일 카테고리
+  // 이름에 'eval/평가/evaluation' 매치 OR 명시 ID 목록 매치
   const EVAL_EXTRA_IDS = ['closing'];
   function isEvalRoom(id, r){
     if (EVAL_EXTRA_IDS.includes(id)) return true;
     const nm = roomLocalName(id, r) + ' ' + (r.name||'') + ' ' + id;
     return /eval|평가|evaluation/i.test(nm);
   }
-  // 평가 방 고정 순서
-  const EVAL_ORDER = ['closing','grocery_eval','meat_evalution_room','seafood_evalution_room','produce','kfood_eval','sushi'];
-  // 일반 방 고정 순서
-  const OTHER_ORDER = ['managers','expired','need_overstock','supply_req','general','hr_inquiries','payroll','kimchi_mart_app_lab'];
-  function sortByFixed(arr, order){
-    return arr.sort((a, b) => {
-      const ai = order.indexOf(a[0]), bi = order.indexOf(b[0]);
-      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-    });
-  }
-  const hubItems = sortByFixed(items.filter(([id, r]) => isWorkHub(id, r)), WORKHUB_ORDER);
-  const evalItems = sortByFixed(items.filter(([id, r]) => isEvalRoom(id, r) && !isWorkHub(id, r)), EVAL_ORDER);
+  const evalItems = items.filter(([id, r]) => isEvalRoom(id, r));
   const dmItems = items.filter(([id, r]) => id.startsWith('dm__'));
-  const otherItems = sortByFixed(items.filter(([id, r]) => !isEvalRoom(id, r) && !id.startsWith('dm__') && !isWorkHub(id, r)), OTHER_ORDER);
+  const otherItems = items.filter(([id, r]) => !isEvalRoom(id, r) && !id.startsWith('dm__'));
   function renderRoomItem([id, r]){
     const active = id === ACTIVE_ROOM ? ' active' : '';
     const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
@@ -1360,10 +1343,6 @@ function renderRooms(){
     </div>`;
   }
   let html = otherItems.map(renderRoomItem).join('');
-  if (hubItems.length > 0) {
-    const hubLabel = ({ko:'🏪 지점 Work Hub', en:'🏪 Store Work Hub', es:'🏪 Hub de Tienda'}[LANG] || '🏪 지점 Work Hub');
-    html += `<div class="rooms-section-hd" style="background:#f0fdf4;color:#15803d;border-top-color:#16a34a;border-bottom-color:#bbf7d0">${hubLabel}</div>` + hubItems.map(renderRoomItem).join('');
-  }
   if (evalItems.length > 0) {
     const evalLabel = ({ko:'📊 평가 (Evaluation)', en:'📊 Evaluation', es:'📊 Evaluación'}[LANG] || '📊 평가');
     html += `<div class="rooms-section-hd">${evalLabel}</div>` + evalItems.map(renderRoomItem).join('');
@@ -1446,17 +1425,8 @@ window.openDmPicker = async function(){
     const emps = (await empRes.json()) || [];
     const owners = (await ownRes.json()) || [];
     const meKey = normName(me?.name || '');
-    const raw = [...owners.map(o=>({name:o?.name, role:o?.role||'OWNER'})), ...emps.map(e=>({name:e?.name, role:e?.role||''}))]
+    const all = [...owners.map(o=>({name:o?.name, role:o?.role||'OWNER'})), ...emps.map(e=>({name:e?.name, role:e?.role||''}))]
       .filter(x => x.name && normName(x.name) !== meKey);
-    // OWNER/EXECUTIVE 에게 DM 가능 여부: 본인이 매니저급 이상이어야 함
-    const iAmManager = me && isManagerRole(me.role);
-    const all = raw.filter(x => {
-      const tr = (x.role||'').toUpperCase();
-      const isTarget_owner = /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(tr);
-      const isTarget_exec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === (x.name||'').replace(/\s+/g,'').toUpperCase());
-      if ((isTarget_owner || isTarget_exec) && !iAmManager) return false;
-      return true;
-    });
     // 중복 제거
     const seen = new Set();
     const unique = all.filter(x => { const k = normName(x.name); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -1474,19 +1444,6 @@ window.startDmFromPicker = function(){
   const otherName = (inp?.value || sel?.value || '').trim();
   if (!otherName) { alert('상대를 선택하거나 이름을 입력하세요'); return; }
   if (normName(otherName) === normName(me?.name || '')) { alert('본인과는 1:1 시작 불가'); return; }
-  // OWNER/EXECUTIVE 에게 DM: 매니저급 이상만 가능
-  if (!isManagerRole(me?.role)) {
-    const otherUpper = (otherName||'').replace(/\s+/g,'').toUpperCase();
-    const isTargetExec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherUpper);
-    // 스케줄에서 상대 역할 확인
-    const selOpt = document.getElementById('dmEmpSelect')?.selectedOptions?.[0];
-    const selText = selOpt ? selOpt.textContent : '';
-    const isTargetOwner = /OWNER|BOSS|오너|사장|대표/i.test(selText);
-    if (isTargetExec || isTargetOwner) {
-      const msg = ({ko:'이 분에게는 매니저급 이상만 1:1 메시지를 보낼 수 있습니다.',en:'Only managers and above can send DMs to this person.',es:'Solo gerentes+ pueden enviar mensajes directos a esta persona.'})[LANG]||'';
-      alert(msg); return;
-    }
-  }
   const id = mkDmRoomId(me.name, otherName);
   if (!id) { alert('이름이 잘못됐습니다'); return; }
   // 룸 메타 저장 (private + members)
@@ -1541,7 +1498,7 @@ function openRoom(id){
     }
   } else if (id === 'hr_inquiries') {
     if (!canAccessHRRoom()){
-      const m = ({ko:'이 방은 HR 매니저와 외부 관계자만 열람 가능합니다.', en:'Only HR Manager and external HR partner can read.', es:'Solo Gerente de RH y socio externo de RH pueden leer.'})[LANG] || '';
+      const m = ({ko:'이 방은 OWNER · 전무 · HR 매니저만 열람 가능합니다.', en:'Only OWNER · Executive · HR Manager can read.', es:'Solo OWNER · Ejecutivo · Gerente de RH pueden leer.'})[LANG] || '';
       alert(m);
       return;
     }

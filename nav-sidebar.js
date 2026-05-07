@@ -220,6 +220,26 @@
       html += `<a href="${it.href}"${tgt}${hl}${clsAttr}${badgeAttr}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
     }
     aside.innerHTML = html;
+    // Click pre-clears unread badges so users don't see stale counts even
+    // when the destination page fails to mark-as-seen (network glitch,
+    // localStorage quota, etc). The destination page's own logic still
+    // runs as the canonical 'seen' marker.
+    aside.querySelectorAll('a[data-badge-key]').forEach(a => {
+      a.addEventListener('click', () => {
+        const key = a.getAttribute('data-badge-key');
+        try {
+          if (key === 'updates') {
+            localStorage.setItem('updates.lastSeenTs', String(Date.now()));
+            window.dispatchEvent(new Event('km-updates-seen'));
+          } else if (key === 'chat') {
+            // chat lastVisit per-room is updated when user enters each
+            // room — at the sidebar level we just hide the badge.
+            setBadge('chat', 0);
+          }
+        } catch (_) {}
+        setBadge(key, 0);
+      });
+    });
   }
   renderInner();
 
