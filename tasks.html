@@ -778,7 +778,13 @@ button{font-family:inherit;cursor:pointer}
         <option value="마트 밖">마트 밖</option>
         <option value="__custom__">✏️ 직접 입력…</option>
       </select>
-      <input type="text" id="aDisplayPlaceCustom" placeholder="장소 직접 입력 (예: 백룸 입구)" style="display:none;margin-top:6px">
+      <input type="text" id="aDisplayPlaceCustom" placeholder="장소 직접 입력 (예: 앤디 캡, 백룸 입구)" style="display:none;margin-top:6px">
+      <!-- "이 장소 저장" 체크박스 — 직접 입력했을 때만 보임. 체크하면
+           이 지점의 장소 목록에 추가돼 다음엔 드롭다운에 노출. -->
+      <label id="aDisplayPlaceSaveLabel" style="display:none;margin-top:6px;align-items:center;gap:6px;font-size:.84em;color:#0e7490;cursor:pointer">
+        <input type="checkbox" id="aDisplayPlaceSave" style="width:16px;height:16px;accent-color:#0891b2">
+        <span>💾 이 장소 다음에도 쓸 수 있게 저장 (지점 공유)</span>
+      </label>
     </div>
     <div class="field" id="cashierStagesField" style="display:none">
       <label id="stagesLabel">🛒 캐셔 4교대 시간</label>
@@ -1332,17 +1338,22 @@ function isDisplayCategoryActive(){
   const checked = document.querySelectorAll('.task-pick:checked');
   return Array.from(checked).some(cb => cb.dataset.cat === '진열');
 }
-// 장소 select 토글 — "__custom__" 선택 시 직접 입력 박스 노출
+// 장소 select 토글 — "__custom__" 선택 시 직접 입력 박스 + 저장 체크박스 노출
 function onDisplayPlaceChange(){
   const sel = document.getElementById('aDisplayPlace');
   const custom = document.getElementById('aDisplayPlaceCustom');
+  const saveLbl = document.getElementById('aDisplayPlaceSaveLabel');
   if (!sel || !custom) return;
   if (sel.value === '__custom__') {
     custom.style.display = '';
     custom.focus();
+    if (saveLbl) saveLbl.style.display = 'flex';
   } else {
     custom.style.display = 'none';
     custom.value = '';
+    if (saveLbl) saveLbl.style.display = 'none';
+    const cb = document.getElementById('aDisplayPlaceSave');
+    if (cb) cb.checked = false;
   }
 }
 window.onDisplayPlaceChange = onDisplayPlaceChange;
@@ -1355,6 +1366,47 @@ function getDisplayPlaceValue(){
     return (custom?.value || '').trim();
   }
   return sel.value;
+}
+
+// 지점별 커스텀 장소 목록 — RTDB /taskPlaces/{branch}/[names…] 에 저장.
+// 매니저가 "직접 입력 + 저장" 체크하면 다음 업무 등록 시 드롭다운에 자동 노출.
+async function loadCustomPlaces(){
+  if (!me || !me.branch) return;
+  try {
+    const r = await fetch(`${FB_DB_URL}/taskPlaces/${me.branch}.json?t=`+Date.now(), { cache:'no-store' });
+    if (!r.ok) return;
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return;
+    const sel = document.getElementById('aDisplayPlace');
+    if (!sel) return;
+    // 기존에 같은 장소가 이미 있으면 스킵 (하드코딩 옵션 + 이전 로드 결과)
+    const existing = new Set(Array.from(sel.options).map(o => o.value));
+    // "✏️ 직접 입력…" option 위에 삽입
+    const customOpt = sel.querySelector('option[value="__custom__"]');
+    list.filter(name => name && !existing.has(name)).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      if (customOpt) sel.insertBefore(opt, customOpt);
+      else sel.appendChild(opt);
+    });
+  } catch(e){ console.warn('[loadCustomPlaces]', e); }
+}
+async function saveCustomPlace(name){
+  if (!name || !me || !me.branch) return;
+  try {
+    // Read existing list, append unique, write back. Race with another
+    // manager adding at the same moment is acceptable — the dedupe
+    // happens on next read-and-render anyway.
+    const r = await fetch(`${FB_DB_URL}/taskPlaces/${me.branch}.json`, { cache:'no-store' });
+    let list = [];
+    if (r.ok) { const d = await r.json(); if (Array.isArray(d)) list = d; }
+    if (!list.includes(name)) list.push(name);
+    await fetch(`${FB_DB_URL}/taskPlaces/${me.branch}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(list)
+    });
+  } catch(e){ console.warn('[saveCustomPlace]', e); }
 }
 function onChecklistToggle(){
   const cb = document.getElementById('aChecklist');
@@ -3248,6 +3300,8 @@ async function openAssignModal(){
       });
     }
   } catch(e){}
+  // 지점별 커스텀 장소 (앤디 캡 등 매니저가 추가한 항목) 드롭다운에 주입
+  try { await loadCustomPlaces(); } catch(_){}
   document.getElementById('assignOv').classList.add('show');
 }
 // ⚡ 특별 지시 모드 — 카테고리/체크리스트 우회, 사진+메모만 빠른 발송
@@ -3368,6 +3422,15 @@ async function sendAssign(){
   if (place && !name.startsWith('[' + place + ']')) {
     name = '[' + place + '] ' + name;
   }
+  // "직접 입력" 한 장소를 다음에도 쓸 수 있게 저장 (매니저가 체크박스 체크 시).
+  // RTDB /taskPlaces/{branch} 에 중복 없이 추가 → 다음 모달 열 때 드롭다운에 자동 노출.
+  try {
+    const sel = document.getElementById('aDisplayPlace');
+    const saveCb = document.getElementById('aDisplayPlaceSave');
+    if (sel && sel.value === '__custom__' && saveCb && saveCb.checked && place) {
+      saveCustomPlace(place);
+    }
+  } catch(_){}
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
   // Translate name + note into ko/en/es so any employee sees it in their language
