@@ -2162,6 +2162,37 @@ let unsub = null;
 let SEEN_IDS = new Set();   // task ids already known — used to detect new arrivals
 let SEEN_INIT = false;       // skip notifications on first snapshot (initial load)
 
+// 정육 일일 보고 체크리스트 템플릿 — auto-create + migration 둘 다 사용.
+const _MEAT_TPL_2026 = [
+  { name: '🐂 BEEF 작업한 종류·수량 (사진+메모)',     done: false,
+    nameTr: { ko:'🐂 BEEF 작업한 종류·수량 (사진+메모)', en:'🐂 BEEF — types & qty worked (photo + memo)', es:'🐂 BEEF — tipos y cantidad trabajados (foto + memo)' } },
+  { name: '🐖 PORK 작업한 종류·수량 (사진+메모)',     done: false,
+    nameTr: { ko:'🐖 PORK 작업한 종류·수량 (사진+메모)', en:'🐖 PORK — types & qty worked (photo + memo)', es:'🐖 PORK — tipos y cantidad trabajados (foto + memo)' } },
+  { name: '🐔 CHICKEN 작업한 종류·수량 (사진+메모)',   done: false,
+    nameTr: { ko:'🐔 CHICKEN 작업한 종류·수량 (사진+메모)', en:'🐔 CHICKEN — types & qty worked (photo + memo)', es:'🐔 CHICKEN — tipos y cantidad trabajados (foto + memo)' } },
+  { name: '🍱 마리네이드/양념 작업 (사진+메모)',       done: false,
+    nameTr: { ko:'🍱 마리네이드/양념 작업 (사진+메모)', en:'🍱 Marinated / seasoned items (photo + memo)', es:'🍱 Marinado / condimentado (foto + memo)' } },
+  { name: '🥗 기타 작업한 종류·수량 (사진+메모)',      done: false,
+    nameTr: { ko:'🥗 기타 작업한 종류·수량 (사진+메모)', en:'🥗 Other items worked (photo + memo)', es:'🥗 Otros artículos trabajados (foto + memo)' } },
+  { name: '🧹 정육 매대·작업대·기계 청소 (사진)',      done: false,
+    nameTr: { ko:'🧹 정육 매대·작업대·기계 청소 (사진)', en:'🧹 Meat case / counter / equipment cleaning (photo)', es:'🧹 Limpieza de vitrina / mesa / equipo (foto)' } },
+];
+// 마이그레이션 시 기존 항목의 done/photos/memo 데이터를 새 템플릿(name+nameTr)
+// 위에 얹어서 → 직원의 진행 데이터는 보존하면서 라벨/번역만 갱신.
+function _mergeClItem(oldItem, newTpl){
+  if (!oldItem) return Object.assign({}, newTpl);
+  return Object.assign({}, newTpl, {
+    done:   !!oldItem.done,
+    doneAt: oldItem.doneAt || null,
+    doneBy: oldItem.doneBy || null,
+    photo:  oldItem.photo || null,
+    photos: Array.isArray(oldItem.photos) ? oldItem.photos : null,
+    memo:   oldItem.memo || null,
+    memoBy: oldItem.memoBy || null,
+    memoAt: oldItem.memoAt || null,
+  });
+}
+
 // 🥩 정육 일일 작업 보고 — 매일 자동 생성. 첫 매니저(또는 오너)가 페이지
 // 열면 그 지점의 오늘 task 가 없을 때 push 한다. ID 고정 (auto_meat_daily)
 // 으로 중복 생성 방지 — 두 매니저가 동시에 열어도 두 번째 PUT 은 진행
@@ -2179,18 +2210,33 @@ async function ensureMeatDailyTask(branchId){
       if (u) { const tok = await u.getIdToken(); if (tok) authQ = '?auth=' + encodeURIComponent(tok); }
     } catch(_){}
     const r = await fetch(restUrl + (authQ ? authQ : ''), { cache: 'no-store' });
-    if (r.ok) {
-      const data = await r.json();
-      if (data) return;   // 오늘 이미 생성됨 → 스킵
+    let existing = null;
+    if (r.ok) existing = await r.json();
+    // 기존 5-item 체크리스트 → 6-item (기타 추가) 마이그레이션
+    // 직원의 done/memo/photos 데이터는 그대로 보존하면서 nameTr 만 갱신.
+    if (existing && Array.isArray(existing.checklist) && existing.checklist.length < 6) {
+      const cl = existing.checklist;
+      // BEEF / PORK / CHICKEN / Marinated 순서 유지, 기타 신규 삽입, Cleaning 마지막
+      const newCl = [
+        _mergeClItem(cl[0], _MEAT_TPL_2026[0]),
+        _mergeClItem(cl[1], _MEAT_TPL_2026[1]),
+        _mergeClItem(cl[2], _MEAT_TPL_2026[2]),
+        _mergeClItem(cl[3], _MEAT_TPL_2026[3]),
+        _MEAT_TPL_2026[4],                        // 기타 — 신규
+        _mergeClItem(cl[4], _MEAT_TPL_2026[5]),
+      ];
+      await fetch(restUrl + (authQ ? authQ : ''), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checklist: newCl })
+      });
+      console.info('[ensureMeatDailyTask] migrated 5→6 items for', branchId);
+      return;
     }
-    // 2) Build the 5-item checklist for meat dept
-    const checklist = [
-      { name: '🐂 BEEF 작업한 종류·수량 (사진+메모)',     done: false },
-      { name: '🐖 PORK 작업한 종류·수량 (사진+메모)',     done: false },
-      { name: '🐔 CHICKEN 작업한 종류·수량 (사진+메모)',   done: false },
-      { name: '🍱 마리네이드/양념 작업 (사진+메모)',       done: false },
-      { name: '🧹 정육 매대·작업대·기계 청소 (사진)',      done: false },
-    ];
+    if (existing) return;   // 이미 6개 — 그대로 두고 스킵
+    // 2) Build the 6-item checklist for meat dept (BEEF/PORK/CHICKEN/
+    //    Marinated/Other/Cleaning) using shared _MEAT_TPL_2026.
+    const checklist = _MEAT_TPL_2026.map(t => Object.assign({}, t));
     const payload = {
       name: '🥩 정육 일일 작업 보고',
       nameTr: { ko:'🥩 정육 일일 작업 보고', en:'🥩 Daily Meat Department Report', es:'🥩 Reporte Diario de Carnicería' },
@@ -2619,10 +2665,17 @@ window.saveChecklistMemo = saveChecklistMemo;
 
 function renderChecklistInline(task){
   if (!task.checklist || !Array.isArray(task.checklist) || task.checklist.length === 0) return '';
+  // 우선 c.nameTr 가 있으면 그걸 사용 (auto-meat-daily 같이 미리 번역된 항목).
+  // 없으면 백그라운드 translate API 로 채워서 다음 렌더에 반영.
   if (LANG !== 'ko') {
     let needRerender = false;
     Promise.all(task.checklist.map(async (c) => {
       if (!c || !c.name) return;
+      // c.nameTr 에 현재 LANG 값이 있으면 즉시 사용 — translate 우회
+      if (c.nameTr && (c.nameTr[LANG] || c.nameTr.en)) {
+        c._displayName = c.nameTr[LANG] || c.nameTr.en;
+        return;
+      }
       const cached = TR_CACHE.get(LANG + '|' + c.name);
       if (cached) { c._displayName = cached; }
       else {
