@@ -93,9 +93,11 @@ function syncToChatMe(profile){
       uid: profile.uid,
       email: profile.email,
       name: finalName,
+      status: profile.status || existing.status,
       role: profile.role || existing.role,
       branch: profile.branch === '*' ? (existing.branch || 'HOLLYWOOD') : (profile.branch || existing.branch),
       photoURL: profile.photoURL || existing.photoURL,
+      isManager: !!profile.role && ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(profile.role),
       authProvider: 'google',
     };
     localStorage.setItem('chat.me', JSON.stringify(next));
