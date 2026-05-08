@@ -3709,6 +3709,11 @@ function renderMgr(){
       </td></tr>`
       : '';
     const safeName = (dispName||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    // 매니저 보정 메뉴 — 직원이 사진 못 올리거나 시스템 오류로 완료 처리
+    // 안 됐을 때 매니저가 직접 수정. 매니저+ 권한자에게만 노출.
+    const adminBtn = (isManager(me?.role) || isOwner())
+      ? `<button onclick="adminTaskMenu('${t.id}','${t.branchId}','${safeName}',event)" title="매니저 보정" style="background:#fff;border:1px solid #e5e7eb;color:#0369a1;border-radius:6px;padding:2px 6px;font-size:.85em;cursor:pointer;margin-left:4px;vertical-align:middle">⚙</button>`
+      : '';
     const delBtn = `<button onclick="deleteTask('${t.id}','${t.branchId}','${safeName}',event)" title="삭제" style="background:#fff;border:1px solid #e5e7eb;color:#9ca3af;border-radius:6px;padding:2px 6px;font-size:.85em;cursor:pointer;margin-left:6px;vertical-align:middle">🗑</button>`;
     const placePill = t.place ? `<span style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:700;margin-left:4px;vertical-align:middle">📍 ${escHtml(t.place)}</span>` : '';
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
@@ -3717,7 +3722,7 @@ function renderMgr(){
       <td><span style="font-size:.85em;${t._status==='delayed'?'color:#dc2626;font-weight:700':''}">${t.deadline||'-'}</span></td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
       <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
-      <td>${photos || '<span style="color:#d1d5db">-</span>'}${delBtn}</td>
+      <td>${photos || '<span style="color:#d1d5db">-</span>'}${adminBtn}${delBtn}</td>
     </tr>${detailRows}`;
   }).join('');
 }
@@ -3733,6 +3738,143 @@ async function deleteTask(taskId, branchId, name, ev){
   } catch(e){ console.warn(e); alert('삭제 실패: '+e.message); return; }
 }
 window.deleteTask = deleteTask;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 매니저 보정 메뉴 — 직원이 사진 못 올리거나 폰 문제로 완료 처리 못 했을
+// 때 매니저가 직접 고친다. 모든 변경은 completedByAdmin 같은 흔적이 남아
+// 누가 고쳤는지 기록됨.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function adminTaskMenu(taskId, branchId, name, ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (!isManager(me?.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
+  if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
+  // 텍스트 메뉴 — 모달 새로 만들지 않고 prompt 로 빠르게.
+  const opts = [
+    '1: ✅ 완료 처리 (담당자 지정)',
+    '2: 👤 담당자 변경',
+    '3: ⏰ 데드라인 변경',
+    '4: 📋 같은 업무 복제 (재발송)',
+    '5: ↩️  완료 취소 (다시 진행 중으로)',
+    '0: 닫기'
+  ];
+  const choice = prompt(
+    `⚙ 매니저 보정 — ${name}\n\n` +
+    `현재: ${t.completedAt ? '✅ 완료 (' + (t.completedBy||'?') + ')' : (t.startedBy ? '⏳ ' + t.startedBy + ' 진행 중' : '⬜ 미시작')}\n\n` +
+    opts.join('\n') + '\n\n번호 입력:'
+  );
+  if (!choice || choice.trim() === '0') return;
+  try {
+    if (choice.trim() === '1') return adminMarkComplete(t);
+    if (choice.trim() === '2') return adminReassign(t);
+    if (choice.trim() === '3') return adminChangeDeadline(t);
+    if (choice.trim() === '4') return adminDuplicate(t);
+    if (choice.trim() === '5') return adminUncomplete(t);
+  } catch(e) { alert('보정 실패: ' + (e.message || e)); }
+}
+window.adminTaskMenu = adminTaskMenu;
+
+// 1) 완료 처리 — 직원 이름 받고 completedAt/completedBy 채움.
+//    completedByAdmin 에 매니저 이름 박아 누가 보정했는지 흔적 남김.
+async function adminMarkComplete(t){
+  const employees = await loadBranchEmployeeNames(t.branchId);
+  const list = employees.length ? '\n\n[지점 직원]\n• ' + employees.join('\n• ') : '';
+  const who = prompt('✅ 완료 처리 — 누가 한 일로 기록할까요?\n(직원 이름 입력)' + list, t.startedBy || '');
+  if (!who || !who.trim()) return;
+  const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+    completedAt: Date.now(),
+    completedBy: who.trim(),
+    completedByAdmin: me.name + ' (보정)',
+    startedAt: t.startedAt || Date.now() - 60000,
+    startedBy: t.startedBy || who.trim()
+  });
+  alert('✅ ' + who + ' 완료 처리됨.\n활동 순위에 +1.0 점 반영.');
+}
+
+// 2) 담당자 변경
+async function adminReassign(t){
+  const employees = await loadBranchEmployeeNames(t.branchId);
+  const list = employees.length ? '\n\n[지점 직원]\n• ' + employees.join('\n• ') + '\n• * (전체)' : '';
+  const newAssignee = prompt('👤 담당자 변경 — 새 담당자 이름' + list, t.assignedTo === '*' ? '' : (t.assignedTo || ''));
+  if (newAssignee == null) return;
+  const v = newAssignee.trim() || '*';
+  const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+    assignedTo: v,
+    assignedToId: v === '*' ? null : v,
+    reassignedBy: me.name,
+    reassignedAt: Date.now()
+  });
+  alert('👤 담당자: ' + (v === '*' ? '전체' : v) + ' 로 변경됨.');
+}
+
+// 3) 데드라인 변경
+async function adminChangeDeadline(t){
+  const newDl = prompt('⏰ 데드라인 (HH:MM 형식)', t.deadline || '18:00');
+  if (!newDl || !/^\d{1,2}:\d{2}$/.test(newDl.trim())) {
+    if (newDl != null) alert('형식 오류 — 예: 11:00');
+    return;
+  }
+  const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+    deadline: newDl.trim(),
+    deadlineChangedBy: me.name,
+    deadlineChangedAt: Date.now()
+  });
+  alert('⏰ 데드라인: ' + newDl + ' 로 변경됨.');
+}
+
+// 4) 같은 업무 복제 (재발송)
+async function adminDuplicate(t){
+  const newAssignee = prompt('📋 복제 — 새 담당자 (현재: ' + (t.assignedTo === '*' ? '전체' : t.assignedTo) + ')', t.assignedTo || '*');
+  if (newAssignee == null) return;
+  const dupe = {
+    name: t.name,
+    nameTr: t.nameTr || null,
+    deadline: t.deadline || '18:00',
+    category: t.category || '기타',
+    place: t.place || null,
+    requirePhoto: !!t.requirePhoto,
+    locationNote: t.locationNote || null,
+    locationNoteTr: t.locationNoteTr || null,
+    locationPhotos: Array.isArray(t.locationPhotos) ? t.locationPhotos : null,
+    assignedTo: newAssignee.trim() || '*',
+    assignedToId: (newAssignee.trim() && newAssignee.trim() !== '*') ? newAssignee.trim() : null,
+    from: me.name + ' (재발송)',
+    fromRole: me.role || 'MANAGER',
+    createdAt: Date.now(),
+    duplicatedFrom: t.id
+  };
+  const path = 'tasks/'+t.branchId+'/'+todayStr();
+  const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
+  await window.__fb.set(r, dupe);
+  alert('📋 복제 완료 — ' + (newAssignee || '전체') + ' 에게 새 업무 발송.');
+}
+
+// 5) 완료 취소 — 잘못 완료 처리한 거 되돌리기
+async function adminUncomplete(t){
+  if (!t.completedAt) { alert('이 업무는 아직 완료 처리 안 됐습니다.'); return; }
+  if (!confirm('↩️ 완료 취소하시겠습니까?\n\n' + t.name + '\n현재 완료: ' + (t.completedBy||'?'))) return;
+  const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+    completedAt: null,
+    completedBy: null,
+    uncompletedBy: me.name,
+    uncompletedAt: Date.now()
+  });
+  alert('↩️ 완료 취소됨 — 다시 진행 중 상태로 돌아감.');
+}
+
+// 지점 직원 명단 로드 (스케줄에서) — 보정 메뉴에서 이름 추천용
+async function loadBranchEmployeeNames(branchId){
+  try {
+    const r = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d?.employees) ? d.employees.map(e => e.name).filter(Boolean) : [];
+  } catch(e) { return []; }
+}
 function toggleMgrRowDetail(key){
   const row = document.querySelector(`tr.cl-detail[data-task="${key}"]`);
   if (!row) return;
