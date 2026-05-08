@@ -720,6 +720,12 @@ button{cursor:pointer}
       </button>
     </div>
     <div class="detail-section-lbl"><span id="detSectAdmin">기록 관리</span> <span class="info-ic" title="" id="detSectAdminTip">?</span></div>
+    <!-- Cross-post the photo + product info into the shared
+         '유통기한/파손' chat room so other branches can see it
+         and managers can credit who's working hardest. -->
+    <div class="detail-bot-actions" style="margin-bottom:8px">
+      <button class="close-btn" id="detailBtnShareChat" onclick="shareToExpiredChat()" style="background:#0369a1;color:#fff;font-weight:700">📤 채팅에 공유 (전 지점)</button>
+    </div>
     <div class="detail-bot-actions">
       <button class="close-btn" onclick="closeOv('detailOv')" id="detailBtnClose">닫기</button>
       <button class="del-btn" onclick="detailDelete()" id="detailBtnDelete">🗑 삭제 (등록 실수)</button>
@@ -1736,6 +1742,119 @@ function detailMark(kind){
   closeOv('detailOv');
   markStatus(id, kind);
 }
+
+// Cross-post the currently-open expiry record into the shared
+// '유통기한/파손' chat room (id='expired' in chat.html DEFAULT_ROOMS).
+// Reuses the photo URL stored on the record — no re-upload needed
+// since both apps write to the same Firebase Storage bucket.
+async function shareToExpiredChat(){
+  if (!__DETAIL_ID) return;
+  // Find the product from local list or all-branch report cache
+  let p = (PRODUCTS || []).find(x => x.id === __DETAIL_ID);
+  if (!p && typeof __ALL_BRANCH_DATA !== 'undefined' && __ALL_BRANCH_DATA){
+    for (const arr of Object.values(__ALL_BRANCH_DATA)){
+      const f = (arr||[]).find(x => x.id === __DETAIL_ID);
+      if (f) { p = f; break; }
+    }
+  }
+  if (!p) { alert('상품 정보를 찾을 수 없습니다.'); return; }
+
+  // Identity from chat.me localStorage (same store both apps use).
+  // me-persist.js mirrors this to cookies/IDB so iOS Safari ITP doesn't
+  // wipe the name across 7-day gaps.
+  let me = null;
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
+  if (!me || !me.name){
+    alert('먼저 ☰ 메뉴 → 채팅 들어가서 본인 이름을 등록하세요.');
+    return;
+  }
+
+  // Compose message text: status emoji + product name + expiry + qty + branch
+  const statusIc = p.status === 'discarded' ? '❌ 폐기'
+                 : p.status === 'discounted' ? '⚠️ 할인'
+                 : '📦 등록';
+  const branchObj = (typeof BRANCHES !== 'undefined') ? BRANCHES.find(b => b.id === BRANCH) : null;
+  const branchLbl = branchObj ? (branchObj.ko || branchObj[LANG] || BRANCH) : BRANCH;
+  const lines = [
+    `${statusIc} · ${p.name || '(이름 없음)'}`,
+    `유통기한: ${p.expiry || '—'} · 수량: ${(p.qty != null ? p.qty : 1)}개`,
+    `🏢 ${branchLbl} · 등록: ${p.addedBy || me.name}`
+  ];
+  if ((p.cost || p.price) && (p.qty || 1) > 0){
+    const loss = (p.cost || p.price || 0) * (p.qty || 1);
+    lines.push(`예상 손실: $${loss.toFixed(2)}`);
+  }
+  const text = lines.join('\n');
+
+  // Idempotency guard — same record shared twice in a row would
+  // double-spam the room. Track shares in localStorage by record id.
+  const sharedKey = 'expiry-shared-ids';
+  let sharedIds = [];
+  try { sharedIds = JSON.parse(localStorage.getItem(sharedKey) || '[]'); } catch(_){}
+  if (sharedIds.includes(__DETAIL_ID)){
+    if (!confirm('이 항목은 이미 채팅에 공유된 적 있습니다. 다시 공유할까요?')) return;
+  }
+
+  const btn = document.getElementById('detailBtnShareChat');
+  if (btn){ btn.disabled = true; btn.textContent = '공유 중…'; }
+
+  try {
+    // Auth token if Firebase SDK loaded — REST writes for the chat
+    // room may need auth depending on rules.
+    let authQ = '';
+    try {
+      const auth = window.__fb && window.__fb.auth;
+      const u = auth && auth.currentUser;
+      if (u){
+        const tok = await u.getIdToken();
+        if (tok) authQ = '?auth=' + encodeURIComponent(tok);
+      }
+    } catch(_){}
+
+    const ts = Date.now();
+    const msgId = 'm' + ts + Math.floor(Math.random()*900);
+    const msg = {
+      sender: me.name,
+      senderBranch: me.branch || BRANCH,
+      senderRole: me.role || '',
+      isManager: !!me.isManager,
+      color: me.color || '#1a5c3a',
+      text,
+      ts,
+      photos: p.photo ? [p.photo] : []
+    };
+
+    // 1) Write the message
+    const r1 = await fetch(`${FB_DB_URL}/chat/messages/expired/${msgId}.json${authQ}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg)
+    });
+    if (!r1.ok) throw new Error('메시지 저장 실패: HTTP ' + r1.status);
+
+    // 2) Update room preview (lastMsg / lastTs / lastSender) so the
+    //    sidebar shows a fresh badge for everyone in other branches.
+    const lastMsg = `${statusIc} · ${p.name || ''}`;
+    await fetch(`${FB_DB_URL}/chat/rooms/expired.json${authQ}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lastMsg, lastTs: ts, lastSender: me.name })
+    }).catch(()=>{});   // PATCH failure is non-fatal — the message itself was saved
+
+    // Remember what we already shared
+    sharedIds.push(__DETAIL_ID);
+    if (sharedIds.length > 200) sharedIds = sharedIds.slice(-200);
+    try { localStorage.setItem(sharedKey, JSON.stringify(sharedIds)); } catch(_){}
+
+    alert('✅ 유통기한/파손 채팅방에 공유되었습니다.\n다른 지점에서도 확인 가능합니다.');
+  } catch(e){
+    console.error('[shareToExpiredChat]', e);
+    alert('공유 실패: ' + (e.message || e));
+  } finally {
+    if (btn){ btn.disabled = false; btn.textContent = '📤 채팅에 공유 (전 지점)'; }
+  }
+}
+window.shareToExpiredChat = shareToExpiredChat;
 async function detailDelete(){
   if (!__DETAIL_ID) return;
   if (!confirm(t('detDeleteConfirm'))) return;
