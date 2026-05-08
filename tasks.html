@@ -1363,9 +1363,11 @@ function onChecklistToggle(){
   const items = checklistItemsFor(cat);
   const cntEl = document.getElementById('aChecklistCount');
   if (cntEl) cntEl.textContent = items.length ? `(${items.length}개 항목)` : '';
-  // 진열 카테고리에서만 장소 선택 필드 노출 (드롭다운 진열 OR 멀티체크 진열 항목)
+  // 장소 선택 필드는 모든 카테고리에서 노출 — 매니저가 어디서 일할지
+  // 정확히 지정해 보내면 직원도 헷갈리지 않고, 카드/매니저 뷰/채팅 어디서든
+  // 같은 [장소] 라벨이 함께 표시됨.
   const placeField = document.getElementById('displayPlaceField');
-  if (placeField) placeField.style.display = isDisplayCategoryActive() ? '' : 'none';
+  if (placeField) placeField.style.display = '';
   const stagesField = document.getElementById('cashierStagesField');
   if (cb && cb.checked) {
     const name = (cat==='기타' ? '일일 체크리스트' : cat + ' 일일 체크리스트');
@@ -2421,6 +2423,7 @@ function renderTaskCard(t){
     </div>
     <div class="task-meta">
       ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}</span>`:''}
+      ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(t.place)}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
       ${t.from?`<span class="from">👤 ${escHtml(t.from)}</span>`:''}
       ${t.category?`<span>· ${escHtml(localizeCat(t.category))}</span>`:''}
@@ -2872,8 +2875,9 @@ async function postCompletionToChat(task, photoUrls, memoText){
     `✅ 업무 완료 — ${taskName}`,
     `🏢 ${branchLbl} · 담당: ${me.name}`,
   ];
+  if (task.place) lines.push(`📍 장소: ${task.place}`);
   if (task.deadline) lines.push(`⏰ 데드라인: ${task.deadline}`);
-  if (task.locationNote) lines.push(`📍 지시: ${task.locationNote}`);
+  if (task.locationNote) lines.push(`📝 지시: ${task.locationNote}`);
   if (memoText) lines.push(`📝 보고: ${memoText}`);
   const text = lines.join('\n');
   const msg = {
@@ -3088,9 +3092,10 @@ function renderMgr(){
       : '';
     const safeName = (dispName||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
     const delBtn = `<button onclick="deleteTask('${t.id}','${t.branchId}','${safeName}',event)" title="삭제" style="background:#fff;border:1px solid #e5e7eb;color:#9ca3af;border-radius:6px;padding:2px 6px;font-size:.85em;cursor:pointer;margin-left:6px;vertical-align:middle">🗑</button>`;
+    const placePill = t.place ? `<span style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:700;margin-left:4px;vertical-align:middle">📍 ${escHtml(t.place)}</span>` : '';
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
       <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
-      <td><div style="font-weight:600">${escHtml(dispName)}</div>${memo}${clBadge}</td>
+      <td><div style="font-weight:600">${escHtml(dispName)}${placePill}</div>${memo}${clBadge}</td>
       <td><span style="font-size:.85em;${t._status==='delayed'?'color:#dc2626;font-weight:700':''}">${t.deadline||'-'}</span></td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
       <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
@@ -3315,6 +3320,7 @@ async function sendAssign(){
       deadline: null,
       category: '특별 지시',
       requirePhoto: true,
+      place: null,                                              // quick-mode: no place picker
       locationPhotos: photoUrls && photoUrls.length ? photoUrls : null,
       locationNote: noteText || null,
       assignedTo: to,
@@ -3355,13 +3361,12 @@ async function sendAssign(){
   }
   if (!name && !STAGE_MODE_CATS.includes(cat)) { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
   if (!to && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
-  // 진열 활성 시(드롭다운 진열 OR 멀티체크 진열 항목) 장소 선택값을 업무명 앞에 [장소] prefix
-  const displayActive = (cat === '진열') || pickedItems.some(it => it.cat === '진열');
-  if (displayActive) {
-    const place = getDisplayPlaceValue();
-    if (place && !name.startsWith('[' + place + ']')) {
-      name = '[' + place + '] ' + name;
-    }
+  // 장소가 선택돼 있으면 카테고리 무관하게 업무명 앞에 [장소] prefix 를 붙이고
+  // task.place 필드로도 저장해 카드·매니저 뷰·채팅 자동 공유에서 같은
+  // 라벨로 노출되게 한다.
+  const place = getDisplayPlaceValue();
+  if (place && !name.startsWith('[' + place + ']')) {
+    name = '[' + place + '] ' + name;
   }
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
@@ -3404,6 +3409,7 @@ async function sendAssign(){
           deadline: stageTo,        // due by end-of-shift
           category: cat,
           requirePhoto: photo,
+          place: place || null,
           locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
           locationNote: window.LOC_NOTE || null,
           assignedTo: stageAssignee,
@@ -3444,6 +3450,12 @@ async function sendAssign(){
     noteTr: noteTr || null,
     checklist: checklist,
     stageDeadlines: stageDeadlines || null,
+    // 장소 + 매니저 첨부 사진/메모 — 모든 카테고리에서 함께 저장.
+    // 이전엔 stage-mode 와 quick-mode 에서만 저장돼서 일반 카테고리
+    // (유통기한, 청결, 진열 단일 등)에선 매니저가 사진 올려도 사라졌음.
+    place: place || null,
+    locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
+    locationNote: window.LOC_NOTE || null,
   });
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   // Optionally save this task name as a reusable template for the user's branch
