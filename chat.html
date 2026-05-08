@@ -1978,8 +1978,11 @@ function openExpModal(msgId){
   if (!m) return;
   const meta = m.meta || _legacyMeta(m);
   const photos = m.photos || [];
+  // 메타 데이터가 비어있으면 (유통기한 앱 통하지 않고 채팅에 직접 올린 글)
+  // 구조화된 행을 보여줘 봐야 '—' 만 잔뜩 → 깨끗하게 행을 숨기는 쪽이 낫다.
+  const hasStructuredMeta = !!(meta.expiry || meta.qty > 1 || (meta.loss > 0) || meta.barcode || meta.kind === 'expiry');
   const dd = _expDDay(meta.expiry);
-  const ddTxt = dd === Infinity ? '—'
+  const ddTxt = dd === Infinity ? ''
               : dd < 0 ? `D+${Math.abs(dd)} (${Math.abs(dd)}일 지남)`
               : dd === 0 ? 'D-0 (오늘 만료)'
               : `D-${dd} (${dd}일 남음)`;
@@ -1988,15 +1991,40 @@ function openExpModal(msgId){
                   : meta.status === 'discounted' ? '⚠️ 할인 처리'
                   : '📦 정상 등록';
   const branchObj = BRANCH_BY_ID[m.senderBranch];
-  const branchTxt = branchObj ? (branchObj[LANG] || branchObj.ko) : (meta.branchLabel || meta.branch || '—');
+  const branchTxt = branchObj ? (branchObj[LANG] || branchObj.ko) : (meta.branchLabel || meta.branch || '');
   const dt = new Date(m.ts || 0);
   const dtLbl = dt.toLocaleString(LANG === 'ko' ? 'ko-KR' : 'en-US', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
-  const lossLine = (meta.loss > 0)
-    ? `<div class="row"><span class="lbl">예상 손실</span><span class="val danger">$${(+meta.loss).toFixed(2)}</span></div>`
-    : '';
-  const barcodeLine = meta.barcode
-    ? `<div class="row"><span class="lbl">바코드</span><span class="val" style="font-family:monospace;font-size:.86em">${escapeHtml(meta.barcode)}</span></div>`
-    : '';
+
+  // 행은 데이터가 있을 때만 렌더 — '—' 빈 칸 잔뜩 보이는 거 방지.
+  const rows = [];
+  if (hasStructuredMeta) {
+    rows.push(`<div class="row"><span class="lbl">상태</span><span class="val">${statusLbl}</span></div>`);
+  }
+  if (meta.expiry) {
+    rows.push(`<div class="row"><span class="lbl">유통기한</span><span class="${ddVal}">${escapeHtml(meta.expiry)}${ddTxt ? ' · ' + ddTxt : ''}</span></div>`);
+  }
+  if (meta.qty != null && meta.qty !== '') {
+    rows.push(`<div class="row"><span class="lbl">수량</span><span class="val">${escapeHtml(String(meta.qty))}개</span></div>`);
+  }
+  if (meta.loss > 0) {
+    rows.push(`<div class="row"><span class="lbl">예상 손실</span><span class="val danger">$${(+meta.loss).toFixed(2)}</span></div>`);
+  }
+  if (meta.barcode) {
+    rows.push(`<div class="row"><span class="lbl">바코드</span><span class="val" style="font-family:monospace;font-size:.86em">${escapeHtml(meta.barcode)}</span></div>`);
+  }
+  if (branchTxt) {
+    rows.push(`<div class="row"><span class="lbl">지점</span><span class="val">🏢 ${escapeHtml(branchTxt)}</span></div>`);
+  }
+  rows.push(`<div class="row"><span class="lbl">등록자</span><span class="val">${escapeHtml(meta.addedBy || m.sender || '—')}</span></div>`);
+  rows.push(`<div class="row"><span class="lbl">공유 시각</span><span class="val">${escapeHtml(dtLbl)}</span></div>`);
+
+  // 채팅 본문 텍스트 (구조화 안 된 자유글) 도 같이 노출 — 단순 사진 게시 글에서
+  // 유용한 메모나 제목이 사라지지 않게.
+  let extraText = '';
+  if (!hasStructuredMeta && m.text) {
+    extraText = `<div class="row" style="display:block"><span class="lbl">메모</span><div class="val" style="margin-top:4px;white-space:pre-wrap;color:#1f2937">${escapeHtml(String(m.text))}</div></div>`;
+  }
+
   // First photo big at top; remaining as small thumbnails to allow
   // clicking through if there are extras.
   const phEl = photos[0]
@@ -2004,16 +2032,13 @@ function openExpModal(msgId){
        <button class="close" onclick="closeExpModal()">×</button>`
     : `<div style="padding:60px 20px;text-align:center;color:#fff;background:#374151">📷 사진 없음<button class="close" onclick="closeExpModal()" style="position:absolute;top:12px;right:12px">×</button></div>`;
   document.getElementById('expModalPh').innerHTML = phEl;
+  // 제목은 productName 우선, 없으면 메시지 첫 줄, 그것도 없으면 기본값
+  const titleEmoji = meta.status === 'discarded' ? '❌' : meta.status === 'discounted' ? '⚠️' : '📦';
+  const title = meta.productName || (m.text || '').split('\n')[0] || '(이름 없음)';
   document.getElementById('expModalInfo').innerHTML = `
-    <h3>${meta.status === 'discarded' ? '❌' : meta.status === 'discounted' ? '⚠️' : '📦'} ${escapeHtml(meta.productName || '(이름 없음)')}</h3>
-    <div class="row"><span class="lbl">상태</span><span class="val">${statusLbl}</span></div>
-    <div class="row"><span class="lbl">유통기한</span><span class="${ddVal}">${escapeHtml(meta.expiry || '—')} · ${ddTxt}</span></div>
-    <div class="row"><span class="lbl">수량</span><span class="val">${meta.qty || 1}개</span></div>
-    ${lossLine}
-    ${barcodeLine}
-    <div class="row"><span class="lbl">지점</span><span class="val">🏢 ${escapeHtml(branchTxt)}</span></div>
-    <div class="row"><span class="lbl">등록자</span><span class="val">${escapeHtml(meta.addedBy || m.sender || '—')}</span></div>
-    <div class="row"><span class="lbl">공유 시각</span><span class="val">${escapeHtml(dtLbl)}</span></div>
+    <h3>${titleEmoji} ${escapeHtml(title)}</h3>
+    ${rows.join('')}
+    ${extraText}
   `;
   document.getElementById('expModal').classList.add('show');
 }
