@@ -2199,8 +2199,15 @@ function _mergeClItem(oldItem, newTpl){
 // 데이터 덮어쓰기 막기 위해 GET 으로 먼저 존재 확인.
 async function ensureMeatDailyTask(branchId){
   if (!window.__fb || !branchId) return;
+  // 정육 작업은 사용자별 — 같은 지점 안에서도 본인 폰에만 자기 task 가
+  // 보이고 다른 직원 폰에는 자기 task 만. 같은 사람 여러 폰 (예: 본인 폰
+  // + 매장 공용 폰) 사이에서는 동기화 (같은 chat.me name 이면 같은 ID).
+  // me 가 아직 안 잡힌 상태면 스킵 → 이후 chat.me storage 이벤트로 다시
+  // 호출됨.
+  if (!me || !me.name) return;
   const today = todayStr();
-  const taskId = 'auto_meat_daily';
+  const userKey = slug(me.name) || 'anon';
+  const taskId = 'auto_meat_daily_' + userKey;
   const restUrl = `${FB_DB_URL}/tasks/${branchId}/${today}/${taskId}.json`;
   try {
     // 1) Check existence via REST GET — cheaper than spinning up onValue.
@@ -2250,7 +2257,10 @@ async function ensureMeatDailyTask(branchId){
         en: 'BEEF / PORK / CHICKEN / Marinated / Cleaning — attach a photo + brief memo per item (e.g. "LA Galbi 25, Chadol 18")',
         es: 'BEEF / PORK / CHICKEN / Marinado / Limpieza — adjunta foto + memo breve por ítem (ej. "LA Galbi 25, Chadol 18")',
       },
-      assignedTo: '*',
+      // 본인에게만 할당 → '내 업무' 탭에서 본인 폰에만 노출. 다른 직원 폰
+      // (같은 지점이라도) 에서는 안 보임 → 데이터 충돌·혼동 방지.
+      assignedTo: me.name,
+      assignedToId: me.name,
       from: '시스템 자동',
       fromRole: 'AUTO',
       createdAt: Date.now(),
