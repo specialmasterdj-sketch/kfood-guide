@@ -2632,29 +2632,24 @@ function renderTaskCard(t){
   </div>`;
 }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 입력 중 보호 — onValue 가 중간에 발화돼서 renderEmp 가 innerHTML 을
-// 통째로 다시 그리면 입력하던 텍스트(아직 RTDB 저장 전)가 input 의 value
-// 속성이 새로 그려지면서 사라진다. 이걸 막기 위해:
-//   1) 키 입력마다 메모리 맵 __PENDING_TXT 에 즉시 저장 (저장은 디바운스)
-//   2) 디바운스 600ms 끝나면 RTDB write
-//   3) 매 render 직후 restorePendingInputs() 가 맵의 값을 input 에 복원
+// 입력 중 보호 — RTDB onValue 가 중간에 발화돼서 renderEmp 가 innerHTML
+// 을 통째로 다시 그리면 입력하던 텍스트(아직 RTDB 저장 전)가 사라진다.
+// 그렇다고 키 입력마다 RTDB write 를 하면 onValue → 재렌더링 → input
+// 이 포커스 잃음 → 모바일 키보드 사라짐 의 악순환. 그래서:
+//   1) oninput 마다 메모리 맵 __PENDING_TXT 에만 저장 (RTDB write 안 함)
+//   2) 실제 RTDB write 는 onchange (blur) 한 번만
+//   3) 매 render 직후 restorePendingInputs() 가 메모리 값 input 에 복원
+// 이렇게 하면 사용자가 타자 치는 동안 RTDB 안 건드려서 키보드 안 사라지고,
+// 다른 모바일이 동시에 업데이트해도 내 입력 텍스트는 보존됨.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 let __PENDING_TXT = {};         // entryId → 입력 중인 값
-let __PENDING_TIMER = {};       // entryId → setTimeout id (debounce)
 function onClEntryInput(taskId, branchId, idx, eid, value){
   __PENDING_TXT[eid] = value;
-  if (__PENDING_TIMER[eid]) clearTimeout(__PENDING_TIMER[eid]);
-  __PENDING_TIMER[eid] = setTimeout(async () => {
-    try {
-      await setClEntryText(taskId, branchId, idx, eid, value);
-      // 저장 성공이고 그 사이 더 입력 안 됐으면 pending 제거
-      if (__PENDING_TXT[eid] === value) delete __PENDING_TXT[eid];
-    } catch(e) { console.warn('[entry-debounce]', e); }
-  }, 600);
+  // No setTimeout / write — purely shadow. Save only fires on blur.
 }
 function restorePendingInputs(){
-  // render 후에 호출 — 메모리에 보관 중인 입력값이 input.value 와 다르면
-  // (즉 RTDB 가 아직 빈값이거나 옛값이라면) 사용자가 입력하던 값으로 복원.
+  // render 후 호출 — 메모리에 보관 중인 입력값이 input.value 와 다르면
+  // (즉 RTDB 가 아직 빈값이거나 옛값이라면) 사용자 입력값으로 복원.
   for (const [eid, val] of Object.entries(__PENDING_TXT)){
     const inputs = document.querySelectorAll(`input[data-entry-id="${eid}"]`);
     inputs.forEach(inp => { if (inp.value !== val) inp.value = val; });
@@ -2787,6 +2782,8 @@ async function setClEntryText(taskId, branchId, idx, entryId, value){
   e.by = me.name;
   e.ts = Date.now();
   await _writeEntries(taskId, branchId, idx, arr);
+  // 저장 성공 → 메모리 백업 비움 (다음 render 가 RTDB 값 그대로 노출)
+  delete __PENDING_TXT[entryId];
 }
 function addClEntryPhoto(taskId, branchId, idx, entryId){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
