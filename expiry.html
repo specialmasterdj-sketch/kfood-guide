@@ -438,7 +438,14 @@ button{cursor:pointer}
   <div class="recent-row" id="recentRow" style="display:none">
     <div class="head">
       <b id="recentTitle">📸 최근 등록</b>
-      <a onclick="switchPage('check')" id="recentMore">전체 보기 ›</a>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="btnShareTodayMine" onclick="shareTodayMineToChat()"
+          style="background:#0369a1;color:#fff;border:0;border-radius:8px;padding:6px 12px;font-size:.78em;font-weight:700;cursor:pointer;display:none"
+          title="오늘 내가 올린 모든 항목을 유통기한/파손 채팅방에 한 번에 보냅니다">
+          📤 오늘 내거 모두 공유
+        </button>
+        <a onclick="switchPage('check')" id="recentMore">전체 보기 ›</a>
+      </div>
     </div>
     <div class="scroll" id="recentScroll"></div>
   </div>
@@ -1813,6 +1820,27 @@ async function shareToExpiredChat(){
 
     const ts = Date.now();
     const msgId = 'm' + ts + Math.floor(Math.random()*900);
+    // Structured metadata so the chat room can render this as a
+    // product card (with D-day badge, status, loss, etc.) instead of
+    // a plain chat bubble. Falls back to `text` for older clients.
+    const lossNum = (p.cost || p.price || 0) * (p.qty || 1);
+    const meta = {
+      kind: 'expiry',
+      recordId: __DETAIL_ID,
+      productName: p.name || '',
+      expiry: p.expiry || '',
+      qty: (p.qty != null ? p.qty : 1),
+      status: p.status || 'active',
+      branch: BRANCH,
+      branchLabel: branchLbl,
+      addedBy: p.addedBy || me.name,
+      addedAt: p.addedAt || ts,
+      cost: p.cost || 0,
+      price: p.price || 0,
+      loss: lossNum,
+      barcode: p.barcode || '',
+      category: p.category || ''
+    };
     const msg = {
       sender: me.name,
       senderBranch: me.branch || BRANCH,
@@ -1821,7 +1849,8 @@ async function shareToExpiredChat(){
       color: me.color || '#1a5c3a',
       text,
       ts,
-      photos: p.photo ? [p.photo] : []
+      photos: p.photo ? [p.photo] : [],
+      meta
     };
 
     // 1) Write the message
@@ -2016,7 +2045,185 @@ function renderRecentRow(){
       <div class="nm">${escHtml(p.name||'').slice(0,12)}</div>
     </div>`;
   }).join('');
+  // Show the bulk-share button only when THIS user (chat.me name) has at
+  // least one of-today entry — no button = nothing to share, less clutter.
+  // The label embeds the user's first name so it's visually obvious whose
+  // work is being credited (managers can verify on screenshot review).
+  const todayMine = todayMineEntries();
+  const btn = document.getElementById('btnShareTodayMine');
+  if (btn) {
+    if (todayMine.length > 0) {
+      let firstName = '';
+      try {
+        const m = JSON.parse(localStorage.getItem('chat.me') || 'null');
+        firstName = (m?.name || '').split(/\s+/)[0] || '내';
+      } catch(_) { firstName = '내'; }
+      btn.style.display = '';
+      btn.textContent = `📤 ${firstName} 오늘 ${todayMine.length}건 공유`;
+    } else {
+      btn.style.display = 'none';
+    }
+  }
 }
+
+// Returns the list of products this user (chat.me name) registered today
+// in the current branch. Used for the bulk share-to-chat button.
+function todayMineEntries(){
+  let me = null;
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
+  if (!me || !me.name) return [];
+  const t0 = new Date(); t0.setHours(0,0,0,0);
+  const t0ms = t0.getTime();
+  return (PRODUCTS || []).filter(p =>
+    (p.addedAt || 0) >= t0ms
+    && (p.addedBy || '').toLowerCase() === me.name.toLowerCase()
+  );
+}
+
+// One-tap "share everything I uploaded today" — sends each product as
+// its own message into the 유통기한/파손 chat room. The per-record
+// idempotency guard from shareToExpiredChat is reused so accidental
+// double-presses don't double-spam.
+async function shareTodayMineToChat(){
+  let me = null;
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
+  if (!me || !me.name){
+    alert('먼저 ☰ 메뉴 → 채팅 들어가서 본인 이름을 등록하세요.');
+    return;
+  }
+
+  const targets = todayMineEntries();
+  if (targets.length === 0){
+    alert('오늘 등록한 항목이 없습니다.');
+    return;
+  }
+
+  // Filter out already-shared records (idempotency log shared with
+  // single-share button — same localStorage key).
+  let sharedIds = [];
+  try { sharedIds = JSON.parse(localStorage.getItem('expiry-shared-ids') || '[]'); } catch(_){}
+  const fresh = targets.filter(p => !sharedIds.includes(p.id));
+  const reSend = targets.length - fresh.length;
+
+  let toSend = fresh;
+  // Make it visually obvious whose work is about to be credited —
+  // the chat.me name is embedded in the dialog so the user can spot
+  // a wrong identity (e.g. shared device with another staff's session)
+  // before any data leaves the device.
+  const meHeader = `📤 보내는 사람: ${me.name}\n     본인이 직접 등록한 항목만 골라서 보냅니다.\n     (다른 직원이 등록한 건은 자동으로 제외됨)\n\n`;
+  if (fresh.length === 0){
+    if (!confirm(meHeader + `오늘 ${targets.length}건 모두 이미 공유한 적 있습니다.\n다시 보낼까요?`)) return;
+    toSend = targets;
+  } else if (reSend > 0){
+    if (!confirm(meHeader + `오늘 ${targets.length}건 중 ${reSend}건은 이미 공유함 → 새 ${fresh.length}건만 보낼게요.`)) return;
+  } else {
+    const preview = toSend.slice(0, 6).map(p => {
+      const s = p.status === 'discarded' ? '❌' : p.status === 'discounted' ? '⚠️' : '📦';
+      return `${s} ${(p.name||'(이름 없음)').slice(0,32)} · ${p.qty||1}개`;
+    }).join('\n');
+    const more = toSend.length > 6 ? `\n…외 ${toSend.length - 6}건` : '';
+    if (!confirm(meHeader + `오늘 ${toSend.length}건을 유통기한/파손 채팅방에 공유할까요?\n\n${preview}${more}`)) return;
+  }
+
+  const btn = document.getElementById('btnShareTodayMine');
+  const orig = btn?.textContent;
+  if (btn){ btn.disabled = true; btn.textContent = `보내는 중 0/${toSend.length}…`; }
+
+  // Auth token (REST writes for chat may need it depending on rules)
+  let authQ = '';
+  try {
+    const auth = window.__fb && window.__fb.auth;
+    const u = auth && auth.currentUser;
+    if (u){
+      const tok = await u.getIdToken();
+      if (tok) authQ = '?auth=' + encodeURIComponent(tok);
+    }
+  } catch(_){}
+
+  const branchObj = (typeof BRANCHES !== 'undefined') ? BRANCHES.find(b => b.id === BRANCH) : null;
+  const branchLbl = branchObj ? (branchObj.ko || branchObj[LANG] || BRANCH) : BRANCH;
+
+  let done = 0, failed = 0;
+  let lastMsgPreview = '', lastTs = 0;
+  for (const p of toSend){
+    const ts = Date.now();
+    const msgId = 'm' + ts + Math.floor(Math.random()*900);
+    const statusIc = p.status === 'discarded' ? '❌ 폐기'
+                   : p.status === 'discounted' ? '⚠️ 할인'
+                   : '📦 등록';
+    const lossNum = (p.cost || p.price || 0) * (p.qty || 1);
+    const text = [
+      `${statusIc} · ${p.name || '(이름 없음)'}`,
+      `유통기한: ${p.expiry || '—'} · 수량: ${p.qty != null ? p.qty : 1}개`,
+      `🏢 ${branchLbl} · 등록: ${p.addedBy || me.name}`,
+      lossNum > 0 ? `예상 손실: $${lossNum.toFixed(2)}` : ''
+    ].filter(Boolean).join('\n');
+    const meta = {
+      kind: 'expiry',
+      recordId: p.id,
+      productName: p.name || '',
+      expiry: p.expiry || '',
+      qty: (p.qty != null ? p.qty : 1),
+      status: p.status || 'active',
+      branch: BRANCH,
+      branchLabel: branchLbl,
+      addedBy: p.addedBy || me.name,
+      addedAt: p.addedAt || ts,
+      cost: p.cost || 0,
+      price: p.price || 0,
+      loss: lossNum,
+      barcode: p.barcode || '',
+      category: p.category || ''
+    };
+    const msg = {
+      sender: me.name,
+      senderBranch: me.branch || BRANCH,
+      senderRole: me.role || '',
+      isManager: !!me.isManager,
+      color: me.color || '#1a5c3a',
+      text, ts,
+      photos: p.photo ? [p.photo] : [],
+      meta
+    };
+    try {
+      const r = await fetch(`${FB_DB_URL}/chat/messages/expired/${msgId}.json${authQ}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(msg)
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      sharedIds.push(p.id);
+      lastMsgPreview = `${statusIc} · ${p.name || ''}`;
+      lastTs = ts;
+      done++;
+    } catch(e){
+      console.warn('[share-batch] fail', p.id, e);
+      failed++;
+    }
+    if (btn) btn.textContent = `보내는 중 ${done+failed}/${toSend.length}…`;
+    // Tiny pause so RTDB doesn't reject us for burst writes — also gives
+    // the room sidebar time to update incrementally for live watchers.
+    await new Promise(r => setTimeout(r, 80));
+  }
+
+  // PATCH the room preview once at the end (single update, not per item)
+  if (lastTs > 0){
+    fetch(`${FB_DB_URL}/chat/rooms/expired.json${authQ}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lastMsg: lastMsgPreview, lastTs, lastSender: me.name })
+    }).catch(()=>{});
+  }
+
+  if (sharedIds.length > 500) sharedIds = sharedIds.slice(-500);
+  try { localStorage.setItem('expiry-shared-ids', JSON.stringify(sharedIds)); } catch(_){}
+
+  if (btn){ btn.disabled = false; btn.textContent = orig || '📤 오늘 모두 공유'; }
+  alert(`✅ ${me.name} — 오늘 일 공유 완료\n  성공: ${done}건\n  실패: ${failed}건\n\n채팅 → 유통기한/파손 방에서 확인하세요.`);
+  // Refresh button label/visibility (now that everything is marked shared)
+  renderRecentRow();
+}
+window.shareTodayMineToChat = shareTodayMineToChat;
 function renderHome(){
   $('todayDate').textContent = fmtDate(new Date());
   // 시간대 인사 + 매장명
