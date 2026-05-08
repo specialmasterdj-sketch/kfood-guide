@@ -2693,7 +2693,11 @@ async function handleLocFiles(ev){
   // 압축 병렬 처리 — 큰 사진 여러 장도 빠르게
   const compressTasks = files
     .filter(f => f.type.startsWith('image/'))
-    .map(f => compressImage(f, 1024, 0.78));  // 1280→1024 / 0.82→0.78 (장소 식별용은 충분, 업로드 ↑)
+    .map(async f => {
+      const compressed = await compressImage(f, 1024, 0.78);   // 장소 식별용은 1024 충분
+      const dataUrl = await readDataUrl(compressed);            // 미리보기 + 업로드 fallback 용
+      return { file: compressed, blob: compressed, dataUrl };   // DONE_PHOTOS 와 동일한 모양
+    });
   const results = await Promise.all(compressTasks);
   results.forEach(c => LOC_PHOTOS.push(c));
   ev.target.value = '';
@@ -2715,13 +2719,34 @@ async function uploadLocPhotos(taskId){
   if (!LOC_PHOTOS.length) return [];
   const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
   const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
+  // Auth token if available — Firebase Storage rules typically require auth
+  let authHeader = {};
+  try {
+    const auth = window.__fb && window.__fb.auth;
+    const u = auth && auth.currentUser;
+    if (u) {
+      const tok = await u.getIdToken();
+      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
+    }
+  } catch(_){}
+  // Helper — read a Blob/File as base64 dataURL (used for fallback path)
+  const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
   // 한 장씩 업로드하는 helper — Promise.all 로 병렬 호출
   const uploadOne = async (att, i) => {
     const path = 'tasks-loc/' + (me.branch || 'X') + '/' + taskId + '/' + i + '.jpg';
     const url = FB_STORAGE_URL + '?name=' + encodeURIComponent(path) + '&uploadType=media';
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const r = await fetch(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob });
+        const r = await fetch(url, {
+          method:'POST',
+          headers: Object.assign({ 'Content-Type':'image/jpeg' }, authHeader),
+          body: att.blob || att.file
+        });
         if (r.ok) {
           const meta = await r.json();
           return FB_STORAGE_URL + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || '');
@@ -2732,10 +2757,13 @@ async function uploadLocPhotos(taskId){
         await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
       }
     }
-    // base64 fallback (smaller)
+    // base64 fallback — compressImage returns a File, convert to dataURL.
+    // Original code did `small.dataUrl` which is undefined → photos silently
+    // disappeared. Use FileReader on the compressed blob/file directly.
     try {
-      const small = await compressImage(att.file || att.blob, 720, 0.55);
-      return small.dataUrl;
+      const source = att.blob || att.file;
+      const compressed = await compressImage(source, 720, 0.55);
+      return await blobToDataUrl(compressed);
     } catch(e) { console.warn('[loc-photo] fallback failed', e); return null; }
   };
   // ⚡ 병렬 업로드 — N 장이 동시에 업로드되어 시간 단축
@@ -3016,13 +3044,23 @@ function renderMgr(){
     const branch = isOwner() && t.branchName ? ` <span style="font-size:.72em;color:#9ca3af">(${t.branchName})</span>` : '';
     const stLabel = stLabels[t._status][LANG];
     const memo = dispMemo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(dispMemo)}</div>` : '';
-    // Combine task-level photos + every checklist item's photos for the proof column
+    // Combine completion photos (task-level) + every checklist item's photos
+    // for the proof column. ALSO include locationPhotos (what the manager
+    // attached when assigning) with a 📍 badge so they can verify both
+    // sides — the instruction photo AND the completion proof.
     const clPhotos = Array.isArray(t.checklist)
       ? t.checklist.flatMap(c => Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []))
       : [];
-    const allProof = [...(t.photos||[]), ...clPhotos];
-    const photos = allProof.slice(0,5).map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')">`).join('')
-      + (allProof.length > 5 ? `<span style="font-size:.74em;color:#6b7280;font-weight:700;margin-left:4px">+${allProof.length-5}</span>` : '');
+    const locPhotos = Array.isArray(t.locationPhotos) ? t.locationPhotos : [];
+    const completePhotos = [...(t.photos||[]), ...clPhotos];
+    const photoTiles = [
+      ...locPhotos.map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')" title="📍 장소 사진" style="border:2px solid #06b6d4;box-shadow:0 0 0 1px #fff inset">`),
+      ...completePhotos.map(u => `<img class="thumb" src="${u}" onclick="openLb('${u}')" title="✅ 완료 사진">`),
+    ];
+    const allProof = [...locPhotos, ...completePhotos];
+    const photos = photoTiles.slice(0,5).join('')
+      + (allProof.length > 5 ? `<span style="font-size:.74em;color:#6b7280;font-weight:700;margin-left:4px">+${allProof.length-5}</span>` : '')
+      + (locPhotos.length ? `<div style="font-size:.66em;color:#0891b2;margin-top:2px;font-weight:700">📍 ${locPhotos.length}장 장소</div>` : '');
     // Checklist progress (if this task carries a checklist)
     const cl = Array.isArray(t.checklist) ? t.checklist : [];
     const clTotal = cl.length;
