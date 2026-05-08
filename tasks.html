@@ -2810,10 +2810,18 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
   input.value = '';
   input.onchange = async () => {
     const files = Array.from(input.files || []); if (!files.length) return;
+    if (typeof showToast === 'function') showToast('📷 업로드 중', files.length + '장');
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'/'+entryId;
       const urls = [];
-      for (const f of files) urls.push(await uploadOnePhoto(f, basePath));
+      for (let i = 0; i < files.length; i++) {
+        try {
+          urls.push(await uploadOnePhoto(files[i], basePath));
+        } catch(perFileErr) {
+          console.error('[addClEntryPhoto] file', i, perFileErr);
+          throw new Error('사진 ' + (i+1) + '장 업로드 실패: ' + (perFileErr.message || perFileErr));
+        }
+      }
       // 다른 줄들 입력 중 텍스트 보존
       const arr = _entriesFromDOM(taskId, branchId, idx);
       const e = arr.find(x => (x.id || 'legacy') === entryId);
@@ -2827,7 +2835,11 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
         e.by = me.name;
       }
       await _writeEntries(taskId, branchId, idx, arr);
-    } catch(err) { alert('사진 업로드 실패: ' + err.message); }
+      if (typeof showToast === 'function') showToast('✅ 사진 추가됨', urls.length + '장');
+    } catch(err) {
+      console.error('[addClEntryPhoto]', err);
+      alert('📷 사진 업로드 실패\n\n' + (err && err.message || err) + '\n\n다시 시도하거나 매니저에게 문의하세요.');
+    }
   };
   input.click();
 }
@@ -4074,6 +4086,12 @@ document.addEventListener('focusout', (e) => {
 }, true);
 
 function renderAllNow(){
+  // 사진 업로드 후 RTDB onValue → renderAll → innerHTML 재구성 으로 페이지
+  // 맨 위로 튕기는 현상이 보고됨 ('밖으로 나간 것 같다'). render 전 scrollY
+  // 를 캡처해두고 render 직후 같은 위치로 복원해서 사용자가 보던 자리 유지.
+  const __scrollY = window.scrollY || window.pageYOffset || 0;
+  const __scrollX = window.scrollX || window.pageXOffset || 0;
+
   // 입력 중인 input 의 포커스 + 커서 위치 + 입력값을 render 전에 캡처.
   // innerHTML 재구성으로 input 이 삭제되면 모바일 키보드가 닫히는데,
   // 같은 data-entry-id 의 새 input 으로 .focus() 호출해 키보드를 다시
@@ -4116,6 +4134,19 @@ function renderAllNow(){
       }
     } catch(_){}
   }
+
+  // 스크롤 위치 복원 — innerHTML 재구성 후 페이지 맨 위로 튕기는 거 방지.
+  // requestAnimationFrame 으로 다음 프레임에 복원해 새 DOM 이 reflow 끝난 뒤
+  // 적용되게 한다.
+  try {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        try { window.scrollTo(__scrollX, __scrollY); } catch(_){}
+      });
+    } else {
+      window.scrollTo(__scrollX, __scrollY);
+    }
+  } catch(_){}
 }
 
 // renderAll wrapper — 입력 중이면 일단 deferred 로 표시하고 실제 render 는
