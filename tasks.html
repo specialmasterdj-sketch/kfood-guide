@@ -3140,19 +3140,35 @@ function openDoneModal(id, branchId){
   document.getElementById('doneOv').classList.add('show');
   updateDoneSubmitState(); // 0/3 초기 상태
 }
-// 카메라 + 갤러리 두 input 모두 같은 핸들러
+// 카메라 + 갤러리 두 input 모두 같은 핸들러 — try/catch 로 감싸서 어디서
+// 막히는지 직원 폰 화면에 알림으로 노출 (전엔 silent fail 가능했음).
 const _donePhotoHandler = async (e) => {
   const files = Array.from(e.target.files || []);
   const btn = document.getElementById('doneBtn');
+  if (!files.length) return;   // 사용자 취소 → 무시
+  let added = 0, failed = 0, lastErr = null;
   for (const f of files) {
-    if (btn) { btn.disabled = true; btn.textContent = '사진 처리 중…'; }
-    const compressed = await compressImage(f);
-    const url = await readDataUrl(compressed);
-    DONE_PHOTOS.push({ file: compressed, dataUrl: url });
+    if (btn) { btn.disabled = true; btn.textContent = '사진 처리 중… ('+(added+failed+1)+'/'+files.length+')'; }
+    try {
+      const compressed = await compressImage(f);
+      const url = await readDataUrl(compressed);
+      if (!url) throw new Error('readDataUrl returned empty');
+      DONE_PHOTOS.push({ file: compressed, dataUrl: url });
+      added++;
+    } catch(err) {
+      console.error('[donePhoto] compress/read fail', err);
+      lastErr = err;
+      failed++;
+    }
   }
   e.target.value = '';
   renderDonePreviews();
   updateDoneSubmitState();
+  if (failed > 0) {
+    alert('📷 사진 ' + failed + '장 처리 실패' + (added ? ' (' + added + '장 성공)' : '') +
+          '\n\n원인: ' + (lastErr && lastErr.message || lastErr || '알 수 없음') +
+          '\n\n다시 시도해 주세요. 계속 안 되면 매니저에게 문의.');
+  }
 };
 document.getElementById('donePhoto').addEventListener('change', _donePhotoHandler);
 document.getElementById('donePhotoCam').addEventListener('change', _donePhotoHandler);
@@ -3184,7 +3200,18 @@ function updateDoneSubmitState(){
   }
 }
 window.updateDoneSubmitState = updateDoneSubmitState;
-function readDataUrl(f){ return new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); }); }
+// onerror 까지 처리 — 일부 모바일 브라우저는 권한 거부 시 onerror 만 발화하고
+// onload 가 안 와서 이전 코드는 조용히 무한 대기에 빠졌음.
+function readDataUrl(f){
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error || new Error('FileReader 에러'));
+    fr.onabort = () => reject(new Error('FileReader 중단'));
+    try { fr.readAsDataURL(f); }
+    catch(e) { reject(e); }
+  });
+}
 // === 매니저 장소 사진 첨부 (NEW) ===
 // 매니저가 업무 지시할 때 작업 위치 사진을 첨부하면 직원이 정확히 어디인지 알 수 있음.
 // LOC_PHOTOS = [{ dataUrl, blob, file }] (compressed in handleLocFiles)
@@ -3313,45 +3340,68 @@ async function finishTask(){
   }
   const btn = document.getElementById('doneBtn');
   btn.disabled = true; btn.textContent = '업로드 중…';
+  // Auth token if available — Storage rules likely require auth!=null
+  let authHeader = {};
+  try {
+    const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
+    if (u) {
+      const tok = await u.getIdToken();
+      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
+    }
+  } catch(_){}
+  let stage = 'init';
   try {
     const photoUrls = [];
-    for (const p of DONE_PHOTOS) {
+    for (let i = 0; i < DONE_PHOTOS.length; i++) {
+      const p = DONE_PHOTOS[i];
+      btn.textContent = '사진 업로드 중… (' + (i+1) + '/' + DONE_PHOTOS.length + ')';
       const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
       let url = null;
-      // 1) Try Firebase Storage REST upload
+      // 1) Try Firebase Storage REST upload (with auth)
+      stage = 'storage-upload';
       try {
         const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
           method: 'POST',
-          headers: { 'Content-Type': 'image/jpeg' },
+          headers: Object.assign({ 'Content-Type': 'image/jpeg' }, authHeader),
           body: p.file
         });
         if (r.ok) {
           const meta = await r.json();
           url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+        } else {
+          console.warn('[doneUpload] storage', r.status, (await r.text()).slice(0, 200));
         }
-      } catch(e) { /* fall through */ }
+      } catch(e) { console.warn('[doneUpload] storage exception', e); }
       // 2) Fallback: re-compress smaller and embed as base64 dataURL in RTDB
       if (!url) {
-        const small = await compressImage(p.file, 720, 0.55);
-        url = await readDataUrl(small);
+        stage = 'fallback-compress';
+        try {
+          const small = await compressImage(p.file, 720, 0.55);
+          url = await readDataUrl(small);
+        } catch(e) { console.error('[doneUpload] fallback fail', e); throw new Error('사진 ' + (i+1) + ' 압축/읽기 실패: ' + (e && e.message || e)); }
       }
+      if (!url) throw new Error('사진 ' + (i+1) + ' 업로드 실패 (Storage + Fallback 모두 실패)');
       photoUrls.push(url);
     }
+    btn.textContent = '저장 중…';
     const memoText = document.getElementById('doneMemo').value.trim();
+    stage = 'translate-memo';
     const memoTr = memoText ? await translateMulti(memoText) : null;
+    stage = 'rtdb-write';
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
     const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: memoText, memoTr: memoTr };
     if (!CURRENT_TASK.startedAt) upd.startedAt = Date.now();
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
-    // Cross-post the completion into the 'grocery_eval' chat room so
-    // managers across all branches can review the work without opening
-    // the tasks page. Only the NEW completion photos are attached, not
-    // the manager's original location photos. Failures here are
-    // non-fatal — the task itself was already saved above.
+    // Cross-post the completion into the matching chat room. Failures
+    // here are non-fatal — the task itself was already saved above.
+    stage = 'chat-post';
     try { await postCompletionToChat(CURRENT_TASK, photoUrls, memoText); }
     catch(e) { console.warn('[task→chat]', e); }
     closeOv('doneOv');
-  } catch(e) { alert('실패: ' + e.message); }
+  } catch(e) {
+    console.error('[finishTask] failed at stage', stage, e);
+    alert('완료 보고 실패 (' + stage + ')\n\n' + (e && e.message || e) + '\n\n다시 시도하거나 매니저에게 문의하세요.');
+  }
   finally { btn.disabled = false; btn.textContent = '✅ 완료 보고'; DONE_PHOTOS = []; }
 }
 
