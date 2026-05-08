@@ -2256,6 +2256,9 @@ async function ensureMeatDailyTask(branchId){
       createdAt: Date.now(),
       checklist,
       autoMeatDaily: true,
+      // 정육은 지점별 정육 직원이 각자 자기 매장 일만 기록 — 다른 지점이 보거나
+      // 매니저들이 채팅으로 비교할 필요 없음. 자동 채팅 게시 비활성화.
+      noAutoChat: true,
     };
     await fetch(restUrl + (authQ ? authQ : ''), {
       method: 'PUT',
@@ -3045,6 +3048,8 @@ async function toggleChecklistItem(taskId, branchId, idx, isChecked){
       // Re-fetch the task from RTDB with REST so we capture every photo +
       // entry that was written DURING this completion run (TASKS in-memory
       // can lag behind the actual store by ~100ms after a write).
+      // Skip if the task is opted-out of auto-share (정육 일일 등).
+      if (task.noAutoChat) { /* skip chat post */ } else
       try {
         let freshChecklist = localCopy;
         try {
@@ -3394,9 +3399,13 @@ async function finishTask(){
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
     // Cross-post the completion into the matching chat room. Failures
     // here are non-fatal — the task itself was already saved above.
-    stage = 'chat-post';
-    try { await postCompletionToChat(CURRENT_TASK, photoUrls, memoText); }
-    catch(e) { console.warn('[task→chat]', e); }
+    // Skip when task carries noAutoChat (e.g. 정육 일일 — each branch's
+    // butcher records privately, not for cross-branch comparison).
+    if (!CURRENT_TASK.noAutoChat) {
+      stage = 'chat-post';
+      try { await postCompletionToChat(CURRENT_TASK, photoUrls, memoText); }
+      catch(e) { console.warn('[task→chat]', e); }
+    }
     closeOv('doneOv');
   } catch(e) {
     console.error('[finishTask] failed at stage', stage, e);
