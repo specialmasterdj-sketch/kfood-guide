@@ -2663,7 +2663,17 @@ window.onClEntryInput = onClEntryInput;
 // 레거시 memo / photos 가 남아있으면 첫 entry 로 보여서 자연스럽게 마이그레이션.
 function _clEntriesOf(item){
   if (!item) return [];
-  if (Array.isArray(item.entries) && item.entries.length) return item.entries;
+  // entries 는 보통 배열이지만 Firebase 가 sparse array 를 객체로 저장할 수
+  // 있어서 (인덱스가 0,2 처럼 비연속이면 {0:..., 2:...} 형태) 둘 다 받는다.
+  let raw = item.entries;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    raw = Object.keys(raw)
+      .filter(k => !isNaN(parseInt(k, 10)))
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+      .map(k => raw[k])
+      .filter(v => v && typeof v === 'object');
+  }
+  if (Array.isArray(raw) && raw.length) return raw;
   // 레거시 fallback — memo + photos 가 있으면 한 entry 로 가상화
   const hasMemo = item.memo && String(item.memo).trim();
   const hasPhoto = (Array.isArray(item.photos) && item.photos.length) || item.photo;
@@ -3032,9 +3042,32 @@ async function toggleChecklistItem(taskId, branchId, idx, isChecked){
         startedAt: task.startedAt || Date.now(),
       });
       // Also post to the matching evaluation chat — same flow as finishTask().
-      // Gather every photo from every entry across all checklist items.
+      // Re-fetch the task from RTDB with REST so we capture every photo +
+      // entry that was written DURING this completion run (TASKS in-memory
+      // can lag behind the actual store by ~100ms after a write).
       try {
-        const allItemPhotos = localCopy.flatMap(c => {
+        let freshChecklist = localCopy;
+        try {
+          const taskUrl = `${FB_DB_URL}/tasks/${branchId}/${todayStr()}/${taskId}.json`;
+          let aq = '';
+          try {
+            const u = window.__fb?.auth?.currentUser;
+            if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+          } catch(_){}
+          const r = await fetch(taskUrl + aq, { cache:'no-store' });
+          if (r.ok) {
+            const fresh = await r.json();
+            if (fresh && fresh.checklist) {
+              const cl = fresh.checklist;
+              const arr = Array.isArray(cl)
+                ? cl
+                : Object.keys(cl).sort((a,b) => +a - +b).map(k => cl[k]);
+              if (arr.length) freshChecklist = arr;
+            }
+          }
+        } catch(e) { /* fall back to localCopy */ }
+
+        const allItemPhotos = freshChecklist.flatMap(c => {
           const entries = _clEntriesOf(c);
           if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
           // legacy fallback for items still on old schema
@@ -3042,7 +3075,7 @@ async function toggleChecklistItem(taskId, branchId, idx, isChecked){
         });
         // Per-item summary: join all entry texts, e.g.
         //   BEEF: LA갈비 25, 차돌 18, 불고기 30
-        const memoLines = localCopy
+        const memoLines = freshChecklist
           .map(c => {
             const entries = _clEntriesOf(c);
             const texts = entries.map(e => String(e.text||'').trim()).filter(Boolean);
@@ -3055,11 +3088,11 @@ async function toggleChecklistItem(taskId, branchId, idx, isChecked){
         const summary = memoLines.length
           ? `체크리스트 ${localCopy.length}개 모두 완료\n${memoLines.join('\n')}`
           : `체크리스트 ${localCopy.length}개 항목 모두 완료`;
-        // Stamp completedBy on the local task copy so the message attributes it correctly
+        // Stamp completedBy on the fresh task copy so the message attributes it correctly
         const taskForChat = Object.assign({}, task, {
           completedBy: me.name,
           completedAt: Date.now(),
-          checklist: localCopy,
+          checklist: freshChecklist,
         });
         await postCompletionToChat(taskForChat, allItemPhotos, summary);
       } catch(e) { console.warn('[checklist-auto-complete→chat]', e); }
