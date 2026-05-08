@@ -3960,16 +3960,80 @@ async function sendAssign(){
 // ================= UTIL =================
 function closeOv(id){ document.getElementById(id).classList.remove('show'); }
 function openLb(url){ document.getElementById('lbImg').src = url; document.getElementById('lbOv').classList.add('show'); }
-function renderAll(){
+// 사용자가 entry input 에 포커스 중이면 renderAll 을 미룬다.
+// 모바일 (특히 iOS Safari) 은 .focus() 만으로는 키보드를 다시 띄우지 못해
+// 일단 input 을 안 바꾸는 게 가장 안전. blur 가 일어나면 deferred 렌더 실행.
+let __RENDER_DEFERRED = false;
+function isUserTyping(){
+  try {
+    const ae = document.activeElement;
+    return !!(ae && ae.tagName === 'INPUT' && ae.dataset && ae.dataset.entryId);
+  } catch(_) { return false; }
+}
+// 입력 input 이 blur 될 때 deferred 렌더 처리 — capture phase 로 한 번만.
+document.addEventListener('focusout', (e) => {
+  if (e.target && e.target.dataset && e.target.dataset.entryId) {
+    if (__RENDER_DEFERRED) {
+      __RENDER_DEFERRED = false;
+      // microtask 로 미뤄서 onchange 가 먼저 발화한 뒤 render 실행
+      setTimeout(() => { try { renderAllNow(); } catch(_){} }, 0);
+    }
+  }
+}, true);
+
+function renderAllNow(){
+  // 입력 중인 input 의 포커스 + 커서 위치 + 입력값을 render 전에 캡처.
+  // innerHTML 재구성으로 input 이 삭제되면 모바일 키보드가 닫히는데,
+  // 같은 data-entry-id 의 새 input 으로 .focus() 호출해 키보드를 다시
+  // 띄우고 커서를 원래 자리에 놓아 끊김 없이 타자 이어가게 한다.
+  let focusSnap = null;
+  try {
+    const ae = document.activeElement;
+    if (ae && ae.tagName === 'INPUT' && ae.dataset && ae.dataset.entryId) {
+      focusSnap = {
+        eid: ae.dataset.entryId,
+        start: ae.selectionStart != null ? ae.selectionStart : null,
+        end: ae.selectionEnd != null ? ae.selectionEnd : null,
+        value: ae.value,
+      };
+    }
+  } catch(_){}
+
   renderEmp();
   renderMgr();
   renderClockIn();
   if (document.getElementById('page-rep').classList.contains('active')) renderReport();
   if (document.getElementById('page-home') && document.getElementById('page-home').classList.contains('active')) renderDashboard();
   // 입력 중이던 텍스트 (RTDB 저장 전) 가 innerHTML 재구성에 휩쓸려 사라지지
-  // 않게 메모리 백업으로 즉시 복원. 디바운스 600ms 안에 onValue 가 발화해도
-  // 사용자 화면이 그대로 유지됨.
+  // 않게 메모리 백업으로 즉시 복원.
   if (typeof restorePendingInputs === 'function') restorePendingInputs();
+
+  // 포커스 복원 — 같은 entryId 의 새 input 을 찾아서 focus + 커서 위치까지.
+  if (focusSnap) {
+    try {
+      const newInp = document.querySelector(`input[data-entry-id="${focusSnap.eid}"]`);
+      if (newInp) {
+        // value 가 빈값으로 그려졌을 가능성 → 우리가 갖고 있던 값으로 채움
+        if (focusSnap.value && newInp.value !== focusSnap.value) {
+          newInp.value = focusSnap.value;
+        }
+        newInp.focus();
+        if (focusSnap.start != null && newInp.setSelectionRange) {
+          try { newInp.setSelectionRange(focusSnap.start, focusSnap.end || focusSnap.start); } catch(_){}
+        }
+      }
+    } catch(_){}
+  }
+}
+
+// renderAll wrapper — 입력 중이면 일단 deferred 로 표시하고 실제 render 는
+// 사용자가 input 에서 빠져나갈 때 (focusout) 실행. 핵심: 모바일 키보드 보존.
+function renderAll(){
+  if (isUserTyping()) {
+    __RENDER_DEFERRED = true;
+    return;
+  }
+  renderAllNow();
 }
 window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); subscribeMyAttendance(); tickLocation(); } });
 window.addEventListener('fb-ready', () => subscribeTasks());
