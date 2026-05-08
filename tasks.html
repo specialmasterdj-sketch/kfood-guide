@@ -2388,7 +2388,13 @@ function renderTaskCard(t){
     memo:     { ko:'📝 메모', en:'📝 Note', es:'📝 Nota' },
   };
   let actions = '';
+  // Claim-lock for assignedTo='*' tasks: once one staff member has
+  // started, only they can complete. Others see a 'taken' badge so
+  // two people don't duplicate work on the same item.
+  const isAllTask = t.assignedTo === '*';
+  const claimedByOther = isAllTask && t.startedBy && t.startedBy !== (me?.name||'') && !t.completedAt;
   if (status === 'completed') actions = `<span class="btn gray">${labels.done[LANG]} ${fmtTime(t.completedAt)}</span>`;
+  else if (claimedByOther) actions = `<span class="btn gray" title="다른 직원이 먼저 시작했습니다">🔒 ${escHtml(t.startedBy)} 진행 중</span>`;
   else if (status === 'in_progress' || (t.startedAt && !t.completedAt)) actions = `<button class="btn" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.report[LANG]}</button>`;
   else actions = `<button class="btn warn" onclick="startTask('${t.id}','${t.branchId}')">${labels.start[LANG]}</button> <button class="btn sec" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.quick[LANG]}</button>`;
   const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
@@ -2595,12 +2601,31 @@ window.onChecklistToggle = onChecklistToggle;
 
 async function startTask(id, branchId){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  const t = TASKS.find(x => x.id === id && x.branchId === branchId);
+  if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
+  // Claim lock — for "전체 (assignedTo='*')" tasks only one staff at a
+  // time. First click wins; later clicks see who's already on it so two
+  // people don't waste effort doing the same task. Specific-assignee
+  // tasks skip the lock (the assignee is supposed to start it).
+  if (t.assignedTo === '*' && t.startedBy && t.startedBy !== me.name && !t.completedAt){
+    alert(`이미 [${t.startedBy}]님이 진행 중입니다. 다른 업무를 골라 주세요.`);
+    return;
+  }
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+id;
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), { startedAt: Date.now(), startedBy: me.name });
 }
 function openDoneModal(id, branchId){
   CURRENT_TASK = TASKS.find(t => t.id === id && t.branchId === branchId);
   if (!CURRENT_TASK) return;
+  // Claim-lock guard for assignedTo='*' tasks — even if a stale UI lets
+  // someone tap the report button, refuse the modal so they don't burn
+  // effort on a task already taken by another teammate.
+  const t2 = CURRENT_TASK;
+  if (t2.assignedTo === '*' && t2.startedBy && me && t2.startedBy !== me.name && !t2.completedAt){
+    alert(`이미 [${t2.startedBy}]님이 진행 중입니다.`);
+    CURRENT_TASK = null;
+    return;
+  }
   DONE_PHOTOS = [];
   document.getElementById('doneTaskInfo').textContent = '✓ ' + CURRENT_TASK.name + (CURRENT_TASK.deadline ? ' · ⏰ '+CURRENT_TASK.deadline : '');
   document.getElementById('donePhotoField').style.display = ''; // 항상 표시 (필수 사진 3장)
