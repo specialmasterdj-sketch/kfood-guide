@@ -2631,6 +2631,37 @@ function renderTaskCard(t){
     <div class="task-actions">${actions}</div>
   </div>`;
 }
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 입력 중 보호 — onValue 가 중간에 발화돼서 renderEmp 가 innerHTML 을
+// 통째로 다시 그리면 입력하던 텍스트(아직 RTDB 저장 전)가 input 의 value
+// 속성이 새로 그려지면서 사라진다. 이걸 막기 위해:
+//   1) 키 입력마다 메모리 맵 __PENDING_TXT 에 즉시 저장 (저장은 디바운스)
+//   2) 디바운스 600ms 끝나면 RTDB write
+//   3) 매 render 직후 restorePendingInputs() 가 맵의 값을 input 에 복원
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let __PENDING_TXT = {};         // entryId → 입력 중인 값
+let __PENDING_TIMER = {};       // entryId → setTimeout id (debounce)
+function onClEntryInput(taskId, branchId, idx, eid, value){
+  __PENDING_TXT[eid] = value;
+  if (__PENDING_TIMER[eid]) clearTimeout(__PENDING_TIMER[eid]);
+  __PENDING_TIMER[eid] = setTimeout(async () => {
+    try {
+      await setClEntryText(taskId, branchId, idx, eid, value);
+      // 저장 성공이고 그 사이 더 입력 안 됐으면 pending 제거
+      if (__PENDING_TXT[eid] === value) delete __PENDING_TXT[eid];
+    } catch(e) { console.warn('[entry-debounce]', e); }
+  }, 600);
+}
+function restorePendingInputs(){
+  // render 후에 호출 — 메모리에 보관 중인 입력값이 input.value 와 다르면
+  // (즉 RTDB 가 아직 빈값이거나 옛값이라면) 사용자가 입력하던 값으로 복원.
+  for (const [eid, val] of Object.entries(__PENDING_TXT)){
+    const inputs = document.querySelectorAll(`input[data-entry-id="${eid}"]`);
+    inputs.forEach(inp => { if (inp.value !== val) inp.value = val; });
+  }
+}
+window.onClEntryInput = onClEntryInput;
+
 // 체크리스트 항목별 다중 entry — 한 줄에 한 품목 (텍스트 + 사진).
 // 직원이 "+ 추가" 누르면 새 빈 줄, 각 줄마다 자기 텍스트 + 자기 사진.
 // 데이터: checklist[idx].entries = [{ id, text, photos:[], ts, by }]
@@ -2668,6 +2699,7 @@ function renderClEntries(task, item, idx){
     return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
       <input type="text" value="${safeText}" placeholder="${phText}"
         data-entry-id="${eid}"
+        oninput="onClEntryInput('${task.id}','${task.branchId}',${idx},'${eid}',this.value)"
         onchange="setClEntryText('${task.id}','${task.branchId}',${idx},'${eid}',this.value)"
         onfocus="event.stopPropagation()"
         style="flex:1;min-width:120px;border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.86em;background:#fff;outline:none;font-family:inherit">
@@ -3931,7 +3963,17 @@ async function sendAssign(){
 // ================= UTIL =================
 function closeOv(id){ document.getElementById(id).classList.remove('show'); }
 function openLb(url){ document.getElementById('lbImg').src = url; document.getElementById('lbOv').classList.add('show'); }
-function renderAll(){ renderEmp(); renderMgr(); renderClockIn(); if (document.getElementById('page-rep').classList.contains('active')) renderReport(); if (document.getElementById('page-home') && document.getElementById('page-home').classList.contains('active')) renderDashboard(); }
+function renderAll(){
+  renderEmp();
+  renderMgr();
+  renderClockIn();
+  if (document.getElementById('page-rep').classList.contains('active')) renderReport();
+  if (document.getElementById('page-home') && document.getElementById('page-home').classList.contains('active')) renderDashboard();
+  // 입력 중이던 텍스트 (RTDB 저장 전) 가 innerHTML 재구성에 휩쓸려 사라지지
+  // 않게 메모리 백업으로 즉시 복원. 디바운스 600ms 안에 onValue 가 발화해도
+  // 사용자 화면이 그대로 유지됨.
+  if (typeof restorePendingInputs === 'function') restorePendingInputs();
+}
 window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); subscribeMyAttendance(); tickLocation(); } });
 window.addEventListener('fb-ready', () => subscribeTasks());
 
