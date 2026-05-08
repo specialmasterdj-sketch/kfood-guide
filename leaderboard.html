@@ -127,6 +127,8 @@ const SCORE = {
   expiryDiscard:1.0,   // 폐기 처리 (썩은거 발견 노력)
   chatMessage:  1.0,   // 채팅 메시지 1건 (어느 방이든)
   chatPhoto:    0.2,   // 메시지 안 사진 1장당 (단, 메시지당 최대 MAX_PHOTOS_PER_MSG)
+  reaction:     0.2,   // 👍 좋아요(이모지) 1개당
+  reply:        0.2,   // 💬 댓글 1개당
 };
 // 사진 남발 방지 — 한 번에 100장 올려도 점수는 최대 20장까지만 인정.
 // 한 메시지에 그 이상 올리는건 정상 업무가 아니라 점수 부풀리기로 간주.
@@ -215,8 +217,8 @@ function isExcludedSender(name, branch){
 }
 
 // ============== Aggregation ==============
-// agg[name] = { name, branch, color, expiryAdd, expiryCheck, expiryDiscard, chatMsg, chatPhoto, score }
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, chatMsg:0, chatPhoto:0, score:0 });
+// agg[name] = { name, branch, color, expiryAdd, expiryCheck, expiryDiscard, chatMsg, chatPhoto, reaction, reply, score }
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, chatMsg:0, chatPhoto:0, reaction:0, reply:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -284,21 +286,49 @@ async function fetchChat(agg, since){
       Object.values(d).forEach(m => {
         if (!m || typeof m !== 'object') return;
         const ts = m.ts || 0;
-        if (ts < since) return;
-        // Branch filter — message branch filter applies to chat (message
-        // senderBranch instead of room). Skip if user wants a single branch.
-        if (CUR_BRANCH !== 'ALL' && m.senderBranch && m.senderBranch !== CUR_BRANCH) return;
-        if (!m.sender) return;
-        bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);
-        // 한 메시지에 사진 21장 이상 올려도 점수는 20장까지만 — 21번째부터는
-        // 보너스 0점으로 처리해서 점수 부풀리기 방지.
-        const phRaw = (m.photos && m.photos.length) || 0;
-        const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
-        if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
-        // Reply (m.replies) — skip per user's request: owner's reply 댓글 빼라
-        // We're already excluding owner via isExcludedSender; since replies
-        // come WITH the parent message, we count base only. (Future: walk
-        // m.replies and credit each reply's author 1 chatMsg too.)
+        // Note: we DON'T filter the whole message out by ts here — we
+        // need to evaluate replies (each has its own ts) even if the
+        // parent thread is old. Main-message scoring still gates on ts.
+        const inWindow = ts >= since;
+        const branchOk = (CUR_BRANCH === 'ALL') || !m.senderBranch || (m.senderBranch === CUR_BRANCH);
+
+        if (inWindow && branchOk && m.sender) {
+          bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);
+          // 한 메시지에 사진 21장 이상 올려도 점수는 20장까지만 — 21번째부터는
+          // 보너스 0점으로 처리해서 점수 부풀리기 방지.
+          const phRaw = (m.photos && m.photos.length) || 0;
+          const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
+          if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
+
+          // 👍 Reactions on this message — credit each user who reacted
+          // with +0.2. Reactions don't carry their own timestamp, so we
+          // gate by the parent message's ts (good-enough proxy).
+          if (m.reactions && typeof m.reactions === 'object') {
+            for (const emoji of Object.keys(m.reactions)) {
+              const usersMap = m.reactions[emoji];
+              if (!usersMap || typeof usersMap !== 'object') continue;
+              // userKey is "branch_name" (sanitized); value is display name
+              for (const [, displayName] of Object.entries(usersMap)) {
+                if (!displayName) continue;
+                bumpAgg(agg, displayName, '', 'reaction', 1);
+              }
+            }
+          }
+        }
+
+        // 💬 Replies — each carries its own ts so score it independently.
+        // A reply on an old parent still earns points for the replier
+        // when made within the current window.
+        if (m.replies && typeof m.replies === 'object') {
+          for (const r of Object.values(m.replies)) {
+            if (!r || typeof r !== 'object') continue;
+            const rts = r.ts || 0;
+            if (rts < since) continue;
+            if (CUR_BRANCH !== 'ALL' && r.senderBranch && r.senderBranch !== CUR_BRANCH) continue;
+            if (!r.sender) continue;
+            bumpAgg(agg, r.sender, r.senderBranch || '', 'reply', 1);
+          }
+        }
       });
     } catch(e){ console.warn('[lb] msgs', rid, e); }
   }));
@@ -311,7 +341,9 @@ function computeScores(agg){
     + r.expiryCheck   * SCORE.expiryCheck
     + r.expiryDiscard * SCORE.expiryDiscard
     + r.chatMsg       * SCORE.chatMessage
-    + r.chatPhoto     * SCORE.chatPhoto;
+    + r.chatPhoto     * SCORE.chatPhoto
+    + r.reaction      * SCORE.reaction
+    + r.reply         * SCORE.reply;
     r.score = Math.round(r.score * 10) / 10;
     if (!r.color) r.color = colorFor(r.name);
   });
@@ -363,6 +395,8 @@ function renderRows(rest){
       if (r.expiryDiscard) bd.push(`❌${r.expiryDiscard}`);
       if (r.chatMsg)       bd.push(`💬${r.chatMsg}`);
       if (r.chatPhoto)     bd.push(`📷${r.chatPhoto}`);
+      if (r.reply)         bd.push(`↩️${r.reply}`);
+      if (r.reaction)      bd.push(`👍${r.reaction}`);
       return `<div class="row">
         <div class="rk">${i + 4}</div>
         <div class="av" style="background:${r.color}">${escHtml(initials(r.name).toUpperCase())}</div>
@@ -401,6 +435,7 @@ function renderLegend(){
     <b>점수 기준</b><br>
     📦 유통기한 등록 <code>+1.0</code> · ✅ 체크 완료 <code>+0.5</code> · ❌ 폐기 처리 <code>+1.0</code><br>
     💬 채팅 메시지 <code>+1.0</code> · 📷 사진 첨부 <code>+0.2</code> (메시지당 최대 ${MAX_PHOTOS_PER_MSG}장까지 인정)<br>
+    ↩️ 댓글 <code>+0.2</code> · 👍 좋아요(이모지 반응) <code>+0.2</code><br>
     <span style="color:#9ca3af">한 메시지에 ${MAX_PHOTOS_PER_MSG}장 초과 업로드는 추가 점수 없음 — 점수 부풀리기 방지.<br>
     사장님(DJ) · 전무님(B.H.K) 등 경영진 활동은 직원 평가에서 자동 제외됩니다.</span>
   </div>`;
