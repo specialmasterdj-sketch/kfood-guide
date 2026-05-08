@@ -2667,6 +2667,7 @@ function renderClEntries(task, item, idx){
     const thumbs = photos.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:zoom-in;border:1px solid #d1d5db">`).join('');
     return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
       <input type="text" value="${safeText}" placeholder="${phText}"
+        data-entry-id="${eid}"
         onchange="setClEntryText('${task.id}','${task.branchId}',${idx},'${eid}',this.value)"
         onfocus="event.stopPropagation()"
         style="flex:1;min-width:120px;border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.86em;background:#fff;outline:none;font-family:inherit">
@@ -2676,7 +2677,10 @@ function renderClEntries(task, item, idx){
     </div>`;
   }).join('');
   const hasAny = entries.length > 0;
-  return `<div style="margin:4px 0 10px 28px">
+  // data-entries-key 로 컨테이너 마킹 → addClEntry 가 입력 중인 텍스트도
+  // 화면에서 직접 읽어 저장 안 된 값까지 보존하고 합칠 수 있게.
+  const cntrKey = task.id + '|' + task.branchId + '|' + idx;
+  return `<div style="margin:4px 0 10px 28px" data-entries-key="${cntrKey}">
     ${rows}
     <button onclick="event.preventDefault();addClEntry('${task.id}','${task.branchId}',${idx})" style="background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:.78em;font-weight:700;cursor:pointer;${hasAny?'':'margin-top:0'}">${addLbl}</button>
   </div>`;
@@ -2698,20 +2702,53 @@ async function _writeEntries(taskId, branchId, idx, entries){
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), { entries });
 }
 
+// DOM 의 현재 입력 값까지 읽어서 live entries 배열을 만든다.
+// onchange 는 blur 에서만 발화하므로, 사용자가 입력 중이던 텍스트가
+// blur 없이 사라지지 않도록 화면에서 직접 긁어서 합친다.
+function _entriesFromDOM(taskId, branchId, idx){
+  const arr = _entriesArrayLive(taskId, branchId, idx);   // RTDB 기준
+  const cntrKey = taskId + '|' + branchId + '|' + idx;
+  const cntr = document.querySelector(`[data-entries-key="${cntrKey}"]`);
+  if (!cntr) return arr;
+  const inputs = cntr.querySelectorAll('input[data-entry-id]');
+  inputs.forEach(inp => {
+    const eid = inp.dataset.entryId;
+    const liveText = String(inp.value || '').trim();
+    const e = arr.find(x => (x.id || 'legacy') === eid);
+    if (e) {
+      // 화면 값이 다르면 (입력 중) 그 값으로 덮어 — 반대로 RTDB 값이 비어있고
+      // 화면에 있으면 그것이 "최신"이 됨.
+      if (liveText !== String(e.text || '').trim()) {
+        e.text = liveText;
+        e.by = (me && me.name) || e.by;
+        e.ts = Date.now();
+      }
+    } else if (liveText) {
+      // 화면에는 있는데 arr 에 없는 경우 — 누가 동시 삭제했거나 stale UI.
+      // 사용자 데이터 보존 우선 → 새 entry 로 추가.
+      arr.push({ id: eid && eid !== 'legacy' ? eid : _newEntryId(), text: liveText, photos: [], ts: Date.now(), by: (me && me.name) || '' });
+    }
+  });
+  return arr;
+}
+
 async function addClEntry(taskId, branchId, idx){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
-  const arr = _entriesArrayLive(taskId, branchId, idx);
+  // 입력 중이던 텍스트(아직 onchange 발화 전) 까지 모두 보존하면서 새 빈 줄 추가.
+  const arr = _entriesFromDOM(taskId, branchId, idx);
   arr.push({ id: _newEntryId(), text: '', photos: [], ts: Date.now(), by: me.name });
   await _writeEntries(taskId, branchId, idx, arr);
 }
 async function removeClEntry(taskId, branchId, idx, entryId){
   if (!confirm(({ko:'이 줄 삭제할까요?',en:'Remove this row?',es:'¿Quitar esta fila?'})[LANG] || '이 줄 삭제할까요?')) return;
-  const arr = _entriesArrayLive(taskId, branchId, idx).filter(e => (e.id || 'legacy') !== entryId);
+  // 입력 중이던 다른 줄들의 텍스트 보존 → DOM 에서 먼저 합치고 그 다음 필터.
+  const arr = _entriesFromDOM(taskId, branchId, idx).filter(e => (e.id || 'legacy') !== entryId);
   await _writeEntries(taskId, branchId, idx, arr);
 }
 async function setClEntryText(taskId, branchId, idx, entryId, value){
   if (!me) return;
-  const arr = _entriesArrayLive(taskId, branchId, idx);
+  // 다른 줄들도 DOM 에서 함께 합쳐서 → 같이 입력 중인 텍스트 안 사라지게.
+  const arr = _entriesFromDOM(taskId, branchId, idx);
   const e = arr.find(x => (x.id || 'legacy') === entryId);
   if (!e) return;
   e.text = String(value || '').trim();
@@ -2735,7 +2772,8 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'/'+entryId;
       const urls = [];
       for (const f of files) urls.push(await uploadOnePhoto(f, basePath));
-      const arr = _entriesArrayLive(taskId, branchId, idx);
+      // 다른 줄들 입력 중 텍스트 보존
+      const arr = _entriesFromDOM(taskId, branchId, idx);
       const e = arr.find(x => (x.id || 'legacy') === entryId);
       if (!e) {
         // legacy fallback — user clicked photo on the virtualized legacy
