@@ -2812,9 +2812,82 @@ async function finishTask(){
     const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: memoText, memoTr: memoTr };
     if (!CURRENT_TASK.startedAt) upd.startedAt = Date.now();
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+    // Cross-post the completion into the 'grocery_eval' chat room so
+    // managers across all branches can review the work without opening
+    // the tasks page. Only the NEW completion photos are attached, not
+    // the manager's original location photos. Failures here are
+    // non-fatal — the task itself was already saved above.
+    try { await postCompletionToChat(CURRENT_TASK, photoUrls, memoText); }
+    catch(e) { console.warn('[task→chat]', e); }
     closeOv('doneOv');
   } catch(e) { alert('실패: ' + e.message); }
   finally { btn.disabled = false; btn.textContent = '✅ 완료 보고'; DONE_PHOTOS = []; }
+}
+
+// Send a completion summary into the '그로서리 평가' chat room
+// (id='grocery_eval'). Same RTDB write pattern as chat.html sendMessage
+// so the message renders identically and gets unread-badge treatment.
+async function postCompletionToChat(task, photoUrls, memoText){
+  if (!me || !me.name || !task) return;
+  const ts = Date.now();
+  const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  // Look up branch label for a friendly header line
+  let branchLbl = task.branchId || '';
+  try {
+    if (typeof BRANCHES !== 'undefined') {
+      const b = BRANCHES.find(x => x.id === task.branchId);
+      if (b) branchLbl = b[LANG] || b.ko || task.branchId;
+    }
+  } catch(_){}
+  const taskName = task.name || '(이름 없음)';
+  const lines = [
+    `✅ 업무 완료 — ${taskName}`,
+    `🏢 ${branchLbl} · 담당: ${me.name}`,
+  ];
+  if (task.deadline) lines.push(`⏰ 데드라인: ${task.deadline}`);
+  if (task.locationNote) lines.push(`📍 지시: ${task.locationNote}`);
+  if (memoText) lines.push(`📝 보고: ${memoText}`);
+  const text = lines.join('\n');
+  const msg = {
+    sender: me.name,
+    senderBranch: me.branch || task.branchId || '',
+    senderRole: me.role || '',
+    isManager: !!me.isManager,
+    color: me.color || '#1a5c3a',
+    text, ts,
+    photos: Array.isArray(photoUrls) ? photoUrls.slice(0, 20) : [],
+    meta: {
+      kind: 'task_complete',
+      taskId: task.id,
+      taskName,
+      branch: task.branchId,
+      branchLabel: branchLbl,
+      completedBy: me.name,
+      completedAt: ts,
+      deadline: task.deadline || '',
+    }
+  };
+  // Auth token (chat write rules typically need auth!=null)
+  let authQ = '';
+  try {
+    const u = window.__fb?.auth?.currentUser;
+    if (u) {
+      const tok = await u.getIdToken();
+      if (tok) authQ = '?auth=' + encodeURIComponent(tok);
+    }
+  } catch(_){}
+  // Write the message
+  await fetch(`${FB_DB_URL}/chat/messages/grocery_eval/${msgId}.json${authQ}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(msg)
+  });
+  // Bump the room preview so other branches see an unread badge
+  fetch(`${FB_DB_URL}/chat/rooms/grocery_eval.json${authQ}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: me.name })
+  }).catch(()=>{});
 }
 
 // ================= MANAGER VIEW =================
