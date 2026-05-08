@@ -1655,7 +1655,21 @@ function openRoom(id){
   // Daily filter bar — only visible for the expired/damage report room.
   // Other rooms hide it so the chat doesn't lose vertical space.
   const dfBar = document.getElementById('dailyFilterBar');
-  if (dfBar) dfBar.style.display = (id === 'expired') ? 'flex' : 'none';
+  if (dfBar) {
+    dfBar.style.display = (id === 'expired') ? 'flex' : 'none';
+    // Restore the visual active state of the saved filter so the
+    // green pill matches DAILY_FILTER on every room (re)entry.
+    if (id === 'expired') {
+      dfBar.querySelectorAll('.df-btn').forEach(b => {
+        const on = b.dataset.df === DAILY_FILTER;
+        b.classList.toggle('active', on);
+        b.style.background = on ? '#1a5c3a' : '#fff';
+        b.style.color = on ? '#fff' : '#374151';
+        b.style.border = on ? '0' : '1px solid #d1d5db';
+        b.style.fontWeight = on ? '700' : '600';
+      });
+    }
+  }
   // Composer is always visible when a room is open. If no identity yet,
   // the input prompts the user to pick a name (instead of vanishing).
   document.getElementById('composer').style.display = '';
@@ -1702,6 +1716,12 @@ function msgsFromObj(d){
 }
 function renderMessages(){
   const cont = document.getElementById('msgs');
+  // 유통기한/파손 방은 채팅 거품 대신 일별 카드 그리드로 렌더 →
+  // 매니저가 누가 어느 날 얼마나 일했는지 한눈에 비교 가능.
+  if (ACTIVE_ROOM === 'expired') {
+    renderExpiredCards();
+    return;
+  }
   if (MSGS.length === 0) {
     const emptyMsg = {ko:'아직 메시지가 없습니다.<br>첫 메시지를 보내보세요!', en:'No messages yet.<br>Send the first one!', es:'Sin mensajes aún.<br>¡Envía el primero!'};
     cont.innerHTML = `<div class="empty-chat">${emptyMsg[LANG] || emptyMsg.ko}</div>`;
@@ -1774,6 +1794,227 @@ function dayLabel(d){
   if (d.toDateString() === yest) return {ko:'어제', en:'Yesterday', es:'Ayer'}[LANG] || '어제';
   return d.toLocaleDateString();
 }
+
+// ============ EXPIRED-ROOM CARD GRID VIEW ============
+// Replaces chat bubbles with day-grouped product cards in the
+// 유통기한/파손 room. Each card is built from msg.meta when present
+// (new posts) or parsed from the message text + photos (legacy posts).
+function setDailyFilter(filter){
+  DAILY_FILTER = filter;
+  try { localStorage.setItem('chat.expiredFilter', filter); } catch(_){}
+  // Update button active state
+  document.querySelectorAll('#dailyFilterBar .df-btn').forEach(b => {
+    const on = b.dataset.df === filter;
+    b.classList.toggle('active', on);
+    b.style.background = on ? '#1a5c3a' : '#fff';
+    b.style.color = on ? '#fff' : '#374151';
+    b.style.border = on ? '0' : '1px solid #d1d5db';
+    b.style.fontWeight = on ? '700' : '600';
+  });
+  renderExpiredCards();
+}
+window.setDailyFilter = setDailyFilter;
+
+// Compute D-day from an expiry yyyy-mm-dd string. Returns Infinity if
+// the date is missing/unparseable so the card just hides the badge.
+function _expDDay(expiryStr){
+  if (!expiryStr) return Infinity;
+  const t = new Date(); t.setHours(0,0,0,0);
+  const e = new Date(expiryStr); if (isNaN(e.getTime())) return Infinity;
+  e.setHours(0,0,0,0);
+  return Math.round((e - t) / 86400000);
+}
+
+// Best-effort meta extraction for legacy messages that pre-date the
+// `meta` field — pulls product name from line 1 of the text.
+function _legacyMeta(m){
+  const text = String(m.text || '');
+  const lines = text.split('\n');
+  // Line 1 example: "❌ 폐기 · 양념간장 1.8L"
+  const m1 = lines[0]?.match(/[^·]+·\s*(.+)/);
+  const name = m1 ? m1[1].trim() : (lines[0] || '').replace(/^[^A-Z0-9가-힣]+/, '').trim();
+  // Line 2 might have "유통기한: YYYY-MM-DD · 수량: N개"
+  const m2 = text.match(/유통기한[:\s]*([\d-]+)/);
+  const m3 = text.match(/수량[:\s]*(\d+)/);
+  const status = /폐기|❌/.test(lines[0]||'') ? 'discarded'
+               : /할인|⚠️/.test(lines[0]||'') ? 'discounted'
+               : 'active';
+  return {
+    productName: name || '(이름 없음)',
+    expiry: m2 ? m2[1] : '',
+    qty: m3 ? +m3[1] : 1,
+    status,
+    branch: m.senderBranch || '',
+    branchLabel: '',
+    addedBy: m.sender || '',
+    loss: 0
+  };
+}
+
+function _expFilterMessages(){
+  const t0 = new Date(); t0.setHours(0,0,0,0);
+  const today0 = t0.getTime();
+  const cutoffs = {
+    today:     today0,
+    yesterday: today0 - 86400000,
+    week:      today0 - 6 * 86400000,
+    all:       0
+  };
+  const cutoff = cutoffs[DAILY_FILTER] ?? today0;
+  // 'yesterday' shows ONLY yesterday — others show >= cutoff
+  return MSGS.filter(m => {
+    const ts = m.ts || 0;
+    if (DAILY_FILTER === 'yesterday') return ts >= cutoff && ts < today0;
+    return ts >= cutoff;
+  });
+}
+
+function renderExpiredCards(){
+  const cont = document.getElementById('msgs');
+  const statBox = document.getElementById('dailyStats');
+  if (!cont) return;
+
+  const filtered = _expFilterMessages();
+
+  // Stats: total count + unique senders for the current filter window
+  const senders = new Set(filtered.map(m => m.sender || '?'));
+  if (statBox){
+    const filterLbl = DAILY_FILTER === 'today' ? '오늘'
+                    : DAILY_FILTER === 'yesterday' ? '어제'
+                    : DAILY_FILTER === 'week' ? '7일'
+                    : '전체';
+    statBox.innerHTML = filtered.length === 0
+      ? `<span style="color:#9ca3af">${filterLbl}: 데이터 없음</span>`
+      : `${filterLbl}: <b>${senders.size}</b>명 · <b>${filtered.length}</b>건`;
+  }
+
+  if (filtered.length === 0){
+    cont.innerHTML = `<div class="exp-empty"><div class="ic">📭</div>해당 기간에 등록된 항목이 없습니다.<br><small style="color:#9ca3af">위에서 다른 기간을 선택해보세요</small></div>`;
+    return;
+  }
+
+  // Group by day key (newest first)
+  const groups = new Map();
+  for (const m of filtered) {
+    const d = new Date(m.ts || 0);
+    const key = d.toDateString();
+    if (!groups.has(key)) groups.set(key, { date: d, items: [] });
+    groups.get(key).items.push(m);
+  }
+  // Sort days desc, items inside each day desc
+  const sortedDays = Array.from(groups.values())
+    .sort((a, b) => b.date - a.date);
+  sortedDays.forEach(g => g.items.sort((a, b) => (b.ts||0) - (a.ts||0)));
+
+  let html = '';
+  for (const g of sortedDays){
+    const daySenders = new Set(g.items.map(m => m.sender || '?'));
+    // Per-staff count breakdown for the day header — managers can
+    // see who logged how much without scanning every card.
+    const perStaff = {};
+    g.items.forEach(m => { const k = m.sender || '?'; perStaff[k] = (perStaff[k]||0) + 1; });
+    const breakdown = Object.entries(perStaff)
+      .sort((a,b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([n, c]) => `${escapeHtml(n.split(/\s+/)[0])} ${c}`)
+      .join(' · ');
+
+    html += `<div class="exp-day-section">
+      <div class="exp-day-hd">
+        <span class="ti">${dayLabel(g.date)}</span>
+        <span class="stat"><b>${daySenders.size}</b>명 · <b>${g.items.length}</b>건${breakdown ? ' · ' + breakdown : ''}</span>
+      </div>
+      <div class="exp-grid">
+        ${g.items.map(m => _expCardHTML(m)).join('')}
+      </div>
+    </div>`;
+  }
+  cont.innerHTML = html;
+}
+
+function _expCardHTML(m){
+  const meta = m.meta || _legacyMeta(m);
+  const photo = (m.photos && m.photos[0]) || '';
+  const dd = _expDDay(meta.expiry);
+  let ddLbl = '', ddCls = '';
+  if (dd === Infinity) { ddLbl = ''; }
+  else if (dd < 0) { ddLbl = `D+${Math.abs(dd)}`; ddCls = 'expired'; }
+  else if (dd === 0) { ddLbl = 'D-0'; ddCls = 'danger'; }
+  else if (dd <= 3) { ddLbl = `D-${dd}`; ddCls = 'danger'; }
+  else if (dd <= 7) { ddLbl = `D-${dd}`; ddCls = 'warn'; }
+  else { ddLbl = `D-${dd}`; }
+  const statusEmoji = meta.status === 'discarded' ? '❌'
+                   : meta.status === 'discounted' ? '⚠️'
+                   : '📦';
+  const senderColor = m.color || colorFor(m.sender || '?');
+  const branchObj = BRANCH_BY_ID[m.senderBranch];
+  const branchTxt = branchObj ? (branchObj[LANG] || branchObj.ko) : (meta.branchLabel || meta.branch || '');
+  const photoEl = photo
+    ? `<img src="${photo}" loading="lazy" alt="">`
+    : `<span class="none">${escapeHtml((meta.productName||'?').slice(0,2).toUpperCase())}</span>`;
+  const ddBadge = ddLbl ? `<div class="badge-dd ${ddCls}">${ddLbl}</div>` : '';
+  return `<div class="exp-card" onclick="openExpModal('${m.id}')">
+    <div class="ph">${photoEl}</div>
+    ${ddBadge}
+    <div class="badge-status">${statusEmoji}</div>
+    <div class="nm">${escapeHtml(meta.productName || '(이름 없음)')}</div>
+    <div class="who">
+      <span class="av" style="background:${senderColor}">${initialsOf(m.sender || '?')}</span>
+      ${escapeHtml((m.sender||'').split(/\s+/)[0] || '?')}${branchTxt ? ' · ' + escapeHtml(branchTxt) : ''}
+    </div>
+  </div>`;
+}
+
+function openExpModal(msgId){
+  const m = MSGS.find(x => x.id === msgId);
+  if (!m) return;
+  const meta = m.meta || _legacyMeta(m);
+  const photos = m.photos || [];
+  const dd = _expDDay(meta.expiry);
+  const ddTxt = dd === Infinity ? '—'
+              : dd < 0 ? `D+${Math.abs(dd)} (${Math.abs(dd)}일 지남)`
+              : dd === 0 ? 'D-0 (오늘 만료)'
+              : `D-${dd} (${dd}일 남음)`;
+  const ddVal = dd === Infinity ? '' : dd <= 3 ? 'val danger' : dd <= 7 ? 'val warn' : 'val';
+  const statusLbl = meta.status === 'discarded' ? '❌ 폐기'
+                  : meta.status === 'discounted' ? '⚠️ 할인 처리'
+                  : '📦 정상 등록';
+  const branchObj = BRANCH_BY_ID[m.senderBranch];
+  const branchTxt = branchObj ? (branchObj[LANG] || branchObj.ko) : (meta.branchLabel || meta.branch || '—');
+  const dt = new Date(m.ts || 0);
+  const dtLbl = dt.toLocaleString(LANG === 'ko' ? 'ko-KR' : 'en-US', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  const lossLine = (meta.loss > 0)
+    ? `<div class="row"><span class="lbl">예상 손실</span><span class="val danger">$${(+meta.loss).toFixed(2)}</span></div>`
+    : '';
+  const barcodeLine = meta.barcode
+    ? `<div class="row"><span class="lbl">바코드</span><span class="val" style="font-family:monospace;font-size:.86em">${escapeHtml(meta.barcode)}</span></div>`
+    : '';
+  // First photo big at top; remaining as small thumbnails to allow
+  // clicking through if there are extras.
+  const phEl = photos[0]
+    ? `<img src="${photos[0]}" alt="" onclick="openLightbox(${JSON.stringify(photos).replace(/"/g,'&quot;')}, 0)">
+       <button class="close" onclick="closeExpModal()">×</button>`
+    : `<div style="padding:60px 20px;text-align:center;color:#fff;background:#374151">📷 사진 없음<button class="close" onclick="closeExpModal()" style="position:absolute;top:12px;right:12px">×</button></div>`;
+  document.getElementById('expModalPh').innerHTML = phEl;
+  document.getElementById('expModalInfo').innerHTML = `
+    <h3>${meta.status === 'discarded' ? '❌' : meta.status === 'discounted' ? '⚠️' : '📦'} ${escapeHtml(meta.productName || '(이름 없음)')}</h3>
+    <div class="row"><span class="lbl">상태</span><span class="val">${statusLbl}</span></div>
+    <div class="row"><span class="lbl">유통기한</span><span class="${ddVal}">${escapeHtml(meta.expiry || '—')} · ${ddTxt}</span></div>
+    <div class="row"><span class="lbl">수량</span><span class="val">${meta.qty || 1}개</span></div>
+    ${lossLine}
+    ${barcodeLine}
+    <div class="row"><span class="lbl">지점</span><span class="val">🏢 ${escapeHtml(branchTxt)}</span></div>
+    <div class="row"><span class="lbl">등록자</span><span class="val">${escapeHtml(meta.addedBy || m.sender || '—')}</span></div>
+    <div class="row"><span class="lbl">공유 시각</span><span class="val">${escapeHtml(dtLbl)}</span></div>
+  `;
+  document.getElementById('expModal').classList.add('show');
+}
+function closeExpModal(e){
+  if (e && e.target.closest('.panel')) return;
+  document.getElementById('expModal').classList.remove('show');
+}
+window.openExpModal = openExpModal;
+window.closeExpModal = closeExpModal;
 
 // ============ COMPOSER ============
 function autoGrow(t){
