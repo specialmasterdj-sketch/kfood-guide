@@ -2631,35 +2631,142 @@ function renderTaskCard(t){
     <div class="task-actions">${actions}</div>
   </div>`;
 }
-// 체크리스트 항목별 메모 인풋 — 직원이 항목 옆에 "LA갈비 25, 차돌 18"
-// 같이 직접 자유롭게 적을 수 있게. blur 시 RTDB 에 자동 저장.
-function renderClMemoInput(task, item, idx){
-  const memo = (item && item.memo) || '';
-  const safeMemo = String(memo).replace(/"/g,'&quot;');
-  const ph = ({
-    ko: '예: LA갈비 25, 차돌 18',
-    en: 'e.g., LA Galbi 25, Chadol 18',
-    es: 'ej., LA Galbi 25, Chadol 18',
-  })[LANG] || '예: LA갈비 25, 차돌 18';
-  return `<div style="margin:4px 0 8px 28px">
-    <input type="text" class="cl-memo" value="${safeMemo}" placeholder="${ph}"
-      onchange="saveChecklistMemo('${task.id}','${task.branchId}',${idx},this.value)"
-      onfocus="event.stopPropagation()"
-      style="width:calc(100% - 8px);border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.86em;background:#fafafa;outline:none;font-family:inherit"
-      onfocus="this.style.background='#fff';this.style.borderColor='#1a5c3a'"
-      onblur="this.style.background='#fafafa';this.style.borderColor='#d1d5db'">
+// 체크리스트 항목별 다중 entry — 한 줄에 한 품목 (텍스트 + 사진).
+// 직원이 "+ 추가" 누르면 새 빈 줄, 각 줄마다 자기 텍스트 + 자기 사진.
+// 데이터: checklist[idx].entries = [{ id, text, photos:[], ts, by }]
+// 레거시 memo / photos 가 남아있으면 첫 entry 로 보여서 자연스럽게 마이그레이션.
+function _clEntriesOf(item){
+  if (!item) return [];
+  if (Array.isArray(item.entries) && item.entries.length) return item.entries;
+  // 레거시 fallback — memo + photos 가 있으면 한 entry 로 가상화
+  const hasMemo = item.memo && String(item.memo).trim();
+  const hasPhoto = (Array.isArray(item.photos) && item.photos.length) || item.photo;
+  if (hasMemo || hasPhoto) {
+    return [{
+      id: 'legacy',
+      text: hasMemo ? String(item.memo) : '',
+      photos: Array.isArray(item.photos) ? item.photos : (item.photo ? [item.photo] : []),
+      ts: item.memoAt || item.photoAt || 0,
+      by: item.memoBy || item.photoBy || ''
+    }];
+  }
+  return [];
+}
+function renderClEntries(task, item, idx){
+  const entries = _clEntriesOf(item);
+  const phText = ({
+    ko: '예: LA갈비 25', en: 'e.g., LA Galbi 25', es: 'ej., LA Galbi 25'
+  })[LANG] || '예: LA갈비 25';
+  const addLbl = ({
+    ko: '➕ 한 줄 추가', en: '➕ Add row', es: '➕ Agregar fila'
+  })[LANG] || '➕ 한 줄 추가';
+  const rows = entries.map(e => {
+    const eid = e.id || 'legacy';
+    const safeText = String(e.text || '').replace(/"/g,'&quot;');
+    const photos = Array.isArray(e.photos) ? e.photos : [];
+    const thumbs = photos.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:zoom-in;border:1px solid #d1d5db">`).join('');
+    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+      <input type="text" value="${safeText}" placeholder="${phText}"
+        onchange="setClEntryText('${task.id}','${task.branchId}',${idx},'${eid}',this.value)"
+        onfocus="event.stopPropagation()"
+        style="flex:1;min-width:120px;border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.86em;background:#fff;outline:none;font-family:inherit">
+      <span style="display:flex;align-items:center;gap:4px">${thumbs}</span>
+      <button class="cl-photo-btn" onclick="event.preventDefault();addClEntryPhoto('${task.id}','${task.branchId}',${idx},'${eid}')" title="이 줄 사진 추가" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:.84em">📷</button>
+      <button onclick="event.preventDefault();removeClEntry('${task.id}','${task.branchId}',${idx},'${eid}')" title="이 줄 삭제" style="background:transparent;border:0;color:#dc2626;font-size:.95em;cursor:pointer;padding:2px 6px">✕</button>
+    </div>`;
+  }).join('');
+  const hasAny = entries.length > 0;
+  return `<div style="margin:4px 0 10px 28px">
+    ${rows}
+    <button onclick="event.preventDefault();addClEntry('${task.id}','${task.branchId}',${idx})" style="background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:.78em;font-weight:700;cursor:pointer;${hasAny?'':'margin-top:0'}">${addLbl}</button>
   </div>`;
 }
+window.renderClEntries = renderClEntries;
+
+// New entry id — short random so it's unique within the task.
+function _newEntryId(){ return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+// Always re-read the FRESH entries array from the latest TASKS snapshot
+// before mutating, so we don't drop entries another concurrent edit added.
+function _entriesArrayLive(taskId, branchId, idx){
+  const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+  if (!task || !Array.isArray(task.checklist) || !task.checklist[idx]) return [];
+  return _clEntriesOf(task.checklist[idx]).map(e => Object.assign({}, e));
+}
+async function _writeEntries(taskId, branchId, idx, entries){
+  const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), { entries });
+}
+
+async function addClEntry(taskId, branchId, idx){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  const arr = _entriesArrayLive(taskId, branchId, idx);
+  arr.push({ id: _newEntryId(), text: '', photos: [], ts: Date.now(), by: me.name });
+  await _writeEntries(taskId, branchId, idx, arr);
+}
+async function removeClEntry(taskId, branchId, idx, entryId){
+  if (!confirm(({ko:'이 줄 삭제할까요?',en:'Remove this row?',es:'¿Quitar esta fila?'})[LANG] || '이 줄 삭제할까요?')) return;
+  const arr = _entriesArrayLive(taskId, branchId, idx).filter(e => (e.id || 'legacy') !== entryId);
+  await _writeEntries(taskId, branchId, idx, arr);
+}
+async function setClEntryText(taskId, branchId, idx, entryId, value){
+  if (!me) return;
+  const arr = _entriesArrayLive(taskId, branchId, idx);
+  const e = arr.find(x => (x.id || 'legacy') === entryId);
+  if (!e) return;
+  e.text = String(value || '').trim();
+  e.by = me.name;
+  e.ts = Date.now();
+  await _writeEntries(taskId, branchId, idx, arr);
+}
+function addClEntryPhoto(taskId, branchId, idx, entryId){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  let input = document.getElementById('__clEntryPhotoPicker');
+  if (!input) {
+    input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
+    input.multiple = true; input.id = '__clEntryPhotoPicker';
+    input.style.display = 'none'; document.body.appendChild(input);
+  }
+  input.value = '';
+  input.onchange = async () => {
+    const files = Array.from(input.files || []); if (!files.length) return;
+    try {
+      const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'/'+entryId;
+      const urls = [];
+      for (const f of files) urls.push(await uploadOnePhoto(f, basePath));
+      const arr = _entriesArrayLive(taskId, branchId, idx);
+      const e = arr.find(x => (x.id || 'legacy') === entryId);
+      if (!e) {
+        // legacy fallback — user clicked photo on the virtualized legacy
+        // entry → promote it to a real entry.
+        arr.push({ id: _newEntryId(), text: '', photos: urls, ts: Date.now(), by: me.name });
+      } else {
+        e.photos = [...(Array.isArray(e.photos) ? e.photos : []), ...urls];
+        e.ts = Date.now();
+        e.by = me.name;
+      }
+      await _writeEntries(taskId, branchId, idx, arr);
+    } catch(err) { alert('사진 업로드 실패: ' + err.message); }
+  };
+  input.click();
+}
+window.addClEntry = addClEntry;
+window.removeClEntry = removeClEntry;
+window.setClEntryText = setClEntryText;
+window.addClEntryPhoto = addClEntryPhoto;
+
+// 레거시 호환 — 일부 코드가 saveChecklistMemo 호출하면 새 entry 로 변환.
 async function saveChecklistMemo(taskId, branchId, idx, value){
   if (!me) return;
-  const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
-  try {
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
-      memo: (value||'').trim() || null,
-      memoBy: me.name,
-      memoAt: Date.now(),
-    });
-  } catch(e) { console.warn('[saveChecklistMemo]', e); }
+  const arr = _entriesArrayLive(taskId, branchId, idx);
+  if (arr.length === 0) {
+    arr.push({ id: _newEntryId(), text: String(value||'').trim(), photos: [], ts: Date.now(), by: me.name });
+  } else {
+    arr[0].text = String(value||'').trim();
+    arr[0].by = me.name; arr[0].ts = Date.now();
+  }
+  await _writeEntries(taskId, branchId, idx, arr);
 }
 window.saveChecklistMemo = saveChecklistMemo;
 
@@ -2720,7 +2827,7 @@ function renderChecklistInline(task){
           <span class="cl-name">${escHtml(dispName)}</span>
           ${by}
           ${photoCtl}
-        </label>${renderClMemoInput(task, c, i)}`;
+        </label>${renderClEntries(task, c, i)}`;
       }).join('');
       return stageHeader + rows;
     }).join('');
@@ -2739,7 +2846,7 @@ function renderChecklistInline(task){
         <span class="cl-name">${escHtml(dispName)}</span>
         ${by}
         ${photoCtl}
-      </label>${renderClMemoInput(task, c, i)}`;
+      </label>${renderClEntries(task, c, i)}`;
     }).join('');
   }
   return `<div class="checklist">
@@ -2831,21 +2938,26 @@ async function toggleChecklistItem(taskId, branchId, idx, isChecked){
         startedAt: task.startedAt || Date.now(),
       });
       // Also post to the matching evaluation chat — same flow as finishTask().
-      // Gather every photo each checklist item carried so the chat
-      // message has complete proof, not just one item's photo.
+      // Gather every photo from every entry across all checklist items.
       try {
-        const allItemPhotos = localCopy.flatMap(c =>
-          Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : [])
-        );
-        // Build a per-item memo summary so the chat shows what the worker
-        // actually did (e.g. 'BEEF: LA갈비 25, 차돌 18 / PORK: 삼겹 30 / ...')
+        const allItemPhotos = localCopy.flatMap(c => {
+          const entries = _clEntriesOf(c);
+          if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
+          // legacy fallback for items still on old schema
+          return Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []);
+        });
+        // Per-item summary: join all entry texts, e.g.
+        //   BEEF: LA갈비 25, 차돌 18, 불고기 30
         const memoLines = localCopy
-          .filter(c => c && c.memo && String(c.memo).trim())
           .map(c => {
-            // strip leading emoji from item name for cleanliness
+            const entries = _clEntriesOf(c);
+            const texts = entries.map(e => String(e.text||'').trim()).filter(Boolean);
+            const joined = texts.length ? texts.join(', ') : (c.memo ? String(c.memo).trim() : '');
+            if (!joined) return null;
             const cleanName = String(c.name||'').replace(/^[^\w가-힣]+/, '').split(/\s/)[0];
-            return `• ${cleanName}: ${String(c.memo).trim()}`;
-          });
+            return `• ${cleanName}: ${joined}`;
+          })
+          .filter(Boolean);
         const summary = memoLines.length
           ? `체크리스트 ${localCopy.length}개 모두 완료\n${memoLines.join('\n')}`
           : `체크리스트 ${localCopy.length}개 항목 모두 완료`;
