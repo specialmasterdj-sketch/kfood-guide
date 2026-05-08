@@ -2756,19 +2756,46 @@ window.removeClEntry = removeClEntry;
 window.setClEntryText = setClEntryText;
 window.addClEntryPhoto = addClEntryPhoto;
 
-// 레거시 호환 — 일부 코드가 saveChecklistMemo 호출하면 새 entry 로 변환.
+// 일반 (비-정육) 업무는 한 줄짜리 메모 입력. .memo 필드에 직접 저장 —
+// 정육처럼 entries[] 배열은 안 씀. 화면도 단순.
+function renderClMemoInput(task, item, idx){
+  const memo = (item && item.memo) || '';
+  const safeMemo = String(memo).replace(/"/g,'&quot;');
+  const ph = ({
+    ko: '예: 서울우유 2.3L 재고 3개 남음',
+    en: 'e.g., Seoul Milk 2.3L — 3 left',
+    es: 'ej., Leche Seoul 2.3L — 3 restantes',
+  })[LANG] || '예: 메모';
+  return `<div style="margin:4px 0 8px 28px">
+    <input type="text" class="cl-memo" value="${safeMemo}" placeholder="${ph}"
+      onchange="saveChecklistMemo('${task.id}','${task.branchId}',${idx},this.value)"
+      onfocus="event.stopPropagation()"
+      style="width:calc(100% - 8px);border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.86em;background:#fafafa;outline:none;font-family:inherit">
+  </div>`;
+}
 async function saveChecklistMemo(taskId, branchId, idx, value){
   if (!me) return;
-  const arr = _entriesArrayLive(taskId, branchId, idx);
-  if (arr.length === 0) {
-    arr.push({ id: _newEntryId(), text: String(value||'').trim(), photos: [], ts: Date.now(), by: me.name });
-  } else {
-    arr[0].text = String(value||'').trim();
-    arr[0].by = me.name; arr[0].ts = Date.now();
-  }
-  await _writeEntries(taskId, branchId, idx, arr);
+  const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+      memo: (value||'').trim() || null,
+      memoBy: me.name,
+      memoAt: Date.now(),
+    });
+  } catch(e) { console.warn('[saveChecklistMemo]', e); }
 }
 window.saveChecklistMemo = saveChecklistMemo;
+
+// 정육 전용 다중행 vs 일반 단일행 — 업무 카테고리·플래그로 분기.
+function _useEntriesMode(task){
+  if (!task) return false;
+  return task.category === '정육' || task.autoMeatDaily === true;
+}
+function renderClItemMemoOrEntries(task, item, idx){
+  return _useEntriesMode(task)
+    ? renderClEntries(task, item, idx)
+    : renderClMemoInput(task, item, idx);
+}
 
 function renderChecklistInline(task){
   if (!task.checklist || !Array.isArray(task.checklist) || task.checklist.length === 0) return '';
@@ -2827,7 +2854,7 @@ function renderChecklistInline(task){
           <span class="cl-name">${escHtml(dispName)}</span>
           ${by}
           ${photoCtl}
-        </label>${renderClEntries(task, c, i)}`;
+        </label>${renderClItemMemoOrEntries(task, c, i)}`;
       }).join('');
       return stageHeader + rows;
     }).join('');
@@ -2846,7 +2873,7 @@ function renderChecklistInline(task){
         <span class="cl-name">${escHtml(dispName)}</span>
         ${by}
         ${photoCtl}
-      </label>${renderClEntries(task, c, i)}`;
+      </label>${renderClItemMemoOrEntries(task, c, i)}`;
     }).join('');
   }
   return `<div class="checklist">
