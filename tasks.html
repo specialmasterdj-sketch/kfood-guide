@@ -2476,7 +2476,8 @@ function computeStatus(t){
 // ================= EMPLOYEE VIEW =================
 function renderEmp(){
   const list = document.getElementById('empList');
-  const my = TASKS.filter(t => isAssignedToMe(t));
+  // 오너/전무가 6지점 '*' 업무 6번 중복 보지 않게 같은 이름·데드라인 dedup
+  const my = dedupAllBranchTasks(TASKS.filter(t => isAssignedToMe(t)));
   my.sort((a,b) => (a.deadline||'99:99').localeCompare(b.deadline||'99:99'));
   const total = my.length;
   const done = my.filter(t => t.completedAt).length;
@@ -2493,16 +2494,31 @@ function renderEmp(){
 }
 function isAssignedToMe(t){
   if (!me) return false;
-  // 오너 / 전무 는 직원이 아니라 감독자 — 자기 이름이 직접 박힌 게 아니면
-  // 'all' 매칭 ('*') 에서 자동 제외해 '내 업무' 탭이 6지점 자동 업무로
-  // 도배되지 않게 한다. 실제 작업은 매니저 뷰에서 봐야 함.
-  const myRole = String(me.role || '').toUpperCase();
-  const isLeadership = myRole.includes('OWNER') || myRole.includes('EXECUTIVE');
   if (t.assignedToId && t.assignedToId === me.name) return true;
   if (t.assignedTo && t.assignedTo.toLowerCase() === (me.name||'').toLowerCase()) return true;
-  if (t.assignedTo === '*' && !isLeadership) return true; // 일반 직원은 '*' 매칭
+  if (t.assignedTo === '*') return true; // all
   if (t.assignedToRole && me.role && t.assignedToRole.toLowerCase() === me.role.toLowerCase()) return true;
   return false;
+}
+
+// 오너 / 전무 가 '*' 업무를 보면 6지점 자동 생성이 6번 중복 표시된다.
+// 같은 이름·데드라인 끼리 묶어서 첫 번째 1개만 남기고 나머지는 제거 —
+// 일반 직원은 자기 지점 하나만 보니까 영향 없음.
+function dedupAllBranchTasks(list){
+  if (!me) return list;
+  const myRole = String(me.role || '').toUpperCase();
+  const isLeadership = myRole.includes('OWNER') || myRole.includes('EXECUTIVE');
+  if (!isLeadership) return list;
+  const seen = new Map();
+  const out = [];
+  for (const t of list) {
+    if (t.assignedTo !== '*') { out.push(t); continue; }
+    const key = (t.name||'') + '|' + (t.deadline||'') + '|' + (t.category||'');
+    if (!seen.has(key)) { seen.set(key, t); out.push(t); }
+    // duplicates from other branches: silently drop in '내 업무' (still
+    // visible per-branch in 매니저 뷰)
+  }
+  return out;
 }
 function renderTaskCard(t){
   const status = computeStatus(t);
