@@ -684,6 +684,7 @@ button{font-family:inherit;cursor:pointer}
       <button class="chip" data-f="delayed" onclick="setMgrFilter('delayed',this)">⚠️ 지연</button>
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
+    <button class="btn sec" onclick="sendMeatDailyAll()" title="6개 지점에 오늘 정육 일일 작업 보고 일괄 발송 (이미 있으면 스킵)" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 일괄 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -2279,21 +2280,93 @@ async function ensureMeatDailyTask(branchId){
   } catch(e) { console.warn('[ensureMeatDailyTask]', branchId, e); }
 }
 
+// 매니저용 정육 일괄 발송 — 매니저 뷰의 '🥩 정육 일괄 발송' 버튼이 호출.
+// 6개 지점에 각각 정육 직원의 task 가 없으면 새로 만들고, 이미 있으면 건너뜀.
+// 매니저는 본인 지점만, 오너/전무는 6지점 전체 발송.
+async function sendMeatDailyAll(){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  // 누구에게 발송할지 — 본인 지점이면 본인 지점만, 오너면 전체 선택
+  const branches = isOwner() ? BRANCHES.map(b => b.id) : (me.branch ? [me.branch] : []);
+  if (!branches.length) { alert('지점 정보 없음'); return; }
+  // 정육 담당자 이름을 한 번 받아서 모든 지점에 동일 직원 이름 사용 — 매니저
+  // 가 매일 직접 발송하니 누가 받을지 명시. 빈 칸이면 '*' (전체 → 첫 클릭자).
+  const who = prompt(
+    '🥩 오늘 정육 일일 작업 보고 발송\n\n' +
+    '받을 직원 이름을 입력하세요 (전 지점 동일):\n' +
+    '비워두면 전체 (* — 정육 담당자가 본인이 잡음)\n' +
+    '대상 지점: ' + branches.length + '개',
+    ''
+  );
+  if (who === null) return;   // 취소
+  const targetName = who.trim() || '*';
+  let created = 0, skipped = 0, failed = 0;
+  for (const branchId of branches){
+    const today = todayStr();
+    const userKey = targetName === '*' ? 'all' : slug(targetName);
+    const taskId = 'auto_meat_daily_' + userKey;
+    const restUrl = `${FB_DB_URL}/tasks/${branchId}/${today}/${taskId}.json`;
+    try {
+      let aq = '';
+      try {
+        const u = window.__fb?.auth?.currentUser;
+        if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+      } catch(_){}
+      // 이미 있으면 스킵
+      const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
+      if (r.ok) {
+        const existing = await r.json();
+        if (existing && Array.isArray(existing.checklist) && existing.checklist.length >= 6) {
+          skipped++; continue;
+        }
+      }
+      const checklist = _MEAT_TPL_2026.map(t => Object.assign({}, t));
+      const payload = {
+        name: '🥩 정육 일일 작업 보고',
+        nameTr: { ko:'🥩 정육 일일 작업 보고', en:'🥩 Daily Meat Department Report', es:'🥩 Reporte Diario de Carnicería' },
+        deadline: '18:00',
+        category: '정육',
+        requirePhoto: true,
+        place: '정육 작업장',
+        locationNote: '하루 작업한 BEEF / PORK / CHICKEN / 마리네이드 / 청소 — 각 항목에 사진+간단 메모',
+        locationNoteTr: {
+          ko: '하루 작업한 BEEF / PORK / CHICKEN / 마리네이드 / 청소 — 각 항목에 사진+간단 메모',
+          en: 'BEEF / PORK / CHICKEN / Marinated / Cleaning — attach a photo + brief memo per item',
+          es: 'BEEF / PORK / CHICKEN / Marinado / Limpieza — adjunta foto + memo breve por ítem',
+        },
+        assignedTo: targetName,
+        assignedToId: targetName === '*' ? null : targetName,
+        from: me.name + ' (정육 일괄 발송)',
+        fromRole: me.role || 'MANAGER',
+        createdAt: Date.now(),
+        checklist,
+        autoMeatDaily: true,
+        noAutoChat: true,
+      };
+      const w = await fetch(restUrl + (aq ? aq : ''), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (w.ok) created++; else { console.warn('[meat-daily] write fail', branchId, w.status); failed++; }
+    } catch(e) { console.warn('[meat-daily]', branchId, e); failed++; }
+  }
+  alert('🥩 정육 일일 발송 완료\n' +
+        '  새로 발송: ' + created + '개 지점\n' +
+        '  이미 있음: ' + skipped + '개\n' +
+        (failed ? '  실패: ' + failed + '개' : ''));
+}
+window.sendMeatDailyAll = sendMeatDailyAll;
+
 function subscribeTasks(){
   if (!me) return;
   if (!window.__fb) { setTimeout(subscribeTasks, 500); return; }
   if (unsub) { try{unsub();}catch(e){} unsub=null; }
   SEEN_IDS = new Set();
   SEEN_INIT = false;
-  // 🥩 매일 정육 일일 작업 보고 자동 생성 — 첫 매니저가 페이지 열면 트리거.
-  // 오너는 6지점 전부, 매니저는 자기 지점만. 이미 있으면 스킵 (idempotent).
-  if (isManager(me.role) || isOwner()) {
-    if (isOwner()) {
-      BRANCHES.forEach(b => { ensureMeatDailyTask(b.id); });
-    } else if (me.branch) {
-      ensureMeatDailyTask(me.branch);
-    }
-  }
+  // 정육 일일 보고 자동 생성은 비활성화 — 매니저가 '🥩 정육 일괄 발송'
+  // 버튼으로 직접 트리거 (sendMeatDailyAll). 비활성 이유: 모든 직원에게
+  // 자동 생성되면 정육 부서 아닌 직원 화면에도 task 가 떠 어수선했음.
   // Owner/B.H.K reads ALL branches; managers read own branch
   if (isOwner()) {
     // For owner, subscribe to today across all branches and merge
