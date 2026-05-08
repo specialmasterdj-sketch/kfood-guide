@@ -2800,6 +2800,26 @@ async function setClEntryText(taskId, branchId, idx, entryId, value){
 }
 function addClEntryPhoto(taskId, branchId, idx, entryId){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  // 카메라 호출 전 현재 스크롤 위치 저장 — iOS / Android 브라우저가 카메라
+  // 닫고 돌아올 때 스크롤을 0 으로 리셋하는 케이스가 있음. 사용자가 보던
+  // 행으로 부드럽게 다시 데려가기 위함. 여러 프레임 동안 반복 복원 시도.
+  const savedY = window.scrollY || window.pageYOffset || 0;
+  const savedX = window.scrollX || window.pageXOffset || 0;
+  const restoreScroll = () => {
+    if (savedY < 5) return;   // 어차피 맨 위였으면 복원 불필요
+    let attempts = 0;
+    const tick = () => {
+      try { window.scrollTo(savedX, savedY); } catch(_){}
+      attempts++;
+      if (attempts < 30 && Math.abs((window.scrollY||0) - savedY) > 5) {
+        // 새 DOM 이 들어오기 전이거나 이미지 reflow 가 늦어 스크롤이 다시
+        // 0 으로 튀는 케이스 → 최대 ~500ms 동안 끈질기게 재복원.
+        setTimeout(tick, 16);
+      }
+    };
+    tick();
+  };
+
   let input = document.getElementById('__clEntryPhotoPicker');
   if (!input) {
     input = document.createElement('input');
@@ -2809,8 +2829,11 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
   }
   input.value = '';
   input.onchange = async () => {
-    const files = Array.from(input.files || []); if (!files.length) return;
+    const files = Array.from(input.files || []);
+    if (!files.length) { restoreScroll(); return; }
     if (typeof showToast === 'function') showToast('📷 업로드 중', files.length + '장');
+    // 카메라가 닫히고 페이지로 돌아오자마자 한 번 복원
+    restoreScroll();
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'/'+entryId;
       const urls = [];
@@ -2836,9 +2859,12 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
       }
       await _writeEntries(taskId, branchId, idx, arr);
       if (typeof showToast === 'function') showToast('✅ 사진 추가됨', urls.length + '장');
+      // RTDB write → renderAll → DOM 재구성 직후 한 번 더 복원
+      restoreScroll();
     } catch(err) {
       console.error('[addClEntryPhoto]', err);
       alert('📷 사진 업로드 실패\n\n' + (err && err.message || err) + '\n\n다시 시도하거나 매니저에게 문의하세요.');
+      restoreScroll();
     }
   };
   input.click();
