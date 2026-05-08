@@ -753,7 +753,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field"><label>② 카테고리</label>
       <div style="display:flex;gap:4px;align-items:stretch">
-        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="기타">기타</option></select>
+        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="기타">기타</option></select>
         <button type="button" id="aCatEdit" onclick="renameCatFromSelect()" title="이 카테고리 이름 수정" style="display:none;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">✏</button>
         <button type="button" id="aCatDelete" onclick="rmCatFromSelect()" title="이 카테고리 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">×</button>
       </div>
@@ -776,6 +776,7 @@ button{font-family:inherit;cursor:pointer}
         <option value="음료수 냉장">음료수 냉장</option>
         <option value="냉동 지역">냉동 지역</option>
         <option value="마트 밖">마트 밖</option>
+        <option value="정육 작업장">🥩 정육 작업장</option>
         <option value="__custom__">✏️ 직접 입력…</option>
       </select>
       <input type="text" id="aDisplayPlaceCustom" placeholder="장소 직접 입력 (예: 앤디 캡, 백룸 입구)" style="display:none;margin-top:6px">
@@ -961,6 +962,13 @@ const TASK_TEMPLATES = [
   { name: '클로징 체크리스트',      category: '기타' },
   { name: '매장 오픈 준비',         category: '기타' },
   { name: '매장 마감 정리',         category: '기타' },
+  // 🥩 정육 — 매일 1명 직원이 정육 작업장에서 수행. 80개 부위 일일이
+  // 고르지 말고 카테고리별로 사진+메모 자유롭게 적게.
+  { name: '🐂 BEEF 작업한 종류·수량 (사진+메모)',     category: '정육' },
+  { name: '🐖 PORK 작업한 종류·수량 (사진+메모)',     category: '정육' },
+  { name: '🐔 CHICKEN 작업한 종류·수량 (사진+메모)',   category: '정육' },
+  { name: '🍱 마리네이드/양념 작업 (사진+메모)',       category: '정육' },
+  { name: '🧹 정육 매대·작업대·기계 청소 (사진)',      category: '정육' },
   // BOBA (3교대 10:00~19:00) — stage: 0=오픈/1=영업 중/2=마감, group=하위 묶음
   // ─── 오픈 (Stage 0) ───
   { name: '매장 바닥 청소 및 테이블 닦기',                  category: 'BOBA', stage: 0, group: '청결 & 위생' },
@@ -2153,12 +2161,80 @@ if (window.kmBack) kmBack.attachView(() => CUR_TAB === 'emp', () => switchTab('e
 let unsub = null;
 let SEEN_IDS = new Set();   // task ids already known — used to detect new arrivals
 let SEEN_INIT = false;       // skip notifications on first snapshot (initial load)
+
+// 🥩 정육 일일 작업 보고 — 매일 자동 생성. 첫 매니저(또는 오너)가 페이지
+// 열면 그 지점의 오늘 task 가 없을 때 push 한다. ID 고정 (auto_meat_daily)
+// 으로 중복 생성 방지 — 두 매니저가 동시에 열어도 두 번째 PUT 은 진행
+// 데이터 덮어쓰기 막기 위해 GET 으로 먼저 존재 확인.
+async function ensureMeatDailyTask(branchId){
+  if (!window.__fb || !branchId) return;
+  const today = todayStr();
+  const taskId = 'auto_meat_daily';
+  const restUrl = `${FB_DB_URL}/tasks/${branchId}/${today}/${taskId}.json`;
+  try {
+    // 1) Check existence via REST GET — cheaper than spinning up onValue.
+    let authQ = '';
+    try {
+      const u = window.__fb?.auth?.currentUser;
+      if (u) { const tok = await u.getIdToken(); if (tok) authQ = '?auth=' + encodeURIComponent(tok); }
+    } catch(_){}
+    const r = await fetch(restUrl + (authQ ? authQ : ''), { cache: 'no-store' });
+    if (r.ok) {
+      const data = await r.json();
+      if (data) return;   // 오늘 이미 생성됨 → 스킵
+    }
+    // 2) Build the 5-item checklist for meat dept
+    const checklist = [
+      { name: '🐂 BEEF 작업한 종류·수량 (사진+메모)',     done: false },
+      { name: '🐖 PORK 작업한 종류·수량 (사진+메모)',     done: false },
+      { name: '🐔 CHICKEN 작업한 종류·수량 (사진+메모)',   done: false },
+      { name: '🍱 마리네이드/양념 작업 (사진+메모)',       done: false },
+      { name: '🧹 정육 매대·작업대·기계 청소 (사진)',      done: false },
+    ];
+    const payload = {
+      name: '🥩 정육 일일 작업 보고',
+      nameTr: { ko:'🥩 정육 일일 작업 보고', en:'🥩 Daily Meat Department Report', es:'🥩 Reporte Diario de Carnicería' },
+      deadline: '18:00',
+      category: '정육',
+      requirePhoto: true,
+      place: '정육 작업장',
+      locationNote: '하루 작업한 BEEF / PORK / CHICKEN / 마리네이드 / 청소 — 각 항목에 사진+간단 메모 (예: "LA갈비 25, 차돌 18")',
+      locationNoteTr: {
+        ko: '하루 작업한 BEEF / PORK / CHICKEN / 마리네이드 / 청소 — 각 항목에 사진+간단 메모 (예: "LA갈비 25, 차돌 18")',
+        en: 'BEEF / PORK / CHICKEN / Marinated / Cleaning — attach a photo + brief memo per item (e.g. "LA Galbi 25, Chadol 18")',
+        es: 'BEEF / PORK / CHICKEN / Marinado / Limpieza — adjunta foto + memo breve por ítem (ej. "LA Galbi 25, Chadol 18")',
+      },
+      assignedTo: '*',
+      from: '시스템 자동',
+      fromRole: 'AUTO',
+      createdAt: Date.now(),
+      checklist,
+      autoMeatDaily: true,
+    };
+    await fetch(restUrl + (authQ ? authQ : ''), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    console.info('[ensureMeatDailyTask] created for', branchId);
+  } catch(e) { console.warn('[ensureMeatDailyTask]', branchId, e); }
+}
+
 function subscribeTasks(){
   if (!me) return;
   if (!window.__fb) { setTimeout(subscribeTasks, 500); return; }
   if (unsub) { try{unsub();}catch(e){} unsub=null; }
   SEEN_IDS = new Set();
   SEEN_INIT = false;
+  // 🥩 매일 정육 일일 작업 보고 자동 생성 — 첫 매니저가 페이지 열면 트리거.
+  // 오너는 6지점 전부, 매니저는 자기 지점만. 이미 있으면 스킵 (idempotent).
+  if (isManager(me.role) || isOwner()) {
+    if (isOwner()) {
+      BRANCHES.forEach(b => { ensureMeatDailyTask(b.id); });
+    } else if (me.branch) {
+      ensureMeatDailyTask(me.branch);
+    }
+  }
   // Owner/B.H.K reads ALL branches; managers read own branch
   if (isOwner()) {
     // For owner, subscribe to today across all branches and merge
@@ -2923,13 +2999,24 @@ async function finishTask(){
   finally { btn.disabled = false; btn.textContent = '✅ 완료 보고'; DONE_PHOTOS = []; }
 }
 
-// Send a completion summary into the '그로서리 평가' chat room
-// (id='grocery_eval'). Same RTDB write pattern as chat.html sendMessage
-// so the message renders identically and gets unread-badge treatment.
+// Send a completion summary into the matching evaluation chat room.
+// 정육 카테고리 → '정육 평가 (meat_evalution_room)', 그 외 → '그로서리 평가
+// (grocery_eval)'. 다른 부문 (sushi / kfood_eval / produce) 도 비슷한 패턴
+// 으로 확장 가능 — 지금은 정육만 분리.
 async function postCompletionToChat(task, photoUrls, memoText){
   if (!me || !me.name || !task) return;
   const ts = Date.now();
   const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  // 카테고리에 맞는 평가방 라우팅. typo 'evalution' 은 chat.html DEFAULT_ROOMS
+  // 에 정의돼있는 기존 ID 라 그대로 사용 (이름 바꾸면 기존 메시지 미아).
+  const ROOM_BY_CATEGORY = {
+    '정육':       'meat_evalution_room',
+    '정육-Beef':  'meat_evalution_room',
+    'Sushi':      'sushi',
+    'K-Food':     'kfood_eval',
+    'Produce':    'produce',
+  };
+  const targetRoom = ROOM_BY_CATEGORY[task.category] || 'grocery_eval';
   // Look up branch label for a friendly header line
   let branchLbl = task.branchId || '';
   try {
@@ -2976,14 +3063,14 @@ async function postCompletionToChat(task, photoUrls, memoText){
       if (tok) authQ = '?auth=' + encodeURIComponent(tok);
     }
   } catch(_){}
-  // Write the message
-  await fetch(`${FB_DB_URL}/chat/messages/grocery_eval/${msgId}.json${authQ}`, {
+  // Write the message into the routed room (정육 → meat_evalution_room, etc.)
+  await fetch(`${FB_DB_URL}/chat/messages/${targetRoom}/${msgId}.json${authQ}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(msg)
   });
   // Bump the room preview so other branches see an unread badge
-  fetch(`${FB_DB_URL}/chat/rooms/grocery_eval.json${authQ}`, {
+  fetch(`${FB_DB_URL}/chat/rooms/${targetRoom}.json${authQ}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: me.name })
