@@ -2176,17 +2176,16 @@ let SEEN_IDS = new Set();   // task ids already known — used to detect new arr
 let SEEN_INIT = false;       // skip notifications on first snapshot (initial load)
 
 // 정육 일일 보고 체크리스트 템플릿 — auto-create + migration 둘 다 사용.
-// K-Food 일일 작업 보고 — 김밥/삼각김밥/잡채 고정 + 기타 빈 슬롯 1개.
-// 직원이 한 줄씩 추가하며 만든 수량 + 사진 기록.
+// K-Food 일일 작업 보고 — 김밥/삼각김밥/잡채 3개 고정 메뉴.
+// 그 아래로 사용자가 '+ 음식 추가' 버튼으로 4번째, 5번째 메뉴를 동적 추가.
+// 각 메뉴는 단일 메모(만든 수량) + 단일 사진 (entries 다중행 아님).
 const _KFOOD_TPL_2026 = [
-  { name: '🍙 김밥 만든 수량 (사진+개수)', done: false,
-    nameTr: { ko:'🍙 김밥 만든 수량 (사진+개수)', en:'🍙 Kimbap made (photo + count)', es:'🍙 Kimbap hecho (foto + cantidad)' } },
-  { name: '🍚 삼각김밥 만든 수량 (사진+개수)', done: false,
-    nameTr: { ko:'🍚 삼각김밥 만든 수량 (사진+개수)', en:'🍚 Triangle kimbap made (photo + count)', es:'🍚 Onigiri hecho (foto + cantidad)' } },
-  { name: '🍜 잡채 만든 수량 (사진+개수)', done: false,
-    nameTr: { ko:'🍜 잡채 만든 수량 (사진+개수)', en:'🍜 Japchae made (photo + count)', es:'🍜 Japchae hecho (foto + cantidad)' } },
-  { name: '🥘 기타 만든 메뉴 (사진+개수)', done: false,
-    nameTr: { ko:'🥘 기타 만든 메뉴 (사진+개수)', en:'🥘 Other items made (photo + count)', es:'🥘 Otros artículos hechos (foto + cantidad)' } },
+  { name: '🍙 김밥', done: false,
+    nameTr: { ko:'🍙 김밥', en:'🍙 Kimbap', es:'🍙 Kimbap' } },
+  { name: '🍚 삼각김밥', done: false,
+    nameTr: { ko:'🍚 삼각김밥', en:'🍚 Triangle Kimbap', es:'🍚 Onigiri' } },
+  { name: '🍜 잡채', done: false,
+    nameTr: { ko:'🍜 잡채', en:'🍜 Japchae', es:'🍜 Japchae' } },
 ];
 
 const _MEAT_TPL_2026 = [
@@ -2458,6 +2457,31 @@ async function sendKFoodDailyAll(){
         (failed ? '  실패: ' + failed + '개' : ''));
 }
 window.sendKFoodDailyAll = sendKFoodDailyAll;
+
+// K-Food '+ 음식 추가' — 새 메뉴 항목을 checklist 배열 끝에 push.
+// 기존 항목들의 done/memo/photos 데이터는 그대로 유지하며 새 빈 줄만 추가.
+async function addKfoodMenuItem(taskId, branchId){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  const name = prompt('🍱 추가할 메뉴 이름을 입력하세요\n(예: 떡갈비, 불고기, 김치전)', '');
+  if (!name || !name.trim()) return;
+  const cleanName = name.trim();
+  const newItem = {
+    name: '🍱 ' + cleanName,
+    done: false,
+    addedAt: Date.now(),
+    addedBy: me.name
+  };
+  // 기존 checklist 읽어서 끝에 append
+  const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+  if (!task) { alert('업무를 찾을 수 없습니다.'); return; }
+  const cl = Array.isArray(task.checklist) ? task.checklist.slice() : [];
+  cl.push(newItem);
+  const path = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId;
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), { checklist: cl });
+  } catch(e) { alert('추가 실패: ' + (e.message || e)); }
+}
+window.addKfoodMenuItem = addKfoodMenuItem;
 
 function subscribeTasks(){
   if (!me) return;
@@ -3093,11 +3117,11 @@ async function saveChecklistMemo(taskId, branchId, idx, value){
 }
 window.saveChecklistMemo = saveChecklistMemo;
 
-// 정육 / K-Food 전용 다중행 입력 vs 일반 단일행 메모 — 카테고리·플래그로 분기.
+// 정육 전용 다중행 입력 vs 일반 단일행 메모 — 카테고리·플래그로 분기.
+// K-Food 는 단일행이지만 동적으로 새 메뉴 항목을 추가하는 방식 (정육과 다름).
 function _useEntriesMode(task){
   if (!task) return false;
-  return task.category === '정육' || task.autoMeatDaily === true
-      || task.category === 'K-Food' || task.autoKfoodDaily === true;
+  return task.category === '정육' || task.autoMeatDaily === true;
 }
 function renderClItemMemoOrEntries(task, item, idx){
   return _useEntriesMode(task)
@@ -3184,6 +3208,18 @@ function renderChecklistInline(task){
       </label>${renderClItemMemoOrEntries(task, c, i)}`;
     }).join('');
   }
+  // K-Food 일일 작업 보고: 김밥/삼각김밥/잡채 고정 후 사용자가 4번째,
+  // 5번째 메뉴를 동적으로 추가할 수 있게 '+ 음식 추가' 버튼 노출.
+  const isKFoodTask = task.category === 'K-Food' || task.autoKfoodDaily === true;
+  const addMenuBtn = isKFoodTask
+    ? `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #d1d5db;text-align:center">
+        <button onclick="event.preventDefault();addKfoodMenuItem('${task.id}','${task.branchId}')"
+          style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 16px;font-size:.84em;font-weight:700;cursor:pointer">
+          ➕ 음식 추가
+        </button>
+        <div style="font-size:.74em;color:#9ca3af;margin-top:4px">김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가</div>
+      </div>`
+    : '';
   return `<div class="checklist">
     <div class="cl-head">
       <b>${t('cl_header')}</b>
@@ -3191,6 +3227,7 @@ function renderChecklistInline(task){
       <span class="cl-progress">${done}/${total}</span>
     </div>
     ${body}
+    ${addMenuBtn}
   </div>`;
 }
 // Per-item photo attachment — multi-select. Each pick gets compressed,
