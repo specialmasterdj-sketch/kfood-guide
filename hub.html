@@ -331,10 +331,11 @@ a{color:inherit;text-decoration:none}
       <div class="card">
         <h2 data-t="stats_title">📈 오늘의 현황</h2>
         <div class="stat-row">
-          <div class="stat-cell"><div class="v" id="stOnDuty">—</div><div class="l" data-t="st_onduty">근무 중</div></div>
-          <div class="stat-cell"><div class="v" id="stLate">0</div><div class="l" data-t="st_late">지각</div></div>
+          <div class="stat-cell" onclick="toggleClockDetail('onduty')" style="cursor:pointer"><div class="v" id="stOnDuty">—</div><div class="l" data-t="st_onduty">근무 중</div></div>
+          <div class="stat-cell" onclick="toggleClockDetail('late')" style="cursor:pointer"><div class="v" id="stLate">0</div><div class="l" data-t="st_late">지각</div></div>
           <div class="stat-cell"><div class="v" id="stTasks">—</div><div class="l" data-t="st_open_tasks">미완료 태스크</div></div>
         </div>
+        <div id="clockDetail" style="display:none;margin-top:10px;font-size:.82em;color:#374151;border-top:1px solid #e5e7eb;padding-top:10px"></div>
       </div>
 
       <div class="card">
@@ -647,21 +648,77 @@ function navTo(id){
 }
 document.querySelectorAll('.side-link').forEach(l => l.onclick = () => navTo(l.dataset.nav));
 
-// ============== STATS / FEED (placeholder) ==============
-function refreshAll(){
-  // Today's stats — placeholder until Time Clock is wired.
-  document.getElementById('stOnDuty').textContent = '—';
-  document.getElementById('stLate').textContent = '0';
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ============== STATS / CLOCK-IN ==============
+const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+let _clockData = {};
+let _clockDetailView = null;
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function fmtClockTime(ts){ if (!ts) return ''; const d = new Date(ts); return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
+
+async function refreshAll(){
+  try {
+    const r = await fetch(`${FB}/clockins/${todayStr()}.json?t=${Date.now()}`, {cache:'no-store'});
+    _clockData = (await r.json()) || {};
+  } catch(e){ _clockData = {}; }
+
+  const brFilter = BRANCH;
+  const entries = Object.values(_clockData);
+  const onDuty = entries.filter(e => e.ts && !e.outTs && (brFilter === '*' || e.store === brFilter));
+  const lateThreshold = new Date(); lateThreshold.setHours(9,15,0,0);
+  const late = entries.filter(e => e.ts && e.ts > lateThreshold.getTime() && (brFilter === '*' || e.store === brFilter));
+
+  document.getElementById('stOnDuty').textContent = onDuty.length;
+  document.getElementById('stLate').textContent = late.length;
   document.getElementById('stTasks').textContent = '—';
-  // Feed — placeholder until activity sources are wired.
+
+  renderClockDetail();
+
   const f = document.getElementById('feedList');
-  f.innerHTML = `<div class="feed-empty">${lt('feed_empty')}</div>`;
+  if (entries.length === 0) {
+    f.innerHTML = `<div class="feed-empty">${lt('feed_empty')}</div>`;
+  } else {
+    const sorted = entries.filter(e => brFilter === '*' || e.store === brFilter).sort((a,b) => (b.ts||0) - (a.ts||0));
+    f.innerHTML = sorted.map(e => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:.88em">
+      <span><b>${escHtml(e.name||'?')}</b> <span style="color:#9ca3af;font-size:.82em">${escHtml(e.store||'')}</span></span>
+      <span style="color:#6b7280">${fmtClockTime(e.ts)}${e.outTs ? ' → '+fmtClockTime(e.outTs) : ' <span style="color:#16a34a;font-weight:700">● 근무중</span>'}</span>
+    </div>`).join('');
+  }
 }
+
+function toggleClockDetail(type){
+  _clockDetailView = (_clockDetailView === type) ? null : type;
+  renderClockDetail();
+}
+function renderClockDetail(){
+  const el = document.getElementById('clockDetail');
+  if (!_clockDetailView) { el.style.display = 'none'; return; }
+  const brFilter = BRANCH;
+  const entries = Object.values(_clockData).filter(e => brFilter === '*' || e.store === brFilter);
+  let list = [];
+  if (_clockDetailView === 'onduty') {
+    list = entries.filter(e => e.ts && !e.outTs);
+    el.innerHTML = list.length
+      ? `<div style="font-weight:700;margin-bottom:6px">🟢 ${lt('st_onduty')} (${list.length})</div>` + list.map(e => `<div style="padding:3px 0">${escHtml(e.name)} · ${escHtml(e.store||'')} · ${fmtClockTime(e.ts)}</div>`).join('')
+      : `<div style="color:#9ca3af">출근 기록 없음</div>`;
+  } else {
+    const thr = new Date(); thr.setHours(9,15,0,0);
+    list = entries.filter(e => e.ts && e.ts > thr.getTime());
+    el.innerHTML = list.length
+      ? `<div style="font-weight:700;margin-bottom:6px;color:#dc2626">⚠ ${lt('st_late')} (${list.length})</div>` + list.map(e => `<div style="padding:3px 0">${escHtml(e.name)} · ${escHtml(e.store||'')} · ${fmtClockTime(e.ts)}</div>`).join('')
+      : `<div style="color:#9ca3af">지각자 없음</div>`;
+  }
+  el.style.display = '';
+}
+window.toggleClockDetail = toggleClockDetail;
 
 // ============== INIT ==============
 renderBranches();
 applyLang();
 refreshAll();
+setInterval(refreshAll, 60000);
 </script>
 
 </body>
