@@ -733,8 +733,6 @@ async function toggleClock(){
   }
   renderClockBtn();
   refreshAll();
-  if (_myClock && _myClock.ts && !_myClock.outTs) startGeoWatch();
-  else stopGeoWatch();
 }
 window.toggleClock = toggleClock;
 
@@ -808,8 +806,6 @@ async function refreshAll(){
     _myClock = null;
   }
   renderClockBtn();
-  if (_myClock && _myClock.ts && !_myClock.outTs) startGeoWatch();
-  else stopGeoWatch();
 
   const brFilter = BRANCH;
   const entries = Object.values(_clockData);
@@ -900,8 +896,8 @@ function renderClockDetail(){
 }
 window.toggleClockDetail = toggleClockDetail;
 
-// ============== GPS GEOFENCING — AUTO CLOCK-OUT ==============
-// 매장 좌표 (실제 주소 기준으로 조정 필요 — 반경 500m)
+// ============== GPS GEOFENCING — AUTO CLOCK-IN + CLOCK-OUT ==============
+// 매장 GPS 좌표 — 반경(m) 내 진입=자동 출근, 이탈=자동 퇴근
 const STORE_COORDS = {
   'MIAMI':         { lat:25.7805, lng:-80.1979, r:500 },
   'PEMBROKE_PINES':{ lat:26.0029, lng:-80.3414, r:500 },
@@ -913,47 +909,113 @@ const STORE_COORDS = {
 
 function haversine(lat1,lon1,lat2,lon2){
   const R=6371000, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function findNearestStore(lat,lng){
+  let best=null, bestDist=Infinity;
+  for(const [id,sc] of Object.entries(STORE_COORDS)){
+    const d=haversine(lat,lng,sc.lat,sc.lng);
+    if(d<sc.r && d<bestDist){ best=id; bestDist=d; }
+  }
+  return best ? {id:best, dist:bestDist} : null;
 }
 
 let _geoWatchId = null;
 let _outsideCount = 0;
+let _insideCount = 0;
+const GEO_IN_THRESHOLD = 2;
 const GEO_OUT_THRESHOLD = 3;
+const GEO_INTERVAL = 180000;
 
 function startGeoWatch(){
-  if (_geoWatchId || !navigator.geolocation) return;
-  _outsideCount = 0;
+  if(_geoWatchId || !navigator.geolocation) return;
+  _outsideCount=0; _insideCount=0;
   checkGeofence();
-  _geoWatchId = setInterval(checkGeofence, 300000);
+  _geoWatchId = setInterval(checkGeofence, GEO_INTERVAL);
 }
 function stopGeoWatch(){
-  if (_geoWatchId){ clearInterval(_geoWatchId); _geoWatchId = null; }
-  _outsideCount = 0;
+  if(_geoWatchId){ clearInterval(_geoWatchId); _geoWatchId=null; }
+  _outsideCount=0; _insideCount=0;
+}
+
+function requestGeoPermission(){
+  if(!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(()=>{}, ()=>{}, {enableHighAccuracy:true, timeout:5000});
 }
 
 function checkGeofence(){
-  if (!_myClock || !_myClock.ts || _myClock.outTs){ stopGeoWatch(); return; }
-  const store = _myClock.store || BRANCH;
-  const sc = STORE_COORDS[store];
-  if (!sc) return;
+  const m = getMe();
+  if(!m || !m.name){ return; }
   navigator.geolocation.getCurrentPosition(pos => {
-    const dist = haversine(pos.coords.latitude, pos.coords.longitude, sc.lat, sc.lng);
-    if (dist > sc.r) {
-      _outsideCount++;
-      console.info(`[geo] ${Math.round(dist)}m from store (${_outsideCount}/${GEO_OUT_THRESHOLD})`);
-      if (_outsideCount >= GEO_OUT_THRESHOLD) {
-        autoClockOut('geo_left_store');
+    const lat=pos.coords.latitude, lng=pos.coords.longitude;
+    const nearest = findNearestStore(lat,lng);
+
+    if(_myClock && _myClock.ts && !_myClock.outTs){
+      // === CLOCKED IN → check for departure ===
+      if(!nearest){
+        _outsideCount++;
+        _insideCount=0;
+        console.info(`[geo] outside all stores (${_outsideCount}/${GEO_OUT_THRESHOLD})`);
+        if(_outsideCount >= GEO_OUT_THRESHOLD){
+          autoClockOut('geo_left_store');
+        }
+      } else {
+        _outsideCount=0;
       }
-    } else {
-      _outsideCount = 0;
+    } else if(!_myClock || !_myClock.ts || _myClock.outTs){
+      // === NOT CLOCKED IN → check for arrival ===
+      if(_myClock && _myClock.outTs){
+        // Already completed a shift today — don't auto re-clock-in
+        return;
+      }
+      if(nearest){
+        _insideCount++;
+        _outsideCount=0;
+        console.info(`[geo] inside ${nearest.id} (${Math.round(nearest.dist)}m) — ${_insideCount}/${GEO_IN_THRESHOLD}`);
+        if(_insideCount >= GEO_IN_THRESHOLD){
+          autoClockIn(nearest.id);
+        }
+      } else {
+        _insideCount=0;
+      }
     }
-  }, ()=>{}, { enableHighAccuracy:true, timeout:10000 });
+  }, err => {
+    console.info('[geo] position unavailable:', err.message);
+  }, { enableHighAccuracy:true, timeout:10000 });
+}
+
+async function autoClockIn(storeId){
+  const m = getMe();
+  if(!m || !m.name) return;
+  const key = myClockKey();
+  if(!key) return;
+  const today = todayStr();
+  try {
+    const r = await fetch(`${FB}/clockins/${today}/${key}.json`);
+    const existing = await r.json();
+    if(existing && existing.ts){
+      _myClock = existing;
+      renderClockBtn();
+      return;
+    }
+  } catch(e){}
+  const payload = { name:m.name, store:storeId, ts:Date.now(), autoIn:'geo_entered_store' };
+  await fetch(`${FB}/clockins/${today}/${key}.json`,{
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+  });
+  _myClock = payload;
+  _insideCount=0;
+  const gate = document.getElementById('__clockGateOv');
+  if(gate) gate.remove();
+  renderClockBtn();
+  refreshAll();
 }
 
 async function autoClockOut(reason){
   const key = myClockKey();
-  if (!key || !_myClock || _myClock.outTs) return;
+  if(!key || !_myClock || _myClock.outTs) return;
   const outTs = Date.now();
   const today = todayStr();
   await fetch(`${FB}/clockins/${today}/${key}/outTs.json`,{
@@ -963,7 +1025,7 @@ async function autoClockOut(reason){
     method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(reason)
   });
   _myClock.outTs = outTs;
-  stopGeoWatch();
+  _outsideCount=0;
   renderClockBtn();
   refreshAll();
 }
@@ -1320,9 +1382,10 @@ refreshAll();
 cleanupYesterdayClockouts();
 setInterval(refreshAll, 60000);
 
-// auth-gate 인증 완료 → 새로고침 + 출근 강제 + 매니저 도구 표시 + 자동 보고서
+// auth-gate 인증 완료 → GPS 시작 + 출근 강제 + 매니저 도구 + 자동 보고서
 window.addEventListener('km-auth-ready', () => {
   refreshAll();
+  startGeoWatch();
   enforceClockIn();
   checkAutoReport();
   const m = getMe();
