@@ -733,6 +733,8 @@ async function toggleClock(){
   }
   renderClockBtn();
   refreshAll();
+  if (_myClock && _myClock.ts && !_myClock.outTs) startGeoWatch();
+  else stopGeoWatch();
 }
 window.toggleClock = toggleClock;
 
@@ -806,6 +808,8 @@ async function refreshAll(){
     _myClock = null;
   }
   renderClockBtn();
+  if (_myClock && _myClock.ts && !_myClock.outTs) startGeoWatch();
+  else stopGeoWatch();
 
   const brFilter = BRANCH;
   const entries = Object.values(_clockData);
@@ -895,6 +899,102 @@ function renderClockDetail(){
   el.style.display = '';
 }
 window.toggleClockDetail = toggleClockDetail;
+
+// ============== GPS GEOFENCING — AUTO CLOCK-OUT ==============
+// 매장 좌표 (실제 주소 기준으로 조정 필요 — 반경 500m)
+const STORE_COORDS = {
+  'MIAMI':         { lat:25.7805, lng:-80.1979, r:500 },
+  'PEMBROKE_PINES':{ lat:26.0029, lng:-80.3414, r:500 },
+  'HOLLYWOOD':     { lat:26.0112, lng:-80.1527, r:500 },
+  'CORAL_SPRINGS': { lat:26.2714, lng:-80.2572, r:500 },
+  'LASOLAS':       { lat:26.1185, lng:-80.1370, r:500 },
+  'WEST_PALM':     { lat:26.7153, lng:-80.0534, r:500 },
+};
+
+function haversine(lat1,lon1,lat2,lon2){
+  const R=6371000, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+let _geoWatchId = null;
+let _outsideCount = 0;
+const GEO_OUT_THRESHOLD = 3;
+
+function startGeoWatch(){
+  if (_geoWatchId || !navigator.geolocation) return;
+  _outsideCount = 0;
+  checkGeofence();
+  _geoWatchId = setInterval(checkGeofence, 300000);
+}
+function stopGeoWatch(){
+  if (_geoWatchId){ clearInterval(_geoWatchId); _geoWatchId = null; }
+  _outsideCount = 0;
+}
+
+function checkGeofence(){
+  if (!_myClock || !_myClock.ts || _myClock.outTs){ stopGeoWatch(); return; }
+  const store = _myClock.store || BRANCH;
+  const sc = STORE_COORDS[store];
+  if (!sc) return;
+  navigator.geolocation.getCurrentPosition(pos => {
+    const dist = haversine(pos.coords.latitude, pos.coords.longitude, sc.lat, sc.lng);
+    if (dist > sc.r) {
+      _outsideCount++;
+      console.info(`[geo] ${Math.round(dist)}m from store (${_outsideCount}/${GEO_OUT_THRESHOLD})`);
+      if (_outsideCount >= GEO_OUT_THRESHOLD) {
+        autoClockOut('geo_left_store');
+      }
+    } else {
+      _outsideCount = 0;
+    }
+  }, ()=>{}, { enableHighAccuracy:true, timeout:10000 });
+}
+
+async function autoClockOut(reason){
+  const key = myClockKey();
+  if (!key || !_myClock || _myClock.outTs) return;
+  const outTs = Date.now();
+  const today = todayStr();
+  await fetch(`${FB}/clockins/${today}/${key}/outTs.json`,{
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(outTs)
+  });
+  await fetch(`${FB}/clockins/${today}/${key}/autoOut.json`,{
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(reason)
+  });
+  _myClock.outTs = outTs;
+  stopGeoWatch();
+  renderClockBtn();
+  refreshAll();
+}
+
+// ============== YESTERDAY CLEANUP ==============
+async function cleanupYesterdayClockouts(){
+  const y = new Date(); y.setDate(y.getDate()-1);
+  const yStr = y.toISOString().slice(0,10);
+  const cleanKey = 'clockCleanup_'+yStr;
+  if (localStorage.getItem(cleanKey)) return;
+  try {
+    const r = await fetch(`${FB}/clockins/${yStr}.json`);
+    const data = await r.json();
+    if (!data) return;
+    const midnight = new Date(yStr+'T23:59:59').getTime();
+    const updates = {};
+    for (const [k,v] of Object.entries(data)){
+      if (v.ts && !v.outTs){
+        updates[`${k}/outTs`] = midnight;
+        updates[`${k}/autoOut`] = 'midnight_cleanup';
+      }
+    }
+    if (Object.keys(updates).length > 0){
+      await fetch(`${FB}/clockins/${yStr}.json`,{
+        method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(updates)
+      });
+      console.info(`[cleanup] auto-clocked-out ${Object.keys(updates).length/2} from ${yStr}`);
+    }
+  } catch(e){}
+  localStorage.setItem(cleanKey, '1');
+}
 
 // ============== TAB SWITCHING ==============
 function switchTcTab(tab){
@@ -1217,6 +1317,7 @@ renderBranches();
 applyLang();
 renderClockBtn();
 refreshAll();
+cleanupYesterdayClockouts();
 setInterval(refreshAll, 60000);
 
 // auth-gate 인증 완료 → 새로고침 + 출근 강제 + 매니저 도구 표시 + 자동 보고서
