@@ -2498,32 +2498,59 @@ function addKfoodMenuItem(taskId, branchId){
   const ov = document.createElement('div');
   ov.id = '__kfoodAddOv';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+  // 다국어 라벨
+  const L = {
+    title: { ko:'🍱 음식 추가', en:'🍱 Add Menu Item', es:'🍱 Agregar Menú' },
+    hint:  { ko:'메뉴 이름 + 만든 개수를 함께 적으면 한 번에 저장됩니다.',
+             en:'Enter the menu name + quantity made — both save in one shot.',
+             es:'Ingresa el nombre del menú + cantidad — todo se guarda a la vez.' },
+    nameLbl:  { ko:'메뉴 이름 *', en:'Menu name *', es:'Nombre del menú *' },
+    namePh:   { ko:'예: 떡갈비', en:'e.g., Tteok-galbi', es:'ej., Tteok-galbi' },
+    qtyLbl:   { ko:'만든 개수 (선택)', en:'Quantity (optional)', es:'Cantidad (opcional)' },
+    qtyPh:    { ko:'예: 10개 만듦', en:'e.g., made 10', es:'ej., 10 hechos' },
+    cancel:   { ko:'취소', en:'Cancel', es:'Cancelar' },
+    submit:   { ko:'추가 + 저장', en:'Add + Save', es:'Agregar + Guardar' },
+  };
+  const tx = (k) => L[k][LANG] || L[k].ko;
   ov.innerHTML = `
     <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:18px 20px;box-shadow:0 8px 28px rgba(0,0,0,.3);font-family:inherit">
-      <div style="font-size:1.1em;font-weight:800;color:#1a5c3a;margin-bottom:10px">🍱 추가할 메뉴 이름</div>
-      <div style="font-size:.84em;color:#6b7280;margin-bottom:12px">예: 떡갈비, 불고기, 김치전, 부대찌개</div>
-      <input id="__kfoodNameIn" type="text" placeholder="메뉴 이름…"
+      <div style="font-size:1.1em;font-weight:800;color:#1a5c3a;margin-bottom:10px">${tx('title')}</div>
+      <div style="font-size:.84em;color:#6b7280;margin-bottom:14px">${tx('hint')}</div>
+      <label style="display:block;font-size:.78em;font-weight:700;color:#374151;margin-bottom:4px">${tx('nameLbl')}</label>
+      <input id="__kfoodNameIn" type="text" placeholder="${tx('namePh')}"
+        style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:10px 12px;font-size:1em;font-family:inherit;outline:none;margin-bottom:12px">
+      <label style="display:block;font-size:.78em;font-weight:700;color:#374151;margin-bottom:4px">${tx('qtyLbl')}</label>
+      <input id="__kfoodQtyIn" type="text" placeholder="${tx('qtyPh')}"
         style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:10px 12px;font-size:1em;font-family:inherit;outline:none;margin-bottom:14px">
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button id="__kfoodCancel" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer;font-family:inherit">취소</button>
-        <button id="__kfoodOk" style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-family:inherit">추가</button>
+        <button id="__kfoodCancel" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer;font-family:inherit">${tx('cancel')}</button>
+        <button id="__kfoodOk" style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-family:inherit">${tx('submit')}</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
-  const inp = document.getElementById('__kfoodNameIn');
-  setTimeout(() => inp.focus(), 50);
+  const nameIn = document.getElementById('__kfoodNameIn');
+  const qtyIn = document.getElementById('__kfoodQtyIn');
+  setTimeout(() => nameIn.focus(), 50);
 
   const close = () => { try { ov.remove(); } catch(_){} };
   const submit = async () => {
-    const name = (inp.value || '').trim();
-    if (!name) { inp.focus(); return; }
+    const name = (nameIn.value || '').trim();
+    const qty = (qtyIn.value || '').trim();
+    if (!name) { nameIn.focus(); return; }
     close();
+    // 메뉴 이름 + 만든 개수(메모) 한 번에 저장 → 이후 사용자가 다시 메모
+    // 입력 안 해도 됨. 추가 사진은 행에 새로 생긴 [📷] 버튼으로 첨부.
     const newItem = {
       name: '🍱 ' + name,
       done: false,
       addedAt: Date.now(),
-      addedBy: me.name
+      addedBy: me.name,
     };
+    if (qty) {
+      newItem.memo = qty;
+      newItem.memoBy = me.name;
+      newItem.memoAt = Date.now();
+    }
     const t2 = TASKS.find(t => t.id === taskId && t.branchId === branchId);
     if (!t2) { alert('업무를 찾을 수 없습니다.'); return; }
     const cl = Array.isArray(t2.checklist) ? t2.checklist.slice() : [];
@@ -2531,13 +2558,19 @@ function addKfoodMenuItem(taskId, branchId){
     const path = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId;
     try {
       await window.__fb.update(window.__fb.ref(window.__fb.db, path), { checklist: cl });
+      if (typeof showToast === 'function') showToast('🍱 추가됨', name + (qty ? ' · ' + qty : ''));
     } catch(e) { alert('추가 실패: ' + (e.message || e)); }
   };
 
   document.getElementById('__kfoodOk').onclick = submit;
   document.getElementById('__kfoodCancel').onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
-  inp.onkeydown = (e) => {
+  // 이름 input 에서 Enter → 개수 input 으로 이동, 개수 input 에서 Enter → 제출
+  nameIn.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); qtyIn.focus(); }
+    else if (e.key === 'Escape') close();
+  };
+  qtyIn.onkeydown = (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submit(); }
     else if (e.key === 'Escape') close();
   };
@@ -2926,6 +2959,11 @@ function restorePendingInputs(){
     const inputs = document.querySelectorAll(`input[data-entry-id="${eid}"]`);
     inputs.forEach(inp => { if (inp.value !== val) inp.value = val; });
   }
+  // cl-memo (일반 체크리스트 메모) 도 동일하게 복원
+  for (const [key, val] of Object.entries(__PENDING_MEMO)){
+    const inputs = document.querySelectorAll(`input[data-cl-memo-id="${key}"]`);
+    inputs.forEach(inp => { if (inp.value !== val) inp.value = val; });
+  }
 }
 window.onClEntryInput = onClEntryInput;
 
@@ -3162,13 +3200,26 @@ function renderClMemoInput(task, item, idx){
     : ({ ko: '예: 서울우유 2.3L 재고 3개 남음',
          en: 'e.g., Seoul Milk 2.3L — 3 left',
          es: 'ej., Leche Seoul 2.3L — 3 restantes' })[LANG] || '예: 메모';
+  // data-cl-memo-id 로 입력값 메모리 백업 키 부여 — render 재구성 후 복원용.
+  const memoKey = task.id + '|' + idx;
   return `<div style="margin:4px 0 8px 28px">
     <input type="text" class="cl-memo" value="${safeMemo}" placeholder="${ph}"
+      data-cl-memo-id="${memoKey}"
+      oninput="onClMemoInput('${task.id}','${task.branchId}',${idx},this.value)"
       onchange="saveChecklistMemo('${task.id}','${task.branchId}',${idx},this.value)"
       onfocus="event.stopPropagation()"
       style="width:calc(100% - 8px);border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.86em;background:#fafafa;outline:none;font-family:inherit">
   </div>`;
 }
+
+// cl-memo input 에 키 입력될 때마다 메모리 백업. blur 안 했어도 render
+// 재구성에 휩쓸리지 않게 restorePendingInputs 가 자동 복원.
+let __PENDING_MEMO = {};
+function onClMemoInput(taskId, branchId, idx, value){
+  const key = taskId + '|' + idx;
+  __PENDING_MEMO[key] = value;
+}
+window.onClMemoInput = onClMemoInput;
 async function saveChecklistMemo(taskId, branchId, idx, value){
   if (!me) return;
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
@@ -3178,7 +3229,12 @@ async function saveChecklistMemo(taskId, branchId, idx, value){
       memoBy: me.name,
       memoAt: Date.now(),
     });
-  } catch(e) { console.warn('[saveChecklistMemo]', e); }
+    // 저장 성공 → 메모리 백업 비움
+    delete __PENDING_MEMO[taskId + '|' + idx];
+  } catch(e) {
+    console.warn('[saveChecklistMemo]', e);
+    alert('메모 저장 실패: ' + (e.message || e));
+  }
 }
 window.saveChecklistMemo = saveChecklistMemo;
 
@@ -3276,13 +3332,19 @@ function renderChecklistInline(task){
   // K-Food 일일 작업 보고: 김밥/삼각김밥/잡채 고정 후 사용자가 4번째,
   // 5번째 메뉴를 동적으로 추가할 수 있게 '+ 음식 추가' 버튼 노출.
   const isKFoodTask = task.category === 'K-Food' || task.autoKfoodDaily === true;
+  const addBtnLbl = ({ ko:'➕ 음식 추가', en:'➕ Add Menu', es:'➕ Agregar Menú' })[LANG] || '➕ 음식 추가';
+  const addBtnHint = ({
+    ko:'김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가',
+    en:'Add menu items beyond Kimbap / Triangle Kimbap / Japchae',
+    es:'Agregar menús adicionales además de Kimbap / Onigiri / Japchae'
+  })[LANG] || '김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가';
   const addMenuBtn = isKFoodTask
     ? `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #d1d5db;text-align:center">
         <button onclick="event.preventDefault();addKfoodMenuItem('${task.id}','${task.branchId}')"
           style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 16px;font-size:.84em;font-weight:700;cursor:pointer">
-          ➕ 음식 추가
+          ${addBtnLbl}
         </button>
-        <div style="font-size:.74em;color:#9ca3af;margin-top:4px">김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가</div>
+        <div style="font-size:.74em;color:#9ca3af;margin-top:4px">${addBtnHint}</div>
       </div>`
     : '';
   return `<div class="checklist">
@@ -4526,14 +4588,22 @@ async function sendAssign(){
 // ================= UTIL =================
 function closeOv(id){ document.getElementById(id).classList.remove('show'); }
 function openLb(url){ document.getElementById('lbImg').src = url; document.getElementById('lbOv').classList.add('show'); }
-// 사용자가 entry input 에 포커스 중이면 renderAll 을 미룬다.
+// 사용자가 입력 input/textarea 에 포커스 중이면 renderAll 을 미룬다.
 // 모바일 (특히 iOS Safari) 은 .focus() 만으로는 키보드를 다시 띄우지 못해
 // 일단 input 을 안 바꾸는 게 가장 안전. blur 가 일어나면 deferred 렌더 실행.
+// data-entry-id (정육 entries) + cl-memo (일반 체크리스트 메모) +
+// 일반 텍스트 input 모두 포함. file/checkbox 등은 제외.
 let __RENDER_DEFERRED = false;
 function isUserTyping(){
   try {
     const ae = document.activeElement;
-    return !!(ae && ae.tagName === 'INPUT' && ae.dataset && ae.dataset.entryId);
+    if (!ae) return false;
+    const tag = ae.tagName;
+    if (tag === 'TEXTAREA') return true;
+    if (tag !== 'INPUT') return false;
+    const type = (ae.type || 'text').toLowerCase();
+    // 텍스트성 input 만 — 사용자가 글자를 치는 중이라는 뜻.
+    return ['text','search','number','tel','email','url','password',''].includes(type);
   } catch(_) { return false; }
 }
 // 입력 input 이 blur 될 때 deferred 렌더 처리 — capture phase 로 한 번만.
