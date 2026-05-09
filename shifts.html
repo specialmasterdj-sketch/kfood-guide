@@ -702,6 +702,18 @@ function applyLang(){
   renderBranches();
   applyReadonlyMode();
   render();
+  // 다른 지점 employees 미리 가져와서 권한 잡기 — 지점 이동한 매니저나
+  // 캐시 비워진 PC 에서도 편집 권한 정확히 인식. auth 준비된 다음에 실행.
+  if (window.__fb && window.__fb.auth && window.__fb.auth.currentUser) {
+    setTimeout(preloadOtherBranchEmployees, 200);
+  } else {
+    window.addEventListener('fb-auth-ready', function once(){
+      window.removeEventListener('fb-auth-ready', once);
+      preloadOtherBranchEmployees();
+      // auth 가 잡힌 직후 chat.me 역할 fallback 도 다시 평가
+      applyReadonlyMode();
+    });
+  }
 }
 function setLang(l){
   LANG = l;
@@ -803,10 +815,17 @@ function findMyRole(){
   // 2. 현재 지점 employees
   var emp = DATA.employees.find(function(e){ return _normName(e.name) === myN; });
   if (emp) return emp.role;
-  // 3. 다른 지점 employees (지점 이동한 매니저 대비)
+  // 3. 다른 지점 employees — RTDB cache + localStorage 둘 다 확인.
+  //    (지점 이동한 매니저 또는 새 기기 / 캐시 비워진 PC 대비)
   for (var i=0; i<BRANCHES.length; i++){
     var bid = BRANCHES[i].id;
     if (bid === BRANCH) continue;
+    // (a) RTDB 에서 미리 모아둔 캐시
+    if (window.__OTHER_BRANCH_EMP && window.__OTHER_BRANCH_EMP[bid]) {
+      var e3 = window.__OTHER_BRANCH_EMP[bid].find(function(x){ return _normName(x.name) === myN; });
+      if (e3) return e3.role;
+    }
+    // (b) 로컬 캐시 (예전 코드 fallback)
     try {
       var raw = localStorage.getItem('shifts.' + bid);
       if (!raw) continue;
@@ -815,7 +834,45 @@ function findMyRole(){
       if (e2) return e2.role;
     } catch(_){}
   }
+  // 4. Firebase 로그인된 상태에서 chat.me.role 이 매니저급 역할이면 신뢰.
+  //    auth 가 신분 보증해 주니까 자칭 매니저로 위장해도 이메일 거짓말은 못함.
+  try {
+    var auth = window.__fb && window.__fb.auth;
+    var u = auth && auth.currentUser;
+    if (u && me.role) {
+      var r = String(me.role).toUpperCase();
+      if (EDITOR_ROLE_TOKENS.some(function(t){ return r.indexOf(t.toUpperCase()) >= 0; })) {
+        console.info('[shifts] edit allowed via Firebase auth + chat.me role:', me.role);
+        return me.role;
+      }
+    }
+  } catch(_){}
   return null;
+}
+
+// 6지점 employees 를 RTDB 에서 한 번에 모아 캐시 — 다른 지점 매니저가 이
+// 지점 스케줄을 열어도 본인 권한이 잡히게 한다.
+async function preloadOtherBranchEmployees(){
+  if (!window.__fb) return;
+  window.__OTHER_BRANCH_EMP = window.__OTHER_BRANCH_EMP || {};
+  var FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  var aq = '';
+  try {
+    var u = window.__fb.auth && window.__fb.auth.currentUser;
+    if (u) { var tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+  await Promise.all(BRANCHES.map(async function(b){
+    if (b.id === BRANCH) return;
+    if (window.__OTHER_BRANCH_EMP[b.id]) return;
+    try {
+      var r = await fetch(FB + '/schedules/' + b.id + '/employees.json' + aq, { cache:'no-store' });
+      if (!r.ok) return;
+      var emp = await r.json();
+      if (Array.isArray(emp)) window.__OTHER_BRANCH_EMP[b.id] = emp;
+    } catch(_){}
+  }));
+  // 권한이 새로 잡혔을 수 있으니 readonly 모드 재평가
+  if (typeof applyReadonlyMode === 'function') applyReadonlyMode();
 }
 // 현재 지점에서 편집 권한 있는 사람 목록 (에러 메시지용)
 function listCurrentEditors(){
