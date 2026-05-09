@@ -2726,13 +2726,40 @@ async function sendProduceDailyAll(){
         if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
       } catch(_){}
       const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
+      let existingChecklist = null;
+      let needsMigration = false;
       if (r.ok) {
         const existing = await r.json();
-        if (existing && Array.isArray(existing.checklist) && existing.checklist.length >= _PRODUCE_TPL_2026.length) {
-          skipped++; continue;
+        if (existing && Array.isArray(existing.checklist)) {
+          existingChecklist = existing.checklist;
+          // Old template detection: first 3 items are 배추/사과/바나나
+          const cl = existingChecklist;
+          const isOldTpl = cl.length >= 3
+            && cl[0]?.name?.includes('배추')
+            && cl[1]?.name?.includes('사과')
+            && cl[2]?.name?.includes('바나나');
+          if (isOldTpl) {
+            needsMigration = true;
+          } else if (cl.length >= _PRODUCE_TPL_2026.length) {
+            skipped++; continue;
+          }
         }
       }
-      const checklist = _PRODUCE_TPL_2026.map(t => Object.assign({}, t));
+      // 마이그레이션: 기존 사용자가 추가한 4번째 이후 항목은 보존, 처음 3개만 새 템플릿으로 교체
+      let checklist;
+      if (needsMigration) {
+        const userAdded = existingChecklist.slice(3); // 사용자가 ➕ 추가 버튼으로 더한 항목 보존
+        checklist = [..._PRODUCE_TPL_2026.map(t => Object.assign({}, t)), ...userAdded];
+        // PATCH 만 — 기존 taskId 유지하고 checklist 만 교체. photos·startedAt 등 보존.
+        const patchRes = await fetch(restUrl + (aq ? aq : ''), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ checklist })
+        });
+        if (patchRes.ok) created++; else { console.warn('[produce-daily] migrate fail', branchId, patchRes.status); failed++; }
+        continue;
+      }
+      checklist = _PRODUCE_TPL_2026.map(t => Object.assign({}, t));
       const payload = {
         name: '🥬 농산물 일일 작업 보고',
         nameTr: { ko:'🥬 농산물 일일 작업 보고', en:'🥬 Daily Produce Department Report', es:'🥬 Reporte Diario de Productos Frescos' },
@@ -3701,6 +3728,41 @@ function renderChecklistInline(task){
         <div style="font-size:.74em;color:#9ca3af;margin-top:4px">${addBtnHint}</div>
       </div>`
     : '';
+
+  // 📸 오늘 전체 진열/작업 사진 (KFood / Seafood / Produce 일일 보고 전용) —
+  // 항목별 사진과 별개로, 매대 전체 모습을 매니저가 한 눈에 확인할 수 있게
+  // 여러 장 업로드. task.photos 배열에 저장 → 매니저 뷰 proof 컬럼에 노출.
+  const overallTitle = isProduceTask
+    ? (({ ko:'📸 오늘 전체 진열 사진', en:'📸 Today\'s overall display photos', es:'📸 Fotos de exhibición de hoy' })[LANG] || '📸 오늘 전체 진열 사진')
+    : isSeafoodTask
+    ? (({ ko:'📸 오늘 전체 진열 사진', en:'📸 Today\'s overall display photos', es:'📸 Fotos de exhibición de hoy' })[LANG] || '📸 오늘 전체 진열 사진')
+    : (({ ko:'📸 오늘 전체 작업 사진', en:'📸 Today\'s overall work photos', es:'📸 Fotos generales de hoy' })[LANG] || '📸 오늘 전체 작업 사진');
+  const overallHint = ({
+    ko:'매대 / 작업장 전체 사진 — 여러 장 한 번에 가능',
+    en:'Whole shelf / station photos — multi-shot supported',
+    es:'Fotos del estante / estación — varias a la vez'
+  })[LANG] || '매대 / 작업장 전체 사진 — 여러 장 한 번에 가능';
+  const overallAddLbl = ({ ko:'📷 사진 추가', en:'📷 Add photos', es:'📷 Agregar fotos' })[LANG] || '📷 사진 추가';
+  const overallPhotos = Array.isArray(task.photos) ? task.photos : [];
+  const overallThumbs = overallPhotos
+    .map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #d1fae5">`)
+    .join('');
+  const overallSection = isAddableMenuTask
+    ? `<div style="margin-top:10px;padding:10px 12px;background:linear-gradient(180deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:.86em;font-weight:800;color:#166534">${overallTitle}</div>
+            <div style="font-size:.72em;color:#16a34a;margin-top:2px">${overallHint}</div>
+          </div>
+          <button onclick="event.preventDefault();pickTaskPhotos('${task.id}','${task.branchId}')"
+            style="background:${addBtnColor};color:#fff;border:0;border-radius:8px;padding:6px 12px;font-size:.82em;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            ${overallAddLbl}${overallPhotos.length?' (+)':''}
+          </button>
+        </div>
+        ${overallThumbs ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${overallThumbs}</div>` : `<div style="font-size:.74em;color:#9ca3af;text-align:center;padding:10px 0">${({ko:'아직 사진 없음', en:'No photos yet', es:'Sin fotos aún'})[LANG] || '아직 사진 없음'}</div>`}
+      </div>`
+    : '';
+
   return `<div class="checklist">
     <div class="cl-head">
       <b>${t('cl_header')}</b>
@@ -3709,6 +3771,7 @@ function renderChecklistInline(task){
     </div>
     ${body}
     ${addMenuBtn}
+    ${overallSection}
   </div>`;
 }
 // Per-item photo attachment — multi-select. Each pick gets compressed,
@@ -3772,6 +3835,50 @@ function pickChecklistPhoto(taskId, branchId, idx){
   input.click();
 }
 window.pickChecklistPhoto = pickChecklistPhoto;
+
+// 📸 task.photos 에 직접 사진 여러장 추가 — 항목별 사진과는 별개. 매대 전체
+// 모습이나 작업장 전경을 한 번에 여러 장 업로드. KFood/Seafood/Produce
+// 일일 보고에서 '오늘 전체 진열 사진' 섹션이 호출.
+function pickTaskPhotos(taskId, branchId){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  let input = document.getElementById('__taskPhotoPicker');
+  if (!input) {
+    input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.multiple = true;
+    input.id = '__taskPhotoPicker';
+    input.setAttribute('tabindex', '-1');
+    input.setAttribute('aria-hidden', 'true');
+    input.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0';
+    document.body.appendChild(input);
+  }
+  input.value = '';
+  input.onchange = async () => {
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    try {
+      const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/overall';
+      const urls = [];
+      for (const f of files) {
+        const u = await uploadOnePhoto(f, basePath);
+        urls.push(u);
+      }
+      const taskPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId;
+      const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+      const existing = (task && Array.isArray(task.photos)) ? task.photos : [];
+      await window.__fb.update(window.__fb.ref(window.__fb.db, taskPath), {
+        photos: [...existing, ...urls],
+        photosBy: me.name,
+        photosAt: Date.now(),
+      });
+      if (typeof showToast === 'function') showToast('📸 사진 추가됨', urls.length + '장');
+    } catch(e) { alert('사진 업로드 실패: '+(e.message||e)); }
+  };
+  input.click();
+}
+window.pickTaskPhotos = pickTaskPhotos;
 async function toggleChecklistItem(taskId, branchId, idx, isChecked){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
