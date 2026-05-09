@@ -3538,6 +3538,10 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
       for (let i = 0; i < files.length; i++) {
         try {
           urls.push(await uploadOnePhoto(files[i], basePath));
+          // iOS PWA 메모리 GC 시간 — 다음 사진 시작 전 200ms 양보. 이게 없으면
+          // canvas/blob 해제가 안 끝난 채 다음 사진을 처리하려다 페이지가
+          // reload 되는 케이스 (특히 3장째부터).
+          if (i < files.length - 1) await new Promise(r => setTimeout(r, 200));
         } catch(perFileErr) {
           console.error('[addClEntryPhoto] file', i, perFileErr);
           throw new Error('사진 ' + (i+1) + '장 업로드 실패: ' + (perFileErr.message || perFileErr));
@@ -3853,9 +3857,11 @@ function pickChecklistPhoto(taskId, branchId, idx){
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx;
       const urls = [];
-      for (const f of files) {
-        const u = await uploadOnePhoto(f, basePath);
+      for (let i = 0; i < files.length; i++) {
+        const u = await uploadOnePhoto(files[i], basePath);
         urls.push(u);
+        // iOS GC 양보 — 3번째 촬영 OOM 방지
+        if (i < files.length - 1) await new Promise(r => setTimeout(r, 200));
       }
       // Read current photos array, append new urls, write back
       const itemPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
@@ -3900,9 +3906,10 @@ function pickTaskPhotos(taskId, branchId){
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/overall';
       const urls = [];
-      for (const f of files) {
-        const u = await uploadOnePhoto(f, basePath);
+      for (let i = 0; i < files.length; i++) {
+        const u = await uploadOnePhoto(files[i], basePath);
         urls.push(u);
+        if (i < files.length - 1) await new Promise(r => setTimeout(r, 200));
       }
       const taskPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId;
       const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
@@ -4202,23 +4209,39 @@ async function uploadLocPhotos(taskId){
 window.handleLocFiles = handleLocFiles;
 window.removeLocPhoto = removeLocPhoto;
 
-async function compressImage(file, maxSide = 1280, quality = 0.82) {
+// iOS PWA 메모리 압박 완화: maxSide 1280 → 1024 (캔버스 4MB → 2.5MB),
+// 압축 후 캔버스/이미지 명시적 해제, 모바일에서는 더 공격적으로 다운스케일.
+async function compressImage(file, maxSide = 1024, quality = 0.78) {
   if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  // iOS Safari PWA 의 직접 카메라 사진은 기본 4032x3024. 그대로 캔버스에 그리면
+  // RGBA 4MB+가 GPU/CPU 메모리에 잡혀 3번째 촬영 시 OOM 으로 페이지 reload.
+  // 모바일 감지하면 maxSide 더 줄임.
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  if (isMobile && maxSide > 900) maxSide = 900;
+  let url = null, img = null, canvas = null;
   try {
-    const url = URL.createObjectURL(file);
-    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
-    URL.revokeObjectURL(url);
+    url = URL.createObjectURL(file);
+    img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
     let { width, height } = img;
-    if (width <= maxSide && height <= maxSide && file.size < 400 * 1024) return file; // small enough — skip
+    if (width <= maxSide && height <= maxSide && file.size < 350 * 1024) {
+      // small enough — skip but still free img/url
+      return file;
+    }
     const r = Math.min(maxSide / width, maxSide / height, 1);
     const w = Math.round(width * r), h = Math.round(height * r);
-    const canvas = document.createElement('canvas');
+    canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
     const blob = await new Promise(res => canvas.toBlob(b => res(b), 'image/jpeg', quality));
     if (!blob || blob.size > file.size) return file;
     return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
   } catch(e) { console.warn('compress fail', e); return file; }
+  finally {
+    // 명시적 해제 — iOS GC 가 늦어서 안 풀리면 다음 사진에서 OOM 발생
+    try { if (url) URL.revokeObjectURL(url); } catch(_){}
+    try { if (img) { img.onload = null; img.onerror = null; img.src = ''; } } catch(_){}
+    try { if (canvas) { canvas.width = 0; canvas.height = 0; } } catch(_){}
+  }
 }
 function renderDonePreviews(){
   document.getElementById('donePreviews').innerHTML = DONE_PHOTOS.map((p,i) =>
