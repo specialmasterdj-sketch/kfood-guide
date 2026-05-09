@@ -706,26 +706,32 @@ let _clockTimer = null;
 function getMe(){
   try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
 }
+const BOOT_NAMES = { 'specialmasterdj@gmail.com':'DJ', 'byhoki64@gmail.com':'B.H.K' };
+function resolveMyName(){
+  const m = getMe();
+  if (!m) return null;
+  const email = (m.email||'').toLowerCase();
+  return BOOT_NAMES[email] || m.name || null;
+}
 function myClockKey(){
   const m = getMe();
-  if (!m || !m.name) return null;
-  return m.name.replace(/[.#$/\[\]]/g, '_');
+  if (!m) return null;
+  return m.uid || (resolveMyName()||'').replace(/[.#$/\[\]]/g, '_');
 }
 async function toggleClock(){
   const m = getMe();
-  if (!m || !m.name) return;
+  const name = resolveMyName();
+  if (!m || !name) return;
   const key = myClockKey();
   const today = todayStr();
   if (_myClock && _myClock.ts && !_myClock.outTs) {
-    // Clock OUT
     const outTs = Date.now();
     await fetch(`${FB}/clockins/${today}/${key}/outTs.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(outTs)
     });
     _myClock.outTs = outTs;
   } else {
-    // Clock IN
-    const payload = { name: m.name, store: m.branch || BRANCH, ts: Date.now() };
+    const payload = { uid:m.uid, name:name, email:m.email, store: m.branch||BRANCH, ts:Date.now() };
     await fetch(`${FB}/clockins/${today}/${key}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
@@ -798,11 +804,15 @@ async function refreshAll(){
     _clockData = (await r.json()) || {};
   } catch(e){ _clockData = {}; }
 
-  // Sync current user's clock record
+  // Sync current user's clock record (uid 우선, name fallback)
   const myKey = myClockKey();
+  const _me = getMe();
   if (myKey && _clockData[myKey]) {
     _myClock = _clockData[myKey];
-  } else if (myKey) {
+  } else if (_me && _me.uid) {
+    const byUid = Object.values(_clockData).find(e => e.uid === _me.uid);
+    _myClock = byUid || null;
+  } else {
     _myClock = null;
   }
   renderClockBtn();
@@ -899,11 +909,11 @@ window.toggleClockDetail = toggleClockDetail;
 // ============== GPS GEOFENCING — AUTO CLOCK-IN + CLOCK-OUT ==============
 // 매장 GPS 좌표 — 반경(m) 내 진입=자동 출근, 이탈=자동 퇴근
 const STORE_COORDS = {
-  'MIAMI':         { lat:25.7805, lng:-80.1979, r:500 },
-  'PEMBROKE_PINES':{ lat:26.0029, lng:-80.3414, r:500 },
-  'HOLLYWOOD':     { lat:26.0112, lng:-80.1527, r:500 },
-  'CORAL_SPRINGS': { lat:26.2714, lng:-80.2572, r:500 },
-  'LASOLAS':       { lat:26.1185, lng:-80.1370, r:500 },
+  'MIAMI':         { lat:25.6053, lng:-80.3510, r:500 },  // 15355 S Dixie Hwy
+  'PEMBROKE_PINES':{ lat:26.0072, lng:-80.2934, r:500 },  // 11230 Pines Blvd
+  'HOLLYWOOD':     { lat:26.0330, lng:-80.1510, r:500 },  // 2420 N Dixie Hwy
+  'CORAL_SPRINGS': { lat:26.2712, lng:-80.2706, r:500 },  // 2693 N University Dr
+  'LASOLAS':       { lat:26.1223, lng:-80.1434, r:500 },  // 510 NW 7th Ave, Fort Lauderdale
   'WEST_PALM':     { lat:26.7153, lng:-80.0534, r:500 },
 };
 
@@ -988,7 +998,8 @@ function checkGeofence(){
 
 async function autoClockIn(storeId){
   const m = getMe();
-  if(!m || !m.name) return;
+  const name = resolveMyName();
+  if(!m || !name) return;
   const key = myClockKey();
   if(!key) return;
   const today = todayStr();
@@ -1001,7 +1012,7 @@ async function autoClockIn(storeId){
       return;
     }
   } catch(e){}
-  const payload = { name:m.name, store:storeId, ts:Date.now(), autoIn:'geo_entered_store' };
+  const payload = { uid:m.uid, name:name, email:m.email, store:storeId, ts:Date.now(), autoIn:'geo_entered_store' };
   await fetch(`${FB}/clockins/${today}/${key}.json`,{
     method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
   });
