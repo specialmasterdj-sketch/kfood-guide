@@ -224,39 +224,60 @@ window.approveUser = async function(uid){
   const branch = document.getElementById('br_' + uid).value;
   const role = document.getElementById('rl_' + uid).value;
   if (!branch || !role) { showToast(t('needBranchRole'), true); return; }
+  const patch = { status:'approved', branch, role, approvedAt: Date.now(), approvedBy: SELF?.uid || 'manager' };
   try {
-    await update(ref(db, 'users/' + uid), {
-      status:'approved', branch, role,
-      approvedAt: Date.now(),
-      approvedBy: SELF?.uid || 'manager',
-    });
+    if (USERS[uid]) Object.assign(USERS[uid], patch);
+    render();
+    await update(ref(db, 'users/' + uid), patch);
     showToast(t('saved'));
-  } catch(e){ showToast('Error: ' + e.message, true); }
+    loadUsersRest();
+  } catch(e){ showToast('Error: ' + e.message, true); loadUsersRest(); }
 };
 window.rejectUser = async function(uid){
   if (!confirm(t('confirmReject'))) return;
+  const patch = { status:'blocked', approvedBy: SELF?.uid || 'manager' };
   try {
-    await update(ref(db, 'users/' + uid), { status:'blocked', approvedBy: SELF?.uid || 'manager' });
+    if (USERS[uid]) Object.assign(USERS[uid], patch);
+    render();
+    await update(ref(db, 'users/' + uid), patch);
     showToast(t('saved'));
-  } catch(e){ showToast('Error: ' + e.message, true); }
+    loadUsersRest();
+  } catch(e){ showToast('Error: ' + e.message, true); loadUsersRest(); }
 };
 window.blockUser = async function(uid){
   if (!confirm(t('confirmBlock'))) return;
   try {
+    if (USERS[uid]) USERS[uid].status = 'blocked';
+    render();
     await update(ref(db, 'users/' + uid), { status:'blocked' });
     showToast(t('saved'));
-  } catch(e){ showToast('Error: ' + e.message, true); }
+    loadUsersRest();
+  } catch(e){ showToast('Error: ' + e.message, true); loadUsersRest(); }
 };
 window.unblockUser = async function(uid){
   if (!confirm(t('confirmUnblock'))) return;
   try {
+    if (USERS[uid]) USERS[uid].status = 'pending';
+    render();
     await update(ref(db, 'users/' + uid), { status:'pending' });
     showToast(t('saved'));
-  } catch(e){ showToast('Error: ' + e.message, true); }
+    loadUsersRest();
+  } catch(e){ showToast('Error: ' + e.message, true); loadUsersRest(); }
 };
 
 // Wait for auth-gate to populate window.__currentUser, then check role +
 // subscribe to /users for the live list of pending/approved/blocked.
+async function loadUsersRest(){
+  try {
+    const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+    const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+    const r = await fetch(cfg.databaseURL + '/users.json' + authQ, { cache:'no-store' });
+    if (r.ok) {
+      USERS = (await r.json()) || {};
+      render();
+    }
+  } catch (_) {}
+}
 function onAuthReady(profile){
   SELF = profile;
   if (!isMgr(profile)) {
@@ -267,20 +288,6 @@ function onAuthReady(profile){
   document.getElementById('mainWrap').style.display = '';
   document.getElementById('noAccess').style.display = 'none';
 
-  // REST primary (works regardless of WebSocket health) + SDK best-effort
-  // for live updates. Without this, the page renders empty on networks
-  // where the SDK's WebSocket can't connect.
-  async function loadUsersRest(){
-    try {
-      const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
-      const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
-      const r = await fetch(cfg.databaseURL + '/users.json' + authQ, { cache:'no-store' });
-      if (r.ok) {
-        USERS = (await r.json()) || {};
-        render();
-      }
-    } catch (_) {}
-  }
   loadUsersRest();
   setInterval(loadUsersRest, 30000);
   // SDK live updates if WebSocket connects:
