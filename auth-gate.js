@@ -7,13 +7,19 @@
 // Place BEFORE the page's main scripts so window.__currentUser is set.
 
 import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-import { getAuth, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getAuth, GoogleAuthProvider, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence, indexedDBLocalPersistence } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { getDatabase, ref, get, set, update, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 
 const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
 const app = getApps().length ? getApp() : initializeApp(cfg);
 const auth = getAuth(app);
 const db = getDatabase(app);
+// 명시적 persistence — IndexedDB 우선 (PWA · iOS 에서 cookie/localStorage
+// 보다 오래 살아남음), 실패 시 localStorage fallback. 페이지 이동 / 앱 재시작
+// 마다 재로그인 요구되는 핵심 원인이 persistence 미설정이었음.
+setPersistence(auth, indexedDBLocalPersistence)
+  .catch(() => setPersistence(auth, browserLocalPersistence))
+  .catch(e => console.warn('[auth-gate] setPersistence failed', e));
 
 // Bootstrap administrators — auto-approved with full権限 on first login.
 // Email match is case-insensitive. Add more here when needed.
@@ -163,16 +169,36 @@ function watchProfile(user){
   });
 }
 
-onAuthStateChanged(auth, (user) => {
-  if (isExemptPath()) return; // login page handles its own flow
-  if (!user) {
-    // Not signed in — bounce to login, preserving where they were going
-    const ret = encodeURIComponent(location.pathname + location.search);
-    location.replace('./auth.html?return=' + ret);
-    return;
+// 페이지 이동마다 즉시 redirect 하던 게 사용자 불만 (특히 iOS / 느린 망에서
+// IndexedDB persistence 가 200ms~수초 늦게 복원되는 동안 잠깐 null 로 발화됨).
+// chat.me 에 이전에 로그인한 흔적(uid+email) 이 있으면 Firebase auth 가
+// 복원될 때까지 잠시 기다린다. 그래도 안 잡히면 그제서야 auth.html 로.
+let __redirected = false;
+async function _maybeRedirect(user){
+  if (isExemptPath()) return;
+  if (user) { watchProfile(user); return; }
+
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
+  if (cached && cached.uid && cached.email) {
+    // 최근 로그인 흔적 있음 → 4초까지 대기 (auth persistence 복원 시간)
+    const start = Date.now();
+    while (Date.now() - start < 4000) {
+      await new Promise(r => setTimeout(r, 200));
+      if (auth.currentUser) {
+        console.info('[auth-gate] auth restored after', Date.now() - start, 'ms');
+        watchProfile(auth.currentUser);
+        return;
+      }
+    }
   }
-  watchProfile(user);
-});
+  if (__redirected) return;   // 이미 redirect 진행 중
+  __redirected = true;
+  const ret = encodeURIComponent(location.pathname + location.search);
+  location.replace('./auth.html?return=' + ret);
+}
+
+onAuthStateChanged(auth, (user) => { _maybeRedirect(user); });
 
 // Expose minimal API for pages that want to read auth state directly
 window.__authGate = {
