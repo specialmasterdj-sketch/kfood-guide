@@ -144,6 +144,13 @@ button,input,textarea,select{font-family:inherit}
 .read-receipts{font-size:.72em;color:#9ca3af;padding:8px 0 0;border-top:1px solid #f3f4f6;margin-top:10px;line-height:1.6}
 .read-receipts b{color:#6b7280;font-weight:700}
 .read-receipts span{color:#6b7280}
+.update .edit{
+  background:#f0fdf4;color:#166534;border:1.5px solid #bbf7d0;
+  border-radius:8px;padding:5px 11px;font-size:.74em;font-weight:700;
+  cursor:pointer;display:none;transition:.15s;
+}
+.update.mine .edit{display:inline-block}
+.update .edit:hover{background:#166534;color:#fff;border-color:transparent}
 .update .del{
   background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca;
   border-radius:8px;padding:5px 11px;font-size:.74em;font-weight:700;
@@ -604,14 +611,16 @@ function renderCard(u){
     ${u.title ? `<h3>${escapeHtml(u.title)}</h3>` : ''}
     ${u.body ? `<div class="body">${escapeHtml(u.body)}</div>` : ''}
     ${photosHtml}
-    ${mine ? `<div class="actions"><button class="del" onclick="deleteUpdate('${u.id}')">${t('del')}</button></div>` : ''}
+    ${mine ? `<div class="actions"><button class="edit" onclick="editUpdate('${u.id}')">✏ ${LANG==='ko'?'수정':LANG==='es'?'Editar':'Edit'}</button><button class="del" onclick="deleteUpdate('${u.id}')">${t('del')}</button></div>` : ''}
   </div>`;
 }
 
 // ===== COMPOSER =====
+let EDITING_ID = null;
 function openComposeModal(){
   if (!ensureMe()) return;
   if (!me.isManager) { showToast(t('toast_mgr_only'), '#dc2626'); return; }
+  EDITING_ID = null;
   document.getElementById('cTitle').value = '';
   document.getElementById('cBody').value = '';
   document.getElementById('cPriority').value = 'normal';
@@ -619,6 +628,26 @@ function openComposeModal(){
   ATTACH = [];
   document.getElementById('cPreviews').innerHTML = '';
   document.getElementById('cAttachCount').textContent = '';
+  const hdr = document.querySelector('#composeOverlay .modal h3');
+  hdr.textContent = LANG==='ko'?'📣 새 공지 작성':LANG==='es'?'📣 Nuevo aviso':'📣 New Announcement';
+  document.getElementById('cPostBtn').textContent = '📤 게시';
+  document.getElementById('composeOverlay').classList.add('show');
+}
+function editUpdate(id){
+  if (!ensureMe()) return;
+  const u = UPDATES.find(x => x.id === id);
+  if (!u) return;
+  EDITING_ID = id;
+  document.getElementById('cTitle').value = u.title || '';
+  document.getElementById('cBody').value = u.body || '';
+  document.getElementById('cPriority').value = u.priority || 'normal';
+  document.getElementById('cAudience').value = u.audience || 'all';
+  ATTACH = [];
+  document.getElementById('cPreviews').innerHTML = '';
+  document.getElementById('cAttachCount').textContent = (u.photos && u.photos.length) ? `기존 사진 ${u.photos.length}장 유지` : '';
+  const hdr = document.querySelector('#composeOverlay .modal h3');
+  hdr.textContent = LANG==='ko'?'✏ 공지 수정':LANG==='es'?'✏ Editar aviso':'✏ Edit Announcement';
+  document.getElementById('cPostBtn').textContent = LANG==='ko'?'💾 저장':LANG==='es'?'💾 Guardar':'💾 Save';
   document.getElementById('composeOverlay').classList.add('show');
 }
 
@@ -683,27 +712,33 @@ async function postUpdate(){
   if (!title && !body && ATTACH.length === 0) { showToast('제목 / 내용 / 사진 중 하나는 입력하세요', '#dc2626'); return; }
   const priority = document.getElementById('cPriority').value;
   const audience = document.getElementById('cAudience').value;
-  const ts = Date.now();
-  const id = 'u' + ts + Math.floor(Math.random()*900);
+  const isEdit = !!EDITING_ID;
+  const id = isEdit ? EDITING_ID : ('u' + Date.now() + Math.floor(Math.random()*900));
   const btn = document.getElementById('cPostBtn');
-  btn.disabled = true; btn.textContent = '게시 중...';
+  btn.disabled = true; btn.textContent = isEdit ? '저장 중...' : '게시 중...';
 
   try {
-    const photos = [];
-    for (let i = 0; i < ATTACH.length; i++) {
-      const url = await uploadPhoto(ATTACH[i], id, i);
-      photos.push(url);
-      btn.textContent = `사진 ${i+1}/${ATTACH.length}...`;
+    let photos = [];
+    if (ATTACH.length > 0) {
+      for (let i = 0; i < ATTACH.length; i++) {
+        const url = await uploadPhoto(ATTACH[i], id, i);
+        photos.push(url);
+        btn.textContent = `사진 ${i+1}/${ATTACH.length}...`;
+      }
+    } else if (isEdit) {
+      const orig = UPDATES.find(x => x.id === id);
+      photos = (orig && orig.photos) ? orig.photos : [];
     }
-    const payload = {
-      author: me.name, authorBranch: me.branch, color: me.color, isManager: true,
-      title, body, priority, audience, photos, ts
-    };
+    const payload = isEdit
+      ? { title, body, priority, audience, photos, editedAt: Date.now() }
+      : { author: me.name, authorBranch: me.branch, color: me.color, isManager: true, title, body, priority, audience, photos, ts: Date.now() };
     await fetch(`${FB_DB_URL}/updates/${id}.json`, {
-      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+      method: isEdit ? 'PATCH' : 'PUT',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
+    EDITING_ID = null;
     closeOverlay('composeOverlay');
-    showToast('✓ 공지가 게시되었습니다');
+    showToast(isEdit ? '✓ 공지가 수정되었습니다' : '✓ 공지가 게시되었습니다');
   } catch (e) {
     showToast('게시 실패: ' + e.message, '#dc2626');
   } finally {
@@ -803,7 +838,7 @@ function renderReadReceipts(){
 
 // expose
 Object.assign(window, {
-  openMeModal, saveMe, renderMeNames, openComposeModal, postUpdate,
+  openMeModal, saveMe, renderMeNames, openComposeModal, editUpdate, postUpdate,
   handleFiles, removeAttach, deleteUpdate, openLightbox, closeOverlay, setFilter, setLang,
 });
 
