@@ -2483,28 +2483,64 @@ async function sendKFoodDailyAll(){
 }
 window.sendKFoodDailyAll = sendKFoodDailyAll;
 
-// K-Food '+ 음식 추가' — 새 메뉴 항목을 checklist 배열 끝에 push.
-// 기존 항목들의 done/memo/photos 데이터는 그대로 유지하며 새 빈 줄만 추가.
-async function addKfoodMenuItem(taskId, branchId){
+// K-Food '+ 음식 추가' — iOS PWA 에서 prompt() 가 가끔 블록돼서 커스텀
+// 모달 사용. 새 메뉴 항목을 checklist 배열 끝에 push, 기존 항목 데이터는
+// 그대로 유지하며 새 빈 줄만 추가.
+function addKfoodMenuItem(taskId, branchId){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
-  const name = prompt('🍱 추가할 메뉴 이름을 입력하세요\n(예: 떡갈비, 불고기, 김치전)', '');
-  if (!name || !name.trim()) return;
-  const cleanName = name.trim();
-  const newItem = {
-    name: '🍱 ' + cleanName,
-    done: false,
-    addedAt: Date.now(),
-    addedBy: me.name
-  };
-  // 기존 checklist 읽어서 끝에 append
   const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
   if (!task) { alert('업무를 찾을 수 없습니다.'); return; }
-  const cl = Array.isArray(task.checklist) ? task.checklist.slice() : [];
-  cl.push(newItem);
-  const path = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId;
-  try {
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), { checklist: cl });
-  } catch(e) { alert('추가 실패: ' + (e.message || e)); }
+
+  // 기존 모달 있으면 제거
+  const old = document.getElementById('__kfoodAddOv');
+  if (old) old.remove();
+
+  const ov = document.createElement('div');
+  ov.id = '__kfoodAddOv';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:18px 20px;box-shadow:0 8px 28px rgba(0,0,0,.3);font-family:inherit">
+      <div style="font-size:1.1em;font-weight:800;color:#1a5c3a;margin-bottom:10px">🍱 추가할 메뉴 이름</div>
+      <div style="font-size:.84em;color:#6b7280;margin-bottom:12px">예: 떡갈비, 불고기, 김치전, 부대찌개</div>
+      <input id="__kfoodNameIn" type="text" placeholder="메뉴 이름…"
+        style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:10px 12px;font-size:1em;font-family:inherit;outline:none;margin-bottom:14px">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="__kfoodCancel" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer;font-family:inherit">취소</button>
+        <button id="__kfoodOk" style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-family:inherit">추가</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const inp = document.getElementById('__kfoodNameIn');
+  setTimeout(() => inp.focus(), 50);
+
+  const close = () => { try { ov.remove(); } catch(_){} };
+  const submit = async () => {
+    const name = (inp.value || '').trim();
+    if (!name) { inp.focus(); return; }
+    close();
+    const newItem = {
+      name: '🍱 ' + name,
+      done: false,
+      addedAt: Date.now(),
+      addedBy: me.name
+    };
+    const t2 = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+    if (!t2) { alert('업무를 찾을 수 없습니다.'); return; }
+    const cl = Array.isArray(t2.checklist) ? t2.checklist.slice() : [];
+    cl.push(newItem);
+    const path = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId;
+    try {
+      await window.__fb.update(window.__fb.ref(window.__fb.db, path), { checklist: cl });
+    } catch(e) { alert('추가 실패: ' + (e.message || e)); }
+  };
+
+  document.getElementById('__kfoodOk').onclick = submit;
+  document.getElementById('__kfoodCancel').onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    else if (e.key === 'Escape') close();
+  };
 }
 window.addKfoodMenuItem = addKfoodMenuItem;
 
@@ -3117,11 +3153,15 @@ window.addClEntryPhoto = addClEntryPhoto;
 function renderClMemoInput(task, item, idx){
   const memo = (item && item.memo) || '';
   const safeMemo = String(memo).replace(/"/g,'&quot;');
-  const ph = ({
-    ko: '예: 서울우유 2.3L 재고 3개 남음',
-    en: 'e.g., Seoul Milk 2.3L — 3 left',
-    es: 'ej., Leche Seoul 2.3L — 3 restantes',
-  })[LANG] || '예: 메모';
+  // 카테고리별 placeholder — K-Food 면 만든 개수 형식
+  const isKFood = task && (task.category === 'K-Food' || task.autoKfoodDaily === true);
+  const ph = isKFood
+    ? ({ ko: '예: 김밥 10개 만듦',
+         en: 'e.g., made 10 kimbap',
+         es: 'ej., 10 kimbap hechos' })[LANG] || '예: 10개 만듦'
+    : ({ ko: '예: 서울우유 2.3L 재고 3개 남음',
+         en: 'e.g., Seoul Milk 2.3L — 3 left',
+         es: 'ej., Leche Seoul 2.3L — 3 restantes' })[LANG] || '예: 메모';
   return `<div style="margin:4px 0 8px 28px">
     <input type="text" class="cl-memo" value="${safeMemo}" placeholder="${ph}"
       onchange="saveChecklistMemo('${task.id}','${task.branchId}',${idx},this.value)"
