@@ -685,6 +685,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
     <button class="btn sec" onclick="sendMeatDailyAll()" title="6개 지점에 오늘 정육 일일 작업 보고 일괄 발송 (이미 있으면 스킵)" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 일괄 발송</button>
+    <button class="btn sec" onclick="sendKFoodDailyAll()" title="6개 지점에 오늘 K-Food 일일 작업 보고 일괄 발송 (이미 있으면 스킵)" style="background:#dbeafe;border-color:#2563eb;color:#1e40af;font-weight:700">🍙 K-Food 일괄 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -754,7 +755,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field"><label>② 카테고리</label>
       <div style="display:flex;gap:4px;align-items:stretch">
-        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="기타">기타</option></select>
+        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="K-Food">🍙 K-Food</option><option value="기타">기타</option></select>
         <button type="button" id="aCatEdit" onclick="renameCatFromSelect()" title="이 카테고리 이름 수정" style="display:none;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">✏</button>
         <button type="button" id="aCatDelete" onclick="rmCatFromSelect()" title="이 카테고리 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">×</button>
       </div>
@@ -2175,6 +2176,19 @@ let SEEN_IDS = new Set();   // task ids already known — used to detect new arr
 let SEEN_INIT = false;       // skip notifications on first snapshot (initial load)
 
 // 정육 일일 보고 체크리스트 템플릿 — auto-create + migration 둘 다 사용.
+// K-Food 일일 작업 보고 — 김밥/삼각김밥/잡채 고정 + 기타 빈 슬롯 1개.
+// 직원이 한 줄씩 추가하며 만든 수량 + 사진 기록.
+const _KFOOD_TPL_2026 = [
+  { name: '🍙 김밥 만든 수량 (사진+개수)', done: false,
+    nameTr: { ko:'🍙 김밥 만든 수량 (사진+개수)', en:'🍙 Kimbap made (photo + count)', es:'🍙 Kimbap hecho (foto + cantidad)' } },
+  { name: '🍚 삼각김밥 만든 수량 (사진+개수)', done: false,
+    nameTr: { ko:'🍚 삼각김밥 만든 수량 (사진+개수)', en:'🍚 Triangle kimbap made (photo + count)', es:'🍚 Onigiri hecho (foto + cantidad)' } },
+  { name: '🍜 잡채 만든 수량 (사진+개수)', done: false,
+    nameTr: { ko:'🍜 잡채 만든 수량 (사진+개수)', en:'🍜 Japchae made (photo + count)', es:'🍜 Japchae hecho (foto + cantidad)' } },
+  { name: '🥘 기타 만든 메뉴 (사진+개수)', done: false,
+    nameTr: { ko:'🥘 기타 만든 메뉴 (사진+개수)', en:'🥘 Other items made (photo + count)', es:'🥘 Otros artículos hechos (foto + cantidad)' } },
+];
+
 const _MEAT_TPL_2026 = [
   { name: '🐂 BEEF 작업한 종류·수량 (사진+메모)',     done: false,
     nameTr: { ko:'🐂 BEEF 작업한 종류·수량 (사진+메모)', en:'🐂 BEEF — types & qty worked (photo + memo)', es:'🐂 BEEF — tipos y cantidad trabajados (foto + memo)' } },
@@ -2368,6 +2382,82 @@ async function sendMeatDailyAll(){
         (failed ? '  실패: ' + failed + '개' : ''));
 }
 window.sendMeatDailyAll = sendMeatDailyAll;
+
+// K-Food 일일 보고 일괄 발송 — 정육과 같은 패턴이지만 다른 점:
+// 1) checklist 는 _KFOOD_TPL_2026 (김밥/삼각김밥/잡채/기타)
+// 2) 완료 시 chat 자동 게시 ('K-Food' 카테고리 → kfood_eval 방으로 라우팅)
+//    → noAutoChat 안 켬
+async function sendKFoodDailyAll(){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  const branches = isOwner() ? BRANCHES.map(b => b.id) : (me.branch ? [me.branch] : []);
+  if (!branches.length) { alert('지점 정보 없음'); return; }
+  const who = prompt(
+    '🍙 오늘 K-Food 일일 작업 보고 발송\n\n' +
+    '받을 직원 이름을 입력하세요 (전 지점 동일):\n' +
+    '비워두면 전체 (* — K-Food 담당자가 본인이 잡음)\n' +
+    '대상 지점: ' + branches.length + '개',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
+  let created = 0, skipped = 0, failed = 0;
+  for (const branchId of branches){
+    const today = todayStr();
+    const userKey = targetName === '*' ? 'all' : slug(targetName);
+    const taskId = 'auto_kfood_daily_' + userKey;
+    const restUrl = `${FB_DB_URL}/tasks/${branchId}/${today}/${taskId}.json`;
+    try {
+      let aq = '';
+      try {
+        const u = window.__fb?.auth?.currentUser;
+        if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+      } catch(_){}
+      const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
+      if (r.ok) {
+        const existing = await r.json();
+        if (existing && Array.isArray(existing.checklist) && existing.checklist.length >= _KFOOD_TPL_2026.length) {
+          skipped++; continue;
+        }
+      }
+      const checklist = _KFOOD_TPL_2026.map(t => Object.assign({}, t));
+      const payload = {
+        name: '🍙 K-Food 일일 작업 보고',
+        nameTr: { ko:'🍙 K-Food 일일 작업 보고', en:'🍙 Daily K-Food Production Report', es:'🍙 Reporte Diario de K-Food' },
+        deadline: '18:00',
+        category: 'K-Food',
+        requirePhoto: true,
+        place: 'K-Food 작업장',
+        locationNote: '오늘 만든 김밥 / 삼각김밥 / 잡채 / 기타 메뉴 — 각 항목에 만든 개수와 사진 첨부. ➕ 한 줄 추가 로 더 추가 가능.',
+        locationNoteTr: {
+          ko: '오늘 만든 김밥 / 삼각김밥 / 잡채 / 기타 메뉴 — 각 항목에 만든 개수와 사진 첨부.',
+          en: 'Kimbap / Triangle kimbap / Japchae / Others made today — attach count + photo per item.',
+          es: 'Kimbap / Onigiri / Japchae / Otros hechos hoy — adjuntar cantidad + foto por ítem.',
+        },
+        assignedTo: targetName,
+        assignedToId: targetName === '*' ? null : targetName,
+        from: me.name + ' (K-Food 일괄 발송)',
+        fromRole: me.role || 'MANAGER',
+        createdAt: Date.now(),
+        checklist,
+        autoKfoodDaily: true,
+        // K-Food 는 채팅 자동 공유 ON (kfood_eval 방). 정육 (noAutoChat:true)
+        // 와 의도적으로 다름 — 여러 지점 K-Food 작업을 한 곳에서 비교/평가.
+      };
+      const w = await fetch(restUrl + (aq ? aq : ''), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (w.ok) created++; else { console.warn('[kfood-daily] write fail', branchId, w.status); failed++; }
+    } catch(e) { console.warn('[kfood-daily]', branchId, e); failed++; }
+  }
+  alert('🍙 K-Food 일일 발송 완료\n' +
+        '  새로 발송: ' + created + '개 지점\n' +
+        '  이미 있음: ' + skipped + '개\n' +
+        (failed ? '  실패: ' + failed + '개' : ''));
+}
+window.sendKFoodDailyAll = sendKFoodDailyAll;
 
 function subscribeTasks(){
   if (!me) return;
@@ -3003,10 +3093,11 @@ async function saveChecklistMemo(taskId, branchId, idx, value){
 }
 window.saveChecklistMemo = saveChecklistMemo;
 
-// 정육 전용 다중행 vs 일반 단일행 — 업무 카테고리·플래그로 분기.
+// 정육 / K-Food 전용 다중행 입력 vs 일반 단일행 메모 — 카테고리·플래그로 분기.
 function _useEntriesMode(task){
   if (!task) return false;
-  return task.category === '정육' || task.autoMeatDaily === true;
+  return task.category === '정육' || task.autoMeatDaily === true
+      || task.category === 'K-Food' || task.autoKfoodDaily === true;
 }
 function renderClItemMemoOrEntries(task, item, idx){
   return _useEntriesMode(task)
