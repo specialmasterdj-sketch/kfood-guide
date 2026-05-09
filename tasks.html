@@ -1756,9 +1756,21 @@ function refreshLangToggle(){
 // Static UI strings — picked by t(key)
 const I18N = {
   pageTitle:    { ko:'업무 지시',          en:'Tasks',                  es:'Tareas' },
+  tabHome:      { ko:'🏠 대시보드',        en:'🏠 Dashboard',           es:'🏠 Panel' },
   tabEmp:       { ko:'📋 내 업무',         en:'📋 My Tasks',            es:'📋 Mis Tareas' },
   tabMgr:       { ko:'👁 매니저 뷰',       en:'👁 Manager View',        es:'👁 Vista Gerente' },
   tabRep:       { ko:'📊 리포트',          en:'📊 Report',              es:'📊 Informe' },
+  // Manager toolbar bulk-send buttons
+  btnSendMeat:    { ko:'🥩 정육 발송',     en:'🥩 Send Meat',          es:'🥩 Enviar Carne' },
+  btnSendKFood:   { ko:'🍙 K-Food 발송',   en:'🍙 Send K-Food',        es:'🍙 Enviar K-Food' },
+  btnSendSeafood: { ko:'🐟 해산물 발송',   en:'🐟 Send Seafood',       es:'🐟 Enviar Mariscos' },
+  // Filter selects + search + reset
+  filterPersonAll: { ko:'👤 담당자: 전체',   en:'👤 Assignee: All',      es:'👤 Encargado: Todos' },
+  filterCatAll:    { ko:'📂 카테고리: 전체', en:'📂 Category: All',      es:'📂 Categoría: Todas' },
+  searchPh:        { ko:'🔎 업무명 검색',    en:'🔎 Search task',        es:'🔎 Buscar tarea' },
+  btnReset:        { ko:'초기화',           en:'Reset',                  es:'Restablecer' },
+  placeNPhotos:    { ko:'{n}장 장소',       en:'{n} place photos',      es:'{n} fotos del lugar' },
+  startedAt:       { ko:'시작 ',           en:'Started ',               es:'Iniciado ' },
   noName:       { ko:'이름 등록',          en:'Set name',               es:'Registrar nombre' },
   doneTotal:    { ko:'완료한 업무 / 전체', en:'Done / Total',           es:'Hecho / Total' },
   noTasksToday: { ko:'오늘 배정된 업무 없음', en:'No tasks today',      es:'Sin tareas hoy' },
@@ -1832,12 +1844,60 @@ function localizeCat(name){
   const k = CAT_I18N[name];
   return k ? t(k) : name;
 }
+// Known place names → 3-language map. User-typed custom places fall through unchanged.
+const PLACE_I18N = {
+  '1번 통로':       { ko:'1번 통로',       en:'Aisle 1',          es:'Pasillo 1' },
+  '2번 통로':       { ko:'2번 통로',       en:'Aisle 2',          es:'Pasillo 2' },
+  '3번 통로':       { ko:'3번 통로',       en:'Aisle 3',          es:'Pasillo 3' },
+  '4번 통로':       { ko:'4번 통로',       en:'Aisle 4',          es:'Pasillo 4' },
+  '5번 통로':       { ko:'5번 통로',       en:'Aisle 5',          es:'Pasillo 5' },
+  '6번 통로':       { ko:'6번 통로',       en:'Aisle 6',          es:'Pasillo 6' },
+  '7번 통로':       { ko:'7번 통로',       en:'Aisle 7',          es:'Pasillo 7' },
+  '누들 냉장':      { ko:'누들 냉장',      en:'Noodle Cooler',    es:'Refri. Fideos' },
+  '김치 냉장':      { ko:'김치 냉장',      en:'Kimchi Cooler',    es:'Refri. Kimchi' },
+  'soup 냉장':      { ko:'soup 냉장',      en:'Soup Cooler',      es:'Refri. Sopa' },
+  '술 냉장':        { ko:'술 냉장',        en:'Liquor Cooler',    es:'Refri. Licor' },
+  '음료수 냉장':    { ko:'음료수 냉장',    en:'Beverage Cooler',  es:'Refri. Bebidas' },
+  '냉동 지역':      { ko:'냉동 지역',      en:'Frozen Area',      es:'Área Congelada' },
+  '마트 밖':        { ko:'마트 밖',        en:'Outside',          es:'Exterior' },
+  '정육 작업장':    { ko:'정육 작업장',    en:'Meat Workstation', es:'Carnicería' },
+  'K-Food 작업장':  { ko:'K-Food 작업장',  en:'K-Food Workstation', es:'Estación K-Food' },
+  '해산물 작업장':  { ko:'해산물 작업장',  en:'Seafood Workstation', es:'Estación Mariscos' },
+};
+function localizePlace(name, placeTr){
+  if (!name) return '';
+  // 1) Static map for known options — instant + no API call
+  const obj = PLACE_I18N[name];
+  if (obj) return obj[LANG] || obj.ko || name;
+  // 2) Custom places — use cached translation if backfillTranslate ran
+  if (placeTr) return pickLang(placeTr, name);
+  return name;
+}
+// Branches — extend with en/es so labels localize. See BRANCHES array — this
+// merges per-language overrides on top of the existing ko name.
+const BRANCH_I18N = {
+  MIAMI:           { en:'Miami',           es:'Miami' },
+  PEMBROKE_PINES:  { en:'Pembroke Pines',  es:'Pembroke Pines' },
+  HOLLYWOOD:       { en:'Hollywood',       es:'Hollywood' },
+  CORAL_SPRINGS:   { en:'Coral Springs',   es:'Coral Springs' },
+  LASOLAS:         { en:'Las Olas',        es:'Las Olas' },
+  WEST_PALM:       { en:'West Palm Beach', es:'West Palm Beach' },
+};
+function localizeBranch(id){
+  if (!id) return '';
+  const obj = BRANCHES.find(b => b.id === id);
+  if (!obj) return id;
+  if (LANG === 'ko') return obj.ko || id;
+  const tr = BRANCH_I18N[id];
+  return (tr && tr[LANG]) || obj.ko || id;
+}
 function refreshStaticI18n(){
   const set = (sel, txt) => { const e = document.querySelector(sel); if (e) e.textContent = txt; };
   set('.topbar h1', t('pageTitle'));
   document.querySelectorAll('.tabs button').forEach(b => {
     const tab = b.dataset.tab;
-    if (tab === 'emp') {
+    if (tab === 'home') b.firstChild ? b.firstChild.textContent = t('tabHome') : b.textContent = t('tabHome');
+    else if (tab === 'emp') {
       const cnt = b.querySelector('.count'); const cntHtml = cnt ? cnt.outerHTML : '';
       b.innerHTML = t('tabEmp') + ' ' + cntHtml;
     } else if (tab === 'mgr') b.firstChild ? b.firstChild.textContent = t('tabMgr') : b.textContent = t('tabMgr');
@@ -1854,6 +1914,24 @@ function refreshStaticI18n(){
   document.querySelectorAll('.mgr-toolbar .chip').forEach(c => { const k = filterMap[c.dataset.f]; if (k) c.textContent = t(k); });
   const newBtn = document.querySelector('.mgr-toolbar > .btn');
   if (newBtn) newBtn.textContent = t('newAssign');
+  // Bulk-send buttons (정육 / K-Food / 해산물) — preserve their inline styles
+  // by only swapping textContent, not innerHTML
+  const sendBtns = document.querySelectorAll('.mgr-toolbar > .btn.sec');
+  sendBtns.forEach(b => {
+    const oc = (b.getAttribute('onclick') || '');
+    if (oc.includes('sendMeatDailyAll'))    b.textContent = t('btnSendMeat');
+    else if (oc.includes('sendKFoodDailyAll'))   b.textContent = t('btnSendKFood');
+    else if (oc.includes('sendSeafoodDailyAll')) b.textContent = t('btnSendSeafood');
+    else if (oc.includes('resetMgrFilters'))     b.textContent = t('btnReset');
+  });
+  // Filter selects — swap the first option (전체) text. Other options come
+  // from populateMgrFilters which we don't touch here.
+  const pSel = document.getElementById('mgrPersonFilter');
+  if (pSel && pSel.options.length) pSel.options[0].textContent = t('filterPersonAll');
+  const cSel = document.getElementById('mgrCatFilter');
+  if (cSel && cSel.options.length) cSel.options[0].textContent = t('filterCatAll');
+  const search = document.getElementById('mgrSearch');
+  if (search) search.placeholder = t('searchPh');
   // Manager table headers
   const headers = ['thWho','thName','thDeadline','thStatus','thDone','thProof'];
   document.querySelectorAll('.mgr-table thead th').forEach((th, i) => { if (headers[i]) th.textContent = t(headers[i]); });
@@ -1904,6 +1982,11 @@ async function backfillTranslate(t) {
   if (tr) t.nameTr = tr;
   if (t.memo && !t.memoTr) t.memoTr = await translateMulti(t.memo);
   if (t.note && !t.noteTr) t.noteTr = await translateMulti(t.note);
+  // Backfill place translation only for free-form custom places. Known
+  // places fall through PLACE_I18N synchronously so we don't burn API calls.
+  if (t.place && !t.placeTr && !PLACE_I18N[t.place]) {
+    t.placeTr = await translateMulti(t.place);
+  }
   renderAll && renderAll();
 }
 const BRANCHES = [
@@ -3044,7 +3127,7 @@ function renderTaskCard(t){
     </div>
     <div class="task-meta">
       ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}</span>`:''}
-      ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(t.place)}</span>`:''}
+      ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
       ${t.from?`<span class="from">👤 ${escHtml(t.from)}</span>`:''}
       ${t.category?`<span>· ${escHtml(localizeCat(t.category))}</span>`:''}
@@ -4142,13 +4225,15 @@ function renderMgr(){
     delayed:    { ko:'지연',   en:'Delayed',     es:'Retrasado' },
   };
   const startLabel = { ko:'시작 ', en:'Started ', es:'Iniciado ' };
+  // Inside the map, the param 't' shadows the i18n t() — alias the outer fn.
+  const _t = t;
   tbody.innerHTML = rows.map(t => {
     if (t.name && !t.nameTr) backfillTranslate(t);
     const dispName = pickLang(t.nameTr, t.name);
     const dispMemo = t.memo ? pickLang(t.memoTr, t.memo) : '';
     const who = t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : '전체');
     const av = `<span class="av" style="background:${colorFor(who)}">${initials(who)}</span>`;
-    const branch = isOwner() && t.branchName ? ` <span style="font-size:.72em;color:#9ca3af">(${t.branchName})</span>` : '';
+    const branch = isOwner() && t.branchId ? ` <span style="font-size:.72em;color:#9ca3af">(${escHtml(localizeBranch(t.branchId))})</span>` : '';
     const stLabel = stLabels[t._status][LANG];
     const memo = dispMemo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(dispMemo)}</div>` : '';
     // Combine completion photos (task-level) + every checklist item's photos
@@ -4167,7 +4252,7 @@ function renderMgr(){
     const allProof = [...locPhotos, ...completePhotos];
     const photos = photoTiles.slice(0,5).join('')
       + (allProof.length > 5 ? `<span style="font-size:.74em;color:#6b7280;font-weight:700;margin-left:4px">+${allProof.length-5}</span>` : '')
-      + (locPhotos.length ? `<div style="font-size:.66em;color:#0891b2;margin-top:2px;font-weight:700">📍 ${locPhotos.length}장 장소</div>` : '');
+      + (locPhotos.length ? `<div style="font-size:.66em;color:#0891b2;margin-top:2px;font-weight:700">📍 ${_t('placeNPhotos', { n: locPhotos.length })}</div>` : '');
     // Checklist progress (if this task carries a checklist)
     const cl = Array.isArray(t.checklist) ? t.checklist : [];
     const clTotal = cl.length;
@@ -4200,7 +4285,7 @@ function renderMgr(){
       ? `<button onclick="adminTaskMenu('${t.id}','${t.branchId}','${safeName}',event)" title="매니저 보정" style="background:#fff;border:1px solid #e5e7eb;color:#0369a1;border-radius:6px;padding:2px 6px;font-size:.85em;cursor:pointer;margin-left:4px;vertical-align:middle">⚙</button>`
       : '';
     const delBtn = `<button onclick="deleteTask('${t.id}','${t.branchId}','${safeName}',event)" title="삭제" style="background:#fff;border:1px solid #e5e7eb;color:#9ca3af;border-radius:6px;padding:2px 6px;font-size:.85em;cursor:pointer;margin-left:6px;vertical-align:middle">🗑</button>`;
-    const placePill = t.place ? `<span style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:700;margin-left:4px;vertical-align:middle">📍 ${escHtml(t.place)}</span>` : '';
+    const placePill = t.place ? `<span style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:700;margin-left:4px;vertical-align:middle">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>` : '';
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
       <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
       <td><div style="font-weight:600">${escHtml(dispName)}${placePill}</div>${memo}${clBadge}</td>
