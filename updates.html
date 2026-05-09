@@ -141,6 +141,9 @@ button,input,textarea,select{font-family:inherit}
 .update .photos.n1 img{height:auto;max-height:340px}
 .update .actions{display:flex;gap:6px;margin-top:12px;color:#94a3b8;font-size:.82em;align-items:center;font-weight:600}
 .update .reads{margin-left:auto;font-size:.78em;color:#94a3b8}
+.read-receipts{font-size:.72em;color:#9ca3af;padding:8px 0 0;border-top:1px solid #f3f4f6;margin-top:10px;line-height:1.6}
+.read-receipts b{color:#6b7280;font-weight:700}
+.read-receipts span{color:#6b7280}
 .update .del{
   background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca;
   border-radius:8px;padding:5px 11px;font-size:.74em;font-weight:700;
@@ -563,6 +566,8 @@ function renderFeed(){
     return;
   }
   feed.innerHTML = list.map(u => renderCard(u)).join('');
+  renderReadReceipts();
+  setTimeout(markAllVisibleAsRead, 600);
 }
 function renderCard(u){
   // Author can delete their own post; OWNER / EXECUTIVE can delete any
@@ -746,15 +751,55 @@ function fetchRest(){
     .then(r => r.json())
     .then(applyUpdates)
     .catch(()=>{});
+  fetch(`${FB_DB_URL}/updateReads.json?t=${Date.now()}`, {cache:'no-store'})
+    .then(r => r.json())
+    .then(d => { READS = d || {}; renderReadReceipts(); })
+    .catch(()=>{});
 }
 function subscribe(){
   fetchRest();
   if (!window.__fb) return;
   const { db, ref, onValue } = window.__fb;
   onValue(ref(db, 'updates'), snap => applyUpdates(snap.val()));
+  onValue(ref(db, 'updateReads'), snap => { READS = snap.val() || {}; renderReadReceipts(); });
 }
 window.addEventListener('fb-ready', subscribe);
 setTimeout(() => { if (!window.__fb) fetchRest(); }, 2500);
+
+// ===== READ RECEIPTS =====
+let READS = {};
+function safeKey(name){ return String(name||'').replace(/[.#$/\[\]]/g, '_'); }
+function markAsRead(updateId){
+  if (!me || !me.name || !updateId) return;
+  const key = safeKey(me.name);
+  if (READS[updateId] && READS[updateId][key]) return;
+  const payload = { name: me.name, branch: me.branch || '', ts: Date.now() };
+  fetch(`${FB_DB_URL}/updateReads/${updateId}/${key}.json`, {
+    method: 'PUT', body: JSON.stringify(payload)
+  }).catch(()=>{});
+  if (!READS[updateId]) READS[updateId] = {};
+  READS[updateId][key] = payload;
+}
+function markAllVisibleAsRead(){
+  if (!me || !me.name) return;
+  visibleUpdates().forEach(u => markAsRead(u.id));
+}
+function renderReadReceipts(){
+  document.querySelectorAll('.update[data-id]').forEach(card => {
+    const id = card.dataset.id;
+    const readers = READS[id] ? Object.values(READS[id]) : [];
+    let el = card.querySelector('.read-receipts');
+    if (!el) { el = document.createElement('div'); el.className = 'read-receipts'; card.appendChild(el); }
+    if (readers.length === 0) { el.innerHTML = ''; return; }
+    readers.sort((a,b) => (a.ts||0) - (b.ts||0));
+    const names = readers.map(r => {
+      const br = BRANCH_BY_ID[r.branch];
+      const brShort = br ? branchName(br) : '';
+      return `<span title="${escapeHtml(brShort)}">${escapeHtml(r.name)}</span>`;
+    }).join(', ');
+    el.innerHTML = `👁 <b>${readers.length}</b> read · ${names}`;
+  });
+}
 
 // expose
 Object.assign(window, {
