@@ -684,8 +684,8 @@ button{font-family:inherit;cursor:pointer}
       <button class="chip" data-f="delayed" onclick="setMgrFilter('delayed',this)">⚠️ 지연</button>
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
-    <button class="btn sec" onclick="sendMeatDailyAll()" title="6개 지점에 오늘 정육 일일 작업 보고 일괄 발송 (이미 있으면 스킵)" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 일괄 발송</button>
-    <button class="btn sec" onclick="sendKFoodDailyAll()" title="6개 지점에 오늘 K-Food 일일 작업 보고 일괄 발송 (이미 있으면 스킵)" style="background:#dbeafe;border-color:#2563eb;color:#1e40af;font-weight:700">🍙 K-Food 일괄 발송</button>
+    <button class="btn sec" onclick="sendMeatDailyAll()" title="지점 + 직원을 골라 오늘 정육 일일 작업 보고 발송" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 발송</button>
+    <button class="btn sec" onclick="sendKFoodDailyAll()" title="지점 + 직원을 골라 오늘 K-Food 일일 작업 보고 발송" style="background:#dbeafe;border-color:#2563eb;color:#1e40af;font-weight:700">🍙 K-Food 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -2310,19 +2310,31 @@ async function ensureMeatDailyTask(branchId){
 async function sendMeatDailyAll(){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
-  // 누구에게 발송할지 — 본인 지점이면 본인 지점만, 오너면 전체 선택
-  const branches = isOwner() ? BRANCHES.map(b => b.id) : (me.branch ? [me.branch] : []);
-  if (!branches.length) { alert('지점 정보 없음'); return; }
-  // 정육 담당자 이름을 한 번 받아서 모든 지점에 동일 직원 이름 사용 — 매니저
-  // 가 매일 직접 발송하니 누가 받을지 명시. 빈 칸이면 '*' (전체 → 첫 클릭자).
+  // 지점 선택 — 매니저는 본인 지점만 가능, 오너/전무는 6지점 중 선택.
+  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
+  let chosenBranch;
+  if (allowedBranches.length === 1) {
+    chosenBranch = allowedBranches[0].id;
+  } else {
+    const list = allowedBranches.map((b, i) => (i+1) + ': ' + b.ko).join('\n');
+    const pick = prompt('🥩 정육 일일 발송 — 어느 지점에 보낼까요?\n\n' + list + '\n\n번호 입력:', '1');
+    if (pick === null) return;
+    const idx = parseInt(pick.trim(), 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert('번호 잘못됨'); return; }
+    chosenBranch = allowedBranches[idx].id;
+  }
+  const branchKo = (BRANCHES.find(b => b.id === chosenBranch) || {}).ko || chosenBranch;
+  const branches = [chosenBranch];
+  // 정육 담당자 이름 (해당 지점)
   const who = prompt(
-    '🥩 오늘 정육 일일 작업 보고 발송\n\n' +
-    '받을 직원 이름을 입력하세요 (전 지점 동일):\n' +
-    '비워두면 전체 (* — 정육 담당자가 본인이 잡음)\n' +
-    '대상 지점: ' + branches.length + '개',
+    '🥩 정육 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 정육 담당자가 본인이 잡음)',
     ''
   );
-  if (who === null) return;   // 취소
+  if (who === null) return;
   const targetName = who.trim() || '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
@@ -2375,10 +2387,10 @@ async function sendMeatDailyAll(){
       if (w.ok) created++; else { console.warn('[meat-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[meat-daily]', branchId, e); failed++; }
   }
-  alert('🥩 정육 일일 발송 완료\n' +
-        '  새로 발송: ' + created + '개 지점\n' +
-        '  이미 있음: ' + skipped + '개\n' +
-        (failed ? '  실패: ' + failed + '개' : ''));
+  alert('🥩 정육 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendMeatDailyAll = sendMeatDailyAll;
 
@@ -2389,13 +2401,26 @@ window.sendMeatDailyAll = sendMeatDailyAll;
 async function sendKFoodDailyAll(){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
-  const branches = isOwner() ? BRANCHES.map(b => b.id) : (me.branch ? [me.branch] : []);
-  if (!branches.length) { alert('지점 정보 없음'); return; }
+  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
+  let chosenBranch;
+  if (allowedBranches.length === 1) {
+    chosenBranch = allowedBranches[0].id;
+  } else {
+    const list = allowedBranches.map((b, i) => (i+1) + ': ' + b.ko).join('\n');
+    const pick = prompt('🍙 K-Food 일일 발송 — 어느 지점에 보낼까요?\n\n' + list + '\n\n번호 입력:', '1');
+    if (pick === null) return;
+    const idx = parseInt(pick.trim(), 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert('번호 잘못됨'); return; }
+    chosenBranch = allowedBranches[idx].id;
+  }
+  const branchKo = (BRANCHES.find(b => b.id === chosenBranch) || {}).ko || chosenBranch;
+  const branches = [chosenBranch];
   const who = prompt(
-    '🍙 오늘 K-Food 일일 작업 보고 발송\n\n' +
-    '받을 직원 이름을 입력하세요 (전 지점 동일):\n' +
-    '비워두면 전체 (* — K-Food 담당자가 본인이 잡음)\n' +
-    '대상 지점: ' + branches.length + '개',
+    '🍙 K-Food 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — K-Food 담당자가 본인이 잡음)',
     ''
   );
   if (who === null) return;
@@ -2451,10 +2476,10 @@ async function sendKFoodDailyAll(){
       if (w.ok) created++; else { console.warn('[kfood-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[kfood-daily]', branchId, e); failed++; }
   }
-  alert('🍙 K-Food 일일 발송 완료\n' +
-        '  새로 발송: ' + created + '개 지점\n' +
-        '  이미 있음: ' + skipped + '개\n' +
-        (failed ? '  실패: ' + failed + '개' : ''));
+  alert('🍙 K-Food 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendKFoodDailyAll = sendKFoodDailyAll;
 
