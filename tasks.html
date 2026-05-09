@@ -2926,6 +2926,40 @@ function addKfoodMenuItem(taskId, branchId, kind){
 }
 window.addKfoodMenuItem = addKfoodMenuItem;
 
+// 사일런트 마이그레이션 — 페이지 로드 시 produce 일일 task 들의 checklist 가
+// v1 (배추/사과/바나나) 또는 v2 (숙주나물/상하이/가지 — 영문 대문자 아님) 면
+// 새 템플릿(BEAN SPROUTS/SHANGHAI/EGGPLANT)으로 자동 PATCH. 한 task 당 1번만
+// 실행되도록 _migrated 플래그 사용. 매니저 / 직원 누구든 보면 자동 갱신.
+const _PRODUCE_MIGRATED = new Set();
+async function autoMigrateProduceTasks(taskList){
+  if (!Array.isArray(taskList) || !window.__fb) return;
+  for (const t of taskList) {
+    if (!t || !t.autoProduceDaily) continue;
+    const key = t.branchId + '/' + t.id;
+    if (_PRODUCE_MIGRATED.has(key)) continue;
+    if (!Array.isArray(t.checklist) || t.checklist.length < 3) continue;
+    const n0 = t.checklist[0]?.name || '';
+    const n1 = t.checklist[1]?.name || '';
+    const n2 = t.checklist[2]?.name || '';
+    const isV1 = n0.includes('배추') && n1.includes('사과') && n2.includes('바나나');
+    const isV2 = n0.includes('숙주나물')
+      && n1.includes('상하이') && !n1.includes('SHANGHAI')
+      && n2.includes('가지') && !n2.includes('EGGPLANT');
+    if (!isV1 && !isV2) { _PRODUCE_MIGRATED.add(key); continue; }
+    _PRODUCE_MIGRATED.add(key); // 한번만 시도
+    const userAdded = t.checklist.slice(3); // 사용자가 ➕ 로 추가한 항목 보존
+    const newChecklist = [..._PRODUCE_TPL_2026.map(x => Object.assign({}, x)), ...userAdded];
+    const path = 'tasks/' + t.branchId + '/' + todayStr() + '/' + t.id;
+    try {
+      await window.__fb.update(window.__fb.ref(window.__fb.db, path), { checklist: newChecklist });
+      console.info('[produce-migrate] OK', t.branchId, t.id, isV1?'v1':'v2');
+    } catch(e) {
+      console.warn('[produce-migrate] fail', t.branchId, t.id, e);
+      _PRODUCE_MIGRATED.delete(key); // 실패하면 다음에 다시 시도
+    }
+  }
+}
+
 function subscribeTasks(){
   if (!me) return;
   if (!window.__fb) { setTimeout(subscribeTasks, 500); return; }
@@ -2949,6 +2983,7 @@ function subscribeTasks(){
         firstByBranch[b.id] = true;
         if (Object.keys(firstByBranch).length >= BRANCHES.length) detectNewTasks();
         renderAll();
+        autoMigrateProduceTasks(TASKS);
       });
     });
   } else {
@@ -2958,6 +2993,7 @@ function subscribeTasks(){
       TASKS = Object.entries(v).map(([id, t]) => Object.assign({id, branchId:me.branch}, t));
       detectNewTasks();
       renderAll();
+      autoMigrateProduceTasks(TASKS);
     });
   }
 }
