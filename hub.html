@@ -6,6 +6,14 @@
 <title>KIMCHI MART HUB</title>
 <script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=3"></script>
+<script type="module">
+import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+window.__getIdToken = async () => {
+  try { const a = getAuth(getApp()); return a.currentUser ? await a.currentUser.getIdToken() : null; }
+  catch(e){ return null; }
+};
+</script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
 <!-- Removed: auto-redirect to chat.html. The hub now shows its own dashboard
@@ -462,10 +470,14 @@ a{color:inherit;text-decoration:none}
       <div class="card" style="padding:0;overflow:hidden">
         <div style="display:flex;border-bottom:2px solid #e5e7eb">
           <button class="tc-tab active" data-tab="today" onclick="switchTcTab('today')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:800;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid var(--primary);color:var(--primary)">📋 <span data-t="tc_tab_today">오늘</span></button>
-          <button class="tc-tab" data-tab="weekly" onclick="switchTcTab('weekly')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent;color:var(--text-3)">📊 <span data-t="tc_tab_weekly">주간 (7일)</span></button>
+          <button class="tc-tab" data-tab="schedule" onclick="switchTcTab('schedule')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent;color:var(--text-3)">📅 <span data-t="tc_tab_sched">스케줄 비교</span></button>
+          <button class="tc-tab" data-tab="weekly" onclick="switchTcTab('weekly')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent;color:var(--text-3)">📊 <span data-t="tc_tab_weekly">주간</span></button>
         </div>
         <div id="tcTabToday" style="padding:16px">
           <div id="timeclockList"><div class="feed-empty">로딩 중…</div></div>
+        </div>
+        <div id="tcTabSchedule" style="padding:16px;display:none">
+          <div id="scheduleCompare"><div class="feed-empty">로딩 중…</div></div>
         </div>
         <div id="tcTabWeekly" style="padding:16px;display:none">
           <div id="weeklyReport"><div class="feed-empty">로딩 중…</div></div>
@@ -568,7 +580,8 @@ const T = {
   timeclock_title:{ ko:'출퇴근',               en:'Time Clock',          es:'Reloj de Trabajo' },
   tc_hint:      { ko:'출근 버튼을 누르면 근무가 시작됩니다. 퇴근 시 다시 눌러주세요.', en:'Press Clock In to start your shift. Press again to clock out.', es:'Presione Entrada para iniciar. Presione de nuevo para salir.' },
   tc_tab_today: { ko:'오늘',                  en:'Today',               es:'Hoy' },
-  tc_tab_weekly:{ ko:'주간 (7일)',             en:'Weekly (7 days)',     es:'Semanal (7 días)' },
+  tc_tab_sched: { ko:'스케줄 비교',            en:'Schedule',            es:'Horario' },
+  tc_tab_weekly:{ ko:'주간',                   en:'Weekly',              es:'Semanal' },
   tc_today:     { ko:'오늘 출퇴근 현황',        en:'Today\'s Attendance', es:'Asistencia de Hoy' },
   tc_mgr_title: { ko:'매니저 도구',            en:'Manager Tools',       es:'Herramientas' },
   tc_daily_btn: { ko:'일일 보고서 생성 → 채팅방 전송', en:'Generate daily report → Post to chat', es:'Generar reporte diario → Enviar al chat' },
@@ -1072,6 +1085,7 @@ async function cleanupYesterdayClockouts(){
 // ============== TAB SWITCHING ==============
 function switchTcTab(tab){
   document.getElementById('tcTabToday').style.display = tab==='today'?'':'none';
+  document.getElementById('tcTabSchedule').style.display = tab==='schedule'?'':'none';
   document.getElementById('tcTabWeekly').style.display = tab==='weekly'?'':'none';
   document.querySelectorAll('.tc-tab').forEach(b => {
     const active = b.dataset.tab === tab;
@@ -1080,6 +1094,7 @@ function switchTcTab(tab){
     b.style.fontWeight = active ? '800' : '700';
   });
   if (tab === 'weekly') loadWeeklyData();
+  if (tab === 'schedule') loadScheduleComparison();
 }
 window.switchTcTab = switchTcTab;
 
@@ -1179,6 +1194,172 @@ function renderWeeklyReport(all, days){
     }
   });
   el.innerHTML = html;
+}
+
+// ============== SCHEDULE vs ACTUAL COMPARISON ==============
+let _scheduleData = null;
+let _scheduleLoading = false;
+
+async function loadScheduleComparison(){
+  const el = document.getElementById('scheduleCompare');
+  if (!el) return;
+  if (_scheduleLoading) return;
+  _scheduleLoading = true;
+  el.innerHTML = `<div class="feed-empty">${LANG==='ko'?'스케줄 로딩 중…':'Loading schedule…'}</div>`;
+
+  try {
+    const token = window.__getIdToken ? await window.__getIdToken() : null;
+    const authQ = token ? `?auth=${token}` : '';
+    const r = await fetch(`${FB}/schedules/${BRANCH}.json${authQ}`);
+    _scheduleData = await r.json();
+  } catch(e){
+    el.innerHTML = `<div class="feed-empty" style="color:#dc2626">${LANG==='ko'?'스케줄을 불러올 수 없습니다':'Cannot load schedule'}</div>`;
+    _scheduleLoading = false;
+    return;
+  }
+
+  if (!_scheduleData || !_scheduleData.employees || !_scheduleData.shifts) {
+    el.innerHTML = `<div class="feed-empty">${LANG==='ko'?'이 지점의 스케줄 데이터가 없습니다':'No schedule data for this branch'}</div>`;
+    _scheduleLoading = false;
+    return;
+  }
+
+  renderScheduleComparison();
+  _scheduleLoading = false;
+}
+
+function renderScheduleComparison(){
+  const el = document.getElementById('scheduleCompare');
+  if (!el || !_scheduleData) return;
+
+  const today = todayStr();
+  const emps = _scheduleData.employees || [];
+  const shifts = _scheduleData.shifts || {};
+  const clockEntries = Object.values(_clockData);
+
+  const rows = [];
+  emps.forEach(emp => {
+    const shiftKey = `${emp.id}@${today}`;
+    const shift = shifts[shiftKey];
+    if (!shift || shift.unavail) return;
+
+    const empName = emp.name || '';
+    const clock = clockEntries.find(c => {
+      const cn = (c.name||'').toLowerCase().trim();
+      const en = empName.toLowerCase().trim();
+      return cn === en || cn.includes(en) || en.includes(cn);
+    });
+
+    const schedStart = shift.start;
+    const schedEnd = shift.end;
+    const position = shift.position || '';
+    const actualIn = clock ? clock.ts : null;
+    const actualOut = clock ? clock.outTs : null;
+
+    let status, statusColor, diffText='';
+    if (!actualIn) {
+      status = LANG==='ko'?'❌ 미출근':'❌ No show';
+      statusColor = '#dc2626';
+    } else {
+      const schedMs = parseTimeToMs(schedStart, today);
+      const diffMin = Math.round((actualIn - schedMs) / 60000);
+      if (diffMin <= 0) {
+        const early = Math.abs(diffMin);
+        status = '✅';
+        statusColor = '#16a34a';
+        diffText = early > 0 ? (LANG==='ko'?`${early}분 일찍`:`${early}m early`) : (LANG==='ko'?'정시':'On time');
+      } else if (diffMin <= 5) {
+        status = '✅';
+        statusColor = '#16a34a';
+        diffText = LANG==='ko'?'정시':'On time';
+      } else if (diffMin <= 15) {
+        status = '⚠️';
+        statusColor = '#f59e0b';
+        diffText = LANG==='ko'?`${diffMin}분 지각`:`${diffMin}m late`;
+      } else {
+        const h = Math.floor(diffMin/60);
+        const m = diffMin%60;
+        status = '🚨';
+        statusColor = '#dc2626';
+        diffText = h > 0
+          ? (LANG==='ko'?`${h}시간 ${m}분 지각`:`${h}h ${m}m late`)
+          : (LANG==='ko'?`${diffMin}분 지각`:`${diffMin}m late`);
+      }
+    }
+
+    let durText = '';
+    if (actualIn && actualOut) {
+      const dur = Math.round((actualOut - actualIn)/60000);
+      const dh = Math.floor(dur/60); const dm = dur%60;
+      durText = `${dh}h ${dm}m`;
+    } else if (actualIn) {
+      durText = LANG==='ko'?'근무중':'Working';
+    }
+
+    rows.push({ empName, position, schedStart, schedEnd, actualIn, actualOut, status, statusColor, diffText, durText });
+  });
+
+  if (rows.length === 0) {
+    el.innerHTML = `<div class="feed-empty">${LANG==='ko'?'오늘 스케줄된 직원이 없습니다':'No staff scheduled today'}</div>`;
+    return;
+  }
+
+  const noShow = rows.filter(r => !r.actualIn);
+  const late = rows.filter(r => r.actualIn && r.statusColor !== '#16a34a');
+  const onTime = rows.filter(r => r.actualIn && r.statusColor === '#16a34a');
+
+  let html = `<div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+    <div style="background:#dcfce7;border-radius:10px;padding:8px 14px;font-size:.82em;font-weight:700;color:#16a34a">✅ ${LANG==='ko'?'정시':'On time'} ${onTime.length}</div>
+    <div style="background:#fef3c7;border-radius:10px;padding:8px 14px;font-size:.82em;font-weight:700;color:#f59e0b">⚠️ ${LANG==='ko'?'지각':'Late'} ${late.length}</div>
+    <div style="background:#fee2e2;border-radius:10px;padding:8px 14px;font-size:.82em;font-weight:700;color:#dc2626">❌ ${LANG==='ko'?'미출근':'No show'} ${noShow.length}</div>
+  </div>`;
+
+  html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.82em">`;
+  html += `<tr style="background:#f9fafb;font-weight:700">
+    <td style="padding:8px;border-bottom:2px solid #e5e7eb">${LANG==='ko'?'이름':'Name'}</td>
+    <td style="padding:8px;border-bottom:2px solid #e5e7eb">${LANG==='ko'?'스케줄':'Schedule'}</td>
+    <td style="padding:8px;border-bottom:2px solid #e5e7eb">${LANG==='ko'?'실제 출근':'Actual In'}</td>
+    <td style="padding:8px;border-bottom:2px solid #e5e7eb">${LANG==='ko'?'상태':'Status'}</td>
+    <td style="padding:8px;border-bottom:2px solid #e5e7eb">${LANG==='ko'?'근무시간':'Hours'}</td>
+  </tr>`;
+
+  rows.sort((a,b) => {
+    if (!a.actualIn && b.actualIn) return -1;
+    if (a.actualIn && !b.actualIn) return 1;
+    if (a.statusColor === '#dc2626' && b.statusColor !== '#dc2626') return -1;
+    if (a.statusColor !== '#dc2626' && b.statusColor === '#dc2626') return 1;
+    return 0;
+  });
+
+  rows.forEach(r => {
+    const schedDisp = `${fmtSched(r.schedStart)}-${fmtSched(r.schedEnd)}`;
+    const actualDisp = r.actualIn ? fmtClockTime(r.actualIn) : '—';
+    html += `<tr style="border-bottom:1px solid #f3f4f6">
+      <td style="padding:8px"><b>${escHtml(r.empName)}</b><br><span style="color:#9ca3af;font-size:.85em">${escHtml(r.position)}</span></td>
+      <td style="padding:8px;white-space:nowrap">${schedDisp}</td>
+      <td style="padding:8px;white-space:nowrap">${actualDisp}</td>
+      <td style="padding:8px;color:${r.statusColor};font-weight:700;white-space:nowrap">${r.status} ${r.diffText}</td>
+      <td style="padding:8px;color:#6b7280;white-space:nowrap">${r.durText}</td>
+    </tr>`;
+  });
+  html += `</table></div>`;
+  el.innerHTML = html;
+}
+
+function parseTimeToMs(timeStr, dateStr){
+  if (!timeStr) return 0;
+  const [h,m] = timeStr.split(':').map(Number);
+  const d = new Date(dateStr+'T00:00:00');
+  d.setHours(h, m, 0, 0);
+  return d.getTime();
+}
+
+function fmtSched(t){
+  if (!t) return '?';
+  const [h,m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'p' : 'a';
+  const h12 = h % 12 || 12;
+  return m > 0 ? `${h12}:${String(m).padStart(2,'0')}${ampm}` : `${h12}${ampm}`;
 }
 
 // ============== DAILY REPORT → CHAT ==============
