@@ -686,6 +686,7 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
     <button class="btn sec" onclick="sendMeatDailyAll()" title="지점 + 직원을 골라 오늘 정육 일일 작업 보고 발송" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 발송</button>
     <button class="btn sec" onclick="sendKFoodDailyAll()" title="지점 + 직원을 골라 오늘 K-Food 일일 작업 보고 발송" style="background:#dbeafe;border-color:#2563eb;color:#1e40af;font-weight:700">🍙 K-Food 발송</button>
+    <button class="btn sec" onclick="sendSeafoodDailyAll()" title="지점 + 직원을 골라 오늘 해산물 일일 작업 보고 발송" style="background:#cffafe;border-color:#0891b2;color:#155e75;font-weight:700">🐟 해산물 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -761,7 +762,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field"><label>② 카테고리</label>
       <div style="display:flex;gap:4px;align-items:stretch">
-        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="K-Food">🍙 K-Food</option><option value="기타">기타</option></select>
+        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="K-Food">🍙 K-Food</option><option value="Seafood">🐟 해산물</option><option value="기타">기타</option></select>
         <button type="button" id="aCatEdit" onclick="renameCatFromSelect()" title="이 카테고리 이름 수정" style="display:none;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">✏</button>
         <button type="button" id="aCatDelete" onclick="rmCatFromSelect()" title="이 카테고리 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">×</button>
       </div>
@@ -2194,6 +2195,17 @@ const _KFOOD_TPL_2026 = [
     nameTr: { ko:'🍜 잡채', en:'🍜 Japchae', es:'🍜 Japchae' } },
 ];
 
+// Seafood (해산물) 일일 작업 보고 — 가장 자주 다루는 3개 고정 + 그 아래
+// '+ 생선 추가' 버튼으로 그날 작업한 생선 추가. 각 줄: 생선 이름 + 수량 + 사진.
+const _SEAFOOD_TPL_2026 = [
+  { name: '🐟 연어 (Salmon)', done: false,
+    nameTr: { ko:'🐟 연어', en:'🐟 Salmon', es:'🐟 Salmón' } },
+  { name: '🦐 새우 (Shrimp)', done: false,
+    nameTr: { ko:'🦐 새우', en:'🦐 Shrimp', es:'🦐 Camarón' } },
+  { name: '🐠 광어 (Halibut)', done: false,
+    nameTr: { ko:'🐠 광어', en:'🐠 Halibut', es:'🐠 Halibut' } },
+];
+
 const _MEAT_TPL_2026 = [
   { name: '🐂 BEEF 작업한 종류·수량 (사진+메모)',     done: false,
     nameTr: { ko:'🐂 BEEF 작업한 종류·수량 (사진+메모)', en:'🐂 BEEF — types & qty worked (photo + memo)', es:'🐂 BEEF — tipos y cantidad trabajados (foto + memo)' } },
@@ -2489,13 +2501,103 @@ async function sendKFoodDailyAll(){
 }
 window.sendKFoodDailyAll = sendKFoodDailyAll;
 
-// K-Food '+ 음식 추가' — iOS PWA 에서 prompt() 가 가끔 블록돼서 커스텀
-// 모달 사용. 새 메뉴 항목을 checklist 배열 끝에 push, 기존 항목 데이터는
-// 그대로 유지하며 새 빈 줄만 추가.
-function addKfoodMenuItem(taskId, branchId){
+// Seafood 일일 보고 — K-Food 와 같은 패턴, 다른 점: 카테고리='Seafood',
+// 채팅 라우팅 → seafood_evalution_room (postCompletionToChat 가 자동 처리).
+async function sendSeafoodDailyAll(){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
+  let chosenBranch;
+  if (allowedBranches.length === 1) {
+    chosenBranch = allowedBranches[0].id;
+  } else {
+    const list = allowedBranches.map((b, i) => (i+1) + ': ' + b.ko).join('\n');
+    const pick = prompt('🐟 해산물 일일 발송 — 어느 지점에 보낼까요?\n\n' + list + '\n\n번호 입력:', '1');
+    if (pick === null) return;
+    const idx = parseInt(pick.trim(), 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert('번호 잘못됨'); return; }
+    chosenBranch = allowedBranches[idx].id;
+  }
+  const branchKo = (BRANCHES.find(b => b.id === chosenBranch) || {}).ko || chosenBranch;
+  const branches = [chosenBranch];
+  const who = prompt(
+    '🐟 해산물 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 해산물 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
+  let created = 0, skipped = 0, failed = 0;
+  for (const branchId of branches){
+    const today = todayStr();
+    const userKey = targetName === '*' ? 'all' : slug(targetName);
+    const taskId = 'auto_seafood_daily_' + userKey;
+    const restUrl = `${FB_DB_URL}/tasks/${branchId}/${today}/${taskId}.json`;
+    try {
+      let aq = '';
+      try {
+        const u = window.__fb?.auth?.currentUser;
+        if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+      } catch(_){}
+      const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
+      if (r.ok) {
+        const existing = await r.json();
+        if (existing && Array.isArray(existing.checklist) && existing.checklist.length >= _SEAFOOD_TPL_2026.length) {
+          skipped++; continue;
+        }
+      }
+      const checklist = _SEAFOOD_TPL_2026.map(t => Object.assign({}, t));
+      const payload = {
+        name: '🐟 해산물 일일 작업 보고',
+        nameTr: { ko:'🐟 해산물 일일 작업 보고', en:'🐟 Daily Seafood Department Report', es:'🐟 Reporte Diario de Mariscos' },
+        deadline: '18:00',
+        category: 'Seafood',
+        requirePhoto: true,
+        place: '해산물 작업장',
+        locationNote: '오늘 작업한 생선·해산물 — 각 항목에 작업 수량과 사진 첨부. ➕ 생선 추가 로 더 추가 가능.',
+        locationNoteTr: {
+          ko: '오늘 작업한 생선·해산물 — 각 항목에 작업 수량과 사진 첨부.',
+          en: 'Seafood worked today — attach quantity + photo per item.',
+          es: 'Mariscos trabajados hoy — adjunte cantidad + foto por ítem.',
+        },
+        assignedTo: targetName,
+        assignedToId: targetName === '*' ? null : targetName,
+        from: me.name + ' (해산물 일괄 발송)',
+        fromRole: me.role || 'MANAGER',
+        createdAt: Date.now(),
+        checklist,
+        autoSeafoodDaily: true,
+      };
+      const w = await fetch(restUrl + (aq ? aq : ''), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (w.ok) created++; else { console.warn('[seafood-daily] write fail', branchId, w.status); failed++; }
+    } catch(e) { console.warn('[seafood-daily]', branchId, e); failed++; }
+  }
+  alert('🐟 해산물 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
+}
+window.sendSeafoodDailyAll = sendSeafoodDailyAll;
+
+// K-Food '+ 음식 추가' / Seafood '+ 생선 추가' — iOS PWA 에서 prompt() 가
+// 가끔 블록돼서 커스텀 모달 사용. 새 항목을 checklist 배열 끝에 push, 기존
+// 항목 데이터는 그대로 유지하며 새 빈 줄만 추가. kind: 'kfood' | 'seafood'.
+function addKfoodMenuItem(taskId, branchId, kind){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
   if (!task) { alert('업무를 찾을 수 없습니다.'); return; }
+  // kind 자동 판별 — 외부 호출에서 미지정 시 task 카테고리로 결정
+  if (!kind) {
+    kind = (task.category === 'Seafood' || task.autoSeafoodDaily === true) ? 'seafood' : 'kfood';
+  }
+  const isSeafood = kind === 'seafood';
 
   // 기존 모달 있으면 제거
   const old = document.getElementById('__kfoodAddOv');
@@ -2504,8 +2606,19 @@ function addKfoodMenuItem(taskId, branchId){
   const ov = document.createElement('div');
   ov.id = '__kfoodAddOv';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
-  // 다국어 라벨
-  const L = {
+  // 다국어 라벨 — kind 에 따라 분기
+  const L = isSeafood ? {
+    title: { ko:'🐟 생선 추가', en:'🐟 Add Seafood', es:'🐟 Agregar Pescado' },
+    hint:  { ko:'생선 이름 + 작업 수량을 함께 적으면 한 번에 저장됩니다.',
+             en:'Enter the seafood name + quantity prepped — both save in one shot.',
+             es:'Ingresa el nombre del pescado + cantidad — todo se guarda a la vez.' },
+    nameLbl:  { ko:'생선 이름 *', en:'Seafood name *', es:'Nombre del pescado *' },
+    namePh:   { ko:'예: 우럭', en:'e.g., Black rockfish', es:'ej., Cabrilla' },
+    qtyLbl:   { ko:'작업 수량 (선택)', en:'Quantity (optional)', es:'Cantidad (opcional)' },
+    qtyPh:    { ko:'예: 5kg 손질', en:'e.g., 5kg prepped', es:'ej., 5kg preparado' },
+    cancel:   { ko:'취소', en:'Cancel', es:'Cancelar' },
+    submit:   { ko:'추가 + 저장', en:'Add + Save', es:'Agregar + Guardar' },
+  } : {
     title: { ko:'🍱 음식 추가', en:'🍱 Add Menu Item', es:'🍱 Agregar Menú' },
     hint:  { ko:'메뉴 이름 + 만든 개수를 함께 적으면 한 번에 저장됩니다.',
              en:'Enter the menu name + quantity made — both save in one shot.',
@@ -2518,9 +2631,11 @@ function addKfoodMenuItem(taskId, branchId){
     submit:   { ko:'추가 + 저장', en:'Add + Save', es:'Agregar + Guardar' },
   };
   const tx = (k) => L[k][LANG] || L[k].ko;
+  const accent = isSeafood ? '#0e7490' : '#1a5c3a';
+  const namePrefix = isSeafood ? '🐟 ' : '🍱 ';
   ov.innerHTML = `
     <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:18px 20px;box-shadow:0 8px 28px rgba(0,0,0,.3);font-family:inherit">
-      <div style="font-size:1.1em;font-weight:800;color:#1a5c3a;margin-bottom:10px">${tx('title')}</div>
+      <div style="font-size:1.1em;font-weight:800;color:${accent};margin-bottom:10px">${tx('title')}</div>
       <div style="font-size:.84em;color:#6b7280;margin-bottom:14px">${tx('hint')}</div>
       <label style="display:block;font-size:.78em;font-weight:700;color:#374151;margin-bottom:4px">${tx('nameLbl')}</label>
       <input id="__kfoodNameIn" type="text" placeholder="${tx('namePh')}"
@@ -2530,7 +2645,7 @@ function addKfoodMenuItem(taskId, branchId){
         style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:10px 12px;font-size:1em;font-family:inherit;outline:none;margin-bottom:14px">
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button id="__kfoodCancel" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer;font-family:inherit">${tx('cancel')}</button>
-        <button id="__kfoodOk" style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-family:inherit">${tx('submit')}</button>
+        <button id="__kfoodOk" style="background:${accent};color:#fff;border:0;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-family:inherit">${tx('submit')}</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -2544,10 +2659,10 @@ function addKfoodMenuItem(taskId, branchId){
     const qty = (qtyIn.value || '').trim();
     if (!name) { nameIn.focus(); return; }
     close();
-    // 메뉴 이름 + 만든 개수(메모) 한 번에 저장 → 이후 사용자가 다시 메모
-    // 입력 안 해도 됨. 추가 사진은 행에 새로 생긴 [📷] 버튼으로 첨부.
+    // 이름 + 수량(메모) 한 번에 저장 → 이후 사용자가 다시 메모 입력 안 해도 됨.
+    // 추가 사진은 행에 새로 생긴 [📷] 버튼으로 첨부.
     const newItem = {
-      name: '🍱 ' + name,
+      name: namePrefix + name,
       done: false,
       addedAt: Date.now(),
       addedBy: me.name,
@@ -2564,14 +2679,14 @@ function addKfoodMenuItem(taskId, branchId){
     const path = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId;
     try {
       await window.__fb.update(window.__fb.ref(window.__fb.db, path), { checklist: cl });
-      if (typeof showToast === 'function') showToast('🍱 추가됨', name + (qty ? ' · ' + qty : ''));
+      if (typeof showToast === 'function') showToast(namePrefix.trim() + ' 추가됨', name + (qty ? ' · ' + qty : ''));
     } catch(e) { alert('추가 실패: ' + (e.message || e)); }
   };
 
   document.getElementById('__kfoodOk').onclick = submit;
   document.getElementById('__kfoodCancel').onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
-  // 이름 input 에서 Enter → 개수 input 으로 이동, 개수 input 에서 Enter → 제출
+  // 이름 input 에서 Enter → 수량 input 으로 이동, 수량 input 에서 Enter → 제출
   nameIn.onkeydown = (e) => {
     if (e.key === 'Enter') { e.preventDefault(); qtyIn.focus(); }
     else if (e.key === 'Escape') close();
@@ -3198,12 +3313,17 @@ window.addClEntryPhoto = addClEntryPhoto;
 function renderClMemoInput(task, item, idx){
   const memo = (item && item.memo) || '';
   const safeMemo = String(memo).replace(/"/g,'&quot;');
-  // 카테고리별 placeholder — K-Food 면 만든 개수 형식
+  // 카테고리별 placeholder — K-Food 면 만든 개수 형식, Seafood 면 손질한 수량 형식
   const isKFood = task && (task.category === 'K-Food' || task.autoKfoodDaily === true);
+  const isSeafood = task && (task.category === 'Seafood' || task.autoSeafoodDaily === true);
   const ph = isKFood
     ? ({ ko: '예: 김밥 10개 만듦',
          en: 'e.g., made 10 kimbap',
          es: 'ej., 10 kimbap hechos' })[LANG] || '예: 10개 만듦'
+    : isSeafood
+    ? ({ ko: '예: 연어 5kg 손질',
+         en: 'e.g., 5kg salmon prepped',
+         es: 'ej., 5kg salmón preparado' })[LANG] || '예: 5kg 손질'
     : ({ ko: '예: 서울우유 2.3L 재고 3개 남음',
          en: 'e.g., Seoul Milk 2.3L — 3 left',
          es: 'ej., Leche Seoul 2.3L — 3 restantes' })[LANG] || '예: 메모';
@@ -3338,17 +3458,28 @@ function renderChecklistInline(task){
   }
   // K-Food 일일 작업 보고: 김밥/삼각김밥/잡채 고정 후 사용자가 4번째,
   // 5번째 메뉴를 동적으로 추가할 수 있게 '+ 음식 추가' 버튼 노출.
+  // Seafood 도 같은 패턴 — 연어/새우/광어 고정 + 추가 가능.
   const isKFoodTask = task.category === 'K-Food' || task.autoKfoodDaily === true;
-  const addBtnLbl = ({ ko:'➕ 음식 추가', en:'➕ Add Menu', es:'➕ Agregar Menú' })[LANG] || '➕ 음식 추가';
-  const addBtnHint = ({
-    ko:'김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가',
-    en:'Add menu items beyond Kimbap / Triangle Kimbap / Japchae',
-    es:'Agregar menús adicionales además de Kimbap / Onigiri / Japchae'
-  })[LANG] || '김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가';
-  const addMenuBtn = isKFoodTask
+  const isSeafoodTask = task.category === 'Seafood' || task.autoSeafoodDaily === true;
+  const isAddableMenuTask = isKFoodTask || isSeafoodTask;
+  const addBtnLbl = isSeafoodTask
+    ? (({ ko:'➕ 생선 추가', en:'➕ Add Seafood', es:'➕ Agregar Pescado' })[LANG] || '➕ 생선 추가')
+    : (({ ko:'➕ 음식 추가', en:'➕ Add Menu', es:'➕ Agregar Menú' })[LANG] || '➕ 음식 추가');
+  const addBtnHint = isSeafoodTask
+    ? (({
+        ko:'연어/새우/광어 외 작업한 생선을 새 줄로 추가',
+        en:'Add seafood items beyond Salmon / Shrimp / Halibut',
+        es:'Agregar mariscos además de Salmón / Camarón / Mero'
+      })[LANG] || '연어/새우/광어 외 작업한 생선을 새 줄로 추가')
+    : (({
+        ko:'김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가',
+        en:'Add menu items beyond Kimbap / Triangle Kimbap / Japchae',
+        es:'Agregar menús adicionales además de Kimbap / Onigiri / Japchae'
+      })[LANG] || '김밥/삼각김밥/잡채 외 만든 메뉴를 새 줄로 추가');
+  const addMenuBtn = isAddableMenuTask
     ? `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #d1d5db;text-align:center">
-        <button onclick="event.preventDefault();addKfoodMenuItem('${task.id}','${task.branchId}')"
-          style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:7px 16px;font-size:.84em;font-weight:700;cursor:pointer">
+        <button onclick="event.preventDefault();addKfoodMenuItem('${task.id}','${task.branchId}','${isSeafoodTask?'seafood':'kfood'}')"
+          style="background:${isSeafoodTask?'#0e7490':'#1a5c3a'};color:#fff;border:0;border-radius:8px;padding:7px 16px;font-size:.84em;font-weight:700;cursor:pointer">
           ${addBtnLbl}
         </button>
         <div style="font-size:.74em;color:#9ca3af;margin-top:4px">${addBtnHint}</div>
@@ -3828,6 +3959,7 @@ async function postCompletionToChat(task, photoUrls, memoText){
   const ROOM_BY_CATEGORY = {
     '정육':       'meat_evalution_room',
     '정육-Beef':  'meat_evalution_room',
+    'Seafood':    'seafood_evalution_room',
     'Sushi':      'sushi',
     'K-Food':     'kfood_eval',
     'Produce':    'produce',
