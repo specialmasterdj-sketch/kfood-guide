@@ -749,6 +749,12 @@ button{font-family:inherit;cursor:pointer}
       <div id="quickModeChip" style="background:#fff;color:#92400e;border:1px solid #f59e0b;border-radius:14px;padding:5px 12px;font-size:.74em;font-weight:800;flex-shrink:0">OFF</div>
     </div>
 
+    <!-- 지점 선택 — 오너/전무만 노출. 일반 매니저는 본인 지점만 가능해 숨김. -->
+    <div class="field" id="aBranchField" style="display:none">
+      <label>📍 지점 (어느 지점에 발송)</label>
+      <select id="aBranchSel" onchange="onAssignBranchChange()"></select>
+      <div class="hint">선택한 지점의 직원만 담당자 목록에 노출됩니다</div>
+    </div>
     <div class="field"><label>① 담당자</label>
       <select id="aTo"><option value="">— 직원 선택 —</option></select>
       <div class="hint">또는 본 지점 전체에 배정 가능</div>
@@ -4340,12 +4346,42 @@ async function openAssignModal(){
   const saveTpl = document.getElementById('aSaveTpl'); if (saveTpl) saveTpl.checked = false;
   const cl = document.getElementById('aChecklist'); if (cl) cl.checked = false;
   onChecklistToggle();
-  // Load branch employees into select
+  // 지점 선택 — 오너/전무는 6지점 중 선택 가능, 매니저는 자기 지점만.
+  const branchField = document.getElementById('aBranchField');
+  const branchSel = document.getElementById('aBranchSel');
+  if (isOwner()) {
+    branchField.style.display = '';
+    branchSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">🏢 ${escHtml(b.ko||b.id)}</option>`).join('');
+    // 기본값 — 매니저 뷰에서 마지막 본 지점 또는 me.branch
+    const defaultBranch = (window.__ASSIGN_BRANCH || me.branch || BRANCHES[0].id);
+    if (BRANCHES.find(b => b.id === defaultBranch)) branchSel.value = defaultBranch;
+  } else {
+    branchField.style.display = 'none';
+    branchSel.innerHTML = `<option value="${me.branch}">🏢 ${escHtml(me.branch)}</option>`;
+    branchSel.value = me.branch;
+  }
+  // 직원 목록은 선택된 지점 기준으로 로드
+  await loadAssignEmployees(branchSel.value);
+  // 지점별 커스텀 장소 (앤디 캡 등 매니저가 추가한 항목) 드롭다운에 주입
+  try { await loadCustomPlaces(); } catch(_){}
+  document.getElementById('assignOv').classList.add('show');
+}
+
+// 지점 변경 시 직원 목록 다시 로드. 사용자가 라스올라스 선택했는데 헐리우드
+// 직원이 나오던 버그 fix — 모달 안 닫고 그 자리에서 직원만 갱신.
+async function onAssignBranchChange(){
+  const branchSel = document.getElementById('aBranchSel');
+  const branchId = branchSel.value;
+  window.__ASSIGN_BRANCH = branchId;   // 다음 모달 열 때 default 로 기억
+  await loadAssignEmployees(branchId);
+}
+window.onAssignBranchChange = onAssignBranchChange;
+
+async function loadAssignEmployees(branchId){
   const sel = document.getElementById('aTo');
   sel.innerHTML = '<option value="">— 직원 선택 —</option><option value="*">📢 본 지점 전체</option>';
   try {
-    const branchId = isOwner() ? me.branch : me.branch; // for now, send to own branch
-    const data = await fetch(`${FB_DB_URL}/schedules/${branchId}.json`).then(r => r.json());
+    const data = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' }).then(r => r.json());
     if (data && data.employees) {
       const grouped = {};
       data.employees.forEach(e => { (grouped[e.role||'기타'] = grouped[e.role||'기타'] || []).push(e); });
@@ -4353,11 +4389,15 @@ async function openAssignModal(){
         sel.innerHTML += `<optgroup label="${escHtml(role)}">` + list.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}</option>`).join('') + '</optgroup>';
       });
     }
-  } catch(e){}
-  // 지점별 커스텀 장소 (앤디 캡 등 매니저가 추가한 항목) 드롭다운에 주입
-  try { await loadCustomPlaces(); } catch(_){}
-  document.getElementById('assignOv').classList.add('show');
+  } catch(e){ console.warn('[loadAssignEmployees]', e); }
 }
+
+// 새 업무 발송 시 사용할 지점 ID — 모달에서 선택된 값 우선, 없으면 본인 지점.
+function getAssignTargetBranch(){
+  const sel = document.getElementById('aBranchSel');
+  return (sel && sel.value) || (me && me.branch) || '';
+}
+window.getAssignTargetBranch = getAssignTargetBranch;
 // ⚡ 특별 지시 모드 — 카테고리/체크리스트 우회, 사진+메모만 빠른 발송
 let QUICK_MODE = false;
 function toggleQuickMode(){
@@ -4417,7 +4457,8 @@ async function sendAssign(){
     if (sendBtnQ) { sendBtnQ.disabled = true; sendBtnQ.textContent = '⚡ 빠른 발송 중…'; }
     const tempId = 'q_' + Date.now();
     const photoUrls = await uploadLocPhotos(tempId);
-    const path = 'tasks/'+me.branch+'/'+todayStr();
+    const targetBranch = getAssignTargetBranch();
+    const path = 'tasks/'+targetBranch+'/'+todayStr();
     const ref = window.__fb.push(window.__fb.ref(window.__fb.db, path));
     const taskName = noteText ? ('🚨 ' + noteText.slice(0, 40)) : '🚨 특별 지시';
     const taskNameTr = await translateMulti(taskName);
@@ -4504,7 +4545,7 @@ async function sendAssign(){
       const allChecked = Array.from(document.querySelectorAll('.cashier-item-cb:checked'));
       if (!allChecked.length) { alert('지시할 업무를 1개 이상 체크하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
       // Build one task per ticked stage and POST them all
-      const path = 'tasks/'+me.branch+'/'+todayStr();
+      const path = 'tasks/'+getAssignTargetBranch()+'/'+todayStr();
       const stagesForCat = stagesFor(cat);
       let sentCount = 0;
       for (const sIdx of stagesOn) {
@@ -4555,7 +4596,7 @@ async function sendAssign(){
     // No checklist mode but multiple items picked — auto-bundle into a checklist
     checklist = pickedItems.map(it => ({ name: it.name, done: false }));
   }
-  const path = 'tasks/'+me.branch+'/'+todayStr();
+  const path = 'tasks/'+getAssignTargetBranch()+'/'+todayStr();
   const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
   await window.__fb.set(r, {
     name, nameTr,
