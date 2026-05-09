@@ -4297,7 +4297,20 @@ async function finishTask(){
     // butcher records privately, not for cross-branch comparison).
     if (!CURRENT_TASK.noAutoChat) {
       stage = 'chat-post';
-      try { await postCompletionToChat(CURRENT_TASK, photoUrls, memoText); }
+      // 🐛 FIX: 직원이 항목별 📷 버튼으로 업로드한 사진은 c.photos 에 들어가는데
+      // 기존엔 doneModal 에서 새로 찍은 photoUrls 만 chat 으로 보냈음 → 채팅방에
+      // 사진 0장으로 표시되는 버그. 모든 출처 사진을 합쳐 dedupe 후 전달.
+      const allTaskPhotos = [...(CURRENT_TASK.photos||[]), ...photoUrls];
+      const allClPhotos = Array.isArray(CURRENT_TASK.checklist)
+        ? CURRENT_TASK.checklist.flatMap(c => {
+            // entries[] 구조 (정육) 우선, 그 외엔 c.photos[] / c.photo
+            const entries = (c && Array.isArray(c.entries)) ? c.entries : [];
+            if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
+            return Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []);
+          })
+        : [];
+      const chatPhotos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
+      try { await postCompletionToChat(CURRENT_TASK, chatPhotos, memoText); }
       catch(e) { console.warn('[task→chat]', e); }
     }
     closeOv('doneOv');
@@ -4605,6 +4618,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     '3: ⏰ 데드라인 변경',
     '4: 📋 같은 업무 복제 (재발송)',
     '5: ↩️  완료 취소 (다시 진행 중으로)',
+    '6: 📨 채팅방 다시 보내기 (사진 누락 보정)',
     '0: 닫기'
   ];
   const choice = prompt(
@@ -4619,9 +4633,47 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     if (choice.trim() === '3') return adminChangeDeadline(t);
     if (choice.trim() === '4') return adminDuplicate(t);
     if (choice.trim() === '5') return adminUncomplete(t);
+    if (choice.trim() === '6') return adminRepostToChat(t);
   } catch(e) { alert('보정 실패: ' + (e.message || e)); }
 }
 window.adminTaskMenu = adminTaskMenu;
+
+// 6) 채팅방 다시 보내기 — 사진 누락된 완료 메시지 재발송. 모든 출처
+// (task.photos / checklist[].photos / checklist[].entries[].photos) 의 사진을
+// 합쳐서 chat 으로 재발송. 직원이 작성한 메모도 그대로 포함.
+async function adminRepostToChat(t){
+  if (!t.completedAt) {
+    alert('아직 완료되지 않은 업무입니다.\n먼저 완료 처리한 뒤 다시 시도하세요.');
+    return;
+  }
+  const allTaskPhotos = Array.isArray(t.photos) ? t.photos : [];
+  const allClPhotos = Array.isArray(t.checklist)
+    ? t.checklist.flatMap(c => {
+        const entries = (c && Array.isArray(c.entries)) ? c.entries : [];
+        if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
+        return Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []);
+      })
+    : [];
+  const photos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
+  if (!photos.length) {
+    if (!confirm('사진이 한 장도 없습니다. 그래도 보낼까요?')) return;
+  }
+  const memoText = t.memo || '';
+  // postCompletionToChat 은 me.name 으로 sender 설정 → 매니저 이름이 보이게 됨.
+  // 직원 이름으로 보이도록 임시로 me 백업 후 task.completedBy 로 갈아끼움.
+  const meBackup = me;
+  if (t.completedBy && t.completedBy !== me.name) {
+    me = Object.assign({}, me, { name: t.completedBy });
+  }
+  try {
+    await postCompletionToChat(t, photos, memoText);
+    alert('📨 채팅방에 다시 보냈습니다 — 사진 ' + photos.length + '장 포함.');
+  } catch(e) {
+    alert('재발송 실패: ' + (e.message || e));
+  } finally {
+    me = meBackup;
+  }
+}
 
 // 1) 완료 처리 — 직원 이름 받고 completedAt/completedBy 채움.
 //    completedByAdmin 에 매니저 이름 박아 누가 보정했는지 흔적 남김.
