@@ -88,15 +88,17 @@ function syncToChatMe(profile){
   if (!profile) return;
   try {
     const existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
-    // Bootstrap admins always get their canonical name
     const boot = bootstrapFor(profile.email);
+    // 이름 결정 — 로컬에 직원이 직접 선택한 이름이 있으면 절대 덮어쓰지 않음.
+    // 공유 기기에서 A가 이름 선택 → B가 나중에 열었을 때 A 이름이 끼어드는 것 방지.
+    const GENERIC = ['Staff','Manager','Employee','User','Admin','staff','manager','employee','user','admin'];
     let finalName;
     if (boot) {
       finalName = boot.name;
+    } else if (existing.name && !GENERIC.includes(existing.name)) {
+      finalName = existing.name;
     } else {
-      const isSharedProfileName = profile.name === 'Staff' || profile.name === 'Manager';
-      const personalName = existing.name && !['Staff','Manager'].includes(existing.name) ? existing.name : null;
-      finalName = (isSharedProfileName && personalName) ? personalName : (profile.name || existing.name);
+      finalName = profile.name || existing.name || '';
     }
     const next = {
       ...existing,
@@ -105,7 +107,7 @@ function syncToChatMe(profile){
       name: finalName,
       status: profile.status || existing.status,
       role: profile.role || existing.role,
-      branch: profile.branch === '*' ? (existing.branch || 'HOLLYWOOD') : (profile.branch || existing.branch),
+      branch: existing.branch || (profile.branch === '*' ? 'HOLLYWOOD' : profile.branch) || 'HOLLYWOOD',
       photoURL: profile.photoURL || existing.photoURL,
       isManager: !!profile.role && ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(profile.role),
       authProvider: 'google',

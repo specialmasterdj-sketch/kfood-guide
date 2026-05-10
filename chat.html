@@ -108,7 +108,8 @@ a{color:inherit;text-decoration:none}
 .msg.mine .who{color:#15803d}
 .msg .del{position:absolute;top:-8px;right:-8px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:24px;height:24px;font-size:.8em;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.2);opacity:0;transition:opacity .15s;display:flex;align-items:center;justify-content:center}
 .msg.mine:hover .del{opacity:1}
-@media(hover:none){ .msg.mine .del{opacity:1} }   /* always show on touch devices */
+.msg:hover .del{opacity:1}
+@media(hover:none){ .msg .del{opacity:1} }
 
 .photo-grid{display:grid;gap:4px;margin-top:6px;border-radius:8px;overflow:hidden}
 .photo-grid.n1{grid-template-columns:1fr;max-width:300px}
@@ -673,6 +674,7 @@ a{color:inherit;text-decoration:none}
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getDatabase, ref, onValue, push, set, update } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
   const firebaseConfig = {
     apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
     authDomain: "kimchi-mart-order.firebaseapp.com",
@@ -683,7 +685,7 @@ a{color:inherit;text-decoration:none}
     appId: "1:640942647201:web:1e3421fb55c89155230de0"
   };
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-  window.__fb = { db: getDatabase(app), ref, onValue, push, set, update };
+  window.__fb = { db: getDatabase(app), auth: getAuth(app), ref, onValue, push, set, update };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 
@@ -1293,11 +1295,7 @@ async function saveMe(){
   let __fbAuthBypassesPin = false;
   try {
     const fbUser = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
-    if (fbUser) {
-      // 같은 origin 의 다른 페이지(auth.html)가 set 해 둔 chat.me 의 role/name 신뢰
-      const stored = JSON.parse(localStorage.getItem('chat.me') || 'null');
-      if (stored && stored.role && stored.isManager) __fbAuthBypassesPin = true;
-    }
+    if (fbUser) __fbAuthBypassesPin = true;
   } catch (_) {}
   if (!__fbAuthBypassesPin && requiresPin(role, name)) {
     // 입력창이 안 보이는 상태면 한 번 더 표시 후 종료 (사용자가 PIN 입력 가능하도록)
@@ -1756,7 +1754,8 @@ function renderMessages(){
           return `<div class="photo-grid ${cls}">${m.photos.map((u,i) => `<img src="${u}" loading="lazy" onclick="openLightbox(${all}, ${i})">`).join('')}</div>${n > 6 ? '<div style="font-size:.74em;color:#9ca3af;margin-top:2px">📷 '+n+'장 · 좌우로 넘기기</div>' : ''}`;
         })()
       : '';
-    const delBtn = mine ? `<button class="del" title="삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
+    const canDel = mine || isOwnerVerified();
+    const delBtn = canDel ? `<button class="del" title="삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
     const rxnHtml = renderReactions(m);
     const refCard = m.reference ? renderRef(m.reference) : '';
     const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'공유',en:'Share',es:'Compartir'}[LANG]||'공유')}</button>` : '';
@@ -2610,7 +2609,8 @@ document.addEventListener('click', function(e){
 async function deleteMessage(msgId){
   const m = MSGS.find(x => x.id === msgId);
   if (!m) return;
-  if (!me || m.sender !== me.name || m.senderBranch !== me.branch) {
+  if (!me) return;
+  if (!isOwnerVerified() && (m.sender !== me.name || m.senderBranch !== me.branch)) {
     alert('본인이 올린 메시지만 삭제할 수 있습니다.');
     return;
   }
@@ -2910,6 +2910,7 @@ function subscribeRooms(){
     Object.entries(d).forEach(([id, r]) => { ROOMS[id] = Object.assign(ROOMS[id]||{}, r); });
     cleanupDeprecatedRooms();
     ensureDefaultRooms();
+    checkRoomNotifications(d);
     renderRooms();
     // 안 읽은 카운트 갱신 (방 lastTs 변경 → 새 메시지 가능성)
     refreshUnreadCounts();
@@ -3014,6 +3015,62 @@ window.addEventListener('km-lang-changed', refreshWelcomeHero);
 window.addEventListener('storage', e => { if (e.key === 'chat.me') markMePillStatus(); });
 window.addEventListener('km-identity-changed', markMePillStatus);
 
+// ============ PUSH NOTIFICATIONS ============
+let __prevRoomTs = {};
+let __notifReady = false;
+
+function requestNotifPermission(){
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') Notification.requestPermission();
+}
+
+function playNotifSound(){
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880; osc.type = 'sine';
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    osc.start(); osc.stop(ctx.currentTime + 0.4);
+  } catch(e){}
+}
+
+function showChatNotification(roomId, roomName, senderName, msgPreview){
+  if (document.visibilityState === 'visible' && ACTIVE_ROOM === roomId) return;
+  playNotifSound();
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const title = roomName || roomId;
+  const body = senderName ? (senderName + ': ' + (msgPreview || '')) : (msgPreview || '새 메시지');
+  try {
+    const n = new Notification(title, { body:body, tag:'chat-'+roomId, icon:'pwa-assets/icon-192.png', silent:true });
+    n.onclick = function(){ window.focus(); openRoom(roomId); n.close(); };
+    setTimeout(function(){ n.close(); }, 6000);
+  } catch(e){}
+}
+
+function checkRoomNotifications(rooms){
+  if (!me || !me.name) return;
+  const now = Date.now();
+  for (const [id, r] of Object.entries(rooms)){
+    if (!r || !r.lastTs) continue;
+    const prev = __prevRoomTs[id] || 0;
+    __prevRoomTs[id] = r.lastTs;
+    if (!__notifReady) continue;
+    if (r.lastTs > prev && r.lastSender && r.lastSender !== me.name){
+      const nm = roomLocalName(id, r);
+      showChatNotification(id, nm, r.lastSender, r.lastMsg || '');
+    }
+  }
+  __notifReady = true;
+}
+
+document.addEventListener('click', function _reqNotif(){
+  requestNotifPermission();
+  document.removeEventListener('click', _reqNotif);
+}, { once:true });
+
 // 브라우저 자동완성/Form Restore가 채운 검색어를 강제 초기화
 // Chrome은 autocomplete=off를 무시하고 readonly 이후에도 값을 넣는 경우가 있어
 // 로드 후 4초간 100ms 간격으로 지속 감시 → 사용자가 포커스 중일 땐 건드리지 않음
@@ -3040,7 +3097,39 @@ if (isMobileWidth() && !shouldAutoRestoreRoom()) {
   const r = document.querySelector('.rooms');
   if (r) r.classList.add('show');
 }
-if (!me) openMeModal();
+
+// auth-gate.js (module) 가 syncToChatMe 완료 후 발행하는 이벤트 수신
+// → me 변수 갱신 + me-pill 표시 + 이미 열린 모달 자동 닫기
+window.addEventListener('km-auth-ready', function(e){
+  if (e.detail && e.detail.name) {
+    me = e.detail;
+    refreshMePill();
+    try { closeOverlay('meOverlay'); } catch(_){}
+    if (ACTIVE_ROOM) {
+      document.getElementById('composer').style.display = '';
+      renderMessages();
+    }
+    renderRooms();
+  }
+});
+// me-persist.js IDB 비동기 복원 후 storage 이벤트도 수신
+window.addEventListener('storage', function(e){
+  if (e.key === 'chat.me' && e.newValue && !me) {
+    try {
+      var restored = JSON.parse(e.newValue);
+      if (restored && restored.name) {
+        me = restored;
+        refreshMePill();
+        try { closeOverlay('meOverlay'); } catch(_){}
+      }
+    } catch(ex){}
+  }
+});
+
+// me 모달 — auth-gate 동기화 기다린 후 여전히 비어있으면 표시
+if (!me) setTimeout(function(){
+  if (!me) openMeModal();
+}, 2000);
 
 // On mobile, if no room is active after a moment, auto-open the rooms drawer
 setTimeout(() => {
