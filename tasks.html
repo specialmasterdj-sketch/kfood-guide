@@ -1466,7 +1466,9 @@ async function loadCustomPlaces(){
     const customOpt = sel.querySelector('option[value="__custom__"]');
     list.filter(name => name && !existing.has(name)).forEach(name => {
       const opt = document.createElement('option');
-      opt.value = name; opt.textContent = name;
+      opt.value = name;
+      // 커스텀 장소도 PLACE_I18N 에 있으면 다국어, 없으면 raw 그대로
+      opt.textContent = (typeof localizePlace === 'function') ? localizePlace(name) : name;
       if (customOpt) sel.insertBefore(opt, customOpt);
       else sel.appendChild(opt);
     });
@@ -2156,11 +2158,62 @@ function refreshStaticI18n(){
       else if (k)              opt.textContent = t(k);
     });
   }
-  // aNameTpl 자주 쓰는 업무 select — 첫 빈 옵션만 다국어
+  // aNameTpl 자주 쓰는 업무 select — 모든 옵션 다국어 (template name 우선,
+  // optgroup 의 카테고리 헤더도 localizeCat() 적용)
   const aNameTpl = document.getElementById('aNameTpl');
   if (aNameTpl && aNameTpl.options.length) {
     const first = aNameTpl.options[0];
     if (!first.value) first.textContent = t('aNameTplDefault');
+    // optgroup 라벨 갱신 — 카테고리 한국어 그대로 들어있을 수 있음
+    Array.from(aNameTpl.querySelectorAll('optgroup')).forEach(og => {
+      const k = og.dataset.catKey || og.label;
+      const localCat = (typeof localizeCat === 'function') ? localizeCat(k) : k;
+      og.label = localCat;
+    });
+    // 옵션 텍스트 — value 는 한국어 보존, 표시는 다국어
+    Array.from(aNameTpl.options).forEach(opt => {
+      if (!opt.value) return; // 첫 빈 옵션 스킵
+      // 매니저가 직접 입력해 만든 task 이름은 nameTr 가 아직 없을 수 있음
+      // → populateTaskTemplates 가 옵션 만들 때 dataset 에 nameTr 넣어두면 더 좋지만
+      // 일단 raw value 그대로 (ko/en/es 다 같은 이름이면 OK).
+      // 표준 템플릿은 TASK_TEMPLATES 에서 nameTr 찾기
+      const tpl = TASK_TEMPLATES.find(x => x.name === opt.value)
+              || (__BRANCH_TPLS||[]).find(x => x.name === opt.value);
+      if (tpl && tpl.nameTr) {
+        opt.textContent = tpl.nameTr[LANG] || tpl.nameTr.ko || opt.value;
+      }
+    });
+  }
+  // 🏢 지점 dropdown (assign modal) — visible text 다국어 갱신
+  const aBranch = document.getElementById('aBranchSel');
+  if (aBranch && typeof BRANCHES !== 'undefined' && aBranch.options.length) {
+    Array.from(aBranch.options).forEach(opt => {
+      const b = BRANCHES.find(x => x.id === opt.value);
+      if (b) opt.textContent = '🏢 ' + (b[LANG] || b.ko || b.id);
+    });
+  }
+  // 📍 장소 dropdown — 정적 옵션 (1번 통로 등 + 정육 작업장) 다국어 갱신
+  const aPlaceSel = document.getElementById('aDisplayPlace');
+  if (aPlaceSel && typeof localizePlace === 'function') {
+    Array.from(aPlaceSel.options).forEach(opt => {
+      if (!opt.value || opt.value === '__custom__') return;
+      const loc = localizePlace(opt.value);
+      // PLACE_I18N 에 매핑 있으면 갱신 (없으면 그대로 = 매니저 직접 입력 장소)
+      if (loc && loc !== opt.value) opt.textContent = loc;
+    });
+    const customOpt = aPlaceSel.querySelector('option[value="__custom__"]');
+    if (customOpt) {
+      const lbl = LANG==='en' ? '✏️ Type your own…' : LANG==='es' ? '✏️ Escribir manualmente…' : '✏️ 직접 입력…';
+      customOpt.textContent = lbl;
+    }
+    // aDisplayPlaceCustom input placeholder 도 다국어
+    const customIn = document.getElementById('aDisplayPlaceCustom');
+    if (customIn) {
+      const ph = LANG==='en' ? 'Type place (e.g., Andy Cap, backroom entrance)'
+               : LANG==='es' ? 'Escribir lugar (ej., Andy Cap, entrada trasera)'
+               :                '장소 직접 입력 (예: 앤디 캡, 백룸 입구)';
+      customIn.placeholder = ph;
+    }
   }
   // 카테고리 dropdown — visible text 갱신 (커스텀 카테고리 BOBA / 배달 박스 /
   // 냉동고 / 아이스크림 등은 그대로, 기본 7종은 다국어 라벨 적용).
@@ -5451,7 +5504,7 @@ async function openAssignModal(){
   const branchSel = document.getElementById('aBranchSel');
   if (isOwner()) {
     branchField.style.display = '';
-    branchSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">🏢 ${escHtml(b.ko||b.id)}</option>`).join('');
+    branchSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">🏢 ${escHtml(b[LANG]||b.ko||b.id)}</option>`).join('');
     // 기본값 — 매니저 뷰에서 마지막 본 지점 또는 me.branch
     const defaultBranch = (window.__ASSIGN_BRANCH || me.branch || BRANCHES[0].id);
     if (BRANCHES.find(b => b.id === defaultBranch)) branchSel.value = defaultBranch;
