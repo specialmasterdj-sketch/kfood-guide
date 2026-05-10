@@ -66,7 +66,23 @@ h1{font-size:1.4em;font-weight:800;color:#1a5c3a;text-align:center;margin-bottom
     <input id="emEmail" type="email" placeholder="manager@miamikimchi.com" autocomplete="email"
       style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:8px;box-sizing:border-box">
     <input id="emPwd" type="password" placeholder="비밀번호 / Password" autocomplete="current-password"
-      style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:10px;box-sizing:border-box">
+      style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:12px;box-sizing:border-box">
+
+    <!-- 지점 + 본인 이름 — 한 번에 다 처리 (Pembroke Pines 등 공유 계정용).
+         로그인 성공 시 chat.me 에 같이 저장되어 별도 '이름 선택' 단계 불필요. -->
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <select id="loginBranch" onchange="onLoginBranchChange()"
+        style="flex:1;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;background:#fff;cursor:pointer">
+        <option value="" id="loginBranchDefault">📍 지점 선택 / Branch</option>
+      </select>
+    </div>
+    <select id="loginName"
+      style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:8px;box-sizing:border-box;background:#fff;cursor:pointer">
+      <option value="" id="loginNameDefault">👤 본인 이름 선택 / Your Name (지점 선택 후)</option>
+    </select>
+    <input id="loginNameCustom" type="text" placeholder="또는 직접 입력 / Or type your name" autocomplete="name"
+      style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;outline:0;margin-bottom:12px;box-sizing:border-box">
+
     <button class="gbtn" id="emBtn" onclick="doEmailSignIn()" style="background:#1a5c3a;color:#fff;border-color:#1a5c3a;justify-content:center">
       <span id="emBtnText">이메일로 로그인</span>
     </button>
@@ -123,6 +139,98 @@ const BOOTSTRAP_ADMINS = {
 };
 function bootstrapFor(email){ return email ? (BOOTSTRAP_ADMINS[email.toLowerCase()] || null) : null; }
 
+// 지점 + 이름 한 번에 — Pembroke Pines 등 공유 계정 직원이 로그인 단계에서
+// 바로 본인 정보를 입력할 수 있도록. 로그인 성공 시 chat.me 에 저장되어
+// chat.html 의 별도 '이름 선택' 모달이 안 뜸.
+const BRANCHES = [
+  { id:'MIAMI',           ko:'마이애미',       en:'Miami',           es:'Miami' },
+  { id:'PEMBROKE_PINES',  ko:'펨브로크 파인즈', en:'Pembroke Pines',  es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',       ko:'할리우드',       en:'Hollywood',       es:'Hollywood' },
+  { id:'CORAL_SPRINGS',   ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs' },
+  { id:'LASOLAS',         ko:'라스올라스',     en:'Las Olas',        es:'Las Olas' },
+  { id:'WEST_PALM',       ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+];
+function fillLoginBranches(){
+  const sel = document.getElementById('loginBranch');
+  if (!sel || sel.options.length > 1) return; // already filled
+  // Restore last selection so returning users don't have to re-pick
+  let lastBranch = ''; let lastName = '';
+  try {
+    const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+    if (me) { lastBranch = me.branch || ''; lastName = me.name || ''; }
+  } catch(_){}
+  for (const b of BRANCHES) {
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    opt.textContent = '📍 ' + (b[LANG] || b.ko);
+    if (b.id === lastBranch) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (lastBranch) {
+    onLoginBranchChange();
+    // pre-select last name once list loads
+    setTimeout(() => {
+      const nameSel = document.getElementById('loginName');
+      const opt = Array.from(nameSel.options).find(o => o.value === lastName);
+      if (opt) opt.selected = true;
+      else if (lastName) document.getElementById('loginNameCustom').value = lastName;
+    }, 800);
+  }
+}
+
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+window.onLoginBranchChange = async function(){
+  const branchId = document.getElementById('loginBranch').value;
+  const sel = document.getElementById('loginName');
+  if (!branchId) {
+    sel.innerHTML = '<option value="">👤 본인 이름 선택 / Your Name (지점 선택 후)</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">⏳ 로딩…</option>';
+  let employees = [];
+  try {
+    // localStorage cache 우선 — chat.html 가 평소 채워둠
+    const cached = JSON.parse(localStorage.getItem('shifts.' + branchId) || 'null');
+    if (cached && cached.employees) employees = cached.employees;
+  } catch(_){}
+  // RTDB fetch — 캐시 없거나 오래됐을 때
+  try {
+    const r = await fetch(`${FB_DB_URL}/schedules/${branchId}.json`, { cache:'no-store' });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && data.employees) {
+        employees = data.employees;
+        try { localStorage.setItem('shifts.' + branchId, JSON.stringify(data)); } catch(_){}
+      }
+    }
+  } catch(_){}
+  // OWNER 도 묶어 보여주기 (DJ, B.H.K)
+  let owners = [];
+  try {
+    const g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
+    if (g && g.owners) owners = g.owners;
+  } catch(_){}
+  if (owners.length === 0) {
+    try {
+      const r = await fetch(`${FB_DB_URL}/schedules/_global.json`, { cache:'no-store' });
+      if (r.ok) {
+        const d = await r.json();
+        if (d && d.owners) {
+          owners = d.owners;
+          try { localStorage.setItem('shifts.global', JSON.stringify(d)); } catch(_){}
+        }
+      }
+    } catch(_){}
+  }
+  const all = [...owners, ...employees];
+  if (all.length === 0) {
+    sel.innerHTML = '<option value="">— 명단 없음, 직접 입력해주세요 —</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">— 직접 입력 —</option>' +
+    all.map(e => `<option value="${e.name||''}" data-role="${e.role||''}">${e.name||''}${e.role?' ('+e.role+')':''}</option>`).join('');
+};
+
 const I18N = {
   ko:{ title:'김치마트', subtitle:'매니저 앱 · 직원 로그인', googleBtn:'Google 계정으로 로그인', firstHintTitle:'처음 사용?', firstHintBody:'구글 계정으로 로그인하면 매니저가 승인해드립니다. 본인 직장 이메일을 사용하세요.', loading:'로그인 중…', logout:'로그아웃', enter:'입장', pendingT:'매니저 승인 대기 중', pendingD:'가입 신청이 접수되었습니다. 매니저가 승인하면 자동으로 입장됩니다.', blockedT:'접근 차단됨', blockedD:'이 계정은 차단되었습니다. 매니저에게 문의하세요.', popupBlocked:'팝업이 차단되었습니다. 잠시 후 다시 시도합니다.', signinErr:'로그인 실패: ' },
   en:{ title:'Kimchi Mart', subtitle:'Manager app · Staff login', googleBtn:'Sign in with Google', firstHintTitle:'First time?', firstHintBody:'Sign in with Google and a manager will approve you. Use your work email.', loading:'Signing in…', logout:'Sign out', enter:'Enter', pendingT:'Awaiting manager approval', pendingD:'Your request has been submitted. You will be admitted automatically when a manager approves.', blockedT:'Access blocked', blockedD:'This account has been blocked. Please contact a manager.', popupBlocked:'Popup blocked. Retrying…', signinErr:'Sign-in failed: ' },
@@ -145,6 +253,40 @@ function applyLang(){
   document.getElementById('btnLogout').textContent = t('logout');
   document.getElementById('btnEnter').textContent = t('enter');
   document.documentElement.lang = LANG;
+  // 로그인 화면 한 번에 받기 — 지점 + 이름 placeholder/옵션 라벨도 다국어
+  const placeholders = {
+    branchDefault:  { ko:'📍 지점 선택 / Branch',         en:'📍 Select Branch',          es:'📍 Sucursal' },
+    nameDefault:    { ko:'👤 본인 이름 선택 / Your Name (지점 선택 후)',
+                      en:'👤 Select your name (after branch)',
+                      es:'👤 Selecciona tu nombre (después de sucursal)' },
+    customPh:       { ko:'또는 직접 입력 / Or type your name',
+                      en:'Or type your name',
+                      es:'O escribe tu nombre' },
+    emPh:           { ko:'비밀번호 / Password', en:'Password', es:'Contraseña' },
+    emBtnT:         { ko:'이메일로 로그인',     en:'Sign in with email', es:'Iniciar con email' },
+    orLabel:        { ko:'또는',                en:'or',                 es:'o' },
+  };
+  const set = (id, key) => { const el = document.getElementById(id); if (el && placeholders[key]) el.textContent = placeholders[key][LANG] || placeholders[key].ko; };
+  set('loginBranchDefault', 'branchDefault');
+  set('loginNameDefault', 'nameDefault');
+  const cust = document.getElementById('loginNameCustom');
+  if (cust) cust.placeholder = placeholders.customPh[LANG] || placeholders.customPh.ko;
+  const pwd = document.getElementById('emPwd');
+  if (pwd) pwd.placeholder = placeholders.emPh[LANG] || placeholders.emPh.ko;
+  const btnT = document.getElementById('emBtnText');
+  if (btnT) btnT.textContent = placeholders.emBtnT[LANG] || placeholders.emBtnT.ko;
+  const orL = document.getElementById('orLabel');
+  if (orL) orL.textContent = placeholders.orLabel[LANG] || placeholders.orLabel.ko;
+  // 지점 dropdown 라벨 갱신 (언어 바뀌면 지점 이름도 바뀜)
+  const bSel = document.getElementById('loginBranch');
+  if (bSel && bSel.options.length > 1) {
+    const cur = bSel.value;
+    for (const b of BRANCHES) {
+      const opt = Array.from(bSel.options).find(o => o.value === b.id);
+      if (opt) opt.textContent = '📍 ' + (b[LANG] || b.ko);
+    }
+    bSel.value = cur;
+  }
 }
 window.setLang = function(l){ if (!I18N[l]) return; LANG = l; ['tasks.lang','kimchi_lang','hub.lang'].forEach(k => localStorage.setItem(k, l)); applyLang(); renderProfile(); };
 applyLang();
@@ -185,10 +327,64 @@ function renderProfile(){
 }
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
+// 지점 + 이름을 chat.me 에 미리 저장 — 로그인 후 chat.html 등에서
+// '이름 선택' 모달이 다시 안 뜨게. onAuthStateChanged 콜백에서도
+// preserveExistingName 로 보존됨.
+function _captureLoginIdentity(){
+  const branchId = document.getElementById('loginBranch').value || '';
+  const fromSel = document.getElementById('loginName').value || '';
+  const fromCustom = (document.getElementById('loginNameCustom').value || '').trim();
+  const name = fromCustom || fromSel;
+  if (!branchId || !name) return null;
+  // role 추론 — select option 의 data-role 또는 employees 캐시에서
+  const sel = document.getElementById('loginName');
+  let role = sel.options[sel.selectedIndex]?.dataset.role || '';
+  if (!role && fromCustom) {
+    try {
+      const data = JSON.parse(localStorage.getItem('shifts.' + branchId) || 'null');
+      const emp = data?.employees?.find(e => e.name && e.name.toLowerCase() === fromCustom.toLowerCase());
+      role = emp?.role || '';
+    } catch(_){}
+  }
+  return { name, branch: branchId, role };
+}
+function _saveChatMe(identity, fbUser, profile){
+  if (!identity || !identity.name || !identity.branch) return false;
+  try {
+    const existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
+    const isManagerRole = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(String(identity.role || '').toUpperCase());
+    const next = Object.assign({}, existing, {
+      uid: fbUser?.uid || existing.uid,
+      email: fbUser?.email || existing.email,
+      name: identity.name,
+      branch: identity.branch,
+      role: identity.role || (profile && profile.role) || existing.role || '',
+      photoURL: fbUser?.photoURL || existing.photoURL,
+      isManager: isManagerRole,
+      authProvider: existing.authProvider || 'pre-set',
+    });
+    localStorage.setItem('chat.me', JSON.stringify(next));
+    try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_) {}
+    return true;
+  } catch(e) { console.warn('saveChatMe', e); return false; }
+}
+
 window.doEmailSignIn = async function(){
   const email = (document.getElementById('emEmail').value || '').trim();
   const pwd = document.getElementById('emPwd').value || '';
   if (!email || !pwd) { showError('이메일과 비밀번호를 입력하세요.'); return; }
+  // 지점·이름이 비어있어도 부트스트랩 어드민 (DJ/B.H.K) 은 통과 — 그 외는 권장
+  const boot = bootstrapFor(email);
+  const id = _captureLoginIdentity();
+  if (!boot && !id) {
+    const msg = (LANG==='en') ? 'Please pick your branch and name first.'
+              : (LANG==='es') ? 'Selecciona la sucursal y tu nombre primero.'
+              :                 '지점과 본인 이름을 먼저 선택해주세요.';
+    showError(msg);
+    return;
+  }
+  // 미리 chat.me 저장 — 로그인 직후 chat.html 등에서 '이름 선택' 다시 안 뜨도록
+  if (id) _saveChatMe(id, null, null);
   const btn = document.getElementById('emBtn');
   btn.disabled = true;
   show('loadingView');
@@ -203,6 +399,9 @@ window.doEmailSignIn = async function(){
 };
 
 window.doGoogleSignIn = async function(){
+  // Google 계정도 지점 + 이름 미리 잡았으면 그대로 chat.me 에 저장
+  const id = _captureLoginIdentity();
+  if (id) _saveChatMe(id, null, null);
   const btn = document.getElementById('googleBtn');
   btn.disabled = true;
   show('loadingView');
@@ -219,6 +418,9 @@ window.doGoogleSignIn = async function(){
     showError(t('signinErr') + (e.code || e.message || 'unknown'));
   }
 };
+
+// 페이지 로드 시 지점 dropdown 즉시 채우기
+fillLoginBranches();
 
 window.doSignOut = async function(){
   try { await signOut(auth); } catch(e){}
@@ -301,23 +503,30 @@ onAuthStateChanged(auth, async (user) => {
       const existing = (() => { try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_) { return null; } })();
       const profileName = __currentProfile.name || user.displayName || user.email.split('@')[0];
       const isSharedAccount = (user.email === 'staff@miamikimchi.com' || user.email === 'manager@miamikimchi.com');
+      // 로그인 화면에서 '본인 이름 + 지점' 을 미리 골랐다면 그 값을 최우선 보존.
+      // (Pembroke Pines 등 공유 계정 로그인 — 한 번에 다 처리하는 신규 흐름)
+      const presetIdentity = _captureLoginIdentity();
       // If user has an existing personal chat.me name and is on a shared
       // account, keep their personal name. Otherwise use the profile name.
-      const name = (isSharedAccount && existing && existing.name && existing.name !== 'Staff' && existing.name !== 'Manager')
-        ? existing.name
-        : profileName;
+      const name = (presetIdentity && presetIdentity.name)
+        || ((isSharedAccount && existing && existing.name && existing.name !== 'Staff' && existing.name !== 'Manager')
+            ? existing.name
+            : profileName);
       const profileBranch = (__currentProfile.branch && __currentProfile.branch !== '*')
         ? __currentProfile.branch
         : null;
-      const branch = profileBranch
+      const branch = (presetIdentity && presetIdentity.branch)
+        || profileBranch
         || (existing && existing.branch)
         || localStorage.getItem('hub.branch')
         || 'MIAMI';
+      const role = (presetIdentity && presetIdentity.role)
+        || __currentProfile.role
+        || (existing && existing.role)
+        || '';
       const chatMe = Object.assign({}, existing || {}, {
-        name,
-        branch,
-        role: __currentProfile.role || (existing && existing.role) || '',
-        isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER'].includes(String(__currentProfile.role || '').toUpperCase())
+        name, branch, role,
+        isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(String(role).toUpperCase())
       });
       localStorage.setItem('chat.me', JSON.stringify(chatMe));
       try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_) {}
