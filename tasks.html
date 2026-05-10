@@ -4895,6 +4895,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     '4: 📋 같은 업무 복제 (재발송)',
     '5: ↩️  완료 취소 (다시 진행 중으로)',
     '6: 📨 채팅방 다시 보내기 (사진 누락 보정)',
+    '7: ⭐ 포인트 변경 (1·2·3점)',
     '0: 닫기'
   ];
   const choice = prompt(
@@ -4910,6 +4911,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     if (choice.trim() === '4') return adminDuplicate(t);
     if (choice.trim() === '5') return adminUncomplete(t);
     if (choice.trim() === '6') return adminRepostToChat(t);
+    if (choice.trim() === '7') return adminChangePoints(t);
   } catch(e) { alert('보정 실패: ' + (e.message || e)); }
 }
 window.adminTaskMenu = adminTaskMenu;
@@ -4949,6 +4951,31 @@ async function adminRepostToChat(t){
   } finally {
     me = meBackup;
   }
+}
+
+// 7) 포인트 변경 — 매니저가 발송 후라도 업무 강도 다시 매김. 완료된 업무
+// 도 변경 가능 (활동 순위에 즉시 반영). 1·2·3 점만 허용.
+async function adminChangePoints(t){
+  const cur = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+  const newPts = prompt(
+    '⭐ 포인트 변경\n\n' +
+    '현재: ' + '⭐'.repeat(cur) + ' ' + cur + '점\n\n' +
+    '새 점수 입력 (1·2·3):\n' +
+    '  1 = ⭐ 약한 업무\n' +
+    '  2 = ⭐⭐ 보통\n' +
+    '  3 = ⭐⭐⭐ 강한 업무',
+    String(cur)
+  );
+  if (newPts == null) return;
+  const v = parseInt(String(newPts).trim(), 10);
+  if (![1,2,3].includes(v)) { alert('1, 2, 3 중 하나를 입력하세요.'); return; }
+  const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+    points: v,
+    pointsChangedBy: me.name,
+    pointsChangedAt: Date.now()
+  });
+  alert('⭐ 포인트: ' + '⭐'.repeat(v) + ' ' + v + '점 으로 변경됨.');
 }
 
 // 1) 완료 처리 — 직원 이름 받고 completedAt/completedBy 채움.
