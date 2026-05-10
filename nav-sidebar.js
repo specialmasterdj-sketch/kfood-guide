@@ -5,11 +5,16 @@
   window.__navSideInjected = true;
 
   // Manager-or-above tokens (mirrors payroll.html access gate)
-  const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER'];
+  // EXECUTIVE / 전무 / VICE PRESIDENT 추가 — B.H.K 가 매니저 전용 메뉴 못 보던 버그 fix.
+  // SUPERVISOR / 부매니저 도 포함 — payroll 외 매니저 권한 메뉴 (직원 승인 등) 접근 가능.
+  const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','SUPERVISORA','감독'];
   function isManager(){
     let me = null;
     try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
-    if (!me || !me.role) return false;
+    if (!me) return false;
+    // chat.me.isManager 가 명시적으로 true 면 통과 (auth.html 에서 EXECUTIVE 등도 true 로 세팅).
+    if (me.isManager === true) return true;
+    if (!me.role) return false;
     const r = String(me.role).toUpperCase();
     return MGR_TOKENS.some(t => r.includes(t.toUpperCase()));
   }
@@ -425,7 +430,9 @@
   // ============ 안 읽은 채팅 메시지 배지 ============
   // chat.html 의 lastVisit 맵을 읽어 각 방의 메시지 키 timestamp 와 비교
   const EXEC_NAMES = ['B.H.K','BHK','B H K','비에이치케이'];
-  const MGR_TOKENS_CHAT = ['OWNER','BOSS','MANAGER','매니저','점장','대표','사장','오너','GERENTE'];
+  // EXECUTIVE / 전무 / SUPERVISOR 추가 — chat 배지에서도 manager-only 방 (manager_only 등)
+  // 카운트가 정상 작동하도록.
+  const MGR_TOKENS_CHAT = ['OWNER','BOSS','MANAGER','매니저','점장','대표','사장','오너','GERENTE','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','감독','ASSISTANT MANAGER','부매니저'];
   function isExecName(me){
     if (!me || !me.name) return false;
     const nm = String(me.name).replace(/\s+/g,'').toUpperCase();
@@ -433,6 +440,7 @@
   }
   function isManagerLevel(me){
     if (!me) return false;
+    if (me.isManager === true) return true; // auth.html 가 명시적으로 true 세팅
     if (isExecName(me)) return true;
     const r = String(me.role || '').toUpperCase();
     return MGR_TOKENS_CHAT.some(t => r.includes(t));
