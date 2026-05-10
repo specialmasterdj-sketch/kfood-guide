@@ -3532,27 +3532,36 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
     if (typeof showToast === 'function') showToast('📷 업로드 중', files.length + '장');
     // 카메라가 닫히고 페이지로 돌아오자마자 한 번 복원
     restoreScroll();
+    // 사진 업로드 중에는 RTDB onValue 가 fire 해도 renderAll 차단 → DOM 재구성이
+    // 카메라 인텐트와 충돌해 페이지 reload 되는 현상 (정육 사진 팅겨나감) 방지.
+    window.__PHOTO_UPLOADING = (window.__PHOTO_UPLOADING || 0) + 1;
+    _photoTick();
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx+'/'+entryId;
       const urls = [];
       for (let i = 0; i < files.length; i++) {
         try {
           urls.push(await uploadOnePhoto(files[i], basePath));
-          // iOS PWA 메모리 GC 시간 — 다음 사진 시작 전 200ms 양보. 이게 없으면
+          // iOS PWA 메모리 GC 시간 — 다음 사진 시작 전 500ms 양보 (200→500 강화).
           // canvas/blob 해제가 안 끝난 채 다음 사진을 처리하려다 페이지가
-          // reload 되는 케이스 (특히 3장째부터).
-          if (i < files.length - 1) await new Promise(r => setTimeout(r, 200));
+          // reload 되는 케이스 (특히 3장째부터) 완전 방지.
+          _photoTick();
+          if (i < files.length - 1) await new Promise(r => setTimeout(r, 500));
         } catch(perFileErr) {
           console.error('[addClEntryPhoto] file', i, perFileErr);
-          throw new Error('사진 ' + (i+1) + '장 업로드 실패: ' + (perFileErr.message || perFileErr));
+          // alert() 는 iOS 에서 카메라/페이지 흐름 깨뜨릴 수 있어 toast 로 대체
+          if (typeof showToast === 'function') showToast('⚠️ 사진 ' + (i+1) + '장 실패', String(perFileErr.message||perFileErr).slice(0,60));
         }
+      }
+      if (urls.length === 0) {
+        // 모든 사진 업로드 실패
+        if (typeof showToast === 'function') showToast('❌ 모든 사진 실패', '네트워크 확인 후 다시 시도');
+        return;
       }
       // 다른 줄들 입력 중 텍스트 보존
       const arr = _entriesFromDOM(taskId, branchId, idx);
       const e = arr.find(x => (x.id || 'legacy') === entryId);
       if (!e) {
-        // legacy fallback — user clicked photo on the virtualized legacy
-        // entry → promote it to a real entry.
         arr.push({ id: _newEntryId(), text: '', photos: urls, ts: Date.now(), by: me.name });
       } else {
         e.photos = [...(Array.isArray(e.photos) ? e.photos : []), ...urls];
@@ -3561,12 +3570,19 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
       }
       await _writeEntries(taskId, branchId, idx, arr);
       if (typeof showToast === 'function') showToast('✅ 사진 추가됨', urls.length + '장');
-      // RTDB write → renderAll → DOM 재구성 직후 한 번 더 복원
-      restoreScroll();
     } catch(err) {
       console.error('[addClEntryPhoto]', err);
-      alert('📷 사진 업로드 실패\n\n' + (err && err.message || err) + '\n\n다시 시도하거나 매니저에게 문의하세요.');
-      restoreScroll();
+      // alert 대신 console + toast — 카메라가 다시 열릴 수 있게
+      if (typeof showToast === 'function') showToast('⚠️ 업로드 실패', String(err.message||err).slice(0,80));
+    } finally {
+      window.__PHOTO_UPLOADING = Math.max(0, (window.__PHOTO_UPLOADING || 1) - 1);
+      // 업로드 끝났으니 deferred 됐던 render 실행 — 이제 안전하게 재구성 가능
+      if (window.__PHOTO_UPLOADING === 0 && __RENDER_DEFERRED) {
+        __RENDER_DEFERRED = false;
+        setTimeout(() => { try { renderAllNow(); restoreScroll(); } catch(_){} }, 100);
+      } else {
+        restoreScroll();
+      }
     }
   };
   input.click();
@@ -3854,16 +3870,27 @@ function pickChecklistPhoto(taskId, branchId, idx){
   input.onchange = async () => {
     const files = Array.from(input.files || []);
     if (!files.length) return;
+    // 사진 업로드 중 renderAll 차단 — iOS PWA 페이지 reload 방지
+    window.__PHOTO_UPLOADING = (window.__PHOTO_UPLOADING || 0) + 1;
+    _photoTick();
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx;
       const urls = [];
       for (let i = 0; i < files.length; i++) {
-        const u = await uploadOnePhoto(files[i], basePath);
-        urls.push(u);
-        // iOS GC 양보 — 3번째 촬영 OOM 방지
-        if (i < files.length - 1) await new Promise(r => setTimeout(r, 200));
+        try {
+          const u = await uploadOnePhoto(files[i], basePath);
+          urls.push(u);
+          _photoTick();
+          if (i < files.length - 1) await new Promise(r => setTimeout(r, 500));
+        } catch(perErr) {
+          console.error('[pickChecklistPhoto]', i, perErr);
+          if (typeof showToast === 'function') showToast('⚠️ 사진 '+(i+1)+'장 실패', String(perErr.message||perErr).slice(0,60));
+        }
       }
-      // Read current photos array, append new urls, write back
+      if (urls.length === 0) {
+        if (typeof showToast === 'function') showToast('❌ 사진 업로드 실패', '네트워크 확인 후 다시 시도');
+        return;
+      }
       const itemPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
       const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
       const existing = (task && task.checklist && task.checklist[idx] && Array.isArray(task.checklist[idx].photos))
@@ -3873,9 +3900,19 @@ function pickChecklistPhoto(taskId, branchId, idx){
         photos: [...existing, ...urls],
         photoBy: me.name,
         photoAt: Date.now(),
-        photo: null,   // legacy single field cleared in favor of photos[]
+        photo: null,
       });
-    } catch(e) { alert('사진 업로드 실패: '+e.message); }
+      if (typeof showToast === 'function') showToast('✅ 사진 추가됨', urls.length + '장');
+    } catch(e) {
+      console.error('[pickChecklistPhoto]', e);
+      if (typeof showToast === 'function') showToast('⚠️ 업로드 실패', String(e.message||e).slice(0,80));
+    } finally {
+      window.__PHOTO_UPLOADING = Math.max(0, (window.__PHOTO_UPLOADING || 1) - 1);
+      if (window.__PHOTO_UPLOADING === 0 && __RENDER_DEFERRED) {
+        __RENDER_DEFERRED = false;
+        setTimeout(() => { try { renderAllNow(); } catch(_){} }, 100);
+      }
+    }
   };
   input.click();
 }
@@ -3903,14 +3940,23 @@ function pickTaskPhotos(taskId, branchId){
   input.onchange = async () => {
     const files = Array.from(input.files || []);
     if (!files.length) return;
+    window.__PHOTO_UPLOADING = (window.__PHOTO_UPLOADING || 0) + 1;
+    _photoTick();
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/overall';
       const urls = [];
       for (let i = 0; i < files.length; i++) {
-        const u = await uploadOnePhoto(files[i], basePath);
-        urls.push(u);
-        if (i < files.length - 1) await new Promise(r => setTimeout(r, 200));
+        try {
+          const u = await uploadOnePhoto(files[i], basePath);
+          urls.push(u);
+          _photoTick();
+          if (i < files.length - 1) await new Promise(r => setTimeout(r, 500));
+        } catch(perErr) {
+          console.error('[pickTaskPhotos]', i, perErr);
+          if (typeof showToast === 'function') showToast('⚠️ 사진 '+(i+1)+'장 실패', String(perErr.message||perErr).slice(0,60));
+        }
       }
+      if (urls.length === 0) return;
       const taskPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId;
       const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
       const existing = (task && Array.isArray(task.photos)) ? task.photos : [];
@@ -3920,7 +3966,16 @@ function pickTaskPhotos(taskId, branchId){
         photosAt: Date.now(),
       });
       if (typeof showToast === 'function') showToast('📸 사진 추가됨', urls.length + '장');
-    } catch(e) { alert('사진 업로드 실패: '+(e.message||e)); }
+    } catch(e) {
+      console.error('[pickTaskPhotos]', e);
+      if (typeof showToast === 'function') showToast('⚠️ 업로드 실패', String(e.message||e).slice(0,80));
+    } finally {
+      window.__PHOTO_UPLOADING = Math.max(0, (window.__PHOTO_UPLOADING || 1) - 1);
+      if (window.__PHOTO_UPLOADING === 0 && __RENDER_DEFERRED) {
+        __RENDER_DEFERRED = false;
+        setTimeout(() => { try { renderAllNow(); } catch(_){} }, 100);
+      }
+    }
   };
   input.click();
 }
@@ -5294,10 +5349,31 @@ function renderAllNow(){
   } catch(_){}
 }
 
-// renderAll wrapper — 입력 중이면 일단 deferred 로 표시하고 실제 render 는
-// 사용자가 input 에서 빠져나갈 때 (focusout) 실행. 핵심: 모바일 키보드 보존.
+// 사진 업로드 중에는 renderAll 차단 — onValue 가 fire 해도 DOM 재구성이
+// 카메라 인텐트 / 업로드 완료 사이에 끼어들면 iOS PWA 가 페이지를 reload 함
+// (직원 폰에서 '사진 팅겨나감' 의 핵심 원인).
+window.__PHOTO_UPLOADING = 0;
+window.__PHOTO_UPLOAD_LAST_TICK = 0;
+// 안전망 — 업로드 중 예상 못 한 throw 로 카운터가 stuck 되면 자동 리셋.
+// 60초 동안 LAST_TICK 갱신 없으면 hung 으로 간주.
+setInterval(() => {
+  if (window.__PHOTO_UPLOADING > 0 && (Date.now() - (window.__PHOTO_UPLOAD_LAST_TICK||0)) > 60000) {
+    console.warn('[photo-guard] stuck counter, resetting:', window.__PHOTO_UPLOADING);
+    window.__PHOTO_UPLOADING = 0;
+    if (typeof __RENDER_DEFERRED !== 'undefined' && __RENDER_DEFERRED) {
+      __RENDER_DEFERRED = false;
+      try { renderAllNow(); } catch(_){}
+    }
+  }
+}, 30000);
+// 사진 업로드 시작/진행 마다 호출 — stuck 감지용 timestamp 갱신
+function _photoTick(){ window.__PHOTO_UPLOAD_LAST_TICK = Date.now(); }
+
+// renderAll wrapper — 입력 중이거나 사진 업로드 중이면 일단 deferred 로
+// 표시하고 실제 render 는 사용자가 input 에서 빠져나갈 때 (focusout) /
+// 업로드 끝날 때 실행. 핵심: 모바일 키보드 보존 + iOS 사진 안 튕기게.
 function renderAll(){
-  if (isUserTyping()) {
+  if (isUserTyping() || window.__PHOTO_UPLOADING > 0) {
     __RENDER_DEFERRED = true;
     return;
   }
