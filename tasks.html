@@ -3812,7 +3812,7 @@ function renderTaskCard(t){
       ${pointsBadge}
     </div>
     <div class="task-meta">
-      ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}</span>`:''}
+      ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}${(isManager(me?.role)||isOwner())?`<button onclick="event.stopPropagation();event.preventDefault();quickExtendDeadline('${t.id}','${t.branchId}')" title="${LANG==='en'?'Extend deadline':LANG==='es'?'Extender plazo':'시간 연장'}" style="background:#fff;border:1.5px solid #2563eb;color:#1d4ed8;border-radius:6px;padding:1px 6px;margin-left:4px;font-size:.84em;font-weight:800;cursor:pointer;font-family:inherit">⏰+</button>`:''}</span>`:''}
       ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>`:''}
       ${t.vendor?`<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📦 ${escHtml(t.vendor)}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
@@ -5289,7 +5289,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
   const opts = [
     '1: ✅ 완료 처리 (담당자 지정)',
     '2: 👤 담당자 변경',
-    '3: ⏰ 데드라인 변경',
+    '3: ⏰ 데드라인 변경 / 시간 연장 (+30분/+1H/+2H)',
     '4: 📋 같은 업무 복제 (재발송)',
     '5: ↩️  완료 취소 (다시 진행 중으로)',
     '6: 📨 채팅방 다시 보내기 (사진 누락 보정)',
@@ -5313,6 +5313,14 @@ async function adminTaskMenu(taskId, branchId, name, ev){
   } catch(e) { alert('보정 실패: ' + (e.message || e)); }
 }
 window.adminTaskMenu = adminTaskMenu;
+
+// ⏰+ 빠른 연장 — task 카드에서 직접 호출. 매니저+ 만 작동.
+window.quickExtendDeadline = async function(taskId, branchId){
+  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
+  const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
+  if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
+  return adminChangeDeadline(t);
+};
 
 // 6) 채팅방 다시 보내기 — 사진 누락된 완료 메시지 재발송. 모든 출처
 // (task.photos / checklist[].photos / checklist[].entries[].photos) 의 사진을
@@ -5413,18 +5421,45 @@ async function adminReassign(t){
 
 // 3) 데드라인 변경
 async function adminChangeDeadline(t){
-  const newDl = prompt('⏰ 데드라인 (HH:MM 형식)', t.deadline || '18:00');
-  if (!newDl || !/^\d{1,2}:\d{2}$/.test(newDl.trim())) {
-    if (newDl != null) alert('형식 오류 — 예: 11:00');
-    return;
-  }
+  const cur = t.deadline || '18:00';
+  // 빠른 연장 프리셋 — 직원 사진 마무리 / 점심 후 마감 등 자주 쓰는 패턴
+  const choice = prompt(
+    '⏰ 데드라인 변경 / 연장\n\n' +
+    '현재: ' + cur + '\n\n' +
+    '빠른 연장:\n' +
+    '  1 = +30분\n' +
+    '  2 = +1시간\n' +
+    '  3 = +2시간\n' +
+    '  4 = +3시간\n' +
+    '  5 = 18:00 (오늘 종료)\n' +
+    '  H:MM 직접 입력 (예: 14:30)\n',
+    '2'
+  );
+  if (choice == null) return;
+  const v = String(choice).trim();
+  let newDl = null;
+  // 프리셋 처리 — 현재 데드라인에 분 추가
+  const addMin = (mins) => {
+    const [hh, mm] = cur.split(':').map(n => parseInt(n,10) || 0);
+    const total = (hh*60 + mm + mins) % (24*60);
+    const h = Math.floor(total/60), m = total%60;
+    return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+  };
+  if (v === '1') newDl = addMin(30);
+  else if (v === '2') newDl = addMin(60);
+  else if (v === '3') newDl = addMin(120);
+  else if (v === '4') newDl = addMin(180);
+  else if (v === '5') newDl = '18:00';
+  else if (/^\d{1,2}:\d{2}$/.test(v)) newDl = v;
+  else { alert('형식 오류 — 1~5 또는 H:MM 입력'); return; }
   const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
-    deadline: newDl.trim(),
+    deadline: newDl,
     deadlineChangedBy: me.name,
-    deadlineChangedAt: Date.now()
+    deadlineChangedAt: Date.now(),
+    // 데드라인 연장하면 startedAt 도 보존 — 진행중 task 재시작 안 됨
   });
-  alert('⏰ 데드라인: ' + newDl + ' 로 변경됨.');
+  alert('⏰ 데드라인: ' + cur + ' → ' + newDl + ' 로 변경됨.');
 }
 
 // 4) 같은 업무 복제 (재발송)
