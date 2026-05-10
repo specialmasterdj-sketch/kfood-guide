@@ -764,7 +764,7 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field"><label id="aCatLbl">② 카테고리</label>
       <div style="display:flex;gap:4px;align-items:stretch">
-        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크">온도 체크</option><option value="유통기한">유통기한</option><option value="진열">진열/보충</option><option value="청소">청소</option><option value="현금">현금/카운트</option><option value="캐셔">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="K-Food">🍙 K-Food</option><option value="Seafood">🐟 해산물</option><option value="Produce">🥬 농산물</option><option value="기타">기타</option></select>
+        <select id="aCat" onchange="onChecklistToggle();updateCatEditButtons()" style="flex:1"><option value="온도 체크" data-cat-key="cat_temp">온도 체크</option><option value="유통기한" data-cat-key="cat_exp">유통기한</option><option value="진열" data-cat-key="cat_disp">진열/보충</option><option value="청소" data-cat-key="cat_clean">청소</option><option value="현금" data-cat-key="cat_cash">현금/카운트</option><option value="캐셔" data-cat-key="cat_cashier">🛒 캐셔 (POS)</option><option value="정육">🥩 정육</option><option value="K-Food">🍙 K-Food</option><option value="Seafood">🐟 해산물</option><option value="Produce">🥬 농산물</option><option value="기타" data-cat-key="cat_other">기타</option></select>
         <button type="button" id="aCatEdit" onclick="renameCatFromSelect()" title="이 카테고리 이름 수정" style="display:none;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">✏</button>
         <button type="button" id="aCatDelete" onclick="rmCatFromSelect()" title="이 카테고리 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:0 10px;font-size:.85em;font-weight:700;cursor:pointer">×</button>
       </div>
@@ -854,14 +854,14 @@ button{font-family:inherit;cursor:pointer}
     <!-- 📍 매니저 장소 사진 첨부 (NEW) -->
     <div class="field" id="aLocPhotoField">
       <label style="display:flex;align-items:center;gap:6px">
-        📍 작업 장소 사진 <span style="font-weight:500;color:#94a3b8;font-size:.78em">(선택 — 직원이 어디인지 정확히 알 수 있게)</span>
+        <span id="aLocPhotoLbl">📍 작업 장소 사진</span> <span id="aLocPhotoHint" style="font-weight:500;color:#94a3b8;font-size:.78em">(선택 — 직원이 어디인지 정확히 알 수 있게)</span>
       </label>
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
-        <button type="button" onclick="document.getElementById('aLocCamera').click()"
+        <button type="button" id="aBtnCamera" onclick="document.getElementById('aLocCamera').click()"
           style="background:linear-gradient(135deg,#0891b2,#06b6d4);color:#fff;border:0;border-radius:9px;padding:8px 14px;font-size:.86em;font-weight:700;cursor:pointer;font-family:inherit">
           📷 카메라
         </button>
-        <button type="button" onclick="document.getElementById('aLocFile').click()"
+        <button type="button" id="aBtnGallery" onclick="document.getElementById('aLocFile').click()"
           style="background:#fff;color:#0891b2;border:1.5px solid rgba(8,145,178,.30);border-radius:9px;padding:8px 14px;font-size:.86em;font-weight:700;cursor:pointer;font-family:inherit">
           📁 갤러리
         </button>
@@ -878,10 +878,10 @@ button{font-family:inherit;cursor:pointer}
         style="width:100%;margin-top:8px;border:1.5px solid rgba(8,145,178,.25);border-radius:9px;padding:10px 12px;font-size:.92em;font-family:inherit;background:#f0fdff;color:#0f172a;resize:vertical;min-height:64px;outline:0"></textarea>
     </div>
 
-    <div class="field"><label>추가 메모 (선택)</label><textarea id="aNote" placeholder="예: 우유 코너 우선 점검"></textarea></div>
+    <div class="field"><label id="aNoteLbl">추가 메모 (선택)</label><textarea id="aNote" placeholder="예: 우유 코너 우선 점검"></textarea></div>
     <div class="modal-actions">
-      <button class="btn sec" onclick="closeOv('assignOv')">취소</button>
-      <button class="btn" onclick="sendAssign()">📨 보내기</button>
+      <button class="btn sec" id="aBtnCancel" onclick="closeOv('assignOv')">취소</button>
+      <button class="btn" id="aBtnSend" onclick="sendAssign()">📨 보내기</button>
     </div>
   </div>
 </div>
@@ -1312,15 +1312,20 @@ function populateTaskCheckList(){
   });
   const grouped = {};
   uniq.forEach(t => { (grouped[t.category||'기타'] = grouped[t.category||'기타'] || []).push(t); });
-  el.innerHTML = Object.entries(grouped).map(([cat, list], gi) => `
-    <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin:${gi===0?'0':'10px 0 0'};padding-bottom:3px;border-bottom:1px solid #e5e7eb;text-transform:uppercase;letter-spacing:.04em">${escHtml(cat)}</div>
-    ${list.map(t => `
+  el.innerHTML = Object.entries(grouped).map(([cat, list], gi) => {
+    // 카테고리 헤더는 다국어, 개별 업무명은 nameTr 가 있으면 그 언어로 표시
+    const localCat = (typeof localizeCat === 'function') ? localizeCat(cat) : cat;
+    return `
+    <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin:${gi===0?'0':'10px 0 0'};padding-bottom:3px;border-bottom:1px solid #e5e7eb;text-transform:uppercase;letter-spacing:.04em">${escHtml(localCat)}</div>
+    ${list.map(tpl => {
+      const dispName = (tpl.nameTr && (tpl.nameTr[LANG] || tpl.nameTr.ko)) || tpl.name;
+      return `
       <label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:.88em">
-        <input type="checkbox" class="task-pick" data-name="${escHtml(t.name)}" data-cat="${escHtml(t.category||'기타')}" style="width:16px;height:16px">
-        <span>${escHtml(t.name)}</span>
+        <input type="checkbox" class="task-pick" data-name="${escHtml(tpl.name)}" data-cat="${escHtml(tpl.category||'기타')}" style="width:16px;height:16px">
+        <span>${escHtml(dispName)}</span>
       </label>
-    `).join('')}
-  `).join('');
+    `;}).join('')}
+  `;}).join('');
   // 체크박스 토글 시 장소 필드 노출 재평가 (진열 항목 체크 시 표시)
   el.querySelectorAll('.task-pick').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -1907,6 +1912,26 @@ const I18N = {
   aPts1Lbl:        { ko:'1점 — 약한 업무',     en:'1pt — Light',               es:'1pt — Ligera' },
   aPts2Lbl:        { ko:'2점 — 보통',          en:'2pts — Normal',             es:'2pts — Normal' },
   aPts3Lbl:        { ko:'3점 — 강한 업무',     en:'3pts — Heavy',              es:'3pts — Pesada' },
+  aLocPhotoLbl:    { ko:'📍 작업 장소 사진',    en:'📍 Work Location Photo',    es:'📍 Foto del Lugar' },
+  aLocPhotoHint:   { ko:'(선택 — 직원이 어디인지 정확히 알 수 있게)', en:'(Optional — so the assignee knows exactly where)', es:'(Opcional — para que el empleado sepa exactamente dónde)' },
+  aBtnCamera:      { ko:'📷 카메라',           en:'📷 Camera',                 es:'📷 Cámara' },
+  aBtnGallery:     { ko:'📁 갤러리',           en:'📁 Gallery',                es:'📁 Galería' },
+  aLocNotePh:      { ko:'📝 이 사진에 대한 지시 내용 (예: 이 자리 우유 보충, 정리, 사진 기준으로 진열)',
+                     en:'📝 Instructions for this photo (e.g., restock milk, organize, follow photo)',
+                     es:'📝 Instrucciones para esta foto (ej., reabastecer leche, organizar)' },
+  aNoteLbl:        { ko:'추가 메모 (선택)',    en:'Additional note (optional)', es:'Nota adicional (opcional)' },
+  aNotePh:         { ko:'예: 우유 코너 우선 점검', en:'e.g., Check milk section first', es:'ej., Revisar leche primero' },
+  aBtnCancel:      { ko:'취소',                en:'Cancel',                    es:'Cancelar' },
+  aBtnSend:        { ko:'📨 보내기',           en:'📨 Send',                   es:'📨 Enviar' },
+  aNameTplDefault: { ko:'— 자주 쓰는 업무 선택 또는 직접 입력 —', en:'— Pick frequent task or type —', es:'— Selecciona tarea frecuente o escribe —' },
+  // 부서 카테고리 (정육·K-Food·해산물·농산물 등) 번역
+  cat_meat:        { ko:'🥩 정육',             en:'🥩 Meat',                   es:'🥩 Carnicería' },
+  cat_kfood:       { ko:'🍙 K-Food',           en:'🍙 K-Food',                 es:'🍙 K-Food' },
+  cat_seafood:     { ko:'🐟 해산물',           en:'🐟 Seafood',                es:'🐟 Mariscos' },
+  cat_produce:     { ko:'🥬 농산물',           en:'🥬 Produce',                es:'🥬 Productos' },
+  cat_disp_full:   { ko:'진열/보충',           en:'Display/Restock',           es:'Exhibición/Reabastecer' },
+  cat_cash_full:   { ko:'현금/카운트',         en:'Cash/Count',                es:'Efectivo/Conteo' },
+  cat_cashier_full:{ ko:'🛒 캐셔 (POS)',       en:'🛒 Cashier (POS)',          es:'🛒 Cajero (POS)' },
 };
 function t(key, vars) {
   const obj = I18N[key];
@@ -2081,6 +2106,50 @@ function refreshStaticI18n(){
   setText('aPts1Lbl', 'aPts1Lbl');
   setText('aPts2Lbl', 'aPts2Lbl');
   setText('aPts3Lbl', 'aPts3Lbl');
+  setText('aLocPhotoLbl', 'aLocPhotoLbl');
+  setText('aLocPhotoHint', 'aLocPhotoHint');
+  setText('aBtnCamera', 'aBtnCamera');
+  setText('aBtnGallery', 'aBtnGallery');
+  setText('aNoteLbl', 'aNoteLbl');
+  setText('aBtnCancel', 'aBtnCancel');
+  setText('aBtnSend', 'aBtnSend');
+  // textarea / input placeholders
+  const aLocNote = document.getElementById('aLocNote');
+  if (aLocNote) aLocNote.placeholder = t('aLocNotePh');
+  const aNote = document.getElementById('aNote');
+  if (aNote) aNote.placeholder = t('aNotePh');
+  // Category dropdown — visible text only; values stay Korean (DB key).
+  // 진열/보충, 현금/카운트, 캐셔 등 복합 라벨은 cat_*_full 키로 별도 처리.
+  const aCat = document.getElementById('aCat');
+  if (aCat) {
+    Array.from(aCat.options).forEach(opt => {
+      const k = opt.dataset.catKey;
+      const v = opt.value;
+      // 부서 카테고리 (정육 / K-Food 등) — 별도 매핑
+      if (v === '정육')        opt.textContent = t('cat_meat');
+      else if (v === 'K-Food') opt.textContent = t('cat_kfood');
+      else if (v === 'Seafood')opt.textContent = t('cat_seafood');
+      else if (v === 'Produce')opt.textContent = t('cat_produce');
+      else if (v === '진열')   opt.textContent = t('cat_disp_full');
+      else if (v === '현금')   opt.textContent = t('cat_cash_full');
+      else if (v === '캐셔')   opt.textContent = t('cat_cashier_full');
+      else if (k)              opt.textContent = t(k);
+    });
+  }
+  // aNameTpl 자주 쓰는 업무 select — 첫 빈 옵션만 다국어
+  const aNameTpl = document.getElementById('aNameTpl');
+  if (aNameTpl && aNameTpl.options.length) {
+    const first = aNameTpl.options[0];
+    if (!first.value) first.textContent = t('aNameTplDefault');
+  }
+  // 카테고리 그룹 헤더(aTaskCheckList) + 업무명 자체는 populateTaskCheckList()
+  // 가 다시 그릴 때 LANG 으로 picked 됨. 모달 열려 있으면 즉시 다시 그림.
+  const assignOv = document.getElementById('assignOv');
+  if (assignOv && assignOv.classList.contains('show')) {
+    if (typeof populateTaskCheckList === 'function') {
+      try { populateTaskCheckList(); } catch(_){}
+    }
+  }
 }
 
 // In-memory translation cache so we don't refetch the same string
