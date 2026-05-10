@@ -824,6 +824,32 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field check"><input type="checkbox" id="aPhoto" checked><label for="aPhoto">📷 완료 사진 필수 (원격 검수)</label></div>
 
+    <!-- 💎 업무 강도 / 포인트 (NEW) — 매니저가 업무 난이도에 따라 1·2·3점 부여.
+         완료 시 직원에게 그 점수가 활동 순위(leaderboard) 에 적립. -->
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:700">
+        💎 <span data-t="aPointsLbl">업무 강도 (포인트)</span>
+        <span style="font-weight:400;color:#94a3b8;font-size:.78em" data-t="aPointsHint">— 약한 업무 1점 / 보통 2점 / 강한 업무 3점</span>
+      </label>
+      <div id="aPointsRadios" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+        <label class="pt-radio" data-pts="1" style="flex:1;min-width:90px;border:2px solid #1a5c3a;background:#dcfce7;border-radius:10px;padding:8px 10px;cursor:pointer;text-align:center;font-weight:700;color:#1a5c3a;font-size:.92em">
+          <input type="radio" name="aPointsR" value="1" checked style="display:none">
+          <div style="font-size:1.2em">⭐</div>
+          <div data-t="aPts1">1점 — 약한 업무</div>
+        </label>
+        <label class="pt-radio" data-pts="2" style="flex:1;min-width:90px;border:2px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer;text-align:center;font-weight:600;color:#6b7280;font-size:.92em">
+          <input type="radio" name="aPointsR" value="2" style="display:none">
+          <div style="font-size:1.2em">⭐⭐</div>
+          <div data-t="aPts2">2점 — 보통</div>
+        </label>
+        <label class="pt-radio" data-pts="3" style="flex:1;min-width:90px;border:2px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer;text-align:center;font-weight:600;color:#6b7280;font-size:.92em">
+          <input type="radio" name="aPointsR" value="3" style="display:none">
+          <div style="font-size:1.2em">⭐⭐⭐</div>
+          <div data-t="aPts3">3점 — 강한 업무</div>
+        </label>
+      </div>
+    </div>
+
     <!-- 📍 매니저 장소 사진 첨부 (NEW) -->
     <div class="field" id="aLocPhotoField">
       <label style="display:flex;align-items:center;gap:6px">
@@ -4956,6 +4982,40 @@ function renderReport(){
 }
 
 // ================= ASSIGN =================
+// 💎 업무 강도 (1/2/3 포인트) — 라디오 시각 갱신 + 값 저장.
+// 점수: 약한 업무=1점 (기본), 보통=2점, 강한 업무=3점.
+function setAssignPoints(pts){
+  const radios = document.querySelectorAll('#aPointsRadios .pt-radio');
+  radios.forEach(r => {
+    const isActive = String(r.dataset.pts) === String(pts);
+    const inp = r.querySelector('input[type=radio]');
+    if (inp) inp.checked = isActive;
+    if (isActive) {
+      r.style.border = '2px solid #1a5c3a';
+      r.style.background = '#dcfce7';
+      r.style.color = '#1a5c3a';
+      r.style.fontWeight = '700';
+    } else {
+      r.style.border = '2px solid #e5e7eb';
+      r.style.background = '#fff';
+      r.style.color = '#6b7280';
+      r.style.fontWeight = '600';
+    }
+  });
+}
+window.setAssignPoints = setAssignPoints;
+// 라디오 클릭 시 값 갱신 — innerHTML 가 한 번만 들어가니 onclick 핸들러 위임
+document.addEventListener('click', (e) => {
+  const lbl = e.target.closest && e.target.closest('#aPointsRadios .pt-radio');
+  if (lbl && lbl.dataset.pts) setAssignPoints(parseInt(lbl.dataset.pts, 10) || 1);
+});
+function getAssignPoints(){
+  const r = document.querySelector('input[name="aPointsR"]:checked');
+  const v = r ? parseInt(r.value, 10) : 1;
+  return (v >= 1 && v <= 3) ? v : 1;
+}
+window.getAssignPoints = getAssignPoints;
+
 async function openAssignModal(){
   if (!me || !(isManager(me.role) || isOwner())) { alert('매니저만 사용 가능합니다.'); return; }
   // 매니저 장소 사진 + 지시 내용 초기화
@@ -4969,6 +5029,8 @@ async function openAssignModal(){
   document.getElementById('aDeadline').value = '11:00';
   document.getElementById('aCat').value = '온도 체크';
   document.getElementById('aPhoto').checked = true;
+  // 포인트 라디오 초기값 — 1점 (약한 업무)
+  setAssignPoints(1);
   document.getElementById('aNote').value = '';
   const saveTpl = document.getElementById('aSaveTpl'); if (saveTpl) saveTpl.checked = false;
   const cl = document.getElementById('aChecklist'); if (cl) cl.checked = false;
@@ -5105,6 +5167,7 @@ async function sendAssign(){
       note: noteText || null,
       noteTr,
       isQuickAssign: true,
+      points: getAssignPoints(),
     });
     closeOv('assignOv');
     showToast('⚡ 특별 지시 전송 완료', to + ' 에게');
@@ -5206,6 +5269,7 @@ async function sendAssign(){
           stage: sIdx,
           stageLabel: stageMeta.label,
           stageFrom, stageTo,
+          points: getAssignPoints(),
         });
         sentCount++;
       }
@@ -5241,6 +5305,9 @@ async function sendAssign(){
     place: place || null,
     locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
     locationNote: window.LOC_NOTE || null,
+    // 💎 업무 강도 포인트 — 매니저가 1/2/3 중 선택. 완료 시 활동 순위에 그 점수
+    // 가 적립. 미지정(레거시) task 는 leaderboard 가 1점으로 기본 처리.
+    points: getAssignPoints(),
   });
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   // Optionally save this task name as a reusable template for the user's branch

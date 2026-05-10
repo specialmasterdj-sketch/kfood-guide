@@ -218,8 +218,11 @@ function isExcludedSender(name, branch){
 }
 
 // ============== Aggregation ==============
-// agg[name] = { name, branch, color, expiryAdd, expiryCheck, expiryDiscard, taskComplete, chatMsg, chatPhoto, reaction, reply, score }
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, chatMsg:0, chatPhoto:0, reaction:0, reply:0, score:0 });
+// agg[name] = { name, branch, color, expiryAdd, expiryCheck, expiryDiscard,
+//   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
+// taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
+// taskComplete = 완료 건수만 (배지 노출용).
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, chatMsg:0, chatPhoto:0, reaction:0, reply:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -287,7 +290,12 @@ async function fetchTasks(agg, since){
           if (!t || typeof t !== 'object') return;
           if (!t.completedAt || !t.completedBy) return;
           if (t.completedAt < since) return;
+          // taskComplete = 완료 건수 (배지용), taskPoints = 매니저가 부여한
+          // 1·2·3 점 합 (실제 score 계산용). points 필드 없는 레거시 task 는
+          // 기본 1점 처리해 호환성 유지.
           bumpAgg(agg, t.completedBy, br, 'taskComplete', 1);
+          const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+          bumpAgg(agg, t.completedBy, br, 'taskPoints', pts);
         });
       });
     } catch(e) { console.warn('[lb] tasks', br, e); }
@@ -363,11 +371,14 @@ async function fetchChat(agg, since){
 
 function computeScores(agg){
   Object.values(agg).forEach(r => {
+    // 💎 task 점수는 taskPoints (매니저가 부여한 1·2·3 합) 그대로 사용 — SCORE.taskComplete
+    // 가중치 곱하지 않음. (가중치 1.0 시절의 단순 카운트는 r.taskComplete 로 별도 보존,
+    // 배지/뱃지 노출용.)
     r.score =
       r.expiryAdd     * SCORE.expiryAdd
     + r.expiryCheck   * SCORE.expiryCheck
     + r.expiryDiscard * SCORE.expiryDiscard
-    + r.taskComplete  * SCORE.taskComplete
+    + r.taskPoints    // 그대로 합산 (1·2·3 점)
     + r.chatMsg       * SCORE.chatMessage
     + r.chatPhoto     * SCORE.chatPhoto
     + r.reaction      * SCORE.reaction
@@ -421,7 +432,7 @@ function renderRows(rest){
       if (r.expiryAdd)     bd.push(`📦${r.expiryAdd}`);
       if (r.expiryCheck)   bd.push(`✅${r.expiryCheck}`);
       if (r.expiryDiscard) bd.push(`❌${r.expiryDiscard}`);
-      if (r.taskComplete)  bd.push(`📋${r.taskComplete}`);
+      if (r.taskComplete)  bd.push(`📋${r.taskComplete}${r.taskPoints && r.taskPoints !== r.taskComplete ? '⭐'+r.taskPoints : ''}`);
       if (r.chatMsg)       bd.push(`💬${r.chatMsg}`);
       if (r.chatPhoto)     bd.push(`📷${r.chatPhoto}`);
       if (r.reply)         bd.push(`↩️${r.reply}`);
