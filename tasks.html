@@ -3469,10 +3469,34 @@ function renderTaskCard(t){
   const memoHtml = dispMemo ? `<div class="task-memo"><b>${labels.memo[LANG]}:</b> ${escHtml(dispMemo)}</div>` : '';
   const noteHtml = dispNote ? `<div class="task-memo" style="background:#fef3c7;color:#92400e">${escHtml(dispNote)}</div>` : '';
   const clHtml = renderChecklistInline(t);
+  // 💎 포인트 배지 — 직원에게 완료 시 받을 점수 명확히 보이게. 동기 부여용.
+  // points 필드 없으면 1점 (레거시 task) 으로 기본 처리.
+  const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+  const isCompleted = !!t.completedAt;
+  const ptsLabels = {
+    earnLbl: { ko:'완료 시', en:'Reward', es:'Recompensa' },
+    earnedLbl: { ko:'획득', en:'Earned', es:'Ganado' },
+    ptUnit: { ko:'점', en:'pts', es:'pts' },
+  };
+  const ptsBg = pts >= 3 ? 'linear-gradient(135deg,#16a34a,#15803d)'
+              : pts === 2 ? 'linear-gradient(135deg,#2563eb,#1d4ed8)'
+              :              'linear-gradient(135deg,#94a3b8,#64748b)';
+  const ptsShadow = pts >= 3 ? '0 4px 12px rgba(22,163,74,.35)'
+                  : pts === 2 ? '0 4px 12px rgba(37,99,235,.30)'
+                  :              '0 2px 6px rgba(100,116,139,.25)';
+  const stars = '⭐'.repeat(pts);
+  const earnText = isCompleted
+    ? (ptsLabels.earnedLbl[LANG] + ' +' + pts + ptsLabels.ptUnit[LANG])
+    : (ptsLabels.earnLbl[LANG] + ' +' + pts + ptsLabels.ptUnit[LANG]);
+  const pointsBadge = `<div style="display:inline-flex;align-items:center;gap:6px;background:${ptsBg};color:#fff;border-radius:12px;padding:5px 11px;font-size:.84em;font-weight:800;box-shadow:${ptsShadow};margin-left:8px;flex-shrink:0;letter-spacing:.01em;${isCompleted?'opacity:.78':''}">
+    <span style="font-size:.95em">${stars}</span>
+    <span>${earnText}</span>
+  </div>`;
   return `<div class="task-card ${status}">
     ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}${labels.inProg[LANG]}</div>`:''}
-    <div class="task-row">
-      <div class="task-name">${escHtml(dispName)}</div>
+    <div class="task-row" style="display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap">
+      <div class="task-name" style="flex:1;min-width:160px">${escHtml(dispName)}</div>
+      ${pointsBadge}
     </div>
     <div class="task-meta">
       ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}</span>`:''}
@@ -4824,9 +4848,15 @@ function renderMgr(){
       : '';
     const delBtn = `<button onclick="deleteTask('${t.id}','${t.branchId}','${safeName}',event)" title="삭제" style="background:#fff;border:1px solid #e5e7eb;color:#9ca3af;border-radius:6px;padding:2px 6px;font-size:.85em;cursor:pointer;margin-left:6px;vertical-align:middle">🗑</button>`;
     const placePill = t.place ? `<span style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:700;margin-left:4px;vertical-align:middle">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>` : '';
+    // 💎 포인트 배지 — 매니저 뷰에서도 발송한 점수 한눈에 확인
+    const tpts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+    const tpBg = tpts >= 3 ? '#dcfce7' : tpts === 2 ? '#dbeafe' : '#f1f5f9';
+    const tpFg = tpts >= 3 ? '#15803d' : tpts === 2 ? '#1d4ed8' : '#64748b';
+    const tpBd = tpts >= 3 ? '#86efac' : tpts === 2 ? '#93c5fd' : '#cbd5e1';
+    const pointsPill = `<span style="display:inline-block;background:${tpBg};color:${tpFg};border:1px solid ${tpBd};border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:800;margin-left:4px;vertical-align:middle" title="완료 시 +${tpts}점">${'⭐'.repeat(tpts)} ${tpts}점</span>`;
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
       <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
-      <td><div style="font-weight:600;display:flex;align-items:center;gap:4px;flex-wrap:wrap">${adminBtn}<span>${escHtml(dispName)}</span>${placePill}</div>${memo}${clBadge}</td>
+      <td><div style="font-weight:600;display:flex;align-items:center;gap:4px;flex-wrap:wrap">${adminBtn}<span>${escHtml(dispName)}</span>${placePill}${pointsPill}</div>${memo}${clBadge}</td>
       <td><span style="font-size:.85em;${t._status==='delayed'?'color:#dc2626;font-weight:700':''}">${t.deadline||'-'}</span></td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
       <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
