@@ -645,7 +645,13 @@ window.addEventListener('storage', function(e){
 // ============== BRANCH ==============
 function renderBranches(){
   const sel = document.getElementById('branchSel');
-  sel.innerHTML = BRANCHES.map(b => `<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b[LANG] || b.ko}</option>`).join('');
+  const m = getMe();
+  const isOwner = m && (m.role === 'OWNER' || m.role === 'EXECUTIVE');
+  const allLbl = LANG==='ko' ? '🌐 전체 지점' : LANG==='es' ? '🌐 Todas' : '🌐 All Branches';
+  let html = '';
+  if (isOwner) html += `<option value="*" ${BRANCH==='*'?'selected':''}>${allLbl}</option>`;
+  html += BRANCHES.map(b => `<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b[LANG] || b.ko}</option>`).join('');
+  sel.innerHTML = html;
 }
 function setBranch(id){ BRANCH = id; localStorage.setItem('hub.branch', id); renderBranches(); refreshAll(); }
 
@@ -744,8 +750,6 @@ async function toggleClock(){
     });
     _myClock.outTs = outTs;
     releaseWakeLock();
-    const minWorked = Math.round((outTs - _myClock.ts) / 60000);
-    reportClockEventToChat(_myClock.store, `🔴 ${name} · ${_myClock.store} 수동 퇴근 ${fmtClockTime(outTs)} (${minWorked}분 근무)`);
   } else {
     const storeId = m.branch||BRANCH;
     const payload = { uid:m.uid, name:name, email:m.email, store: storeId, ts:Date.now() };
@@ -754,7 +758,6 @@ async function toggleClock(){
     });
     _myClock = payload;
     acquireWakeLock();
-    reportClockEventToChat(storeId, `🟢 ${name} · ${storeId} 수동 출근 ${fmtClockTime(payload.ts)}`);
   }
   renderClockBtn();
   refreshAll();
@@ -865,6 +868,24 @@ async function refreshAll(){
     const allE = Object.values(_clockData).filter(e => brFilter === '*' || e.store === brFilter).sort((a,b) => (b.ts||0) - (a.ts||0));
     if (allE.length === 0) {
       tcList.innerHTML = `<div class="feed-empty">${LANG==='ko'?'오늘 출퇴근 기록이 없습니다':LANG==='es'?'Sin registros hoy':'No records today'}</div>`;
+    } else if (brFilter === '*') {
+      // 전체 지점 — 지점별로 그룹핑해 투명하게 표시
+      const byStore = {};
+      allE.forEach(e => { const s = e.store || 'UNKNOWN'; (byStore[s] = byStore[s] || []).push(e); });
+      let html = '';
+      const sortedStores = Object.keys(byStore).sort();
+      const totalCount = allE.length;
+      const totalWorking = allE.filter(e => e.ts && !e.outTs).length;
+      html += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:.85em;color:#15803d;font-weight:700">📊 전체 ${totalCount}명 (근무중 ${totalWorking}명)</div>`;
+      for (const store of sortedStores) {
+        const list = byStore[store];
+        const working = list.filter(e => e.ts && !e.outTs);
+        const done = list.filter(e => e.outTs);
+        html += `<div style="font-weight:800;color:#1a5c3a;margin:14px 0 6px;font-size:.92em;border-bottom:2px solid #bbf7d0;padding-bottom:4px">📍 ${escHtml(store)} <span style="color:#6b7280;font-weight:600;font-size:.85em">(${list.length}명${working.length?', 근무중 '+working.length:''})</span></div>`;
+        if (working.length) html += working.map(e => _tcRow(e, true)).join('');
+        if (done.length) html += done.map(e => _tcRow(e, false)).join('');
+      }
+      tcList.innerHTML = html;
     } else {
       const working = allE.filter(e => e.ts && !e.outTs);
       const done = allE.filter(e => e.outTs);
@@ -886,11 +907,18 @@ async function refreshAll(){
 function _tcRow(e, working){
   const dur = e.outTs ? Math.round((e.outTs - e.ts)/60000) : Math.round((Date.now() - e.ts)/60000);
   const h = Math.floor(dur/60); const mm = dur%60;
-  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 6px;border-bottom:1px solid #f3f4f6;font-size:.88em">
-    <div>
+  // 자동/수동 출퇴근 + 사유 배지 — 투명하게 누가 어떻게 출퇴근했는지 표시
+  let badges = '';
+  if (e.autoIn === 'geo_entered_store') badges += `<span style="display:inline-block;background:#dcfce7;color:#15803d;font-size:.7em;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px">📍 GPS 자동 출근</span>`;
+  if (e.autoOut === 'geo_left_store') badges += `<span style="display:inline-block;background:#fee2e2;color:#dc2626;font-size:.7em;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px">🚨 GPS 매장 이탈</span>`;
+  if (e.autoOut === 'geo_left_during_background') badges += `<span style="display:inline-block;background:#fed7aa;color:#c2410c;font-size:.7em;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px">⚠️ 백그라운드 이탈</span>`;
+  if (e.autoOut === 'midnight_cleanup') badges += `<span style="display:inline-block;background:#f3f4f6;color:#6b7280;font-size:.7em;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px">🌙 자정 자동 마감</span>`;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 6px;border-bottom:1px solid #f3f4f6;font-size:.88em;flex-wrap:wrap;gap:4px">
+    <div style="flex:1;min-width:0">
       ${working?'<span style="color:#16a34a;font-weight:800;margin-right:4px">●</span>':''}
       <b>${escHtml(e.name||'?')}</b>
       <span style="color:#9ca3af;font-size:.82em;margin-left:6px">${escHtml(e.store||'')}</span>
+      ${badges}
     </div>
     <div style="text-align:right;white-space:nowrap">
       <span style="color:#6b7280">${fmtClockTime(e.ts)}${e.outTs?' → '+fmtClockTime(e.outTs):''}</span>
@@ -1137,8 +1165,6 @@ async function autoClockIn(storeId){
   renderClockBtn();
   refreshAll();
   acquireWakeLock();
-  const tStr = fmtClockTime(payload.ts);
-  reportClockEventToChat(storeId, `🟢 ${name} · ${storeId} 자동 출근 ${tStr} (GPS 진입 감지)`);
 }
 
 async function autoClockOut(reason){
@@ -1160,13 +1186,6 @@ async function autoClockOut(reason){
   renderClockBtn();
   refreshAll();
   releaseWakeLock();
-  const reasonText = reason === 'geo_left_store' ? '매장 이탈 9분 감지'
-                   : reason === 'geo_left_during_background' ? '백그라운드 중 매장 이탈'
-                   : reason === 'midnight_cleanup' ? '자정 자동 마감'
-                   : reason;
-  const tOut = fmtClockTime(outTs);
-  const minWorked = Math.round((outTs - _myClock.ts) / 60000);
-  reportClockEventToChat(storeBefore, `🚨 ${nameBefore} · ${storeBefore} 자동 퇴근 ${tOut} — ${reasonText} (출근 ${tIn}, ${minWorked}분 근무)`);
 }
 
 // ============== YESTERDAY CLEANUP ==============
@@ -1523,8 +1542,12 @@ async function generateDailyReport(){
   const msgKey = `daily_report_${today}`;
   const msg = { sender: m?.name || 'System', text: report, ts: Date.now(), type:'daily_report' };
   try {
-    await fetch(`${FB}/messages/general/${msgKey}.json`, {
+    await fetch(`${FB}/chat/messages/general/${msgKey}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
+    });
+    await fetch(`${FB}/chat/rooms/general.json`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg:'📊 일일 출퇴근 보고서', lastTs: msg.ts, lastSender: msg.sender })
     });
     if (statusEl) statusEl.innerHTML = `<span style="color:#16a34a;font-weight:700">✅ ${LANG==='ko'?'채팅방(general)에 전송 완료':'Posted to general chat'}</span>`;
   } catch(e){
@@ -1666,20 +1689,18 @@ function checkOvertimeAlerts(){
   }).join('');
 }
 
-// ============== LOGIN → SCHEDULE CHECK ==============
-// 로그인 직후 본인 이름이 오늘 스케줄에 있는지 확인.
-// - 스케줄에 없음 + 매니저급 아님 → 매니저 룸 + 본인 지점 Work Hub 에 자동 보고
-// - 스케줄에 있고 시프트 시작 30분+ 지났는데 아직 출근 안 했음 → 매니저 룸에 미출근 보고
-// 하루 1회만 보고 (localStorage 플래그) — 스팸 방지.
+// ============== LOGIN → SCHEDULE CHECK (Time Clock 노출용) ==============
+// 로그인 직후 본인 이름이 오늘 스케줄에 있는지 / 시프트 시작했는데 미출근인지 확인.
+// 채팅에 보고하지 않고 RTDB attendance/alerts 노드에만 기록 → Time Clock UI 에서 표시.
 const SCHEDULE_CHECK_EXEMPT = ['OWNER','EXECUTIVE'];
 async function loginScheduleCheck(){
   const m = getMe();
-  if (!m || !m.name || isManagerRoleExempt(m.role)) return;
+  if (!m || !m.name) return;
+  if (m.role && SCHEDULE_CHECK_EXEMPT.includes(m.role)) return;
   const today = todayStr();
   const flagKey = `scheduleCheck_${today}_${normName(m.name)}`;
   if (localStorage.getItem(flagKey)) return;
   const branch = m.branch || BRANCH;
-  if (SCHEDULE_CHECK_EXEMPT.includes(m.role)) return;
   let data = null;
   try {
     const r = await fetch(`${FB}/schedules/${branch}.json`);
@@ -1689,32 +1710,41 @@ async function loginScheduleCheck(){
   const meKey = normName(m.name);
   const matched = data.employees.find(e => normName(e.name) === meKey);
   localStorage.setItem(flagKey, '1');
+  // 결과는 attendance/alerts/{date}/{branch}/{key} 에 저장 — 채팅 게시 안 함.
+  // Time Clock UI 에서 이 노드를 읽어 노출하면 됨.
+  const alertKey = `${normName(m.name)}_${Date.now()}`;
+  let alertObj = null;
   if (!matched) {
-    await reportClockEventToChat(branch, `⚠️ ${m.name} · ${branch} 로그인 — 오늘 스케줄에 본인 이름 없음 (매니저 확인 필요)`);
-    return;
+    alertObj = { type:'no_schedule', name:m.name, branch:branch, ts:Date.now() };
+  } else {
+    const shift = (data.shifts || {})[`${matched.id}@${today}`];
+    if (!shift || shift.unavail) {
+      alertObj = { type:'no_shift_today', name:m.name, branch:branch, ts:Date.now() };
+    } else {
+      const schedMs = parseTimeToMs(shift.start, today);
+      const diffMin = Math.round((Date.now() - schedMs) / 60000);
+      const key = myClockKey();
+      let hasClockIn = false;
+      if (key){
+        try {
+          const r = await fetch(`${FB}/clockins/${today}/${key}.json`);
+          const cd = await r.json();
+          hasClockIn = !!(cd && cd.ts);
+        } catch(_){}
+      }
+      if (!hasClockIn && diffMin > 30){
+        alertObj = { type:'late_no_clockin', name:m.name, branch:branch, schedStart:shift.start, lateMin:diffMin, ts:Date.now() };
+      }
+    }
   }
-  const shift = (data.shifts || {})[`${matched.id}@${today}`];
-  if (!shift || shift.unavail) {
-    await reportClockEventToChat(branch, `ℹ️ ${m.name} · ${branch} 로그인 — 오늘 시프트 없음 (스케줄은 등록됨)`);
-    return;
-  }
-  const schedMs = parseTimeToMs(shift.start, today);
-  const diffMin = Math.round((Date.now() - schedMs) / 60000);
-  const key = myClockKey();
-  let hasClockIn = false;
-  if (key){
+  if (alertObj){
     try {
-      const r = await fetch(`${FB}/clockins/${today}/${key}.json`);
-      const cd = await r.json();
-      hasClockIn = !!(cd && cd.ts);
-    } catch(_){}
+      await fetch(`${FB}/attendance/alerts/${today}/${branch}/${alertKey}.json`, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(alertObj)
+      });
+    } catch(e){ console.warn('[scheduleAlert] save failed', e); }
   }
-  if (!hasClockIn && diffMin > 30){
-    await reportClockEventToChat(branch, `🚨 ${m.name} · ${branch} 미출근 — 시프트 ${shift.start} 시작 ${diffMin}분 경과, 출근 기록 없음`);
-  }
-}
-function isManagerRoleExempt(role){
-  return role && SCHEDULE_CHECK_EXEMPT.includes(role);
 }
 
 // ============== AUTO DAILY REPORT ==============
