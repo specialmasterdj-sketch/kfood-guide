@@ -88,4 +88,11 @@ if ('serviceWorker' in navigator) {
       location.reload();
     }
   });
+  // 페이지 로드마다 + 5분마다 SW 강제 업데이트 체크 — PWA 가 옛 코드에 갇히는 문제 방지.
+  // navigator.serviceWorker.ready 가 resolve 되면 .update() 호출 → 새 sw.js 가 있으면
+  // install 이벤트 발생 → skipWaiting → activate → sw-updated 메시지 → location.reload.
+  navigator.serviceWorker.ready.then(reg => {
+    try { reg.update(); } catch(_){}
+    setInterval(() => { try { reg.update(); } catch(_){} }, 5 * 60 * 1000);
+  }).catch(() => {});
 }
