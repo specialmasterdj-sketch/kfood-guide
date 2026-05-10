@@ -743,12 +743,18 @@ async function toggleClock(){
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(outTs)
     });
     _myClock.outTs = outTs;
+    releaseWakeLock();
+    const minWorked = Math.round((outTs - _myClock.ts) / 60000);
+    reportClockEventToChat(_myClock.store, `🔴 ${name} · ${_myClock.store} 수동 퇴근 ${fmtClockTime(outTs)} (${minWorked}분 근무)`);
   } else {
-    const payload = { uid:m.uid, name:name, email:m.email, store: m.branch||BRANCH, ts:Date.now() };
+    const storeId = m.branch||BRANCH;
+    const payload = { uid:m.uid, name:name, email:m.email, store: storeId, ts:Date.now() };
     await fetch(`${FB}/clockins/${today}/${key}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
     _myClock = payload;
+    acquireWakeLock();
+    reportClockEventToChat(storeId, `🟢 ${name} · ${storeId} 수동 출근 ${fmtClockTime(payload.ts)}`);
   }
   renderClockBtn();
   refreshAll();
@@ -919,6 +925,101 @@ function renderClockDetail(){
 }
 window.toggleClockDetail = toggleClockDetail;
 
+// ============== HELPERS: 이름 정규화 (정확 매칭용) ==============
+// includes() 대신 정규화된 정확 일치 사용 — "Ana"가 "Anabel"과 잘못 매칭되는 문제 방지.
+function normName(s){
+  return String(s||'').toLowerCase().trim()
+    .replace(/[.,_\-]+/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+// 지점 → Work Hub 채팅방 ID 매핑 (chat.html DEFAULT_ROOMS 와 일치)
+const BRANCH_WORK_HUB = {
+  'MIAMI':         'miami_work_hub',
+  'PEMBROKE_PINES':'pembroke_pines_work_hub',
+  'HOLLYWOOD':     'hollywood_work_hub',
+  'CORAL_SPRINGS': 'coral_springs_work_hub',
+  'LASOLAS':       'lasolas',
+  'WEST_PALM':     null,
+};
+
+// ============== AUTO REPORT TO CHAT ==============
+// 출퇴근 이벤트(자동 출근, 매장 이탈, 미스케줄 로그인 등) 발생 시
+// 매니저 룸 + 본인 지점 Work Hub 에 자동 메시지 게시.
+async function reportClockEventToChat(branchId, text){
+  const m = getMe();
+  if (!m || !m.name) return;
+  const ts = Date.now();
+  const baseMsg = {
+    text: text,
+    sender: m.name,
+    senderBranch: branchId || m.branch || '',
+    color: '#dc2626',
+    isManager: !!m.isManager,
+    ts: ts,
+    isAutoReport: true,
+  };
+  const targets = ['managers'];
+  const hub = BRANCH_WORK_HUB[branchId || m.branch];
+  if (hub) targets.push(hub);
+  for (const room of targets){
+    try {
+      const msgId = ts + '_auto_' + Math.random().toString(36).slice(2,8);
+      await fetch(`${FB}/chat/messages/${room}/${msgId}.json`, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(baseMsg)
+      });
+      await fetch(`${FB}/chat/rooms/${room}.json`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ lastMsg:'🚨 ' + text.slice(0,60), lastTs: ts, lastSender:'시스템' })
+      });
+    } catch(e){ console.warn('[autoReport] failed', room, e); }
+  }
+}
+
+// ============== WAKE LOCK — 출근 중에는 화면 sleep 방지 ==============
+// 백그라운드 추적 한계 보완 — 직원이 폰 화면을 끄면 GPS 가 멈춤. 출근 상태일 땐
+// Wake Lock 으로 화면 깨운 채로 유지 (배터리 영향 있지만 출근 중에만).
+let _wakeLock = null;
+async function acquireWakeLock(){
+  try {
+    if ('wakeLock' in navigator && !_wakeLock){
+      _wakeLock = await navigator.wakeLock.request('screen');
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+      console.info('[wakeLock] acquired');
+    }
+  } catch(e){ console.info('[wakeLock] denied', e.message); }
+}
+function releaseWakeLock(){
+  if (_wakeLock){ try { _wakeLock.release(); } catch(e){} _wakeLock = null; }
+}
+
+// ============== VISIBILITY RESUME — 페이지 복귀 시 위반 감지 ==============
+// 직원이 PWA 닫고 매장 떠난 뒤 한참 후 다시 열면, 그 공백 기간을
+// 검사해 출근 중이었으면 자동 퇴근 처리 + 매니저 보고.
+const VISIBILITY_VIOLATION_MIN = 15 * 60 * 1000;  // 15분 이상 백그라운드면 검사
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible') {
+    try { localStorage.setItem('hub.lastVisibleTs', String(Date.now())); } catch(_){}
+    return;
+  }
+  const last = parseInt(localStorage.getItem('hub.lastVisibleTs') || '0', 10);
+  const gap = Date.now() - (last || Date.now());
+  if (last && gap > VISIBILITY_VIOLATION_MIN && _myClock && _myClock.ts && !_myClock.outTs){
+    // 백그라운드 동안 위치 추적 멈춰있었음 — 즉시 위치 검사
+    if (navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const nearest = findNearestStore(pos.coords.latitude, pos.coords.longitude);
+        if (!nearest){
+          // 출근 중인데 매장 밖 + 15분+ 백그라운드 → 자동 퇴근 + 보고
+          await autoClockOut('geo_left_during_background');
+        }
+      }, () => {}, { enableHighAccuracy:true, timeout:8000 });
+    }
+  }
+  if (_myClock && _myClock.ts && !_myClock.outTs && !_wakeLock) acquireWakeLock();
+});
+
 // ============== GPS GEOFENCING — AUTO CLOCK-IN + CLOCK-OUT ==============
 // 매장 GPS 좌표 — 반경(m) 내 진입=자동 출근, 이탈=자동 퇴근
 const STORE_COORDS = {
@@ -1035,6 +1136,9 @@ async function autoClockIn(storeId){
   if(gate) gate.remove();
   renderClockBtn();
   refreshAll();
+  acquireWakeLock();
+  const tStr = fmtClockTime(payload.ts);
+  reportClockEventToChat(storeId, `🟢 ${name} · ${storeId} 자동 출근 ${tStr} (GPS 진입 감지)`);
 }
 
 async function autoClockOut(reason){
@@ -1042,6 +1146,9 @@ async function autoClockOut(reason){
   if(!key || !_myClock || _myClock.outTs) return;
   const outTs = Date.now();
   const today = todayStr();
+  const storeBefore = _myClock.store;
+  const nameBefore = _myClock.name || resolveMyName() || '';
+  const tIn = fmtClockTime(_myClock.ts);
   await fetch(`${FB}/clockins/${today}/${key}/outTs.json`,{
     method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(outTs)
   });
@@ -1052,6 +1159,14 @@ async function autoClockOut(reason){
   _outsideCount=0;
   renderClockBtn();
   refreshAll();
+  releaseWakeLock();
+  const reasonText = reason === 'geo_left_store' ? '매장 이탈 9분 감지'
+                   : reason === 'geo_left_during_background' ? '백그라운드 중 매장 이탈'
+                   : reason === 'midnight_cleanup' ? '자정 자동 마감'
+                   : reason;
+  const tOut = fmtClockTime(outTs);
+  const minWorked = Math.round((outTs - _myClock.ts) / 60000);
+  reportClockEventToChat(storeBefore, `🚨 ${nameBefore} · ${storeBefore} 자동 퇴근 ${tOut} — ${reasonText} (출근 ${tIn}, ${minWorked}분 근무)`);
 }
 
 // ============== YESTERDAY CLEANUP ==============
@@ -1244,11 +1359,9 @@ function renderScheduleComparison(){
     if (!shift || shift.unavail) return;
 
     const empName = emp.name || '';
-    const clock = clockEntries.find(c => {
-      const cn = (c.name||'').toLowerCase().trim();
-      const en = empName.toLowerCase().trim();
-      return cn === en || cn.includes(en) || en.includes(cn);
-    });
+    // 정확 매칭 — normName 으로 정규화 후 동등 비교만 사용 (includes 제거).
+    const enKey = normName(empName);
+    const clock = clockEntries.find(c => normName(c.name) === enKey);
 
     const schedStart = shift.start;
     const schedEnd = shift.end;
@@ -1553,6 +1666,57 @@ function checkOvertimeAlerts(){
   }).join('');
 }
 
+// ============== LOGIN → SCHEDULE CHECK ==============
+// 로그인 직후 본인 이름이 오늘 스케줄에 있는지 확인.
+// - 스케줄에 없음 + 매니저급 아님 → 매니저 룸 + 본인 지점 Work Hub 에 자동 보고
+// - 스케줄에 있고 시프트 시작 30분+ 지났는데 아직 출근 안 했음 → 매니저 룸에 미출근 보고
+// 하루 1회만 보고 (localStorage 플래그) — 스팸 방지.
+const SCHEDULE_CHECK_EXEMPT = ['OWNER','EXECUTIVE'];
+async function loginScheduleCheck(){
+  const m = getMe();
+  if (!m || !m.name || isManagerRoleExempt(m.role)) return;
+  const today = todayStr();
+  const flagKey = `scheduleCheck_${today}_${normName(m.name)}`;
+  if (localStorage.getItem(flagKey)) return;
+  const branch = m.branch || BRANCH;
+  if (SCHEDULE_CHECK_EXEMPT.includes(m.role)) return;
+  let data = null;
+  try {
+    const r = await fetch(`${FB}/schedules/${branch}.json`);
+    data = await r.json();
+  } catch(e){ console.warn('[loginScheduleCheck] fetch failed', e); return; }
+  if (!data || !data.employees) return;
+  const meKey = normName(m.name);
+  const matched = data.employees.find(e => normName(e.name) === meKey);
+  localStorage.setItem(flagKey, '1');
+  if (!matched) {
+    await reportClockEventToChat(branch, `⚠️ ${m.name} · ${branch} 로그인 — 오늘 스케줄에 본인 이름 없음 (매니저 확인 필요)`);
+    return;
+  }
+  const shift = (data.shifts || {})[`${matched.id}@${today}`];
+  if (!shift || shift.unavail) {
+    await reportClockEventToChat(branch, `ℹ️ ${m.name} · ${branch} 로그인 — 오늘 시프트 없음 (스케줄은 등록됨)`);
+    return;
+  }
+  const schedMs = parseTimeToMs(shift.start, today);
+  const diffMin = Math.round((Date.now() - schedMs) / 60000);
+  const key = myClockKey();
+  let hasClockIn = false;
+  if (key){
+    try {
+      const r = await fetch(`${FB}/clockins/${today}/${key}.json`);
+      const cd = await r.json();
+      hasClockIn = !!(cd && cd.ts);
+    } catch(_){}
+  }
+  if (!hasClockIn && diffMin > 30){
+    await reportClockEventToChat(branch, `🚨 ${m.name} · ${branch} 미출근 — 시프트 ${shift.start} 시작 ${diffMin}분 경과, 출근 기록 없음`);
+  }
+}
+function isManagerRoleExempt(role){
+  return role && SCHEDULE_CHECK_EXEMPT.includes(role);
+}
+
 // ============== AUTO DAILY REPORT ==============
 async function checkAutoReport(){
   const m = getMe();
@@ -1574,15 +1738,19 @@ refreshAll();
 cleanupYesterdayClockouts();
 setInterval(refreshAll, 60000);
 
-// auth-gate 인증 완료 → GPS 시작 + 출근 강제 + 매니저 도구 + 자동 보고서
+// auth-gate 인증 완료 → GPS 시작 + 출근 강제 + 매니저 도구 + 자동 보고서 + 스케줄 체크
 window.addEventListener('km-auth-ready', () => {
   refreshAll();
   startGeoWatch();
   enforceClockIn();
   checkAutoReport();
+  loginScheduleCheck();
   const m = getMe();
   const pill = document.querySelector('.user-pill');
   if (m && m.name && pill) { pill.textContent = m.name.charAt(0).toUpperCase(); pill.title = m.name; }
+  // 출근 상태로 돌아왔으면 Wake Lock 재획득 (페이지 reload 후)
+  if (_myClock && _myClock.ts && !_myClock.outTs) acquireWakeLock();
+  try { localStorage.setItem('hub.lastVisibleTs', String(Date.now())); } catch(_){}
 });
 // 즉시 pill 표시 (이미 로그인된 경우)
 (function(){
