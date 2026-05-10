@@ -688,6 +688,7 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn sec" onclick="sendKFoodDailyAll()" title="지점 + 직원을 골라 오늘 K-Food 일일 작업 보고 발송" style="background:#dbeafe;border-color:#2563eb;color:#1e40af;font-weight:700">🍙 K-Food 발송</button>
     <button class="btn sec" onclick="sendSeafoodDailyAll()" title="지점 + 직원을 골라 오늘 해산물 일일 작업 보고 발송" style="background:#cffafe;border-color:#0891b2;color:#155e75;font-weight:700">🐟 해산물 발송</button>
     <button class="btn sec" onclick="sendProduceDailyAll()" title="지점 + 직원을 골라 오늘 농산물 일일 작업 보고 발송" style="background:#dcfce7;border-color:#16a34a;color:#166534;font-weight:700">🥬 농산물 발송</button>
+    <button class="btn sec" onclick="sendFrozenDailyAll()" title="지점 + 직원을 골라 오늘 냉동고 전체 진열 보고 발송 (2점)" style="background:#e0e7ff;border-color:#6366f1;color:#3730a3;font-weight:700">🧊 냉동고 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -1792,6 +1793,7 @@ const I18N = {
   btnSendKFood:   { ko:'🍙 K-Food 발송',   en:'🍙 Send K-Food',        es:'🍙 Enviar K-Food' },
   btnSendSeafood: { ko:'🐟 해산물 발송',   en:'🐟 Send Seafood',       es:'🐟 Enviar Mariscos' },
   btnSendProduce: { ko:'🥬 농산물 발송',   en:'🥬 Send Produce',       es:'🥬 Enviar Productos' },
+  btnSendFrozen:  { ko:'🧊 냉동고 발송',   en:'🧊 Send Frozen',        es:'🧊 Enviar Congelados' },
   // Filter selects + search + reset
   filterPersonAll: { ko:'👤 담당자: 전체',   en:'👤 Assignee: All',      es:'👤 Encargado: Todos' },
   filterCatAll:    { ko:'📂 카테고리: 전체', en:'📂 Category: All',      es:'📂 Categoría: Todas' },
@@ -1952,6 +1954,7 @@ function refreshStaticI18n(){
     else if (oc.includes('sendKFoodDailyAll'))   b.textContent = t('btnSendKFood');
     else if (oc.includes('sendSeafoodDailyAll')) b.textContent = t('btnSendSeafood');
     else if (oc.includes('sendProduceDailyAll')) b.textContent = t('btnSendProduce');
+    else if (oc.includes('sendFrozenDailyAll'))  b.textContent = t('btnSendFrozen');
     else if (oc.includes('resetMgrFilters'))     b.textContent = t('btnReset');
   });
   // Filter selects — swap the first option (전체) text. Other options come
@@ -2328,6 +2331,17 @@ const _PRODUCE_TPL_2026 = [
     nameTr: { ko:'🥬 상하이', en:'🥬 SHANGHAI', es:'🥬 SHANGHAI' } },
   { name: '🍆 EGGPLANT', done: false,
     nameTr: { ko:'🍆 가지', en:'🍆 EGGPLANT', es:'🍆 BERENJENA' } },
+];
+
+// Frozen (냉동고 전체 진열) 일일 작업 보고 — 매일 아침 발송. 매대 3구역 + 추가.
+// 강도는 K-Food/Seafood 보다 낮은 2점 (사진 위주 점검).
+const _FROZEN_TPL_2026 = [
+  { name: '🧊 냉동 매대 (벽)', done: false,
+    nameTr: { ko:'🧊 냉동 매대 (벽)', en:'🧊 Wall Freezer', es:'🧊 Congelador de Pared' } },
+  { name: '🥶 냉동 케이스 (오픈)', done: false,
+    nameTr: { ko:'🥶 냉동 케이스 (오픈)', en:'🥶 Open Case Freezer', es:'🥶 Congelador Abierto' } },
+  { name: '🍦 아이스크림 코너', done: false,
+    nameTr: { ko:'🍦 아이스크림 코너', en:'🍦 Ice Cream Section', es:'🍦 Sección de Helados' } },
 ];
 
 const _MEAT_TPL_2026 = [
@@ -2835,6 +2849,93 @@ async function sendProduceDailyAll(){
 }
 window.sendProduceDailyAll = sendProduceDailyAll;
 
+// Frozen 일일 보고 — Produce 와 같은 패턴. 카테고리='Frozen',
+// 채팅 라우팅 → grocery_eval (전용 방 없으니 일반 진열 평가방으로). 2점 고정.
+async function sendFrozenDailyAll(){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
+  let chosenBranch;
+  if (allowedBranches.length === 1) {
+    chosenBranch = allowedBranches[0].id;
+  } else {
+    const list = allowedBranches.map((b, i) => (i+1) + ': ' + b.ko).join('\n');
+    const pick = prompt('🧊 냉동고 전체 진열 — 어느 지점에 보낼까요?\n\n' + list + '\n\n번호 입력:', '1');
+    if (pick === null) return;
+    const idx = parseInt(pick.trim(), 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert('번호 잘못됨'); return; }
+    chosenBranch = allowedBranches[idx].id;
+  }
+  const branchKo = (BRANCHES.find(b => b.id === chosenBranch) || {}).ko || chosenBranch;
+  const branches = [chosenBranch];
+  const who = prompt(
+    '🧊 냉동고 전체 진열 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 냉동 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
+  let created = 0, skipped = 0, failed = 0;
+  for (const branchId of branches){
+    const today = todayStr();
+    const userKey = targetName === '*' ? 'all' : slug(targetName);
+    const taskId = 'auto_frozen_daily_' + userKey;
+    const restUrl = `${FB_DB_URL}/tasks/${branchId}/${today}/${taskId}.json`;
+    try {
+      let aq = '';
+      try {
+        const u = window.__fb?.auth?.currentUser;
+        if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+      } catch(_){}
+      const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
+      if (r.ok) {
+        const existing = await r.json();
+        if (existing && Array.isArray(existing.checklist) && existing.checklist.length >= _FROZEN_TPL_2026.length) {
+          skipped++; continue;
+        }
+      }
+      const checklist = _FROZEN_TPL_2026.map(t => Object.assign({}, t));
+      const payload = {
+        name: '🧊 냉동고 전체 진열 보고',
+        nameTr: { ko:'🧊 냉동고 전체 진열 보고', en:'🧊 Daily Frozen Display Report', es:'🧊 Reporte Diario de Congelados' },
+        deadline: '12:00',
+        category: 'Frozen',
+        requirePhoto: true,
+        place: '냉동 지역',
+        locationNote: '오늘 아침 냉동고 전체 진열 상태 — 각 구역별 사진 첨부 + 보충 필요한 품목 메모.',
+        locationNoteTr: {
+          ko: '오늘 아침 냉동고 전체 진열 상태 — 각 구역별 사진 첨부.',
+          en: 'Frozen section overall display this morning — attach photo per zone.',
+          es: 'Estado del congelador esta mañana — adjunte foto por zona.',
+        },
+        assignedTo: targetName,
+        assignedToId: targetName === '*' ? null : targetName,
+        from: me.name + ' (냉동고 일괄 발송)',
+        fromRole: me.role || 'MANAGER',
+        createdAt: Date.now(),
+        checklist,
+        autoFrozenDaily: true,
+        // 냉동고 전체 진열 — 2점 고정 (사진 위주, 강도 보통)
+        points: 2,
+      };
+      const w = await fetch(restUrl + (aq ? aq : ''), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (w.ok) created++; else { console.warn('[frozen-daily] write fail', branchId, w.status); failed++; }
+    } catch(e) { console.warn('[frozen-daily]', branchId, e); failed++; }
+  }
+  alert('🧊 냉동고 전체 진열 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
+}
+window.sendFrozenDailyAll = sendFrozenDailyAll;
+
 // K-Food '+ 음식 추가' / Seafood '+ 생선 추가' / Produce '+ 농산물 추가' —
 // iOS PWA 에서 prompt() 가 가끔 블록돼서 커스텀 모달 사용. 새 항목을 checklist
 // 배열 끝에 push, 기존 항목 데이터는 그대로 유지하며 새 빈 줄만 추가.
@@ -2996,6 +3097,36 @@ async function autoMigrateProduceTasks(taskList){
   }
 }
 
+// 💎 포인트 마이그레이션 — 오늘 이미 발송된 일일 보고 task 들이 points 필드
+// 없을 때 (어제 v429 이전 발송분) 자동으로 적용:
+// · 정육 / K-Food / 해산물 / 농산물 = 3점
+// · 냉동고 = 2점
+// 한 번 마이그레이션 한 task 는 _POINTS_MIGRATED 에 표시해 재실행 안 함.
+const _POINTS_MIGRATED = new Set();
+async function autoMigrateTaskPoints(taskList){
+  if (!Array.isArray(taskList) || !window.__fb) return;
+  for (const t of taskList) {
+    if (!t) continue;
+    const key = t.branchId + '/' + t.id;
+    if (_POINTS_MIGRATED.has(key)) continue;
+    // 이미 points 필드 있으면 건드리지 않음 (매니저가 수동 발송한 1·2·3 점 보존)
+    if (typeof t.points === 'number') { _POINTS_MIGRATED.add(key); continue; }
+    let pts = null;
+    if (t.autoMeatDaily || t.autoKfoodDaily || t.autoSeafoodDaily || t.autoProduceDaily) pts = 3;
+    else if (t.autoFrozenDaily) pts = 2;
+    if (!pts) { _POINTS_MIGRATED.add(key); continue; }
+    _POINTS_MIGRATED.add(key);
+    const path = 'tasks/' + t.branchId + '/' + todayStr() + '/' + t.id;
+    try {
+      await window.__fb.update(window.__fb.ref(window.__fb.db, path), { points: pts });
+      console.info('[points-migrate] OK', t.branchId, t.id, '→', pts);
+    } catch(e) {
+      console.warn('[points-migrate] fail', t.branchId, t.id, e);
+      _POINTS_MIGRATED.delete(key);
+    }
+  }
+}
+
 function subscribeTasks(){
   if (!me) return;
   if (!window.__fb) { setTimeout(subscribeTasks, 500); return; }
@@ -3020,6 +3151,7 @@ function subscribeTasks(){
         if (Object.keys(firstByBranch).length >= BRANCHES.length) detectNewTasks();
         renderAll();
         autoMigrateProduceTasks(TASKS);
+        autoMigrateTaskPoints(TASKS);
       });
     });
   } else {
