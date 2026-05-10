@@ -1763,7 +1763,7 @@ function openProductDetail(id){
       relatedSec.style.display = '';
       setText('detailRelatedTitle', t('detRelatedTitle', { n: related.length + (p.status === 'discarded' ? 1 : 0) }));
       $('detailRelatedList').innerHTML = related.map(r => {
-        const lossOne = (r.cost || r.price || 0) * (r.qty || 1);
+        const lossOne = (r.cost || r.price || 0) * lossEffectiveQty(r);
         const dt = r.discardedAt ? _detailFmtDate(r.discardedAt) : '—';
         const bObj = BRANCHES.find(b => b.id === (r._branch || BRANCH));
         const branchName = bObj ? (bObj[LANG] || bObj.ko) : (r._branch || BRANCH);
@@ -1839,7 +1839,8 @@ async function shareToExpiredChat(){
     `🏢 ${branchLbl} · 등록: ${p.addedBy || me.name}`
   ];
   if ((p.cost || p.price) && (p.qty || 1) > 0){
-    const loss = (p.cost || p.price || 0) * (p.qty || 1);
+    // 폐기됐고 부분 폐기면 discardQty 만 손실, 아니면 qty 전체 (예상 손실)
+    const loss = (p.cost || p.price || 0) * (p.status==='discarded' ? lossEffectiveQty(p) : (p.qty || 1));
     lines.push(`예상 손실: $${loss.toFixed(2)}`);
   }
   const text = lines.join('\n');
@@ -1874,7 +1875,7 @@ async function shareToExpiredChat(){
     // Structured metadata so the chat room can render this as a
     // product card (with D-day badge, status, loss, etc.) instead of
     // a plain chat bubble. Falls back to `text` for older clients.
-    const lossNum = (p.cost || p.price || 0) * (p.qty || 1);
+    const lossNum = (p.cost || p.price || 0) * (p.status==='discarded' ? lossEffectiveQty(p) : (p.qty || 1));
     const meta = {
       kind: 'expiry',
       recordId: __DETAIL_ID,
@@ -2027,14 +2028,38 @@ async function markStatus(id, kind){
   // 폐기 사진은 보존 (증거·패턴 분석 가치). discardedAt 만 기록.
   if (kind === 'danger') {
     upd.discardedAt = Date.now();
+    // 💡 부분 폐기 — 등록 시 5개였는데 4개 팔리고 1개 남으면 손실은 1개분만 집계.
+    // 직원이 실제 폐기한 개수를 입력. 빈값/취소 = 전체 폐기 (qty 그대로).
+    const p = (PRODUCTS||[]).find(x => x.id === id);
+    if (p && (p.qty || 0) > 1) {
+      const ph = LANG==='en' ? 'How many actually discarded? (sold the rest)\nDefault = ' + p.qty + ' (all)\nEnter actual discard count:'
+               : LANG==='es' ? '¿Cuántos descartados realmente? (resto vendido)\nDefault = ' + p.qty + ' (todos)\nIngresar cantidad real:'
+               :                '실제 폐기한 개수는?\n등록 ' + p.qty + '개 중 일부만 폐기면 그 숫자 입력.\n비워두면 전체 ' + p.qty + '개 폐기.';
+      const input = prompt(ph, String(p.qty));
+      if (input == null) return; // 사용자 취소
+      const n = parseInt(String(input).trim(), 10);
+      if (!isNaN(n) && n >= 0 && n <= p.qty) {
+        upd.discardQty = n;
+        // qty 자체는 등록 원본 보존 (몇 개 등록했는지 분석 가치). 손실 계산은
+        // discardQty 우선 → 없으면 qty fallback. (lossEffectiveQty 헬퍼 참고)
+      }
+    }
   } else {
     // 정상 / 할인으로 되돌릴 때 폐기 흔적 정리 — 손실 리포트 정합성
     upd.discardedAt = null;
+    upd.discardQty = null;
   }
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
   showToast(t('marked'));
   // ✅ 정상 체크 후 홈으로 — 다음 체크 작업 빠르게 시작할 수 있도록
   if (kind === 'normal') switchPage('home');
+}
+
+// 손실 계산용 — discardQty 가 있으면 그 값, 없으면 qty (전체 폐기)
+function lossEffectiveQty(p){
+  if (!p) return 0;
+  if (typeof p.discardQty === 'number' && p.discardQty >= 0) return p.discardQty;
+  return p.qty || 1;
 }
 
 // ============== Settings ==============
@@ -2203,7 +2228,7 @@ async function shareTodayMineToChat(){
     const statusIc = p.status === 'discarded' ? '❌ 폐기'
                    : p.status === 'discounted' ? '⚠️ 할인'
                    : '📦 등록';
-    const lossNum = (p.cost || p.price || 0) * (p.qty || 1);
+    const lossNum = (p.cost || p.price || 0) * (p.status==='discarded' ? lossEffectiveQty(p) : (p.qty || 1));
     const text = [
       `${statusIc} · ${p.name || '(이름 없음)'}`,
       `유통기한: ${p.expiry || '—'} · 수량: ${p.qty != null ? p.qty : 1}개`,
@@ -2478,7 +2503,8 @@ function renderReport(){
     ? Object.values(__ALL_BRANCH_DATA).flat()
     : PRODUCTS.map(p => Object.assign({ _branch:BRANCH }, p));
   const discarded = sourceProducts.filter(p => p.status === 'discarded' && p.discardedAt && p.discardedAt >= fromMs);
-  const total = discarded.reduce((s,p) => s + (p.cost || p.price || 0)*(p.qty||1), 0);
+  // 부분 폐기 적용 — discardQty 가 있으면 그 값, 없으면 qty (전체 폐기)
+  const total = discarded.reduce((s,p) => s + (p.cost || p.price || 0)*lossEffectiveQty(p), 0);
   $('reportTotalVal').textContent = '$' + Math.round(total);
   // 지점별 손실 — 전지점 모드에서만
   const byBranchSec = $('reportByBranchSection');
@@ -2487,7 +2513,7 @@ function renderReport(){
     const byBranch = {};
     discarded.forEach(p => {
       const b = p._branch || BRANCH;
-      byBranch[b] = (byBranch[b] || 0) + (p.cost || p.price || 0)*(p.qty||1);
+      byBranch[b] = (byBranch[b] || 0) + (p.cost || p.price || 0)*lossEffectiveQty(p);
     });
     const branchRows = BRANCHES.map(b => [b, byBranch[b.id] || 0]).sort((a,b) => b[1] - a[1]);
     const maxB = branchRows.length && branchRows[0][1] ? branchRows[0][1] : 1;
@@ -2501,7 +2527,7 @@ function renderReport(){
   const byCat = {};
   discarded.forEach(p => {
     const c = p.category || '기타';
-    byCat[c] = (byCat[c] || 0) + (p.cost || p.price || 0)*(p.qty||1);
+    byCat[c] = (byCat[c] || 0) + (p.cost || p.price || 0)*lossEffectiveQty(p);
   });
   const catRows = Object.entries(byCat).sort((a,b) => b[1] - a[1]);
   const max = catRows.length ? catRows[0][1] : 1;
@@ -2513,7 +2539,7 @@ function renderReport(){
   discarded.forEach(p => {
     if (!byProd[p.name]) byProd[p.name] = { total:0, latestId:p.id, latestTs:p.discardedAt||0, count:0 };
     const e = byProd[p.name];
-    e.total += (p.cost || p.price || 0)*(p.qty||1);
+    e.total += (p.cost || p.price || 0)*lossEffectiveQty(p);
     e.count += 1;
     if ((p.discardedAt||0) > e.latestTs) { e.latestTs = p.discardedAt||0; e.latestId = p.id; }
   });
