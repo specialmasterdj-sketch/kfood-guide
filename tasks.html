@@ -3852,7 +3852,11 @@ function renderClEntries(task, item, idx){
     const eid = e.id || 'legacy';
     const safeText = String(e.text || '').replace(/"/g,'&quot;');
     const photos = Array.isArray(e.photos) ? e.photos : [];
-    const thumbs = photos.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:zoom-in;border:1px solid #d1d5db">`).join('');
+    // 각 사진에 ✕ 삭제 버튼 오버레이 — 직원이 잘못 올린 사진 즉시 제거 가능
+    const thumbs = photos.map((u, pi) => `<span style="position:relative;display:inline-block;flex-shrink:0">
+      <img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:zoom-in;border:1px solid #d1d5db">
+      <button onclick="event.preventDefault();event.stopPropagation();removeClEntryPhoto('${task.id}','${task.branchId}',${idx},'${eid}',${pi})" title="이 사진 삭제 / Delete" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:16px;height:16px;font-size:.7em;line-height:1;cursor:pointer;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.3);font-family:inherit;font-weight:700">✕</button>
+    </span>`).join('');
     return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
       <input type="text" value="${safeText}" placeholder="${phText}"
         data-entry-id="${eid}"
@@ -4049,6 +4053,26 @@ window.removeClEntry = removeClEntry;
 window.setClEntryText = setClEntryText;
 window.addClEntryPhoto = addClEntryPhoto;
 
+// 정육 등 entries[] 모드 — 한 줄 안의 사진 1장 삭제. confirm 없이 즉시 처리
+// (작은 ✕ 버튼이라 의도적 클릭이고, 다시 사진 찍어 추가하면 됨).
+async function removeClEntryPhoto(taskId, branchId, idx, entryId, photoIdx){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  try {
+    const arr = _entriesFromDOM(taskId, branchId, idx);
+    const e = arr.find(x => (x.id || 'legacy') === entryId);
+    if (!e || !Array.isArray(e.photos)) return;
+    if (photoIdx < 0 || photoIdx >= e.photos.length) return;
+    e.photos.splice(photoIdx, 1);
+    e.ts = Date.now();
+    await _writeEntries(taskId, branchId, idx, arr);
+    if (typeof showToast === 'function') showToast('🗑 사진 삭제됨', '');
+  } catch(err){
+    console.error('[removeClEntryPhoto]', err);
+    if (typeof showToast === 'function') showToast('⚠️ 삭제 실패', String(err.message||err).slice(0,80));
+  }
+}
+window.removeClEntryPhoto = removeClEntryPhoto;
+
 // 일반 (비-정육) 업무는 한 줄짜리 메모 입력. .memo 필드에 직접 저장 —
 // 정육처럼 entries[] 배열은 안 씀. 화면도 단순.
 function renderClMemoInput(task, item, idx){
@@ -4173,7 +4197,10 @@ function renderChecklistInline(task){
         const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
         const dispName = c._displayName || c.name || '';
         const photoList = Array.isArray(c.photos) ? c.photos : (c.photo ? [c.photo] : []);
-        const thumbs = photoList.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기">`).join('');
+        const thumbs = photoList.map((u, pi) => `<span style="position:relative;display:inline-block;flex-shrink:0">
+        <img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기">
+        <button onclick="event.preventDefault();event.stopPropagation();removeChecklistPhoto('${task.id}','${task.branchId}',${i},${pi})" title="이 사진 삭제 / Delete" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:16px;height:16px;font-size:.7em;line-height:1;cursor:pointer;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.3);font-family:inherit;font-weight:700">✕</button>
+      </span>`).join('');
         const addBtn = `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 추가 (여러 장 가능)">📷${photoList.length?'+':''}</button>`;
         const photoCtl = `<span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${thumbs}${addBtn}</span>`;
         return `<label class="${cls}">
@@ -4192,7 +4219,10 @@ function renderChecklistInline(task){
       const by = c && c.done && c.doneBy ? `<span class="by">${escHtml(c.doneBy)}</span>` : '';
       const dispName = c._displayName || c.name || '';
       const photoList = Array.isArray(c.photos) ? c.photos : (c.photo ? [c.photo] : []);
-      const thumbs = photoList.map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기">`).join('');
+      const thumbs = photoList.map((u, pi) => `<span style="position:relative;display:inline-block;flex-shrink:0">
+        <img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기">
+        <button onclick="event.preventDefault();event.stopPropagation();removeChecklistPhoto('${task.id}','${task.branchId}',${i},${pi})" title="이 사진 삭제 / Delete" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:16px;height:16px;font-size:.7em;line-height:1;cursor:pointer;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.3);font-family:inherit;font-weight:700">✕</button>
+      </span>`).join('');
       const addBtn = `<button class="cl-photo-btn" onclick="event.preventDefault();pickChecklistPhoto('${task.id}','${task.branchId}',${i})" title="사진 추가 (여러 장 가능)">📷${photoList.length?'+':''}</button>`;
       const photoCtl = `<span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${thumbs}${addBtn}</span>`;
       return `<label class="${cls}">
@@ -4261,7 +4291,10 @@ function renderChecklistInline(task){
   const overallAddLbl = ({ ko:'📷 사진 추가', en:'📷 Add photos', es:'📷 Agregar fotos' })[LANG] || '📷 사진 추가';
   const overallPhotos = Array.isArray(task.photos) ? task.photos : [];
   const overallThumbs = overallPhotos
-    .map(u => `<img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #d1fae5">`)
+    .map((u, pi) => `<span style="position:relative;display:inline-block">
+      <img class="cl-photo-thumb" src="${u}" onclick="event.preventDefault();openLb('${u}')" title="클릭하여 보기" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #d1fae5">
+      <button onclick="event.preventDefault();event.stopPropagation();removeTaskPhoto('${task.id}','${task.branchId}',${pi})" title="이 사진 삭제 / Delete" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:18px;height:18px;font-size:.74em;line-height:1;cursor:pointer;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.3);font-family:inherit;font-weight:700">✕</button>
+    </span>`)
     .join('');
   const overallSection = isAddableMenuTask
     ? `<div style="margin-top:10px;padding:10px 12px;background:linear-gradient(180deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:10px">
@@ -4375,6 +4408,29 @@ function pickChecklistPhoto(taskId, branchId, idx){
 }
 window.pickChecklistPhoto = pickChecklistPhoto;
 
+// 일반 체크리스트 — c.photos[] 에서 1장 삭제
+async function removeChecklistPhoto(taskId, branchId, idx, photoIdx){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  try {
+    const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+    if (!task || !task.checklist || !task.checklist[idx]) return;
+    const c = task.checklist[idx];
+    const photos = Array.isArray(c.photos) ? c.photos.slice() : (c.photo ? [c.photo] : []);
+    if (photoIdx < 0 || photoIdx >= photos.length) return;
+    photos.splice(photoIdx, 1);
+    const itemPath = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId + '/checklist/' + idx;
+    await window.__fb.update(window.__fb.ref(window.__fb.db, itemPath), {
+      photos: photos,
+      photo: null, // legacy 단일 필드 정리
+    });
+    if (typeof showToast === 'function') showToast('🗑 사진 삭제됨', '');
+  } catch(err){
+    console.error('[removeChecklistPhoto]', err);
+    if (typeof showToast === 'function') showToast('⚠️ 삭제 실패', String(err.message||err).slice(0,80));
+  }
+}
+window.removeChecklistPhoto = removeChecklistPhoto;
+
 // 📸 task.photos 에 직접 사진 여러장 추가 — 항목별 사진과는 별개. 매대 전체
 // 모습이나 작업장 전경을 한 번에 여러 장 업로드. KFood/Seafood/Produce
 // 일일 보고에서 '오늘 전체 진열 사진' 섹션이 호출.
@@ -4437,6 +4493,25 @@ function pickTaskPhotos(taskId, branchId){
   input.click();
 }
 window.pickTaskPhotos = pickTaskPhotos;
+
+// task.photos[] 에서 1장 삭제 — KFood/Seafood/Produce 전체 진열 사진
+async function removeTaskPhoto(taskId, branchId, photoIdx){
+  if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  try {
+    const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
+    if (!task || !Array.isArray(task.photos)) return;
+    if (photoIdx < 0 || photoIdx >= task.photos.length) return;
+    const photos = task.photos.slice();
+    photos.splice(photoIdx, 1);
+    const taskPath = 'tasks/' + branchId + '/' + todayStr() + '/' + taskId;
+    await window.__fb.update(window.__fb.ref(window.__fb.db, taskPath), { photos });
+    if (typeof showToast === 'function') showToast('🗑 사진 삭제됨', '');
+  } catch(err){
+    console.error('[removeTaskPhoto]', err);
+    if (typeof showToast === 'function') showToast('⚠️ 삭제 실패', String(err.message||err).slice(0,80));
+  }
+}
+window.removeTaskPhoto = removeTaskPhoto;
 async function toggleChecklistItem(taskId, branchId, idx, isChecked){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
