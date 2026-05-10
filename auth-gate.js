@@ -89,16 +89,23 @@ function syncToChatMe(profile){
   try {
     const existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
     const boot = bootstrapFor(profile.email);
-    // 이름 결정 — 로컬에 직원이 직접 선택한 이름이 있으면 절대 덮어쓰지 않음.
-    // 공유 기기에서 A가 이름 선택 → B가 나중에 열었을 때 A 이름이 끼어드는 것 방지.
-    const GENERIC = ['Staff','Manager','Employee','User','Admin','staff','manager','employee','user','admin'];
+    // 이름 결정 정책:
+    //  1) Bootstrap admin (DJ, B.H.K) → canonical name
+    //  2) 로컬에 본인이 직접 선택한 개인 이름 있음 → 절대 덮어쓰지 않음
+    //  3) 둘 다 아니면 — Firebase profile name 이 generic ("manager","Staff") 이면 빈 문자열로 두고
+    //     chat.html 의 me-modal 이 본인 이름 선택을 강제. profile.name 을 그대로 박으면
+    //     공유 계정 사용자가 "manager"/"Staff" 로 메시지 올림.
+    const GENERIC = ['staff','manager','employee','admin','user','직원','매니저','스태프','사원','관리자'];
+    function _isGeneric(n){ return !n || GENERIC.includes(String(n).toLowerCase().trim()); }
     let finalName;
     if (boot) {
       finalName = boot.name;
-    } else if (existing.name && !GENERIC.includes(existing.name)) {
+    } else if (existing.name && !_isGeneric(existing.name)) {
       finalName = existing.name;
+    } else if (profile.name && !_isGeneric(profile.name)) {
+      finalName = profile.name;
     } else {
-      finalName = profile.name || existing.name || '';
+      finalName = '';   // ← me-modal 강제 트리거
     }
     const next = {
       ...existing,
