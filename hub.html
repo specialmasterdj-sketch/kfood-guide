@@ -472,6 +472,7 @@ a{color:inherit;text-decoration:none}
           <button class="tc-tab active" data-tab="today" onclick="switchTcTab('today')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:800;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid var(--primary);color:var(--primary)">📋 <span data-t="tc_tab_today">오늘</span></button>
           <button class="tc-tab" data-tab="schedule" onclick="switchTcTab('schedule')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent;color:var(--text-3)">📅 <span data-t="tc_tab_sched">스케줄 비교</span></button>
           <button class="tc-tab" data-tab="weekly" onclick="switchTcTab('weekly')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent;color:var(--text-3)">📊 <span data-t="tc_tab_weekly">주간</span></button>
+          <button class="tc-tab" data-tab="monthly" onclick="switchTcTab('monthly')" style="flex:1;padding:12px;border:0;background:transparent;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent;color:var(--text-3)">📅 <span data-t="tc_tab_monthly">월간</span></button>
         </div>
         <div id="tcTabToday" style="padding:16px">
           <div id="timeclockList"><div class="feed-empty">로딩 중…</div></div>
@@ -481,6 +482,15 @@ a{color:inherit;text-decoration:none}
         </div>
         <div id="tcTabWeekly" style="padding:16px;display:none">
           <div id="weeklyReport"><div class="feed-empty">로딩 중…</div></div>
+        </div>
+        <div id="tcTabMonthly" style="padding:16px;display:none">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <label style="font-weight:700;font-size:.88em;color:#374151">📅 <span data-t="tc_month_label">월 선택</span>:</label>
+            <input type="month" id="monthPicker" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:.9em;font-family:inherit">
+            <button onclick="loadMonthlyData()" style="padding:6px 14px;background:var(--primary);color:#fff;border:0;border-radius:8px;font-weight:700;font-size:.85em;cursor:pointer;font-family:inherit">🔍 <span data-t="tc_month_load">조회</span></button>
+            <button onclick="downloadMonthlyCSV()" style="padding:6px 14px;background:#1f2937;color:#fff;border:0;border-radius:8px;font-weight:700;font-size:.85em;cursor:pointer;font-family:inherit;margin-left:auto">💾 <span data-t="tc_month_csv">CSV</span></button>
+          </div>
+          <div id="monthlyReport"><div class="feed-empty" data-t="tc_month_pick">월을 선택하고 조회하세요.</div></div>
         </div>
       </div>
 
@@ -582,6 +592,11 @@ const T = {
   tc_tab_today: { ko:'오늘',                  en:'Today',               es:'Hoy' },
   tc_tab_sched: { ko:'스케줄 비교',            en:'Schedule',            es:'Horario' },
   tc_tab_weekly:{ ko:'주간',                   en:'Weekly',              es:'Semanal' },
+  tc_tab_monthly:{ ko:'월간',                  en:'Monthly',             es:'Mensual' },
+  tc_month_label:{ ko:'월 선택',              en:'Select month',        es:'Seleccionar mes' },
+  tc_month_load: { ko:'조회',                 en:'Load',                es:'Cargar' },
+  tc_month_csv:  { ko:'CSV',                  en:'CSV',                 es:'CSV' },
+  tc_month_pick: { ko:'월을 선택하고 조회하세요.', en:'Pick a month and load.', es:'Selecciona un mes y carga.' },
   tc_today:     { ko:'오늘 출퇴근 현황',        en:'Today\'s Attendance', es:'Asistencia de Hoy' },
   tc_mgr_title: { ko:'매니저 도구',            en:'Manager Tools',       es:'Herramientas' },
   tc_daily_btn: { ko:'일일 보고서 생성 → 채팅방 전송', en:'Generate daily report → Post to chat', es:'Generar reporte diario → Enviar al chat' },
@@ -653,7 +668,16 @@ function renderBranches(){
   html += BRANCHES.map(b => `<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b[LANG] || b.ko}</option>`).join('');
   sel.innerHTML = html;
 }
-function setBranch(id){ BRANCH = id; localStorage.setItem('hub.branch', id); renderBranches(); refreshAll(); }
+function setBranch(id){
+  BRANCH = id;
+  localStorage.setItem('hub.branch', id);
+  renderBranches();
+  refreshAll();
+  // 월간 탭이 이미 로드된 상태면 새 지점 기준으로 즉시 재렌더
+  if (_monthlyCache && document.getElementById('tcTabMonthly')?.style.display !== 'none') {
+    renderMonthlyReport();
+  }
+}
 
 // ============== QUICK ACTIONS ==============
 const QUICK_ACTIONS = [
@@ -1221,6 +1245,7 @@ function switchTcTab(tab){
   document.getElementById('tcTabToday').style.display = tab==='today'?'':'none';
   document.getElementById('tcTabSchedule').style.display = tab==='schedule'?'':'none';
   document.getElementById('tcTabWeekly').style.display = tab==='weekly'?'':'none';
+  document.getElementById('tcTabMonthly').style.display = tab==='monthly'?'':'none';
   document.querySelectorAll('.tc-tab').forEach(b => {
     const active = b.dataset.tab === tab;
     b.style.borderBottomColor = active ? 'var(--primary)' : 'transparent';
@@ -1229,8 +1254,174 @@ function switchTcTab(tab){
   });
   if (tab === 'weekly') loadWeeklyData();
   if (tab === 'schedule') loadScheduleComparison();
+  if (tab === 'monthly') initMonthlyTab();
 }
 window.switchTcTab = switchTcTab;
+
+// ============== MONTHLY REPORT (1일 ~ 말일) ==============
+let _monthlyCache = null;
+let _monthlyKey = null;
+
+function initMonthlyTab(){
+  const picker = document.getElementById('monthPicker');
+  if (picker && !picker.value){
+    const d = new Date();
+    picker.value = d.toISOString().slice(0,7);
+  }
+}
+function _daysInMonth(yearMonth){
+  const [y,m] = yearMonth.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function _dateStr(yearMonth, day){
+  return `${yearMonth}-${String(day).padStart(2,'0')}`;
+}
+async function loadMonthlyData(){
+  const picker = document.getElementById('monthPicker');
+  const ym = (picker && picker.value) || new Date().toISOString().slice(0,7);
+  const el = document.getElementById('monthlyReport');
+  if (!el) return;
+  el.innerHTML = `<div class="feed-empty">${LANG==='ko'?'로딩 중…':'Loading…'}</div>`;
+  const days = _daysInMonth(ym);
+  const fetches = [];
+  for (let d = 1; d <= days; d++){
+    const ds = _dateStr(ym, d);
+    fetches.push(fetch(`${FB}/clockins/${ds}.json?t=${Date.now()}`, {cache:'no-store'})
+      .then(r => r.json()).then(data => ({date: ds, data: data || {}}))
+      .catch(() => ({date: ds, data: {}})));
+  }
+  const results = await Promise.all(fetches);
+  _monthlyCache = results;
+  _monthlyKey = ym;
+  renderMonthlyReport();
+}
+window.loadMonthlyData = loadMonthlyData;
+
+function renderMonthlyReport(){
+  const el = document.getElementById('monthlyReport');
+  if (!el || !_monthlyCache) return;
+  const brFilter = BRANCH;
+  const lateThreshold = (dateStr) => {
+    const t = new Date(dateStr+'T09:15:00');
+    return t.getTime();
+  };
+  // employee aggregation: { normName: { name, store, days, totalMin, lateCount, autoOutCount, daily: [...] } }
+  const empMap = {};
+  for (const {date, data} of _monthlyCache){
+    for (const [key, e] of Object.entries(data || {})){
+      if (!e || !e.ts) continue;
+      const store = e.store || 'UNKNOWN';
+      if (brFilter !== '*' && store !== brFilter) continue;
+      const nm = e.name || '?';
+      const nKey = String(nm).toLowerCase().trim();
+      if (!empMap[nKey]) {
+        empMap[nKey] = { name: nm, stores: new Set(), days: 0, totalMin: 0, lateCount: 0, autoOutCount: 0, daily: [] };
+      }
+      const r = empMap[nKey];
+      r.stores.add(store);
+      const inT = e.ts;
+      const outT = e.outTs || null;
+      const dur = outT ? Math.round((outT - inT) / 60000) : 0;
+      const isLate = inT > lateThreshold(date);
+      const isAutoOut = !!e.autoOut;
+      r.days++;
+      r.totalMin += dur;
+      if (isLate) r.lateCount++;
+      if (isAutoOut) r.autoOutCount++;
+      r.daily.push({ date, store, ts:inT, outTs:outT, dur, isLate, autoIn: e.autoIn || null, autoOut: e.autoOut || null, key });
+    }
+  }
+  const emps = Object.values(empMap).sort((a,b) => a.name.localeCompare(b.name));
+  if (emps.length === 0){
+    el.innerHTML = `<div class="feed-empty">${LANG==='ko'?'해당 월 / 지점에 출퇴근 기록이 없습니다.':'No records for this month / branch.'}</div>`;
+    return;
+  }
+  // 합계 헤더
+  const totalDays = emps.reduce((s,e) => s + e.days, 0);
+  const totalMin = emps.reduce((s,e) => s + e.totalMin, 0);
+  const totalLate = emps.reduce((s,e) => s + e.lateCount, 0);
+  const branchLbl = brFilter === '*' ? (LANG==='ko'?'전체 지점':'All branches') : brFilter;
+  let html = `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:.88em;color:#15803d;font-weight:700">
+    📊 ${_monthlyKey} · ${branchLbl} · ${emps.length}명 · 총 ${totalDays}일 근무 · ${Math.floor(totalMin/60)}h ${totalMin%60}m · 지각 ${totalLate}회
+  </div>`;
+  // 직원별 카드
+  for (const e of emps){
+    const h = Math.floor(e.totalMin/60), mm = e.totalMin%60;
+    const storeLbl = Array.from(e.stores).join(', ');
+    const id = 'mr_' + e.name.replace(/\W+/g,'_');
+    html += `<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" onclick="document.getElementById('${id}').style.display=document.getElementById('${id}').style.display==='none'?'block':'none'">
+        <div style="flex:1;min-width:0">
+          <b style="font-size:.95em">${escHtml(e.name)}</b>
+          <span style="color:#9ca3af;font-size:.8em;margin-left:6px">${escHtml(storeLbl)}</span>
+        </div>
+        <div style="text-align:right;font-size:.85em;color:#374151;white-space:nowrap">
+          <span style="font-weight:700">${e.days}일</span>
+          <span style="color:#6b7280;margin-left:8px">${h}h ${mm}m</span>
+          ${e.lateCount?`<span style="color:#dc2626;font-weight:700;margin-left:8px">⚠ 지각 ${e.lateCount}</span>`:''}
+          ${e.autoOutCount?`<span style="color:#c2410c;font-weight:700;margin-left:8px">🚨 자동퇴근 ${e.autoOutCount}</span>`:''}
+        </div>
+      </div>
+      <div id="${id}" style="display:none;margin-top:8px;border-top:1px dashed #e5e7eb;padding-top:8px;font-size:.82em">
+        ${e.daily.sort((a,b)=>a.date.localeCompare(b.date)).map(d => {
+          const dh = Math.floor(d.dur/60), dm = d.dur%60;
+          let badges = '';
+          if (d.autoIn === 'geo_entered_store') badges += ' 📍';
+          if (d.autoOut === 'geo_left_store') badges += ' 🚨';
+          if (d.autoOut === 'geo_left_during_background') badges += ' ⚠️';
+          if (d.autoOut === 'midnight_cleanup') badges += ' 🌙';
+          return `<div style="display:flex;justify-content:space-between;padding:3px 0;color:#4b5563">
+            <span>${d.date} · ${escHtml(d.store)}</span>
+            <span>${fmtClockTime(d.ts)} → ${d.outTs?fmtClockTime(d.outTs):'—'}${badges} <span style="color:#9ca3af;margin-left:6px">${dh}h ${dm}m${d.isLate?' ⏰지각':''}</span></span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function downloadMonthlyCSV(){
+  if (!_monthlyCache) { alert(LANG==='ko'?'먼저 [조회] 버튼으로 데이터를 불러오세요.':'Load data first.'); return; }
+  const brFilter = BRANCH;
+  const rows = [['Date','Name','Store','Clock In','Clock Out','Hours','Minutes','Late','Auto In','Auto Out']];
+  for (const {date, data} of _monthlyCache){
+    for (const e of Object.values(data || {})){
+      if (!e || !e.ts) continue;
+      const store = e.store || '';
+      if (brFilter !== '*' && store !== brFilter) continue;
+      const inT = new Date(e.ts);
+      const outT = e.outTs ? new Date(e.outTs) : null;
+      const dur = outT ? Math.round((e.outTs - e.ts)/60000) : 0;
+      const lateMs = new Date(date+'T09:15:00').getTime();
+      const isLate = e.ts > lateMs ? 'YES' : '';
+      rows.push([
+        date,
+        e.name || '',
+        store,
+        inT.toLocaleTimeString('en-US', {hour12:false}),
+        outT ? outT.toLocaleTimeString('en-US', {hour12:false}) : '',
+        Math.floor(dur/60),
+        dur%60,
+        isLate,
+        e.autoIn || '',
+        e.autoOut || ''
+      ]);
+    }
+  }
+  const csv = rows.map(r => r.map(v => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([new Uint8Array([0xEF,0xBB,0xBF]), csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const branchLbl = brFilter === '*' ? 'all-branches' : brFilter;
+  a.download = `attendance_${_monthlyKey}_${branchLbl}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+window.downloadMonthlyCSV = downloadMonthlyCSV;
 
 // ============== WEEKLY REPORT ==============
 let _weeklyCache = null;
