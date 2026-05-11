@@ -38,6 +38,7 @@
     { ic: '🏆', lbl: { ko:'활동 순위',       en:'Leaderboard',    es:'Clasificación' },   href: './leaderboard.html' },
 
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
+    { ic: '🏆', lbl: { ko:'Top 500 재고',  en:'Top 500 Stock', es:'Top 500 Inventario' }, href: './top500.html', highlight: true },
     { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
     { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: './lookup.html' },
     { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/' },
