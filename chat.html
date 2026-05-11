@@ -833,7 +833,19 @@ function applyLang() {
   );
   document.documentElement.lang = LANG;
   if (typeof renderRooms === 'function') renderRooms();
+  // payroll 메시지 캡션도 언어별 — 활성 룸이 payroll 이면 재렌더
+  if (typeof ACTIVE_ROOM !== 'undefined' && ACTIVE_ROOM === 'payroll'
+      && typeof renderMessages === 'function') {
+    try { renderMessages(); } catch(_){}
+  }
 }
+// 다른 페이지에서 언어 바꾸면 자동 반영 (lang-sync.js + storage 이벤트)
+window.addEventListener('storage', (e) => {
+  if (e.key === 'kimchi_lang' && e.newValue && e.newValue !== LANG){
+    LANG = e.newValue;
+    applyLang();
+  }
+});
 document.addEventListener('DOMContentLoaded', applyLang);
 </script>
 
@@ -1818,6 +1830,58 @@ function msgsFromObj(d){
     return obj;
   }).sort((a,b) => (a._latestActivity||0) - (b._latestActivity||0));
 }
+// Payroll 메시지 다국어 렌더러 — 보는 사람 LANG 으로 즉시 포맷.
+// 1) payrollMeta 필드 있으면 (새 메시지) 그대로 사용
+// 2) 없으면 옛 한국어 / 영어 / 스페인어 텍스트 패턴 파싱 시도
+const PAYROLL_CHAT_I18N = {
+  ko: { tagCash:'[현금]', tagCpa:'[CPA]', staff:'인원', staffSuffix:'명', total:'총', sig:'사인', sigBlank:'(공란)' },
+  en: { tagCash:'[CASH]', tagCpa:'[CPA]', staff:'Staff', staffSuffix:'', total:'Total', sig:'Signed by', sigBlank:'(blank)' },
+  es: { tagCash:'[EFECTIVO]', tagCpa:'[CPA]', staff:'Empleados', staffSuffix:'', total:'Total', sig:'Firmado por', sigBlank:'(en blanco)' },
+};
+function _payrollT(){ return PAYROLL_CHAT_I18N[LANG] || PAYROLL_CHAT_I18N.ko; }
+function _fmtPayrollText(meta){
+  const t = _payrollT();
+  const tag = (meta.type === 'cpa') ? t.tagCpa : t.tagCash;
+  const total = Number(meta.total || 0).toLocaleString('en-US');
+  const sig = meta.sig || t.sigBlank;
+  const staffStr = t.staff + ' ' + meta.rowCount + (t.staffSuffix || '');
+  return tag + ' ' + (meta.branchLabel || '') + ' · ' + (meta.weekRange || '')
+       + ' · ' + staffStr + ' · ' + t.total + ' $' + total + ' · ' + t.sig + ': ' + sig;
+}
+// 옛 메시지 (payrollMeta 없는 것) 텍스트 패턴 파싱 — 3개 언어 형식 모두 인식
+function _parsePayrollText(text){
+  if (!text) return null;
+  // 통합 정규식: [현금]/[CASH]/[CPA]/[EFECTIVO] 시작
+  const re = /^\[(현금|CASH|CPA|EFECTIVO)\]\s+(.+?)\s+·\s+(.+?)\s+·\s+(?:인원|Staff|Empleados)\s+(\d+)(?:명)?\s+·\s+(?:총|Total)\s+\$([\d,]+(?:\.\d+)?)\s+·\s+(?:사인|Signed by|Firmado por):\s*(.+?)$/;
+  const m = String(text).match(re);
+  if (!m) return null;
+  const tagWord = m[1];
+  return {
+    type: (tagWord === 'CPA') ? 'cpa' : 'cash',
+    branchLabel: m[2].trim(),
+    weekRange: m[3].trim(),
+    rowCount: parseInt(m[4], 10),
+    total: parseFloat(m[5].replace(/,/g, '')),
+    sig: m[6].trim().replace(/^\((공란|blank|en blanco)\)$/, ''),
+  };
+}
+function localizePayrollMessage(m){
+  if (!m) return m && m.text || '';
+  // payroll 룸에서만 의미 있음 — 다른 룸은 그대로
+  if (ACTIVE_ROOM !== 'payroll') return m.text || '';
+  // 1) 메타데이터 우선
+  if (m.payrollMeta && typeof m.payrollMeta === 'object'){
+    try { return _fmtPayrollText(m.payrollMeta); } catch(_){}
+  }
+  // 2) 텍스트 파싱
+  const parsed = _parsePayrollText(m.text);
+  if (parsed) {
+    try { return _fmtPayrollText(parsed); } catch(_){}
+  }
+  // 3) 인식 불가 — 원본 그대로
+  return m.text || '';
+}
+
 function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
@@ -1870,13 +1934,15 @@ function renderMessages(){
     const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'공유',en:'Share',es:'Compartir'}[LANG]||'공유')}</button>` : '';
     const dateBadge = fmtMsgDateBadge(d);
     const dateBadgeHtml = dateBadge ? ` <span class="date-badge">${escapeHtml(dateBadge)}</span>` : '';
+    // payroll 룸 메시지 — viewer 언어로 동적 재포맷 (옛 메시지의 한국어 텍스트도 localize)
+    const localizedText = localizePayrollMessage(m);
     html += `<div class="msg ${mine?'mine':''}" data-msg-id="${m.id}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
         ${delBtn}
         <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}${dateBadgeHtml}</div>
         ${refCard}
-        ${m.text ? `<div class="text">${escapeHtml(m.text)}</div>` : ''}
+        ${localizedText ? `<div class="text">${escapeHtml(localizedText)}</div>` : ''}
         ${photoHtml}
         ${fileHtml}
         <div class="ts">${time}</div>
