@@ -44,6 +44,18 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 .filter-chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{background:#fff;border:1.5px solid #e5e7eb;color:#374151;border-radius:999px;padding:5px 12px;font-size:.82em;font-weight:700;cursor:pointer;font-family:inherit}
 .chip.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+/* Category bar — 매장 매대 따라 스캔하기 위한 카테고리 필터 */
+.cat-bar{background:#fff;border-radius:12px;padding:8px;margin-bottom:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:0 1px 3px rgba(15,23,42,.05);display:flex;gap:6px;flex-wrap:nowrap;scrollbar-width:thin}
+.cat-bar::-webkit-scrollbar{height:6px}
+.cat-bar::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+.cat-chip{flex-shrink:0;background:#f8fafc;border:1.5px solid #e5e7eb;color:#374151;border-radius:999px;padding:7px 13px;font-size:.82em;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;transition:.12s}
+.cat-chip:hover{background:#f0fdf4;border-color:#1a5c3a;color:#1a5c3a}
+.cat-chip.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+.cat-chip .cnt{background:rgba(15,23,42,.08);color:inherit;border-radius:999px;padding:1px 7px;font-size:.86em;font-weight:800;min-width:22px;text-align:center}
+.cat-chip.active .cnt{background:rgba(255,255,255,.28);color:#fff}
+.cat-chip .pend{background:#dc2626;color:#fff;border-radius:999px;padding:1px 6px;font-size:.74em;font-weight:800;margin-left:-2px}
+.cat-chip.active .pend{background:#fff;color:#dc2626}
+.cat-progress{font-size:.74em;color:#6b7280;text-align:center;margin-bottom:6px}
 .item-row{background:#fff;border-radius:11px;padding:10px 12px;margin-bottom:6px;display:flex;gap:10px;align-items:center;box-shadow:0 1px 2px rgba(15,23,42,.04);transition:.12s;cursor:pointer}
 .item-row:hover{box-shadow:0 2px 8px rgba(15,23,42,.08)}
 .item-row.crit{border-left:4px solid #dc2626;background:linear-gradient(90deg,#fef2f2,#fff 30%)}
@@ -146,6 +158,9 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
     <button class="btn sec" onclick="setFilter('all',null)" id="allBtn">전체</button>
   </div>
 
+  <div class="cat-bar" id="catBar"></div>
+  <div class="cat-progress" id="catProgress"></div>
+
   <div class="stat-line" id="statLine">로딩 중…</div>
   <div id="list"></div>
 </div>
@@ -241,6 +256,9 @@ const I18N = {
     toastLow: (c,n) => `🟡 ${c} — 부족 (${n}개)`,
     toastOk: (c,n) => `🟢 ${c} — 정상 (${n}개)`,
     locale: 'ko-KR',
+    allCats: '📂 전체',
+    catProgress: (cat,done,total) => `📍 ${cat} · 점검 완료 ${done}/${total}`,
+    catStat: (b,cat,n) => `📍 ${b} · ${cat} · ${n}개 상품`,
   },
   en: {
     pageTitle: '🏆 Top 500 Inventory',
@@ -284,6 +302,9 @@ const I18N = {
     toastLow: (c,n) => `🟡 ${c} — Low (${n} units)`,
     toastOk: (c,n) => `🟢 ${c} — OK (${n} units)`,
     locale: 'en-US',
+    allCats: '📂 All',
+    catProgress: (cat,done,total) => `📍 ${cat} · Checked ${done}/${total}`,
+    catStat: (b,cat,n) => `📍 ${b} · ${cat} · ${n} items`,
   },
   es: {
     pageTitle: '🏆 Inventario Top 500',
@@ -327,6 +348,9 @@ const I18N = {
     toastLow: (c,n) => `🟡 ${c} — Bajo (${n} u.)`,
     toastOk: (c,n) => `🟢 ${c} — OK (${n} u.)`,
     locale: 'es-US',
+    allCats: '📂 Todas',
+    catProgress: (cat,done,total) => `📍 ${cat} · Revisados ${done}/${total}`,
+    catStat: (b,cat,n) => `📍 ${b} · ${cat} · ${n} artículos`,
   }
 };
 let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; }})();
@@ -339,6 +363,7 @@ let STATE = {};         // code → { qty, ts, by, status }
 let BRANCH = null;
 let QUERY = '';
 let FILTER = 'all';     // 'all'|'crit'|'low'|'ok'|'unset'
+let CATEGORY = 'all';   // 'all' | category name — 매대 따라 스캔 시 한 카테고리만 보기
 let ME = null;
 let SOURCE_DAYS = 90;   // CSV 데이터의 기간 — 일일 평균 계산용
 
@@ -398,6 +423,8 @@ function applyI18N(){
   document.querySelectorAll('#langSw button').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.lang === LANG);
   });
+  // 카테고리 칩 + stat line 도 언어 갱신
+  if (TOP500.length) updateStatLine();
 }
 function setLang(L){
   if (!I18N[L] || L === LANG) {
@@ -426,15 +453,34 @@ async function loadTop500(){
     const d = await r.json();
     TOP500 = d.items || [];
     TOP500.forEach(p => { SALES_INDEX[p.code] = p.qty; });
-    $('statLine').innerHTML = escHtml(T().statCover(
-      branchLabel(),
-      TOP500.length,
-      (d.coverageQty*100).toFixed(0),
-      (d.coverageRevenue*100).toFixed(0)
-    ));
+    // 이전에 보던 카테고리 복원 (지점별) — 카테고리가 더 이상 없으면 'all' 로 리셋
+    let savedCat = 'all';
+    try { savedCat = localStorage.getItem('top500.cat.' + BRANCH) || 'all'; } catch(_){}
+    const cats = new Set(TOP500.map(p => p.cat||'(no cat)'));
+    CATEGORY = (savedCat === 'all' || cats.has(savedCat)) ? savedCat : 'all';
+    updateStatLine(d);
   } catch(e) {
     $('statLine').innerHTML = `<span style="color:#dc2626;font-weight:700">${escHtml(T().noBranchData(branchLabel()))}</span>`;
     console.warn('[top500] no data for', BRANCH, e);
+  }
+}
+
+let LAST_COVERAGE = null;   // 카테고리 stat 표시할 때 전체 stat 다시 만들기 위해 캐싱
+function updateStatLine(d){
+  if (d) LAST_COVERAGE = d;
+  const t = T();
+  if (CATEGORY !== 'all') {
+    const n = TOP500.filter(p => (p.cat||'(no cat)') === CATEGORY).length;
+    $('statLine').innerHTML = escHtml(t.catStat(branchLabel(), CATEGORY, n));
+    return;
+  }
+  if (LAST_COVERAGE) {
+    $('statLine').innerHTML = escHtml(t.statCover(
+      branchLabel(),
+      TOP500.length,
+      (LAST_COVERAGE.coverageQty*100).toFixed(0),
+      (LAST_COVERAGE.coverageRevenue*100).toFixed(0)
+    ));
   }
 }
 
@@ -465,8 +511,63 @@ function setFilter(f, el){
   render();
 }
 
+function setCategory(cat){
+  CATEGORY = cat;
+  try { localStorage.setItem('top500.cat.' + (BRANCH||''), cat); } catch(_){}
+  updateStatLine();
+  renderCatBar();   // active state refresh
+  render();
+  // 선택한 카테고리 첫 행으로 부드럽게 스크롤 (모바일 매대 스캔 시 편의)
+  if (cat !== 'all') {
+    const list = $('list');
+    if (list) window.scrollTo({ top: list.offsetTop - 8, behavior: 'smooth' });
+  }
+}
+window.setCategory = setCategory;
+
+// 매장 매대 따라 스캔하기 위한 카테고리 칩 렌더 — 카테고리별 상품 수 + 미점검 카운트 표시.
+function renderCatBar(){
+  const bar = $('catBar');
+  if (!bar) return;
+  if (!TOP500.length) { bar.innerHTML = ''; $('catProgress').textContent = ''; return; }
+  // 카테고리별 통계 — 총 개수 + 미점검 개수
+  const stats = {};
+  TOP500.forEach(p => {
+    const c = p.cat || '(no cat)';
+    if (!stats[c]) stats[c] = { total: 0, pending: 0 };
+    stats[c].total++;
+    if (statusOf(p.code) === 'unset') stats[c].pending++;
+  });
+  // 카운트 desc 정렬 — 큰 매대부터 노출
+  const cats = Object.entries(stats).sort((a,b) => b[1].total - a[1].total);
+  const totalAll = TOP500.length;
+  const pendingAll = TOP500.filter(p => statusOf(p.code) === 'unset').length;
+  const t = T();
+  const chips = [
+    `<button class="cat-chip ${CATEGORY==='all'?'active':''}" onclick="setCategory('all')">
+       ${escHtml(t.allCats)} <span class="cnt">${totalAll}</span>${pendingAll>0?`<span class="pend">${pendingAll}</span>`:''}
+     </button>`
+  ];
+  cats.forEach(([c, s]) => {
+    const active = CATEGORY === c ? 'active' : '';
+    chips.push(`<button class="cat-chip ${active}" onclick="setCategory(${JSON.stringify(c)})">
+      ${escHtml(c)} <span class="cnt">${s.total}</span>${s.pending>0?`<span class="pend">${s.pending}</span>`:''}
+    </button>`);
+  });
+  bar.innerHTML = chips.join('');
+  // 카테고리 선택 시 진행률 표시
+  if (CATEGORY !== 'all' && stats[CATEGORY]) {
+    const s = stats[CATEGORY];
+    const done = s.total - s.pending;
+    $('catProgress').textContent = t.catProgress(CATEGORY, done, s.total);
+  } else {
+    $('catProgress').textContent = '';
+  }
+}
+
 function render(){
   computeKpis();
+  renderCatBar();
   const q = String(QUERY||'').trim().toLowerCase();
   let list = TOP500.slice();
   if (q) {
@@ -475,6 +576,7 @@ function render(){
       String(p.code||'').toLowerCase().includes(q) ||
       String(p.cat||'').toLowerCase().includes(q));
   }
+  if (CATEGORY !== 'all') list = list.filter(p => (p.cat||'(no cat)') === CATEGORY);
   if (FILTER !== 'all') list = list.filter(p => statusOf(p.code) === FILTER);
   if (!list.length){
     if (TOP500.length === 0) {
