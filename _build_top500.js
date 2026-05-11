@@ -53,9 +53,12 @@ function num(s){ return parseFloat(String(s||'').replace(/[",]/g, '')) || 0; }
 // 매니저 요청: PRODUCE (FRUITS, VEGETABLE) + MEAT/SEAFOOD (MEAT, SEAFOOD,
 // MARINATED MEAT) 통째로 제외해 grocery/dry/frozen/snacks 위주의 진열 관리만.
 const EXCLUDE_DEPTS = new Set(['PRODUCE', 'MEAT/SEAFOOD']);
+// 짧은 PLU 코드 (3~6 자리) 는 매장 내부 제조품 (김치, 김밥, 반찬 등) — 별도 관리.
+// 진짜 UPC/EAN 바코드는 8자리 이상이므로 7자리 미만 자동 제외.
+const MIN_CODE_LEN = 7;
 
 const products = [];
-const excluded = { byDept: {}, total: 0 };
+const excluded = { byDept: {}, total: 0, shortCode: 0 };
 for (let r = 1; r < rows.length; r++) {
   const row = rows[r];
   if (!row || row.length < 5) continue;
@@ -68,6 +71,12 @@ for (let r = 1; r < rows.length; r++) {
   const dept = String(row[I.dep]||'').trim();
   if (EXCLUDE_DEPTS.has(dept)) {
     excluded.byDept[dept] = (excluded.byDept[dept]||0) + 1;
+    excluded.total++;
+    continue;
+  }
+  // 짧은 코드 (매장 내부 PLU — 김치, 김밥, 반찬 등) 제외
+  if (code.length < MIN_CODE_LEN) {
+    excluded.shortCode++;
     excluded.total++;
     continue;
   }
@@ -85,6 +94,7 @@ for (let r = 1; r < rows.length; r++) {
 }
 console.log('Excluded (managed separately via daily report):', excluded.total, 'SKUs');
 Object.entries(excluded.byDept).forEach(([d,n]) => console.log('  ' + d + ': ' + n));
+console.log('  short code (<' + MIN_CODE_LEN + ' chars, in-house PLU): ' + excluded.shortCode);
 
 // Sort by QTY desc (highest turnover first — most likely to run out)
 products.sort((a, b) => b.qty - a.qty);
