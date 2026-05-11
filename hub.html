@@ -1696,7 +1696,10 @@ async function generateDailyReport(){
     data = (await r.json()) || {};
   } catch(e){}
 
-  const entries = Object.values(data);
+  // OWNER / EXECUTIVE (DJ, B.H.K) 출근 기록은 보고서에서 자동 제외 — 사장님은 매장 출근 안 함.
+  const OWNER_NAMES = new Set(['DJ','B.H.K','BHK']);
+  function _normNm(s){ return String(s||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
+  const entries = Object.values(data).filter(e => !OWNER_NAMES.has(_normNm(e.name)));
   if (entries.length === 0) {
     if (statusEl) statusEl.textContent = LANG==='ko'?'오늘 출퇴근 기록이 없습니다':'No records today';
     return;
@@ -1731,16 +1734,17 @@ async function generateDailyReport(){
 
   const m = getMe();
   const msgKey = `daily_report_${today}`;
-  const msg = { sender: m?.name || 'System', text: report, ts: Date.now(), type:'daily_report' };
+  const msg = { sender: m?.name || 'System', text: report, ts: Date.now(), type:'daily_report', isManager: true };
+  // 매니저 룸으로 전송 (이전엔 HR 인사·급여 룸 — 어색해서 옮김. HR 룸은 건의 전용.)
   try {
-    await fetch(`${FB}/chat/messages/hr_inquiries/${msgKey}.json`, {
+    await fetch(`${FB}/chat/messages/managers/${msgKey}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
     });
-    await fetch(`${FB}/chat/rooms/hr_inquiries.json`, {
+    await fetch(`${FB}/chat/rooms/managers.json`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ lastMsg:'📊 일일 출퇴근 보고서', lastTs: msg.ts, lastSender: msg.sender })
     });
-    if (statusEl) statusEl.innerHTML = `<span style="color:#16a34a;font-weight:700">✅ ${LANG==='ko'?'HR Inquiries 룸에 전송 완료':'Posted to HR Inquiries'}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#16a34a;font-weight:700">✅ ${LANG==='ko'?'매니저 룸에 전송 완료':'Posted to Managers room'}</span>`;
   } catch(e){
     if (statusEl) statusEl.innerHTML = `<span style="color:#dc2626">❌ ${LANG==='ko'?'전송 실패':'Failed'}</span>`;
   }
@@ -1945,7 +1949,9 @@ async function loginScheduleCheck(){
 async function checkAutoReport(){
   const m = getMe();
   if (!m || !m.role) return;
-  if (!['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(m.role)) return;
+  // SUPERVISOR 제외 — 매니저급만 자동 전송 트리거 (스태프/감독자가 매일 hub 열 때마다
+  // 보고서 발송하던 게 노이즈였음. 매니저 룸에만 가는 것도 있고 권한 일치성 차원)
+  if (!['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER'].includes(m.role)) return;
   const today = todayStr();
   // 1) RTDB 플래그 확인 (다른 기기가 이미 보냈는지)
   try {
