@@ -182,36 +182,74 @@ function watchProfile(user){
   });
 }
 
-// 페이지 이동마다 즉시 redirect 하던 게 사용자 불만 (특히 iOS / 느린 망에서
+// 페이지 이동마다 즉시 redirect 하던 게 전 지점 불만 (iOS / 느린 망에서
 // IndexedDB persistence 가 200ms~수초 늦게 복원되는 동안 잠깐 null 로 발화됨).
-// chat.me 에 이전에 로그인한 흔적(uid+email) 이 있으면 Firebase auth 가
-// 복원될 때까지 잠시 기다린다. 그래도 안 잡히면 그제서야 auth.html 로.
+// chat.me 에 이전에 로그인한 흔적 있으면 Firebase auth 가 복원될 때까지 너그럽게 기다림.
+// (uid 없는 옛 형식 chat.me 도 호환 — email 또는 name+branch 만 있어도 로그인 흔적으로 인정)
 let __redirected = false;
+let __waitingForRestore = false;
+
 async function _maybeRedirect(user){
   if (isExemptPath()) return;
-  if (user) { watchProfile(user); return; }
+  if (user) {
+    __waitingForRestore = false;
+    watchProfile(user);
+    return;
+  }
+  // 동시에 두 번 안 들어오게 — onAuthStateChanged 가 multiple 발화 가능
+  if (__waitingForRestore) return;
 
   let cached = null;
   try { cached = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
-  if (cached && cached.uid && cached.email) {
-    // 최근 로그인 흔적 있음 → 4초까지 대기 (auth persistence 복원 시간)
-    const start = Date.now();
-    while (Date.now() - start < 4000) {
-      await new Promise(r => setTimeout(r, 200));
-      if (auth.currentUser) {
-        console.info('[auth-gate] auth restored after', Date.now() - start, 'ms');
-        watchProfile(auth.currentUser);
-        return;
-      }
+  // 옛 chat.me 형식도 호환: uid 없어도 email / name+branch 만 있으면 "전에 로그인함" 인정.
+  const hadPreviousLogin = cached && (
+    cached.email ||
+    cached.uid ||
+    (cached.name && cached.branch)
+  );
+
+  if (hadPreviousLogin) {
+    __waitingForRestore = true;
+    // iOS Safari 의 IndexedDB cold-start 가 4초 넘어가는 경우가 있어 8초로 늘림.
+    // Poll + 자연 onAuthStateChanged 재발화 둘 다 활용 (먼저 잡히는 쪽).
+    const restored = await new Promise(resolve => {
+      let done = false;
+      const finish = (u) => { if (!done){ done = true; resolve(u); } };
+      const TIMEOUT = setTimeout(() => finish(null), 8000);
+      const poll = setInterval(() => {
+        if (auth.currentUser){ clearInterval(poll); clearTimeout(TIMEOUT); finish(auth.currentUser); }
+      }, 150);
+    });
+    __waitingForRestore = false;
+    if (restored){
+      console.info('[auth-gate] auth restored from persistence');
+      watchProfile(restored);
+      return;
     }
+    console.warn('[auth-gate] persistence empty — redirecting to login');
   }
-  if (__redirected) return;   // 이미 redirect 진행 중
+  if (__redirected) return;
   __redirected = true;
   const ret = encodeURIComponent(location.pathname + location.search);
   location.replace('./auth.html?return=' + ret);
 }
 
 onAuthStateChanged(auth, (user) => { _maybeRedirect(user); });
+
+// PWA / 모바일 브라우저 — 백그라운드에서 돌아왔을 때 IndexedDB 가
+// 늦게 깨면 잘못된 logout 으로 보임. visibilitychange 에서 currentUser
+// 다시 확인. 이미 로그인된 상태면 noop.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !auth.currentUser && !__redirected){
+    // 한 번 더 시도 — currentUser 가 곧 채워질 가능성
+    setTimeout(() => {
+      if (auth.currentUser){
+        console.info('[auth-gate] resumed — auth restored on visibility change');
+        watchProfile(auth.currentUser);
+      }
+    }, 500);
+  }
+});
 
 // Expose minimal API for pages that want to read auth state directly
 window.__authGate = {
