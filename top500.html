@@ -502,11 +502,33 @@ function categoryEmoji(cat){
 }
 
 // ============== Photos (전 지점 공유, RTDB /catalog/photos/{code}) ==============
+// 사진 소스 우선순위:
+//   1. RTDB /catalog/photos/{code} — 사용자 업로드 (dataURL, base64)
+//   2. ./top500/photos/{safeCode}.jpg — kimchi-mart-order 카탈로그 매칭 결과 (URL)
+// dataURL 인지 URL 인지로 사용자 업로드 vs static 구분 가능.
+let STATIC_PHOTO_MAP = {};   // { upc: safeCode } — static 자산이 있는 코드 목록
 async function loadPhotos(){
+  PHOTOS = {};
+  // 1. RTDB 사용자 업로드 (top priority)
   try {
     const r = await fetch(`${FB_DB}/catalog/photos.json?t=` + Date.now(), { cache:'no-store' });
-    PHOTOS = (r.ok && await r.json()) || {};
-  } catch(e) { PHOTOS = {}; console.warn('[photos]', e); }
+    if (r.ok) PHOTOS = (await r.json()) || {};
+  } catch(e) { console.warn('[photos rtdb]', e); }
+  // 2. 정적 카탈로그 매칭 fallback
+  try {
+    const r2 = await fetch('./top500/photos-map.json?t=' + Date.now(), { cache:'no-store' });
+    if (r2.ok) {
+      STATIC_PHOTO_MAP = (await r2.json()) || {};
+      for (const [code, safe] of Object.entries(STATIC_PHOTO_MAP)) {
+        if (!PHOTOS[code]) PHOTOS[code] = `./top500/photos/${safe}.jpg`;
+      }
+    }
+  } catch(e) { console.warn('[photos static]', e); }
+}
+function isUserPhoto(code){
+  // 사용자 업로드 사진은 dataURL (data:image/...) 로 시작
+  const p = PHOTOS[code];
+  return p && typeof p === 'string' && p.startsWith('data:');
 }
 
 async function savePhotoToDB(code, dataURL){
@@ -921,7 +943,8 @@ function openPhotoModal(code){
   $('phTakeBtn').textContent = PHOTOS[code] ? t.photoChange : t.photoTakeBtn;
   $('phDelBtn').textContent = t.photoDelBtn;
   $('phCloseBtn').textContent = t.photoCloseBtn;
-  $('phDelBtn').style.display = PHOTOS[code] ? '' : 'none';
+  // 삭제는 사용자 업로드(dataURL)만 가능 — 카탈로그 매칭 사진은 못 지움
+  $('phDelBtn').style.display = isUserPhoto(code) ? '' : 'none';
   $('phBusy').textContent = t.photoBusy;
   $('phBusy').style.display = 'none';
   $('photoOv').classList.add('show');
@@ -980,8 +1003,14 @@ async function confirmDeletePhoto(){
   $('phBusy').style.display = '';
   try {
     await deletePhotoFromDB(PHOTO_CODE);
+    // 사용자 업로드 지운 후 static 매칭 사진이 있으면 그걸로 폴백
+    if (STATIC_PHOTO_MAP[PHOTO_CODE]) {
+      PHOTOS[PHOTO_CODE] = `./top500/photos/${STATIC_PHOTO_MAP[PHOTO_CODE]}.jpg`;
+      $('phTakeBtn').textContent = t.photoChange;
+    } else {
+      $('phTakeBtn').textContent = t.photoTakeBtn;
+    }
     renderPhotoView();
-    $('phTakeBtn').textContent = t.photoTakeBtn;
     $('phDelBtn').style.display = 'none';
     if (CUR_CODE === PHOTO_CODE) syncQtyPhoto(PHOTO_CODE);
     render();
