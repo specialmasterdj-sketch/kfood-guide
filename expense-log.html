@@ -304,11 +304,17 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
       </select>
     </div>
     <div class="field">
-      <label id="lblFieldVendor">회사 / 벤더</label>
-      <input type="text" id="entryVendor" list="vendorList" placeholder="예: ASAMI FOODS" autocomplete="off" oninput="updateSaveToggle('vendor')">
+      <label id="lblFieldVendor">회사 / 벤더 <span style="color:#9ca3af;font-weight:400;font-size:.78em">(현금화 check 이면 'cash' 입력)</span></label>
+      <input type="text" id="entryVendor" list="vendorList" placeholder="예: ASAMI FOODS 또는 cash" autocomplete="off" oninput="updateSaveToggle('vendor');onVendorChange()">
       <label class="save-toggle" id="entryVendorSaveLbl" style="display:none;font-size:.85em;color:#15803d;font-weight:700;margin-top:6px;cursor:pointer;align-items:center;gap:6px">
         <input type="checkbox" id="entryVendorSaveCb" checked style="width:18px;height:18px;-webkit-appearance:auto;appearance:auto;accent-color:#15803d;cursor:pointer;flex-shrink:0;padding:0;margin:0;border:1.5px solid #d1d5db"> <span id="lblSaveVendor">📌 다음에도 쓰려면 저장 목록에 추가</span>
       </label>
+    </div>
+    <!-- 💵 받는 사람 — vendor 가 'cash' 일 때만 노출. 누구에게 현금 check 줬는지 기록. -->
+    <div class="field" id="recipientField" style="display:none">
+      <label id="lblFieldRecipient">💵 받는 사람 (CASH CHECK)</label>
+      <input type="text" id="entryRecipient" placeholder="예: 김매니저, John, Erika" autocomplete="off">
+      <div style="font-size:.74em;color:#6b7280;margin-top:4px">현금화 한 check 받은 사람 이름</div>
     </div>
     <datalist id="vendorList"></datalist>
     <div class="field">
@@ -352,6 +358,14 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
           <option value="other">📋 기타 (Other)</option>
         </select>
         <button class="btn sec" onclick="saveDetailPurpose()" style="flex:0 0 auto">저장</button>
+      </div>
+    </div>
+    <!-- 💵 받는 사람 변경 — CASH CHECK 인 경우만 노출 -->
+    <div id="detailRecipientWrap" style="margin:6px 0;display:none">
+      <label style="font-size:.82em;color:#6b7280;font-weight:700;display:block;margin-bottom:4px">💵 받는 사람 (CASH CHECK)</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="detailRecipientIn" placeholder="예: 김매니저, John, Erika" style="flex:1;border:1.5px solid #d1d5db;border-radius:9px;padding:8px 10px;font-size:.92em;font-family:inherit;background:#fff">
+        <button class="btn sec" onclick="saveDetailRecipient()" style="flex:0 0 auto">저장</button>
       </div>
     </div>
     <div class="actions">
@@ -590,6 +604,18 @@ const PURPOSE_META = {
   other:      { icon:'📋', bg:'#f3f4f6', fg:'#6b7280', ko:'기타',       en:'Other',       es:'Otro' },
 };
 function purposeLabel(p){ const m = PURPOSE_META[p]; return m ? (m[LANG] || m.ko) : ''; }
+// 'cash' 벤더 → 'CASH CHECK' 로 표시 (현금화 check). recipient 있으면 같이.
+function isCashCheckEntry(e){
+  return e && String(e.vendor||'').trim().toLowerCase() === 'cash';
+}
+function displayVendor(e){
+  if (!e) return '—';
+  if (isCashCheckEntry(e)) {
+    const who = (e.recipient || '').trim();
+    return who ? `💵 CASH CHECK → ${who}` : '💵 CASH CHECK';
+  }
+  return e.vendor || '—';
+}
 function purposeBadge(p){
   if (!p) return '';
   const m = PURPOSE_META[p]; if (!m) return '';
@@ -673,7 +699,7 @@ function renderHome(){
           <div class="ic">${typeIcon(e.type)}</div>
           <div class="body">
             <div class="head">
-              <div style="font-weight:700;font-size:.92em">${escHtml(e.vendor || '—')}${purposeBadge(e.purpose)}</div>
+              <div style="font-weight:700;font-size:.92em">${escHtml(displayVendor(e))}${purposeBadge(e.purpose)}</div>
               <b style="color:#1a5c3a">${fmt$(e.amount)}</b>
             </div>
             <div style="font-size:.76em;color:#6b7280">
@@ -718,6 +744,11 @@ function openEntry(type){
   // 용도 reset — 매번 새로 선택 (직원 급여 / 벤더 / 공과금 등)
   const purposeSel = document.getElementById('entryPurpose');
   if (purposeSel) purposeSel.value = '';
+  // recipient reset + 숨김
+  const rIn = document.getElementById('entryRecipient');
+  if (rIn) rIn.value = '';
+  const rField = document.getElementById('recipientField');
+  if (rField) rField.style.display = 'none';
   document.getElementById('entryPhoto').value = '';
   document.getElementById('entryPhotoPreview').innerHTML = '';
   document.getElementById('checkDupErr').classList.remove('show');
@@ -742,6 +773,12 @@ function openEntry(type){
   document.getElementById('entryOv').classList.add('show');
 }
 window.openEntry = openEntry;
+// vendor input 'cash' 일 때 받는 사람 필드 노출 토글
+window.onVendorChange = function(){
+  const v = String(document.getElementById('entryVendor').value||'').trim().toLowerCase();
+  const rField = document.getElementById('recipientField');
+  if (rField) rField.style.display = (v === 'cash') ? '' : 'none';
+};
 window.onEntryPhotoSelected = async function(ev){
   const file = ev.target.files && ev.target.files[0];
   if (!file) { CUR_PHOTO = null; return; }
@@ -787,9 +824,11 @@ window.saveEntry = async function(){
   if (saveBtn) saveBtn.disabled = true;
   try {
     const purpose = (document.getElementById('entryPurpose')?.value || '').trim();
+    const recipient = (document.getElementById('entryRecipient')?.value || '').trim();
     const expense = {
       type, date, amount,
       purpose, // 💼 용도 — payroll/vendor/utility/rent/supplies/maintenance/marketing/tax/other
+      recipient: (vendor.toLowerCase() === 'cash') ? recipient : '', // CASH CHECK 받은 사람
       checkNumber: type === 'check' ? checkNumber : '',
       vendor, issuer, memo,
       photo: '', // will be set after upload
@@ -976,7 +1015,7 @@ function renderList(){
       return `<div class="exp-item t-${e.type}" onclick="openDetail('${e.id}','${e.branch}')">`
         + `<div class="ic">${typeIcon(e.type)}</div>`
         + `<div class="body">`
-          + `<div class="head"><div class="vendor">${escHtml(e.vendor||'—')}${purposeBadge(e.purpose)}<span class="badge s-${status}">${statusLabel(status)}</span></div><div class="amt">${fmt$(e.amount)}</div></div>`
+          + `<div class="head"><div class="vendor">${escHtml(displayVendor(e))}${purposeBadge(e.purpose)}<span class="badge s-${status}">${statusLabel(status)}</span></div><div class="amt">${fmt$(e.amount)}</div></div>`
           + `<div class="meta">${escHtml(e.date)} · ${escHtml(branch)} · ${escHtml(e.issuer||'—')}${ck}${e.photo?' · 📷':''}</div>`
           + (e.memo ? `<div class="meta" style="color:#374151;margin-top:2px">${escHtml(e.memo).slice(0,80)}</div>` : '')
         + `</div></div>`;
@@ -991,7 +1030,7 @@ window.openDetail = function(eid, branchId){
   const ck = e.type === 'check' ? `<div><b>${({ko:'체크 번호',en:'Check #',es:'Núm. cheque'}[LANG])}:</b> ${escHtml(e.checkNumber||'')}</div>` : '';
   const photo = e.photo ? `<img src="${e.photo}" style="max-width:100%;max-height:300px;border-radius:8px;margin:8px 0;border:1px solid #e5e7eb;cursor:pointer" onclick="window.open('${e.photo}','_blank')">` : '';
   const memo = e.memo ? `<div style="background:#f9fafb;border-radius:8px;padding:8px;margin-top:6px;font-size:.85em">${escHtml(e.memo)}</div>` : '';
-  document.getElementById('detailTitle').innerHTML = typeIcon(e.type) + ' ' + escHtml(e.vendor||'—') + ' <span class="badge s-' + (e.status||'pending') + '" style="margin-left:6px">' + statusLabel(e.status||'pending') + '</span>';
+  document.getElementById('detailTitle').innerHTML = typeIcon(e.type) + ' ' + escHtml(displayVendor(e)) + ' <span class="badge s-' + (e.status||'pending') + '" style="margin-left:6px">' + statusLabel(e.status||'pending') + '</span>';
   document.getElementById('detailBody').innerHTML = `
     <div style="font-size:.95em;line-height:1.7">
       <div><b>${({ko:'금액',en:'Amount',es:'Monto'}[LANG])}:</b> <span style="color:#1a5c3a;font-weight:800;font-size:1.1em">${fmt$(e.amount)}</span></div>
@@ -1015,6 +1054,18 @@ window.openDetail = function(eid, branchId){
   // 💼 용도 dropdown 현재 값 미리 선택
   const psel = document.getElementById('detailPurposeSel');
   if (psel) psel.value = e.purpose || '';
+  // 💵 받는 사람 — CASH CHECK 인 entry 만 노출 + 현재 값 채움
+  const rWrap = document.getElementById('detailRecipientWrap');
+  const rIn = document.getElementById('detailRecipientIn');
+  if (rWrap && rIn) {
+    if (isCashCheckEntry(e)) {
+      rWrap.style.display = '';
+      rIn.value = e.recipient || '';
+    } else {
+      rWrap.style.display = 'none';
+      rIn.value = '';
+    }
+  }
   document.getElementById('detailOv').classList.add('show');
 };
 
@@ -1122,7 +1173,7 @@ function renderBulkList(items){
     }).join('');
     return `<div style="display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid #f3f4f6;font-size:.86em">
       <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        <b>${escHtml(e.vendor||'—')}</b>
+        <b>${escHtml(displayVendor(e))}</b>
         <span style="color:#6b7280">· ${fmt$(e.amount)} · ${escHtml(e.date)} · ${typeIcon(e.type)}</span>
       </div>
       <select data-bulk-key="${escHtml(key)}" onchange="onBulkChange(this)" style="flex:0 0 180px;border:1px solid #d1d5db;border-radius:6px;padding:5px 8px;font-size:.85em;font-family:inherit">${opts}</select>
@@ -1174,6 +1225,24 @@ window.bulkSaveAll = async function(){
   closeOv('bulkPurposeOv');
   renderHome();
   renderList();
+};
+
+// 💵 받는 사람 (recipient) 변경 — CASH CHECK 인 entry 만
+window.saveDetailRecipient = async function(){
+  if (!CUR_DETAIL) return;
+  const newR = (document.getElementById('detailRecipientIn').value || '').trim();
+  if (newR === (CUR_DETAIL.recipient||'')) { toast(({ko:'변경 없음',en:'No change',es:'Sin cambios'}[LANG]), 'err'); return; }
+  try {
+    await patchExpense(CUR_DETAIL.branch, CUR_DETAIL.id, { recipient: newR, recipientBy: ME?.name||'', recipientAt: Date.now() });
+    CUR_DETAIL.recipient = newR;
+    const idx = EXPENSES.findIndex(e => e.id === CUR_DETAIL.id && e.branch === CUR_DETAIL.branch);
+    if (idx >= 0) EXPENSES[idx].recipient = newR;
+    toast('💵 ' + (newR ? newR : ({ko:'받는 사람 제거',en:'Recipient cleared',es:'Eliminado'}[LANG])) + ' ✓', 'ok');
+    renderList();
+    renderHome();
+    // 상세 모달 제목도 즉시 갱신 (CASH CHECK → 새 이름)
+    document.getElementById('detailTitle').innerHTML = typeIcon(CUR_DETAIL.type) + ' ' + escHtml(displayVendor(CUR_DETAIL)) + ' <span class="badge s-' + (CUR_DETAIL.status||'pending') + '" style="margin-left:6px">' + statusLabel(CUR_DETAIL.status||'pending') + '</span>';
+  } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
 };
 
 // 💼 단건 용도 변경 — 상세 모달에서 직접 PATCH
