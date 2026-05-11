@@ -1371,8 +1371,23 @@ function populateTaskCheckList(){
     seen.add(t.name);
     return true;
   });
+  // 🎯 카테고리별 필터링 — 매니저가 카테고리 dropdown 에서 선택한 값과
+  // 일치하는 템플릿만 노출. '기타' 선택 시엔 모든 카테고리 보임 (보조 용도).
+  const curCatEl = document.getElementById('aCat');
+  const curCat = curCatEl ? curCatEl.value : '';
+  const filtered = (curCat && curCat !== '기타')
+    ? uniq.filter(t => (t.category||'기타') === curCat)
+    : uniq;
   const grouped = {};
-  uniq.forEach(t => { (grouped[t.category||'기타'] = grouped[t.category||'기타'] || []).push(t); });
+  filtered.forEach(t => { (grouped[t.category||'기타'] = grouped[t.category||'기타'] || []).push(t); });
+  // 빈 결과 — 매니저가 새 직접 입력으로 만들거나 템플릿 편집 하라고 안내
+  if (Object.keys(grouped).length === 0) {
+    const emptyMsg = (LANG==='en') ? `No ${curCat||'category'} templates yet — type your own below or pick another category.`
+                  : (LANG==='es') ? `No hay plantillas de ${curCat||'categoría'} aún — escribe abajo o elige otra.`
+                  :                 `${curCat||'카테고리'} 템플릿이 아직 없음 — 아래 직접 입력하거나 다른 카테고리 선택.`;
+    el.innerHTML = `<div style="font-size:.84em;color:#9ca3af;text-align:center;padding:18px 10px;line-height:1.5">${escHtml(emptyMsg)}</div>`;
+    return;
+  }
   el.innerHTML = Object.entries(grouped).map(([cat, list], gi) => {
     // 카테고리 헤더는 다국어, 개별 업무명은 nameTr 가 있으면 그 언어로 표시
     const localCat = (typeof localizeCat === 'function') ? localizeCat(cat) : cat;
@@ -1539,6 +1554,10 @@ function onChecklistToggle(){
   const items = checklistItemsFor(cat);
   const cntEl = document.getElementById('aChecklistCount');
   if (cntEl) cntEl.textContent = items.length ? `(${items.length}개 항목)` : '';
+  // 카테고리 바뀌면 업무명 체크리스트도 그 카테고리만 보이게 다시 그림
+  if (typeof populateTaskCheckList === 'function') {
+    try { populateTaskCheckList(); } catch(_){}
+  }
   // 장소 선택 필드는 모든 카테고리에서 노출 — 매니저가 어디서 일할지
   // 정확히 지정해 보내면 직원도 헷갈리지 않고, 카드/매니저 뷰/채팅 어디서든
   // 같은 [장소] 라벨이 함께 표시됨.
