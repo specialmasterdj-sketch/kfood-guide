@@ -506,13 +506,60 @@ function categoryEmoji(cat){
 //   1. RTDB /catalog/photos/{code} — 사용자 업로드 (dataURL, base64)
 //   2. ./top500/photos/{safeCode}.jpg — kimchi-mart-order 카탈로그 매칭 결과 (URL)
 // dataURL 인지 URL 인지로 사용자 업로드 vs static 구분 가능.
+//
+// 🔑 바코드 정규화: Vela CSV 가 같은 상품을 지점마다 다르게 export 함:
+//    "07441074180", "=07441074180", "0744107418" (앞 0 변형) 등.
+//    조회/저장 시 normBarcode() 통과시켜 한 키로 통일.
 let STATIC_PHOTO_MAP = {};   // { upc: safeCode } — static 자산이 있는 코드 목록
+
+// 바코드 정규화 — 앞 = 떼고 leading-zero 제거. 빈 문자열은 그대로.
+function normBarcode(code){
+  let s = String(code||'').trim();
+  if (!s) return '';
+  // 앞 = 모두 제거 (Vela CSV "텍스트 강제" 형식)
+  s = s.replace(/^=+/, '');
+  // 숫자가 아닌 문자 제거 (혹시 모를 보호)
+  s = s.replace(/[^0-9]/g, '');
+  // leading 0 제거 — 단, 길이 6 이상 유지
+  while (s.length > 6 && s.startsWith('0')) s = s.slice(1);
+  return s;
+}
+
+// Vela CODE 와 catalog 바코드 매칭 변형 — Vela 는 보통 check digit 빠진 11자리.
+// 정규화된 키 + prefix 11/12 자리를 lookup 키로 시도.
+function photoLookupKeys(code){
+  const out = [];
+  out.push(String(code||'').trim());           // 원형
+  const n = normBarcode(code);
+  if (n) out.push(n);
+  // n 의 11자리 prefix (check digit 잘림 대응)
+  if (n.length >= 11) out.push(n.slice(0, 11));
+  if (n.length >= 12) out.push(n.slice(0, 12));
+  return [...new Set(out)].filter(Boolean);
+}
+
+// 사진 lookup — 다양한 바코드 변형 시도. 첫 매치 반환.
+function photoFor(code){
+  for (const k of photoLookupKeys(code)){
+    if (PHOTOS[k]) return PHOTOS[k];
+  }
+  return null;
+}
+
 async function loadPhotos(){
   PHOTOS = {};
   // 1. RTDB 사용자 업로드 (top priority)
   try {
     const r = await fetch(`${FB_DB}/catalog/photos.json?t=` + Date.now(), { cache:'no-store' });
-    if (r.ok) PHOTOS = (await r.json()) || {};
+    if (r.ok) {
+      const raw = (await r.json()) || {};
+      // 사용자가 업로드한 키와 정규화 키 둘 다 등록 — variant 매칭
+      for (const [code, dataURL] of Object.entries(raw)){
+        PHOTOS[code] = dataURL;
+        const n = normBarcode(code);
+        if (n && n !== code && !PHOTOS[n]) PHOTOS[n] = dataURL;
+      }
+    }
   } catch(e) { console.warn('[photos rtdb]', e); }
   // 2. 정적 카탈로그 매칭 fallback
   try {
@@ -520,15 +567,24 @@ async function loadPhotos(){
     if (r2.ok) {
       STATIC_PHOTO_MAP = (await r2.json()) || {};
       for (const [code, safe] of Object.entries(STATIC_PHOTO_MAP)) {
-        if (!PHOTOS[code]) PHOTOS[code] = `./top500/photos/${safe}.jpg`;
+        const url = `./top500/photos/${safe}.jpg`;
+        if (!PHOTOS[code]) PHOTOS[code] = url;
+        const n = normBarcode(code);
+        if (n && n !== code && !PHOTOS[n]) PHOTOS[n] = url;
       }
     }
   } catch(e) { console.warn('[photos static]', e); }
 }
 function isUserPhoto(code){
   // 사용자 업로드 사진은 dataURL (data:image/...) 로 시작
-  const p = PHOTOS[code];
+  const p = photoFor(code);
   return p && typeof p === 'string' && p.startsWith('data:');
+}
+
+// 사진 저장/삭제 시 사용할 정규화 키 — 한 지점이 올리면 다른 지점도 보이게.
+function photoStorageKey(code){
+  const n = normBarcode(code);
+  return n || String(code||'').trim();
 }
 
 // 썸네일 로드 실패 시 이모지로 폴백 — static 사진 파일 404, SW 캐시 문제, 네트워크 오류 등.
@@ -536,15 +592,23 @@ function isUserPhoto(code){
 function handleThumbError(img){
   const code = img.dataset.code || '';
   const emoji = img.dataset.emoji || '📦';
-  if (code && PHOTOS[code] && !isUserPhoto(code)) delete PHOTOS[code];
+  // 원형/정규화 키 둘 다 정리. 사용자 업로드 (dataURL) 는 보존 — static URL 만 제거.
+  if (code){
+    for (const k of photoLookupKeys(code)){
+      if (PHOTOS[k] && !String(PHOTOS[k]).startsWith('data:')) delete PHOTOS[k];
+    }
+  }
   const parent = img.parentNode;
   if (parent) parent.innerHTML = `<span class="ph">${emoji}</span><span class="cam-badge">📷</span>`;
 }
 window.handleThumbError = handleThumbError;
 
 async function savePhotoToDB(code, dataURL){
+  // 정규화된 키 + 원형 둘 다 PHOTOS 에 등록 — 다음 페이지 로드 전까지 즉시 반영
+  const key = photoStorageKey(code);
   PHOTOS[code] = dataURL;
-  await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(code)}.json`, {
+  PHOTOS[key] = dataURL;
+  await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dataURL)
@@ -552,8 +616,12 @@ async function savePhotoToDB(code, dataURL){
 }
 
 async function deletePhotoFromDB(code){
-  delete PHOTOS[code];
-  await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(code)}.json`, { method: 'DELETE' });
+  const key = photoStorageKey(code);
+  // 원형/정규화 키 모두 메모리에서 제거 (단, static URL 일 수 있으니 isUserPhoto 만)
+  for (const k of [code, key]){
+    if (PHOTOS[k] && String(PHOTOS[k]).startsWith('data:')) delete PHOTOS[k];
+  }
+  await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, { method: 'DELETE' });
 }
 
 // 이미지 압축 — JPEG 120×120 max, ~5-8KB. RTDB 에 base64 저장하기에 적합한 크기.
@@ -845,7 +913,7 @@ function renderRow(p){
     : `<div class="qval">${qty}</div>`;
   // 썸네일 — 사진 있으면 <img>, 없으면 카테고리 이모지. 탭 시 사진 관리 모달 (qty 모달과 분리).
   // onerror: static 사진 파일이 404 (GitHub Pages 배포 race 등) 시 이모지로 폴백.
-  const photo = PHOTOS[p.code];
+  const photo = photoFor(p.code);
   const emoji = categoryEmoji(p.cat||'');
   const codeEsc = escHtml(p.code);
   const thumbInner = photo
@@ -880,7 +948,7 @@ function syncQtyPhoto(code){
   if (!p) return;
   const t = T();
   const wrap = $('qtyPhoto');
-  const photo = PHOTOS[code];
+  const photo = photoFor(code);
   const emoji = categoryEmoji(p.cat||'');
   if (photo) {
     const fallbackHTML = `<span class=\\'ph-big\\'>${emoji}</span><div class=\\'edit-hint\\'>${escHtml(t.photoAdd)}</div>`;
@@ -956,7 +1024,7 @@ function openPhotoModal(code){
   $('phName').textContent = p.name;
   $('phCode').textContent = `#${p.code} · ${p.cat||''}`;
   renderPhotoView();
-  $('phTakeBtn').textContent = PHOTOS[code] ? t.photoChange : t.photoTakeBtn;
+  $('phTakeBtn').textContent = photoFor(code) ? t.photoChange : t.photoTakeBtn;
   $('phDelBtn').textContent = t.photoDelBtn;
   $('phCloseBtn').textContent = t.photoCloseBtn;
   // 삭제는 사용자 업로드(dataURL)만 가능 — 카탈로그 매칭 사진은 못 지움
@@ -967,7 +1035,7 @@ function openPhotoModal(code){
 }
 function renderPhotoView(){
   const view = $('phView');
-  const photo = PHOTOS[PHOTO_CODE];
+  const photo = photoFor(PHOTO_CODE);
   if (photo) {
     view.innerHTML = `<img src="${escHtml(photo)}" alt="">`;
   } else {
@@ -1019,9 +1087,14 @@ async function confirmDeletePhoto(){
   $('phBusy').style.display = '';
   try {
     await deletePhotoFromDB(PHOTO_CODE);
-    // 사용자 업로드 지운 후 static 매칭 사진이 있으면 그걸로 폴백
-    if (STATIC_PHOTO_MAP[PHOTO_CODE]) {
-      PHOTOS[PHOTO_CODE] = `./top500/photos/${STATIC_PHOTO_MAP[PHOTO_CODE]}.jpg`;
+    // 사용자 업로드 지운 후 static 매칭 사진이 있으면 그걸로 폴백 (변형 키도 확인)
+    let staticSafe = null;
+    for (const k of photoLookupKeys(PHOTO_CODE)){
+      if (STATIC_PHOTO_MAP[k]) { staticSafe = STATIC_PHOTO_MAP[k]; break; }
+    }
+    if (staticSafe) {
+      const url = `./top500/photos/${staticSafe}.jpg`;
+      PHOTOS[PHOTO_CODE] = url;
       $('phTakeBtn').textContent = t.photoChange;
     } else {
       $('phTakeBtn').textContent = t.photoTakeBtn;
