@@ -178,6 +178,36 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
     <button class="btn sec block" onclick="goView('list')">📋 <span id="lblTodayList">오늘 내역</span></button>
     <button class="btn sec block" onclick="goView('report')">📊 <span id="lblReport">통계·리포트</span></button>
   </div>
+  <!-- 🔧 일괄 분류 보정 — 기존 entry 들의 용도 (purpose) 한 번에 부여 -->
+  <div style="margin-top:10px">
+    <button class="btn sec block" onclick="openBulkPurpose()" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🔧 일괄 용도 분류 — 기존 데이터 보정</button>
+  </div>
+</div>
+
+<!-- BULK PURPOSE MODAL — 기존 entries 일괄 분류 -->
+<div class="overlay" id="bulkPurposeOv">
+  <div class="sheet" style="max-width:680px">
+    <h3>🔧 일괄 용도 분류 보정</h3>
+    <p style="font-size:.84em;color:#6b7280;margin-bottom:10px">용도 미지정 entry 들을 한 번에 분류. 키워드 매칭으로 자동 제안 + 수동 변경 가능.</p>
+    <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:10px;margin-bottom:10px;font-size:.82em;color:#92400e">
+      💡 자동 분류 규칙:<br>
+      · 직원 이름 (Erika, Mirna 등) → 👥 직원 급여<br>
+      · "FPL", "전기", "수도", "Comcast", "Internet" → 💡 공과금<br>
+      · "Rent", "임대" → 🏢 임대료<br>
+      · 그 외 벤더 → 📦 벤더<br>
+      나머지는 수동 선택
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn warn" onclick="bulkAutoClassify()" style="flex:1">⚡ 자동 분류 적용</button>
+      <button class="btn sec" onclick="bulkClearAll()" style="flex:0 0 auto">🗑 모두 비우기</button>
+    </div>
+    <div id="bulkList" style="max-height:50vh;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px"></div>
+    <div style="font-size:.82em;color:#6b7280;margin-bottom:10px"><span id="bulkCount">0</span>개 entry 표시 중</div>
+    <div class="actions">
+      <button class="btn sec" onclick="closeOv('bulkPurposeOv')">닫기</button>
+      <button class="btn" onclick="bulkSaveAll()">💾 변경사항 일괄 저장</button>
+    </div>
+  </div>
 </div>
 
 <!-- TODAY LIST -->
@@ -305,6 +335,25 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
   <div class="sheet">
     <h3 id="detailTitle">상세</h3>
     <div id="detailBody"></div>
+    <!-- 💼 용도 변경 — 기존 entry 의 purpose 직접 수정 -->
+    <div style="margin:10px 0 6px;padding-top:10px;border-top:1px solid #e5e7eb">
+      <label style="font-size:.82em;color:#6b7280;font-weight:700;display:block;margin-bottom:4px">💼 용도 변경 / Change Purpose</label>
+      <div style="display:flex;gap:6px">
+        <select id="detailPurposeSel" style="flex:1;border:1.5px solid #d1d5db;border-radius:9px;padding:8px 10px;font-size:.92em;font-family:inherit;background:#fff">
+          <option value="">— 선택 / Select —</option>
+          <option value="payroll">👥 직원 급여 (Payroll)</option>
+          <option value="vendor">📦 벤더 (Vendor)</option>
+          <option value="utility">💡 공과금 (Utility)</option>
+          <option value="rent">🏢 임대료 (Rent)</option>
+          <option value="supplies">📋 소모품 (Supplies)</option>
+          <option value="maintenance">🔧 수리/유지 (Maintenance)</option>
+          <option value="marketing">📢 마케팅 (Marketing)</option>
+          <option value="tax">📜 세금/보험 (Tax)</option>
+          <option value="other">📋 기타 (Other)</option>
+        </select>
+        <button class="btn sec" onclick="saveDetailPurpose()" style="flex:0 0 auto">저장</button>
+      </div>
+    </div>
     <div class="actions">
       <button class="btn sec" onclick="closeOv('detailOv')" id="lblClose">닫기</button>
       <button class="btn warn" onclick="updateDetailStatus('approved')" id="lblApprove">✓ 승인</button>
@@ -963,6 +1012,9 @@ window.openDetail = function(eid, branchId){
       .filter(b => b.id !== branchId)
       .map(b => `<option value="${b.id}">${(b[LANG]||b.en||b.id)}</option>`).join('');
   }
+  // 💼 용도 dropdown 현재 값 미리 선택
+  const psel = document.getElementById('detailPurposeSel');
+  if (psel) psel.value = e.purpose || '';
   document.getElementById('detailOv').classList.add('show');
 };
 
@@ -1010,6 +1062,135 @@ window.updateDetailStatus = async function(status){
     closeOv('detailOv');
     toast('✓ ' + statusLabel(status), 'ok');
     renderList();
+  } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
+};
+// ═══════════════════════════════════════════════════════════
+// 🔧 일괄 용도 분류 — 기존 데이터 보정
+// ═══════════════════════════════════════════════════════════
+let BULK_PENDING = {}; // { id|branch → newPurpose }
+const PURPOSE_OPTIONS = ['', 'payroll', 'vendor', 'utility', 'rent', 'supplies', 'maintenance', 'marketing', 'tax', 'other'];
+// 자동 분류 키워드 매칭 — vendor 이름 + memo 검사
+function autoGuessPurpose(e){
+  const v = String((e.vendor||'') + ' ' + (e.memo||'')).toLowerCase();
+  // 공과금 키워드
+  if (/\b(fpl|comcast|spectrum|att|verizon|t-mobile|internet|electric|water|gas|sewer|garbage|trash|전기|수도|가스|인터넷|공과)\b/i.test(v)) return 'utility';
+  // 임대료
+  if (/\b(rent|lease|landlord|임대|월세|렌트)\b/i.test(v)) return 'rent';
+  // 세금/보험
+  if (/\b(tax|irs|insurance|보험|세금|국세|소득세)\b/i.test(v)) return 'tax';
+  // 수리/유지
+  if (/\b(repair|maintenance|hvac|plumbing|electric.*repair|수리|유지|보수|점검)\b/i.test(v)) return 'maintenance';
+  // 마케팅
+  if (/\b(ad|advertising|marketing|google|facebook|광고|마케팅)\b/i.test(v)) return 'marketing';
+  // 소모품
+  if (/\b(office.*supply|supplies|paper|stationery|소모품|문구|용지)\b/i.test(v)) return 'supplies';
+  // 직원 이름 패턴 — 단어가 1~2개의 first/last name 패턴이거나 이미 'cash' 처럼 명확
+  // vendor 가 employee name 같으면 (capitalize 된 단어 1~3개 only, 회사명 키워드 없음)
+  const venTrim = String(e.vendor||'').trim();
+  const isPlainName = venTrim.length > 0 && venTrim.length < 30
+    && /^[A-Za-z\s.]+$/.test(venTrim)  // 영문 이름만
+    && !/\b(inc|llc|corp|co\.|company|foods?|trading|globalnet|catering|markets?|wholesale|services?)\b/i.test(venTrim)
+    && venTrim.split(/\s+/).length <= 3;
+  if (isPlainName) return 'payroll';
+  // 회사명 같은 패턴 (inc/llc/etc) — 벤더 결제로 추정
+  if (/\b(inc|llc|corp|co\.|company|foods?|trading|globalnet|wholesale|markets?)\b/i.test(venTrim)) return 'vendor';
+  return ''; // 매칭 안 됨 — 수동 선택 필요
+}
+window.openBulkPurpose = function(){
+  // 매니저만 가능
+  if (!hasAccess(ME)) { toast(({ko:'매니저 권한 필요',en:'Manager only',es:'Solo gerente'}[LANG]), 'err'); return; }
+  BULK_PENDING = {};
+  // purpose 없는 (또는 비어있는) entry 들 + 사용자가 변경하고 싶은 entry 모두 표시
+  const items = EXPENSES.filter(e => !e.purpose).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+  renderBulkList(items);
+  document.getElementById('bulkPurposeOv').classList.add('show');
+};
+function renderBulkList(items){
+  const root = document.getElementById('bulkList');
+  if (!items.length) {
+    root.innerHTML = `<div style="text-align:center;padding:20px;color:#15803d;font-weight:700">✓ ${({ko:'용도 미지정 entry 없음 — 모두 분류 완료',en:'All entries already classified',es:'Todo clasificado'}[LANG])}</div>`;
+    document.getElementById('bulkCount').textContent = '0';
+    return;
+  }
+  root.innerHTML = items.map(e => {
+    const key = e.id + '|' + e.branch;
+    const cur = BULK_PENDING[key] != null ? BULK_PENDING[key] : (e.purpose||'');
+    const opts = PURPOSE_OPTIONS.map(p => {
+      const meta = PURPOSE_META[p];
+      const lbl = p === '' ? '— ' + ({ko:'선택',en:'Select',es:'Seleccionar'}[LANG]) + ' —' : (meta ? `${meta.icon} ${meta[LANG]||meta.ko}` : p);
+      return `<option value="${p}" ${cur===p?'selected':''}>${lbl}</option>`;
+    }).join('');
+    return `<div style="display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid #f3f4f6;font-size:.86em">
+      <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <b>${escHtml(e.vendor||'—')}</b>
+        <span style="color:#6b7280">· ${fmt$(e.amount)} · ${escHtml(e.date)} · ${typeIcon(e.type)}</span>
+      </div>
+      <select data-bulk-key="${escHtml(key)}" onchange="onBulkChange(this)" style="flex:0 0 180px;border:1px solid #d1d5db;border-radius:6px;padding:5px 8px;font-size:.85em;font-family:inherit">${opts}</select>
+    </div>`;
+  }).join('');
+  document.getElementById('bulkCount').textContent = items.length;
+}
+window.onBulkChange = function(sel){
+  const key = sel.dataset.bulkKey;
+  BULK_PENDING[key] = sel.value;
+};
+window.bulkAutoClassify = function(){
+  let applied = 0;
+  EXPENSES.filter(e => !e.purpose).forEach(e => {
+    const guess = autoGuessPurpose(e);
+    if (guess) {
+      BULK_PENDING[e.id + '|' + e.branch] = guess;
+      applied++;
+    }
+  });
+  // 다시 그리기
+  const items = EXPENSES.filter(e => !e.purpose).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+  renderBulkList(items);
+  toast(`⚡ ${applied}건 자동 분류됨 — 검토 후 저장`, 'ok');
+};
+window.bulkClearAll = function(){
+  if (!confirm(({ko:'모든 임시 변경을 취소할까요?',en:'Clear all pending changes?',es:'¿Limpiar cambios?'}[LANG]))) return;
+  BULK_PENDING = {};
+  const items = EXPENSES.filter(e => !e.purpose).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+  renderBulkList(items);
+};
+window.bulkSaveAll = async function(){
+  const keys = Object.keys(BULK_PENDING).filter(k => BULK_PENDING[k]); // 빈 값 (선택 안 함) 은 저장 안 함
+  if (!keys.length) { toast(({ko:'저장할 변경 없음',en:'Nothing to save',es:'Nada que guardar'}[LANG]), 'err'); return; }
+  if (!confirm(`💾 ${keys.length}개 entry 의 용도를 저장할까요?`)) return;
+  let ok = 0, failed = 0;
+  for (const k of keys) {
+    const [eid, branchId] = k.split('|');
+    const purpose = BULK_PENDING[k];
+    try {
+      await patchExpense(branchId, eid, { purpose, purposeBy: ME?.name||'', purposeAt: Date.now() });
+      const idx = EXPENSES.findIndex(e => e.id === eid && e.branch === branchId);
+      if (idx >= 0) EXPENSES[idx].purpose = purpose;
+      ok++;
+    } catch(e) { failed++; console.warn('[bulk]', k, e); }
+  }
+  toast(`✓ ${ok}건 저장 완료${failed?(' · '+failed+'건 실패'):''}`, ok ? 'ok' : 'err');
+  BULK_PENDING = {};
+  closeOv('bulkPurposeOv');
+  renderHome();
+  renderList();
+};
+
+// 💼 단건 용도 변경 — 상세 모달에서 직접 PATCH
+window.saveDetailPurpose = async function(){
+  if (!CUR_DETAIL) return;
+  const newPurpose = document.getElementById('detailPurposeSel').value || '';
+  if (newPurpose === (CUR_DETAIL.purpose||'')) { toast(({ko:'변경 없음',en:'No change',es:'Sin cambios'}[LANG]), 'err'); return; }
+  try {
+    await patchExpense(CUR_DETAIL.branch, CUR_DETAIL.id, { purpose: newPurpose, purposeBy: ME?.name||'', purposeAt: Date.now() });
+    CUR_DETAIL.purpose = newPurpose;
+    // 로컬 EXPENSES 도 갱신
+    const idx = EXPENSES.findIndex(e => e.id === CUR_DETAIL.id && e.branch === CUR_DETAIL.branch);
+    if (idx >= 0) EXPENSES[idx].purpose = newPurpose;
+    toast('💼 ' + (newPurpose ? purposeLabel(newPurpose) : ({ko:'용도 제거',en:'Purpose cleared',es:'Eliminado'}[LANG])) + ' ✓', 'ok');
+    renderList();
+    renderHome();
+    // 모달 안 닫음 — 매니저가 연속 수정 가능
   } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
 };
 window.deleteDetail = async function(){
