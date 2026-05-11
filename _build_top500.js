@@ -60,9 +60,12 @@ function num(s){ return parseFloat(String(s||'').replace(/[",]/g, '')) || 0; }
 // 매니저 요청: PRODUCE (FRUITS, VEGETABLE) + MEAT/SEAFOOD (MEAT, SEAFOOD,
 // MARINATED MEAT) 통째로 제외해 grocery/dry/frozen/snacks 위주의 진열 관리만.
 const EXCLUDE_DEPTS = new Set(['PRODUCE', 'MEAT/SEAFOOD']);
-// 김치/김밥/초밥 카테고리 — 매장 내부 제조품, 일일 보고로 관리됨.
-// 매니저 요청: KIMCHI (F) / GIMBAP (F) / SUSHI (F) 카테고리 통째 제외.
-const EXCLUDE_CATEGORIES = new Set(['KIMCHI (F)', 'GIMBAP (F)', 'SUSHI (F)']);
+// 김치/김밥/초밥/반찬/즉석식품 카테고리 — 매장 내부 제조품, 일일 보고로 관리됨.
+// 매니저 요청: KIMCHI/GIMBAP/SUSHI/READY-TO-EAT/BANCHAN 카테고리 통째 제외.
+const EXCLUDE_CATEGORIES = new Set([
+  'KIMCHI (F)', 'GIMBAP (F)', 'SUSHI (F)',
+  'READY-TO-EAT (F)', 'BANCHAN (F)',
+]);
 // 짧은 PLU 코드 (3~6 자리) 는 매장 내부 제조품 (김치, 김밥, 반찬 등) — 별도 관리.
 // 진짜 UPC/EAN 바코드는 8자리 이상이므로 7자리 미만 자동 제외.
 const MIN_CODE_LEN = 7;
