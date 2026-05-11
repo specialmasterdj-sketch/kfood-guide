@@ -18,17 +18,40 @@ if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
 // 브랜드 약어 → 풀네임 (top500 이름이 짧고 카탈로그가 김)
 const BRAND = {
   HSE: 'HOUSE', QP: 'KEWPIE', SY: 'SAMYANG', TYJ: 'TEEYIHJIA', BGR: 'BINGGRAE',
-  KKM: 'KIKKOMAN', OTO: 'OTOKI', NS: 'NONGSHIM', LT: 'LOTTE', CJ: 'CJ',
+  KKM: 'KIKKOMAN', OTO: 'OTOKI', NS: 'NONGSHIM', LT: 'LOTTE',
   HT: 'HAITAI', JS: 'JONGGA', SRS: 'SURASANG', BBG: 'BIBIGO',
-  HQ: 'HAEKAR', CKN: 'CHICKEN', FLV: 'FLAVOR', BUL: 'BULDAK',
-  ASS: 'ASSI', PD: 'PALDO', WG: 'WANG', WMT: 'WISMETTAC',
+  ASS: 'ASSI', PD: 'PALDO', WG: 'WANG',
+  LKK: 'LEEKUMKEE', LS: 'LAYS', SLW: 'SOULWELL',
 };
+
+// 붙여 쓴 합성어 분리 — top500 이 "ICECREAM" 카탈로그 "ICE CREAM" 인 케이스
+const COMPOUND = {
+  ICECREAM: 'ICE CREAM',
+  RICECAKE: 'RICE CAKE',
+  SOYMILK: 'SOY MILK',
+  SOYSAUCE: 'SOY SAUCE',
+  RICEPAPER: 'RICE PAPER',
+  GREENONION: 'GREEN ONION',
+  BLACKBEAN: 'BLACK BEAN',
+  GLUTENFREE: 'GLUTEN FREE',
+  HOTPOT: 'HOT POT',
+};
+
+// Generic 토큰 — 두 개 이상 매칭되어야 의미. 단독 매치는 가중치 낮음 (SMART WATER vs COCONUT WATER 같은 false positive 방지).
+const GENERIC = new Set([
+  'ICE','CREAM','RICE','MILK','WATER','DRINK','SAUCE','SOUP','SODA',
+  'NOODLE','NOODLES','RAMEN','CHIP','CHIPS','SNACK','SNACKS','CANDY',
+  'FLAVOR','FLAVORED','FLAVOURED','STYLE','JUICE','PASTE','TEA','COFFEE',
+  'TYPE','COOKED','ORIGINAL','PREMIUM','HOT','COLD','SWEET','SPICY',
+  'CRACKER','COOKIE','CAKE','BREAD','BUN','RICE',
+  'POWDER','LIQUID','POUCH','CUP','BOWL','BOTTLE','CAN',
+]);
 
 const SIZE_RE = /\d+(?:\.\d+)?\s*(?:OZ|LB|ML|G|KG|L|FL|PC|PK|CT|CASE|X\d+|#)+/gi;
 
 const STOP = new Set([
   'AND','THE','OF','WITH','FOR','IN','TO','A','AN','OR','BY','ON','AT','FROM',
-  'KOREAN','KOREA','JAPANESE','JAPAN','PRODUCT','BRAND','NEW','FRESH','PREMIUM',
+  'KOREAN','KOREA','JAPANESE','JAPAN','PRODUCT','BRAND','NEW','FRESH',
   'EA','CT','PC','PCS','PK','OZ','LB','ML','G','KG','L','FL','BOX','BAG','EACH',
   '&','-','+','/',
 ]);
@@ -41,7 +64,12 @@ function normalize(s){
     .replace(/\s+/g, ' ').trim();
   const parts = t.split(' ');
   if (BRAND[parts[0]]) parts[0] = BRAND[parts[0]];
-  return parts.join(' ');
+  // Compound word 분리 — ICECREAM → ICE CREAM
+  t = parts.join(' ');
+  for (const [c, ex] of Object.entries(COMPOUND)){
+    t = t.replace(new RegExp('\\b'+c+'\\b', 'g'), ex);
+  }
+  return t;
 }
 
 function tokens(s){
@@ -55,18 +83,43 @@ function sizeTokens(s){
   return m.map(x => x.replace(/\s+/g,''));
 }
 
+// Prefix-5 키 — 오타 / 변형 (MAYONNASE ↔ MAYONNAISE) 흡수.
+// 6글자 이상 토큰은 첫 5글자로 매칭. 짧은 토큰은 그대로.
+function tokenKey(tok){
+  return tok.length >= 6 ? tok.slice(0, 5) : tok;
+}
+
+// 점수 계산: jaccard + containment + generic-aware
+// - 최소 2개 토큰 또는 1개 + 사이즈 일치 필요
+// - generic-only 매치는 약하게, significant 토큰 보너스
 function score(aTok, bTok, aSize, bSize){
   if (!aTok.length || !bTok.length) return 0;
-  const aSet = new Set(aTok), bSet = new Set(bTok);
-  let inter = 0;
-  for (const x of aSet) if (bSet.has(x)) inter++;
-  const jacc = inter / (aSet.size + bSet.size - inter);
+  const aKeys = new Set(aTok.map(tokenKey));
+  const bKeys = new Set(bTok.map(tokenKey));
+  // 원래 토큰들로 generic 여부 판정 — keys 는 prefix 라 generic 여부 알 수 없음
+  const aGen = new Set(aTok.filter(t => GENERIC.has(t)).map(tokenKey));
+  const bGen = new Set(bTok.filter(t => GENERIC.has(t)).map(tokenKey));
+  let interSig = 0, interGen = 0;
+  for (const k of aKeys){
+    if (!bKeys.has(k)) continue;
+    if (aGen.has(k) || bGen.has(k)) interGen++;
+    else interSig++;
+  }
+  const inter = interSig + interGen;
+  // 최소 2개 토큰 매치 필요 (그 중 최소 1개는 significant)
+  if (inter < 2 || interSig < 1) return 0;
+
+  const jacc = inter / (aKeys.size + bKeys.size - inter);
+  const cont = inter / Math.min(aKeys.size, bKeys.size);
+  // Containment 가중치 더 — 짧은 top500 이름이 긴 카탈로그에 포함되면 강한 신호
+  const combined = jacc * 0.3 + cont * 0.7;
+  const sigBonus = Math.min(interSig * 0.04, 0.12);
   let sizeBonus = 0;
   if (aSize.length && bSize.length) {
     const aSz = new Set(aSize);
     for (const s of bSize) if (aSz.has(s)) { sizeBonus = 0.15; break; }
   }
-  return jacc + sizeBonus;
+  return combined + sigBonus + sizeBonus;
 }
 
 // safeCode: 파일명용. UPC 의 `=` 등 특수문자 제거.
