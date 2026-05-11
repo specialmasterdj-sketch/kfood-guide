@@ -4,27 +4,47 @@
   if (window.__navSideInjected) return;
   window.__navSideInjected = true;
 
-  // Manager-or-above tokens (mirrors payroll.html access gate)
-  // EXECUTIVE / 전무 / VICE PRESIDENT 추가 — B.H.K 가 매니저 전용 메뉴 못 보던 버그 fix.
-  // SUPERVISOR / 부매니저 도 포함 — payroll 외 매니저 권한 메뉴 (직원 승인 등) 접근 가능.
+  // Manager-or-above tokens — 일반 매니저 권한 메뉴 (직원 승인, 지점 지출 등).
+  // SUPERVISOR / 부매니저 도 포함 — 매장 운영 관리 자체는 가능해야 함.
   const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','SUPERVISORA','감독'];
+  // 더 엄격한 토큰 — 급여(현금/CPA) 등 민감 메뉴 전용. SUPERVISOR 명시적 제외.
+  const PAYROLL_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','EXECUTIVE','전무','상무','이사','DIRECTOR','VICE PRESIDENT','VP','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER'];
+  const STAFF_ONLY_TOKENS = ['SUPERVISOR','SUPERVISORA','STAFF','EMPLOYEE','STOCKER','CASHIER','직원','스태프','캐셔','스토커'];
+
+  function _loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }}
+  function _isExecName(name){
+    const n = String(name||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,'');
+    return n === 'BHK' || n === 'DJ';
+  }
+
   function isManager(){
-    let me = null;
-    try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+    const me = _loadMe();
     if (!me) return false;
-    // chat.me.isManager 가 명시적으로 true 면 통과 (auth.html 에서 EXECUTIVE 등도 true 로 세팅).
     if (me.isManager === true) return true;
     if (!me.role) return false;
     const r = String(me.role).toUpperCase();
     return MGR_TOKENS.some(t => r.includes(t.toUpperCase()));
+  }
+  // 급여(현금/CPA) 같은 민감 메뉴 — SUPERVISOR 차단.
+  function canSeePayroll(){
+    const me = _loadMe();
+    if (!me) return false;
+    const r = String(me.role || '').toUpperCase();
+    // SUPERVISOR / STAFF / EMPLOYEE 등은 명시적 차단 (이름이 임원인 경우 예외)
+    if (r && STAFF_ONLY_TOKENS.some(t => r === t)) {
+      return _isExecName(me.name);
+    }
+    if (r && PAYROLL_TOKENS.some(t => r.includes(t.toUpperCase()))) return true;
+    if (_isExecName(me.name)) return true;
+    return false;
   }
 
   const LINKS = [
     { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
     { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
     { ic: '📅', lbl: { ko:'스케줄',       en:'Schedule',    es:'Horario' },     href: './shifts.html' },
-    { ic: '💵', lbl: { ko:'급여 (현금)', en:'Payroll (Cash)', es:'Nómina (Efectivo)' }, href: './payroll.html?type=cash', mgr: true },
-    { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa',  mgr: true },
+    { ic: '💵', lbl: { ko:'급여 (현금)', en:'Payroll (Cash)', es:'Nómina (Efectivo)' }, href: './payroll.html?type=cash', payroll: true },
+    { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa',  payroll: true },
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true, badge: 'chat' },
@@ -197,8 +217,15 @@
 
   function renderInner(){
     const mgr = isManager();
-    // Pre-filter so sections with no visible items don't render an orphan header
-    const visible = LINKS.filter(it => it.sec || !it.mgr || mgr);
+    const payrollOk = canSeePayroll();
+    // Pre-filter so sections with no visible items don't render an orphan header.
+    // 🔒 payroll 메뉴는 별도 strict 체크 — SUPERVISOR / STAFF 차단.
+    const visible = LINKS.filter(it => {
+      if (it.sec) return true;
+      if (it.payroll && !payrollOk) return false;
+      if (it.mgr && !mgr) return false;
+      return true;
+    });
     const lang = currentLang();
     const backLbl = lang==='ko' ? '← 뒤로' : lang==='es' ? '← Volver' : '← Back';
     const backHtml = (here !== 'apps.html')
