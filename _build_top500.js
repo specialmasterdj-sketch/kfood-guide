@@ -3,8 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const SRC = process.argv[2] || 'C:/Users/speci/Downloads/위판매순.csv';
-const OUT = process.argv[3] || path.join(__dirname, 'top500.json');
+// Usage: node _build_top500.js <BRANCH_ID> [csv_path]
+// Branch IDs: CORAL_SPRINGS, HOLLYWOOD, MIAMI, PEMBROKE_PINES, LASOLAS, WEST_PALM
+// Output: top500/<BRANCH_ID>.json
+const BRANCH = (process.argv[2] || 'CORAL_SPRINGS').toUpperCase();
+const SRC = process.argv[3] || 'C:/Users/speci/Downloads/위판매순.csv';
+const OUT = path.join(__dirname, 'top500', BRANCH + '.json');
+// Ensure top500 folder exists
+const outDir = path.dirname(OUT);
+if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
 const raw = fs.readFileSync(SRC, 'utf8');
 
@@ -121,10 +128,11 @@ Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,10).forEach(([c,n]) => cons
 
 fs.writeFileSync(OUT, JSON.stringify({
   generatedAt: Date.now(),
+  branch: BRANCH,
   source: path.basename(SRC),
   totalSKUs: products.length,
   coverageQty: top500Qty / totalQty,
   coverageRevenue: top500Sbtls / totalSbtls,
   items: top,
 }, null, 2));
-console.log('\nWrote ' + OUT);
+console.log('\nWrote ' + OUT + ' (branch=' + BRANCH + ')');
