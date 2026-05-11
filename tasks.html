@@ -2265,9 +2265,25 @@ function refreshStaticI18n(){
   // 🏢 지점 dropdown (assign modal) — visible text 다국어 갱신
   const aBranch = document.getElementById('aBranchSel');
   if (aBranch && typeof BRANCHES !== 'undefined' && aBranch.options.length) {
+    const curBr = aBranch.value;
     Array.from(aBranch.options).forEach(opt => {
       const b = BRANCHES.find(x => x.id === opt.value);
       if (b) opt.textContent = '🏢 ' + (b[LANG] || b.ko || b.id);
+    });
+    // Force redraw of selected option text (some browsers cache it)
+    try { aBranch.value = ''; aBranch.value = curBr; } catch(_){}
+  }
+  // 👤 담당자 dropdown (aTo) — 첫 옵션 '직원 선택' 다국어, '본 지점 전체' 도
+  // 모달 열려있고 dropdown 채워진 상태면 재로드해서 정확히 다시 그림.
+  const aToSel = document.getElementById('aTo');
+  if (aToSel && aToSel.options.length) {
+    const selectLbl = LANG==='en' ? '— Select employee —' : LANG==='es' ? '— Selecciona empleado —' : '— 직원 선택 —';
+    const allLbl    = LANG==='en' ? '📢 Entire branch'    : LANG==='es' ? '📢 Toda la sucursal'      : '📢 본 지점 전체';
+    // 첫 옵션 (값 없는 placeholder) 갱신
+    if (!aToSel.options[0].value) aToSel.options[0].textContent = selectLbl;
+    // 두번째 옵션 (* 전체) 가 있으면 그것도 갱신
+    Array.from(aToSel.options).forEach(opt => {
+      if (opt.value === '*') opt.textContent = allLbl;
     });
   }
   // 📍 장소 dropdown — 정적 옵션 (1번 통로 등 + 정육 작업장) 다국어 갱신
@@ -5708,7 +5724,10 @@ async function openAssignModal(){
     if (BRANCHES.find(b => b.id === defaultBranch)) branchSel.value = defaultBranch;
   } else {
     branchField.style.display = 'none';
-    branchSel.innerHTML = `<option value="${me.branch}">🏢 ${escHtml(me.branch)}</option>`;
+    // 매니저용 — 본인 지점만, 다국어 라벨로 표시
+    const bObj = (typeof BRANCHES !== 'undefined') ? BRANCHES.find(x => x.id === me.branch) : null;
+    const bLbl = bObj ? (bObj[LANG] || bObj.ko || me.branch) : me.branch;
+    branchSel.innerHTML = `<option value="${me.branch}">🏢 ${escHtml(bLbl)}</option>`;
     branchSel.value = me.branch;
   }
   // 직원 목록은 선택된 지점 기준으로 로드
@@ -5730,7 +5749,9 @@ window.onAssignBranchChange = onAssignBranchChange;
 
 async function loadAssignEmployees(branchId){
   const sel = document.getElementById('aTo');
-  sel.innerHTML = '<option value="">— 직원 선택 —</option><option value="*">📢 본 지점 전체</option>';
+  const selectLbl = LANG==='en' ? '— Select employee —' : LANG==='es' ? '— Selecciona empleado —' : '— 직원 선택 —';
+  const allLbl    = LANG==='en' ? '📢 Entire branch'    : LANG==='es' ? '📢 Toda la sucursal'      : '📢 본 지점 전체';
+  sel.innerHTML = `<option value="" id="aToDefault">${selectLbl}</option><option value="*">${allLbl}</option>`;
   try {
     const data = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' }).then(r => r.json());
     if (data && data.employees) {
