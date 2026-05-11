@@ -179,11 +179,54 @@ function fillLoginBranches(){
 }
 
 const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+// 직원 데이터 정규화 — 레거시 string 배열 / 잘못된 형식도 안전하게.
+// 폰에서 사파리/크롬 캐시가 옛 포맷을 갖고 있을 때 dropdown 이 깨지는 경우 방지.
+function _normalizeEmployees(arr){
+  if (!Array.isArray(arr)) return [];
+  return arr.map(e => {
+    if (!e) return null;
+    if (typeof e === 'string') return { name: e.trim() };
+    if (typeof e === 'object') {
+      const name = String(e.name || e.fullName || e.displayName || '').trim();
+      if (!name) return null;
+      return { name, role: String(e.role || '').trim() };
+    }
+    return null;
+  }).filter(Boolean);
+}
+
+// 명단 비었을 때 시각적 강조 + 직접 입력 input 자동 focus.
+// "이름 선택이 안 됨" 신고의 주된 원인 — dropdown 비어있어 막혔다고 느낌.
+function _highlightCustomInput(message){
+  const cust = document.getElementById('loginNameCustom');
+  if (!cust) return;
+  cust.style.borderColor = '#1a5c3a';
+  cust.style.borderWidth = '2px';
+  cust.style.background = '#f0fdf4';
+  // 모바일에선 autofocus 가 키보드 팝업 → 좀 거슬리니 클릭 가능한 표시만.
+  // 데스크탑은 focus.
+  if (window.matchMedia && window.matchMedia('(min-width: 768px)').matches) {
+    setTimeout(() => cust.focus(), 100);
+  }
+  if (message){
+    const sel = document.getElementById('loginName');
+    if (sel) sel.innerHTML = `<option value="">${message}</option>`;
+  }
+}
+function _resetCustomInputStyle(){
+  const cust = document.getElementById('loginNameCustom');
+  if (!cust) return;
+  cust.style.borderColor = '';
+  cust.style.borderWidth = '';
+  cust.style.background = '';
+}
+
 window.onLoginBranchChange = async function(){
   const branchId = document.getElementById('loginBranch').value;
   const sel = document.getElementById('loginName');
   if (!branchId) {
     sel.innerHTML = '<option value="">👤 본인 이름 선택 / Your Name (지점 선택 후)</option>';
+    _resetCustomInputStyle();
     return;
   }
   sel.innerHTML = '<option value="">⏳ 로딩…</option>';
@@ -191,16 +234,20 @@ window.onLoginBranchChange = async function(){
   try {
     // localStorage cache 우선 — chat.html 가 평소 채워둠
     const cached = JSON.parse(localStorage.getItem('shifts.' + branchId) || 'null');
-    if (cached && cached.employees) employees = cached.employees;
+    if (cached && cached.employees) employees = _normalizeEmployees(cached.employees);
   } catch(_){}
-  // RTDB fetch — 캐시 없거나 오래됐을 때
+  // RTDB fetch — 캐시 없거나 오래됐을 때.
+  // 로그인 전엔 401 (auth != null) 일 수 있음 — 그러면 캐시만 사용.
   try {
     const r = await fetch(`${FB_DB_URL}/schedules/${branchId}.json`, { cache:'no-store' });
     if (r.ok) {
       const data = await r.json();
       if (data && data.employees) {
-        employees = data.employees;
-        try { localStorage.setItem('shifts.' + branchId, JSON.stringify(data)); } catch(_){}
+        const fresh = _normalizeEmployees(data.employees);
+        if (fresh.length) {
+          employees = fresh;
+          try { localStorage.setItem('shifts.' + branchId, JSON.stringify(data)); } catch(_){}
+        }
       }
     }
   } catch(_){}
@@ -208,7 +255,7 @@ window.onLoginBranchChange = async function(){
   let owners = [];
   try {
     const g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
-    if (g && g.owners) owners = g.owners;
+    if (g && g.owners) owners = _normalizeEmployees(g.owners);
   } catch(_){}
   if (owners.length === 0) {
     try {
@@ -216,7 +263,7 @@ window.onLoginBranchChange = async function(){
       if (r.ok) {
         const d = await r.json();
         if (d && d.owners) {
-          owners = d.owners;
+          owners = _normalizeEmployees(d.owners);
           try { localStorage.setItem('shifts.global', JSON.stringify(d)); } catch(_){}
         }
       }
@@ -224,11 +271,35 @@ window.onLoginBranchChange = async function(){
   }
   const all = [...owners, ...employees];
   if (all.length === 0) {
-    sel.innerHTML = '<option value="">— 명단 없음, 직접 입력해주세요 —</option>';
+    // 명단 비었음 — 폰 첫 방문 + 인증 전 RTDB read 차단된 경우. 직접 입력 박스 강조.
+    _highlightCustomInput('⌨️ 아래 칸에 이름을 직접 입력하세요');
     return;
   }
+  _resetCustomInputStyle();
   sel.innerHTML = '<option value="">— 직접 입력 —</option>' +
     all.map(e => `<option value="${e.name||''}" data-role="${e.role||''}">${e.name||''}${e.role?' ('+e.role+')':''}</option>`).join('');
+};
+
+// 로그인 성공 후 명단 재조회 — 인증된 상태로 schedules read 가능.
+// 폰에서 처음 들어와 명단 비어있던 사용자도 다음 번부터 캐시 활용.
+window.__refreshEmployeesAfterAuth = async function(branchId){
+  if (!branchId) return;
+  try {
+    const r = await fetch(`${FB_DB_URL}/schedules/${branchId}.json`, { cache:'no-store' });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && data.employees && data.employees.length) {
+        try { localStorage.setItem('shifts.' + branchId, JSON.stringify(data)); } catch(_){}
+      }
+    }
+    const g = await fetch(`${FB_DB_URL}/schedules/_global.json`, { cache:'no-store' });
+    if (g.ok) {
+      const d = await g.json();
+      if (d) {
+        try { localStorage.setItem('shifts.global', JSON.stringify(d)); } catch(_){}
+      }
+    }
+  } catch(_){}
 };
 
 const I18N = {
@@ -530,6 +601,11 @@ onAuthStateChanged(auth, async (user) => {
       });
       localStorage.setItem('chat.me', JSON.stringify(chatMe));
       try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_) {}
+      // 인증 직후 직원 명단 백그라운드 캐싱 — 다음 방문 시 dropdown 즉시 표시.
+      // 폰 첫 방문에서 명단 비어있어 막힌 사용자 케이스 해결.
+      if (typeof window.__refreshEmployeesAfterAuth === 'function' && branch) {
+        window.__refreshEmployeesAfterAuth(branch).catch(()=>{});
+      }
     } catch(_) {}
     show('statusView');
     renderProfile();
