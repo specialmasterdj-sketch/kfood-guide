@@ -112,9 +112,15 @@ a{color:inherit;text-decoration:none}
 .msg:hover .del{opacity:1}
 /* 오너 전용 ✕ — 모든 메시지에 항상 보이게. 사진 위로 올라옴 (z-index). */
 /* 박스 안쪽 우상단 — 박스 밖으로 절대 안 빠져나감. 콘텐츠와 살짝 겹쳐도 작아서 가독성 영향 미미. */
-.msg .del.owner-always{opacity:.85 !important;width:4px;height:4px;font-size:.22em;background:#dc2626;color:#fff;top:1px;right:1px;box-shadow:none;z-index:5;font-weight:800;line-height:1;padding:0}
-.msg .del.owner-always:hover{opacity:1 !important;background:#b91c1c;transform:scale(1.1)}
-@media(hover:none){ .msg .del{opacity:1} .msg .del.owner-always{opacity:.85 !important} }
+/* 오너 ✕ 버튼 — 평소엔 작게 (실수 클릭 방지), 호버/탭 시 커짐.
+   폰에선 항상 누르기 쉬운 크기로 (모바일 hover 없음 → 작으면 영원히 못 누름). */
+.msg .del.owner-always{opacity:.78 !important;width:22px;height:22px;font-size:.78em;background:#dc2626;color:#fff;top:-6px;right:-6px;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:5;font-weight:800;line-height:1;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff;cursor:pointer}
+.msg .del.owner-always:hover{opacity:1 !important;background:#b91c1c;transform:scale(1.15)}
+@media(hover:none){
+  /* 모바일/터치 — 항상 잘 보이게 + 누를 수 있게 */
+  .msg .del{opacity:1}
+  .msg .del.owner-always{opacity:.92 !important;width:26px;height:26px;font-size:.9em}
+}
 
 /* 첨부 미리보기 — 일반 파일 (PDF/Word/Excel 등) */
 .pv-file{display:inline-flex;align-items:center;gap:8px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;position:relative;min-width:120px}
@@ -1108,11 +1114,20 @@ const STRICT_OWNER_EMAILS = [
   'specialmasterdj@gmail.com',   // DJ — 사장님
   'byhoki64@gmail.com',          // B.H.K — 전무
 ];
+// chat.me.name 기반 fallback — 공유 계정(staff@/manager@) 로그인 후 이름만
+// "DJ" 또는 "B.H.K" 로 선택한 케이스도 인정. email 매칭 실패해도 본인 식별됨.
+const STRICT_OWNER_NAMES = ['DJ', 'B.H.K', 'BHK'];
+function _normName(s){ return String(s||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
 function isStrictOwner(){
   try {
     const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
-    if (!u || !u.email) return false;
-    return STRICT_OWNER_EMAILS.includes(u.email.toLowerCase());
+    if (u && u.email && STRICT_OWNER_EMAILS.includes(u.email.toLowerCase())) return true;
+    // Fallback: chat.me 이름 + role 조합 — 공유 계정 사용자 케이스
+    if (me && me.name){
+      const n = _normName(me.name);
+      if (STRICT_OWNER_NAMES.map(_normName).includes(n)) return true;
+    }
+    return false;
   } catch(e){ return false; }
 }
 // 화면에 표시할 권한 라벨: 실제 오너만 'OWNER', 임원은 본인 역할 (전무 등) 그대로
@@ -2784,7 +2799,11 @@ async function deleteMessage(msgId){
     alert('사장님(DJ) / 전무님(B.H.K) 만 메시지를 삭제할 수 있습니다.');
     return;
   }
-  // 확인 팝업 제거 — 오너 ✕ 클릭 즉시 삭제. 실수 방지용 mini-toast 만 띄움.
+  // 버튼 키운 만큼 폰에서 실수 누름 가능 — 확인 다이얼로그 추가.
+  // 메시지 미리보기 (앞 50자) 로 어떤 메시지인지 명확히.
+  const preview = String(m.text || (m.photos && m.photos.length ? `📷 사진 ${m.photos.length}장` : '(빈 메시지)'))
+    .replace(/\s+/g, ' ').trim().slice(0, 50);
+  if (!confirm(`🗑 이 메시지를 삭제할까요?\n\n"${preview}${preview.length >= 50 ? '…' : ''}"\n\n복구 안 됨.`)) return;
   try {
     const t = document.createElement('div');
     t.textContent = '🗑 삭제됨';
