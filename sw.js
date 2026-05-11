@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v467';
+const CACHE = 'kmtools-v468';
 
 const CORE = [
   './',
@@ -78,7 +78,9 @@ self.addEventListener('fetch', e => {
                 || url.pathname.endsWith('.webmanifest');
 
   if (isStatic){
-    // Cache-first for static assets
+    // Cache-first for static assets. 네트워크 실패 시 invoice-to-excel.html 폴백을 주면
+    // <img> 요소가 HTML 을 이미지로 디코드 못해 깨진 아이콘. 이미지 요청은 그냥 404 빈 응답을 돌려
+    // 클라이언트의 onerror 핸들러가 깨끗하게 처리하도록.
     e.respondWith(
       caches.match(e.request).then(hit =>
         hit || fetch(e.request).then(res => {
@@ -87,7 +89,7 @@ self.addEventListener('fetch', e => {
             caches.open(CACHE).then(c => c.put(e.request, copy));
           }
           return res;
-        }).catch(() => caches.match('./invoice-to-excel.html'))
+        }).catch(() => new Response('', { status: 404, statusText: 'offline' }))
       )
     );
     return;

@@ -531,6 +531,17 @@ function isUserPhoto(code){
   return p && typeof p === 'string' && p.startsWith('data:');
 }
 
+// 썸네일 로드 실패 시 이모지로 폴백 — static 사진 파일 404, SW 캐시 문제, 네트워크 오류 등.
+// 동시에 PHOTOS[code] 에서도 제거해 재렌더 시 깨끗하게 emoji 가 나오도록.
+function handleThumbError(img){
+  const code = img.dataset.code || '';
+  const emoji = img.dataset.emoji || '📦';
+  if (code && PHOTOS[code] && !isUserPhoto(code)) delete PHOTOS[code];
+  const parent = img.parentNode;
+  if (parent) parent.innerHTML = `<span class="ph">${emoji}</span><span class="cam-badge">📷</span>`;
+}
+window.handleThumbError = handleThumbError;
+
 async function savePhotoToDB(code, dataURL){
   PHOTOS[code] = dataURL;
   await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(code)}.json`, {
@@ -833,11 +844,13 @@ function renderRow(p){
     ? `<div class="qval unset">—</div>`
     : `<div class="qval">${qty}</div>`;
   // 썸네일 — 사진 있으면 <img>, 없으면 카테고리 이모지. 탭 시 사진 관리 모달 (qty 모달과 분리).
+  // onerror: static 사진 파일이 404 (GitHub Pages 배포 race 등) 시 이모지로 폴백.
   const photo = PHOTOS[p.code];
-  const thumbInner = photo
-    ? `<img loading="lazy" src="${escHtml(photo)}" alt="">`
-    : `<span class="ph">${categoryEmoji(p.cat||'')}</span><span class="cam-badge">📷</span>`;
+  const emoji = categoryEmoji(p.cat||'');
   const codeEsc = escHtml(p.code);
+  const thumbInner = photo
+    ? `<img loading="lazy" src="${escHtml(photo)}" alt="" data-code="${codeEsc}" data-emoji="${emoji}" onerror="handleThumbError(this)">`
+    : `<span class="ph">${emoji}</span><span class="cam-badge">📷</span>`;
   return `<div class="item-row ${status}" onclick="openQtyOv('${codeEsc}')">
     <div class="rank ${rankCls}">#${p.rank}</div>
     <div class="thumb" data-code="${codeEsc}" onclick="event.stopPropagation();openPhotoModal('${codeEsc}')">${thumbInner}</div>
@@ -862,15 +875,18 @@ let CUR_CODE = null;
 let NUMPAD_VAL = '';
 function syncQtyPhoto(code){
   // qty 모달의 사진 미리보기 갱신 — 사진 있으면 <img>, 없으면 카테고리 이모지.
+  // onerror 시 이모지 fallback (썸네일과 동일 로직).
   const p = TOP500.find(x => x.code === code);
   if (!p) return;
   const t = T();
   const wrap = $('qtyPhoto');
   const photo = PHOTOS[code];
+  const emoji = categoryEmoji(p.cat||'');
   if (photo) {
-    wrap.innerHTML = `<img src="${escHtml(photo)}" alt=""><div class="edit-hint">${escHtml(t.photoChange)}</div>`;
+    const fallbackHTML = `<span class=\\'ph-big\\'>${emoji}</span><div class=\\'edit-hint\\'>${escHtml(t.photoAdd)}</div>`;
+    wrap.innerHTML = `<img src="${escHtml(photo)}" alt="" onerror="this.parentNode.innerHTML='${fallbackHTML}'"><div class="edit-hint">${escHtml(t.photoChange)}</div>`;
   } else {
-    wrap.innerHTML = `<span class="ph-big">${categoryEmoji(p.cat||'')}</span><div class="edit-hint">${escHtml(t.photoAdd)}</div>`;
+    wrap.innerHTML = `<span class="ph-big">${emoji}</span><div class="edit-hint">${escHtml(t.photoAdd)}</div>`;
   }
 }
 function openQtyOv(code){
