@@ -10,6 +10,8 @@
 <script src="./nav-sidebar.js?v=18" defer></script>
 <script src="./back-nav.js?v=1"></script>
 <script src="./lang-sync.js?v=2" defer></script>
+<!-- ZXing — iOS Safari 용 바코드 스캔. Android 는 native BarcodeDetector 사용. -->
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <link rel="stylesheet" href="./km-design.css?v=3">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -136,6 +138,21 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 .photo-sheet .ph-busy{text-align:center;color:#6b7280;font-size:.84em;padding:8px}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(40px);background:#0f172a;color:#fff;padding:10px 18px;border-radius:24px;font-weight:700;font-size:.88em;opacity:0;transition:.2s;z-index:1100;pointer-events:none}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+/* Barcode scanner — 전체 화면 카메라 뷰포트 (lookup.html 패턴 차용) */
+.scan-ov{position:fixed;inset:0;background:#000;z-index:1200;display:none;flex-direction:column}
+.scan-ov.active{display:flex}
+.scan-video{flex:1;width:100%;height:100%;object-fit:cover;background:#000}
+.scan-top{position:absolute;top:0;left:0;right:0;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,rgba(0,0,0,.7),transparent);z-index:2}
+.scan-top .scan-title{color:#fff;font-weight:800;font-size:1em;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.scan-top button{background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.4);border-radius:999px;padding:7px 14px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit}
+.scan-reticle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(80vw,360px);height:min(36vh,180px);border:3px solid #16a34a;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none;z-index:2}
+.scan-reticle::before,.scan-reticle::after{content:'';position:absolute;left:8%;right:8%;height:2px;background:#16a34a}
+.scan-reticle::before{top:50%}
+.scan-bottom{position:absolute;bottom:0;left:0;right:0;padding:18px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent);z-index:2}
+.scan-hint{color:#fff;font-size:.86em;font-weight:600;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.scan-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.scan-actions button{background:rgba(255,255,255,.92);color:#0f172a;border:0;border-radius:9px;padding:10px 16px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit}
+.scan-actions button:hover{background:#fff}
 .stat-line{font-size:.78em;color:#6b7280;text-align:center;margin-bottom:8px}
 </style>
 </head>
@@ -247,6 +264,24 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 </div>
 <input type="file" id="photoFile" accept="image/*" style="display:none">
 
+<!-- BARCODE SCANNER OVERLAY -->
+<div class="scan-ov" id="scanOv">
+  <div class="scan-top">
+    <div class="scan-title" id="scanTitle">📷 바코드 스캔</div>
+    <button onclick="closeScan()" id="scanCloseBtn">✕ 취소</button>
+  </div>
+  <video id="scanVideo" class="scan-video" playsinline muted autoplay></video>
+  <div class="scan-reticle"></div>
+  <div class="scan-bottom">
+    <div class="scan-hint" id="scanHint">바코드를 화면 중앙 사각형 안에 맞추세요</div>
+    <div class="scan-actions">
+      <button onclick="triggerScanFile()" id="scanFileBtn">🖼️ 사진에서 인식</button>
+      <button onclick="manualBarcodeEntry()" id="scanManualBtn">⌨️ 직접 입력</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="scanFile" accept="image/*" capture="environment" style="display:none">
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -328,6 +363,16 @@ const I18N = {
     photoConfirmDel: '이 상품 사진을 삭제할까요?',
     photoErrSize: '⚠️ 사진이 너무 큼 (10MB 이하)',
     photoErrType: '⚠️ 이미지 파일만 가능',
+    scanTitle: '📷 바코드 스캔',
+    scanHint: '바코드를 화면 중앙 사각형 안에 맞추세요',
+    scanClose: '✕ 취소',
+    scanFile: '🖼️ 사진에서 인식',
+    scanManual: '⌨️ 직접 입력',
+    scanSuccess: (c) => `✅ 스캔: ${c}`,
+    scanNotFound: (c) => `🔍 "${c}" — Top 500 에 없음.\n전체 카탈로그 검색하시겠어요?`,
+    scanNoCam: '⚠️ 카메라 권한 없음 — 직접 입력하시겠어요?',
+    scanFail: '❌ 바코드 인식 실패 — 다시 시도하세요',
+    scanPrompt: '📷 바코드 번호 입력:',
   },
   en: {
     pageTitle: '🏆 Top 500 Inventory',
@@ -392,6 +437,16 @@ const I18N = {
     photoConfirmDel: 'Delete this product photo?',
     photoErrSize: '⚠️ Photo too large (max 10MB)',
     photoErrType: '⚠️ Image files only',
+    scanTitle: '📷 Scan Barcode',
+    scanHint: 'Align the barcode inside the center frame',
+    scanClose: '✕ Cancel',
+    scanFile: '🖼️ From Photo',
+    scanManual: '⌨️ Type Code',
+    scanSuccess: (c) => `✅ Scanned: ${c}`,
+    scanNotFound: (c) => `🔍 "${c}" — not in Top 500.\nSearch full catalog?`,
+    scanNoCam: '⚠️ No camera access — type code manually?',
+    scanFail: '❌ Barcode not recognized — try again',
+    scanPrompt: '📷 Enter barcode:',
   },
   es: {
     pageTitle: '🏆 Inventario Top 500',
@@ -456,6 +511,16 @@ const I18N = {
     photoConfirmDel: '¿Eliminar la foto de este producto?',
     photoErrSize: '⚠️ Foto muy grande (máx 10MB)',
     photoErrType: '⚠️ Solo archivos de imagen',
+    scanTitle: '📷 Escanear Código',
+    scanHint: 'Alinee el código en el cuadro central',
+    scanClose: '✕ Cancelar',
+    scanFile: '🖼️ Desde Foto',
+    scanManual: '⌨️ Escribir Código',
+    scanSuccess: (c) => `✅ Escaneado: ${c}`,
+    scanNotFound: (c) => `🔍 "${c}" — no está en Top 500.\n¿Buscar catálogo completo?`,
+    scanNoCam: '⚠️ Sin acceso a cámara — ¿escribir manualmente?',
+    scanFail: '❌ Código no reconocido — intente de nuevo',
+    scanPrompt: '📷 Ingrese código de barras:',
   }
 };
 let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; }})();
@@ -698,6 +763,12 @@ function applyI18N(){
   $('saveBtn').textContent = t.btnSave;
   $('zeroBtn').textContent = t.zeroOut;
   if ($('catSelLbl')) $('catSelLbl').textContent = t.catLbl;
+  // 스캔 모달 텍스트 — 카메라 열려있지 않아도 사전 세팅
+  if ($('scanTitle')) $('scanTitle').textContent = t.scanTitle;
+  if ($('scanHint')) $('scanHint').textContent = t.scanHint;
+  if ($('scanCloseBtn')) $('scanCloseBtn').textContent = t.scanClose;
+  if ($('scanFileBtn')) $('scanFileBtn').textContent = t.scanFile;
+  if ($('scanManualBtn')) $('scanManualBtn').textContent = t.scanManual;
   // refresh branch dropdown labels
   const sel = $('branchSel');
   const cur = sel.value;
@@ -1117,19 +1188,180 @@ window.triggerPhotoFile = triggerPhotoFile;
 window.confirmDeletePhoto = confirmDeletePhoto;
 
 // ============== Barcode scan ==============
-function startScan(){
-  const code = prompt(T().promptBarcode);
-  if (!code) return;
-  const trimmed = code.trim();
-  const hit = TOP500.find(p => p.code === trimmed || p.code.endsWith(trimmed));
-  if (hit) { openQtyOv(hit.code); }
-  else {
-    if (confirm(T().notInTop500(trimmed))) {
-      window.location.href = './lookup.html?q=' + encodeURIComponent(trimmed);
+// 실시간 카메라 스캔 — Android: BarcodeDetector, iOS: ZXing, 폴백: 파일/직접 입력.
+// lookup.html 의 검증된 패턴 차용.
+let scanVideoStream = null;
+let scanInterval = null;
+let zxingReader = null;
+let zxingLiveActive = false;
+let scanOpen = false;
+
+async function startScan(){
+  if (scanOpen) return;
+  scanOpen = true;
+  const overlay = $('scanOv');
+  const video = $('scanVideo');
+  overlay.classList.add('active');
+
+  // Android / Chrome: native BarcodeDetector (가장 빠름)
+  if ('BarcodeDetector' in window){
+    try {
+      scanVideoStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width:{ideal:1280}, height:{ideal:720} }
+      });
+      video.srcObject = scanVideoStream;
+      video.onloadedmetadata = () => {
+        const detector = new BarcodeDetector({
+          formats: ['ean_13','upc_a','upc_e','ean_8','code_128','code_39','qr_code']
+        });
+        scanInterval = setInterval(async () => {
+          if (!scanOpen) return;
+          if (video.readyState === video.HAVE_ENOUGH_DATA){
+            try {
+              const codes = await detector.detect(video);
+              if (codes && codes.length > 0) handleScannedCode(codes[0].rawValue);
+            } catch(_) {}
+          }
+        }, 400);
+      };
+      return;
+    } catch(e){ console.warn('BarcodeDetector failed:', e); }
+  }
+
+  // iOS Safari: ZXing live stream.
+  // Stability guard: 같은 값 2번 디코드되면 commit, 또는 800ms 후 single-hit 도 허용.
+  if (typeof ZXing !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+    try {
+      if (!zxingReader) zxingReader = new ZXing.BrowserMultiFormatReader();
+      zxingLiveActive = true;
+      const hits = new Map();
+      const scanStart = Date.now();
+      let committed = false;
+      await zxingReader.decodeFromConstraints(
+        { video: { facingMode: { ideal: 'environment' } } },
+        video,
+        (result) => {
+          if (!zxingLiveActive || committed || !result) return;
+          const text = result.getText();
+          if (!text || text.replace(/\D/g,'').length < 8) return;
+          const n = (hits.get(text) || 0) + 1;
+          hits.set(text, n);
+          if (n >= 2){ committed = true; handleScannedCode(text); return; }
+          if (Date.now() - scanStart >= 800){ committed = true; handleScannedCode(text); }
+        }
+      );
+      return;
+    } catch(e){
+      zxingLiveActive = false;
+      console.warn('ZXing scan unavailable:', e);
+    }
+  }
+
+  // 최후 폴백: 파일 업로드 모드로 전환
+  showToast(T().scanNoCam);
+  triggerScanFile();
+}
+
+function closeScan(){
+  scanOpen = false;
+  if (scanInterval){ clearInterval(scanInterval); scanInterval = null; }
+  zxingLiveActive = false;
+  if (scanVideoStream){
+    try { scanVideoStream.getTracks().forEach(t => t.stop()); } catch(_){}
+    scanVideoStream = null;
+  }
+  if (zxingReader){ try { zxingReader.reset(); } catch(_){} }
+  const v = $('scanVideo');
+  if (v && v.srcObject){
+    try { v.srcObject.getTracks().forEach(t => t.stop()); } catch(_){}
+    v.srcObject = null;
+  }
+  $('scanOv').classList.remove('active');
+}
+
+// 스캔 코드 처리 — top500 내 매칭 후 qty modal 열기.
+// 바코드 정규화로 = 접두사, leading 0 등 변형 모두 시도.
+function handleScannedCode(code){
+  closeScan();
+  const raw = String(code||'').trim();
+  if (!raw) return;
+  // Top500 안에서 매칭 시도 (변형 키 사용)
+  const hit = findTop500ByBarcode(raw);
+  const t = T();
+  if (hit){
+    showToast(t.scanSuccess(raw));
+    openQtyOv(hit.code);
+  } else {
+    if (confirm(t.scanNotFound(raw))){
+      window.location.href = './lookup.html?q=' + encodeURIComponent(raw);
     }
   }
 }
+
+function findTop500ByBarcode(scanned){
+  const variants = photoLookupKeys(scanned);   // 정규화 + prefix 변형
+  for (const v of variants){
+    let hit = TOP500.find(p => p.code === v);
+    if (hit) return hit;
+  }
+  // top500 코드를 정규화한 후 비교 (반대 방향)
+  const normScan = normBarcode(scanned);
+  for (const p of TOP500){
+    const normProd = normBarcode(p.code);
+    if (normProd && (normProd === normScan || normProd.startsWith(normScan) || normScan.startsWith(normProd))){
+      return p;
+    }
+  }
+  return null;
+}
+
+function triggerScanFile(){
+  $('scanFile').value = '';
+  $('scanFile').click();
+}
+
+async function handleScanFile(file){
+  if (!file) return;
+  const t = T();
+  let result = null;
+  // BarcodeDetector 우선
+  if ('BarcodeDetector' in window){
+    try {
+      const img = await createImageBitmap(file);
+      const detector = new BarcodeDetector({
+        formats: ['ean_13','upc_a','upc_e','ean_8','code_128','code_39','qr_code']
+      });
+      const codes = await detector.detect(img);
+      if (codes && codes.length > 0) result = codes[0].rawValue;
+    } catch(e){}
+  }
+  // ZXing 폴백
+  if (!result && typeof ZXing !== 'undefined'){
+    try {
+      const url = URL.createObjectURL(file);
+      if (!zxingReader) zxingReader = new ZXing.BrowserMultiFormatReader();
+      const res = await zxingReader.decodeFromImageUrl(url);
+      URL.revokeObjectURL(url);
+      if (res) result = res.getText();
+    } catch(e){}
+  }
+  if (result){
+    handleScannedCode(result);
+  } else {
+    showToast(t.scanFail);
+  }
+}
+
+function manualBarcodeEntry(){
+  closeScan();
+  const code = prompt(T().scanPrompt);
+  if (code) handleScannedCode(code);
+}
+
 window.startScan = startScan;
+window.closeScan = closeScan;
+window.triggerScanFile = triggerScanFile;
+window.manualBarcodeEntry = manualBarcodeEntry;
 
 // ============== Init ==============
 function init(){
@@ -1160,6 +1392,12 @@ function init(){
   if (photoFile) photoFile.addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
     if (f) handlePhotoFile(f);
+  });
+  // Scan file picker wire-up
+  const scanFile = $('scanFile');
+  if (scanFile) scanFile.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handleScanFile(f);
   });
   // 다른 페이지에서 언어 바꾸고 돌아왔을 때 동기화 (lang-sync.js 가 broadcast)
   window.addEventListener('storage', (e) => {
