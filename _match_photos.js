@@ -184,7 +184,7 @@ async function compressToFile(srcPath, outPath){
 }
 
 (async function main(){
-  const branches = ['CORAL_SPRINGS', 'HOLLYWOOD'];
+  const branches = ['CORAL_SPRINGS', 'HOLLYWOOD', 'LASOLAS'];
   const allMatches = [];
   for (const b of branches){
     allMatches.push(...matchBranch(b));
