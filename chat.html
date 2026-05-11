@@ -1224,22 +1224,32 @@ function isManagerRole(role){
   const r = role.toUpperCase();
   return MANAGER_ROLE_TOKENS.some(t => r.includes(t));
 }
-// 더 엄격: payroll 방은 OWNER / 전무 / MANAGER / ASSISTANT MANAGER만 (SUPERVISOR 제외)
-// 'MANAGER' substring은 'ASSISTANT MANAGER'와 'MANAGER' 둘 다 매치, 'SUPERVISOR'는 미매치.
-// 🐛 전무(EXECUTIVE/전무/DIRECTOR) 가 빠져있어 B.H.K 전무님 현금 급여 보고 방 못 봤음.
-const PAYROLL_ACCESS_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+// 더 엄격: payroll / managers 방은 OWNER / 전무 / MANAGER / ASSISTANT MANAGER만.
+// 'SUPERVISOR' 는 명시적 제외 (스태프 + 일반 직원 권한 — 매니저 방 출입 X).
+// 'MANAGER' substring은 'ASSISTANT MANAGER'와 'MANAGER' 둘 다 매치.
+const MGR_ACCESS_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
   'EXECUTIVE','전무','상무','이사','DIRECTOR','VICE PRESIDENT','VP',
   'MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE'];
-function canAccessPayrollRoom(){
+// SUPERVISOR 가 'MANAGER' substring 에 안 잡히지만, 누군가 'STORE MANAGER SUPERVISOR'
+// 같은 합성 role 을 넣을 가능성 대비해 명시적 거부 목록도 따로 관리.
+const STAFF_ONLY_TOKENS = ['SUPERVISOR','STAFF','EMPLOYEE','STOCKER','CASHIER','직원','스태프','캐셔','스토커'];
+
+function _hasMgrAccess(){
   if (!me) return false;
   const r = String(me.role || '').toUpperCase();
-  if (r && PAYROLL_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase()))) return true;
-  // Fallback: 이름으로 임원 식별 (공유 계정 로그인 케이스)
+  // 스태프 명시적 차단 — STAFF/SUPERVISOR/CASHIER 등은 매니저 권한 절대 X
+  if (r && STAFF_ONLY_TOKENS.some(t => r === t || r === t.toUpperCase())) {
+    // 단, 이름으로 임원 인정되면 허용 (B.H.K 공유 계정 케이스)
+    if (isExecNameStr(me.name)) return true;
+    return false;
+  }
+  if (r && MGR_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase()))) return true;
   if (isExecNameStr(me.name)) return true;
-  // 또는 chat.me.isManager 플래그
-  if (me.isManager) return true;
   return false;
 }
+function canAccessPayrollRoom(){ return _hasMgrAccess(); }
+// 매니저 룸 / 매니저 전용 방 — payroll 과 동일한 엄격 기준 (SUPERVISOR 제외).
+function canAccessManagerRoom(){ return _hasMgrAccess(); }
 // HR 룸: OWNER · 전무 · HR 매니저만 열람. 누구나 제출(submitHRInquiry) 가능.
 const HR_ACCESS_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
   '전무','상무','이사','EXECUTIVE','DIRECTOR',
@@ -1449,10 +1459,14 @@ function renderRooms(){
   const list = document.getElementById('roomsList');
   const items = Object.entries(ROOMS)
     .filter(([id, r]) => {
-      // 권한 체크 (통과 못하면 숨김, 검색 무관)
+      // 권한 체크 (통과 못하면 숨김, 검색 무관).
+      // 🔒 SUPERVISOR(스태프 공유 계정) 도 매니저 룸 못 들어가게 — payroll 과 동일 strict.
       if (id === 'payroll' && !canAccessPayrollRoom()) return false;
-      if (id === 'managers' && !me?.isManager) return false;
+      if (id === 'managers' && !canAccessManagerRoom()) return false;
       if (id === 'hr_inquiries' && !canAccessHRRoom()) return false;
+      // 추가 매니저 전용 룸들 — 잘못 만든 manager-only 룸도 SUPERVISOR 차단
+      if ((id === 'app_lab' || id === 'kimchi_mart_app_lab' || id === 'admin' || id === 'devlab')
+          && !canAccessManagerRoom()) return false;
       // 1:1 (DM) 룸: 본인이 members 에 포함된 경우만 표시
       if (id.startsWith('dm__') && !isMyDmRoom(id, r)) return false;
       // 검색 필터 — 모든 방에 동등 적용
@@ -1695,9 +1709,15 @@ function openRoom(id){
       return;
     }
   } else if (id === 'managers') {
-    if (!me?.isManager){
-      const m = ({ko:'매니저 전용 방입니다.', en:'Manager-only room.', es:'Sala solo para gerentes.'})[LANG] || '';
+    // 🔒 SUPERVISOR / STAFF / 직원 차단 — payroll 과 동일한 strict 기준 (canAccessManagerRoom)
+    if (!canAccessManagerRoom()){
+      const m = ({ko:'매니저 전용 방입니다.\nOWNER · 전무 · MANAGER · ASSISTANT MANAGER만 입장 가능합니다.', en:'Manager-only room.\nOWNER · EXEC · MANAGER · ASSISTANT MANAGER only.', es:'Sala solo para gerentes.'})[LANG] || '';
       alert(m);
+      return;
+    }
+  } else if (id === 'app_lab' || id === 'kimchi_mart_app_lab' || id === 'admin' || id === 'devlab') {
+    if (!canAccessManagerRoom()){
+      alert(({ko:'매니저 이상 전용 방입니다.', en:'Manager-only room.', es:'Solo gerentes.'})[LANG] || '');
       return;
     }
   } else if (id === 'hr_inquiries') {
