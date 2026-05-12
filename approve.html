@@ -75,6 +75,21 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 </div>
 
 <div class="wrap" id="mainWrap" style="display:none">
+
+  <!-- 매장 가입 PIN 관리 (OWNER/EXECUTIVE 만) -->
+  <div id="pinAdminBox" style="display:none;background:#fff;border-radius:14px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="font-size:1em;font-weight:800;color:#1a5c3a;display:flex;align-items:center;gap:8px">🔐 <span id="lblPinSection">매장 가입 PIN</span></h3>
+      <button onclick="togglePinAdmin()" style="background:transparent;border:0;color:#6b7280;font-size:1.1em;cursor:pointer" id="pinAdminToggle">▾</button>
+    </div>
+    <div id="pinAdminBody" style="display:none">
+      <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;font-size:.82em;color:#1e40af;margin-bottom:10px" id="pinAdminHint">
+        매장별 4자리 PIN. 신입 직원이 가입할 때 본인 매장 PIN을 입력해야 통과됨. 외부인이 가입 못 함.
+      </div>
+      <div id="pinAdminList"></div>
+    </div>
+  </div>
+
   <div class="tabs">
     <button id="tabPending" class="active" onclick="setTab('pending')">⏳ <span id="tabPendingLbl">대기</span> <span class="badge" id="cntPending">0</span></button>
     <button id="tabApproved" onclick="setTab('approved')">✅ <span id="tabApprovedLbl">승인됨</span> <span class="badge" id="cntApproved">0</span></button>
@@ -300,6 +315,71 @@ window.applyGuess = function(uid, branchId, role){
   if (rl && role) rl.value = role;
 };
 
+//==================================================================
+// 매장 가입 PIN 관리 — OWNER/EXECUTIVE 만 변경 가능
+//==================================================================
+let JOIN_PINS = {}; // { branchId: '1234' }
+
+window.togglePinAdmin = function(){
+  const body = document.getElementById('pinAdminBody');
+  const tog = document.getElementById('pinAdminToggle');
+  if (!body) return;
+  const open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  if (tog) tog.textContent = open ? '▴' : '▾';
+  if (open) renderPinAdmin();
+};
+
+function _genPin(){ return String(Math.floor(1000 + Math.random()*9000)); }
+
+async function loadJoinPins(){
+  const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+  const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+  try {
+    const r = await fetch(cfg.databaseURL + '/joinPins.json' + authQ, { cache:'no-store' });
+    if (r.ok) JOIN_PINS = (await r.json()) || {};
+  } catch(_){}
+}
+
+function renderPinAdmin(){
+  const wrap = document.getElementById('pinAdminList');
+  if (!wrap) return;
+  wrap.innerHTML = BRANCHES.map(b => {
+    const pin = JOIN_PINS[b.id] || '';
+    const pinDisplay = pin ? `<span style="font-family:Consolas,monospace;font-size:1.15em;font-weight:800;color:#1a5c3a;letter-spacing:.1em">${escHtml(pin)}</span>` : `<span style="color:#dc2626;font-weight:700;font-size:.85em">⚠ 미설정</span>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:.92em">📍 ${escHtml(b[LANG] || b.ko)}</div>
+        <div style="margin-top:3px">${pinDisplay}</div>
+      </div>
+      <input type="text" id="pin_${b.id}" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4자리" style="width:80px;text-align:center;font-size:1em;font-weight:700;border:1.5px solid #e5e7eb;border-radius:8px;padding:8px;font-family:Consolas,monospace">
+      <button onclick="savePin('${b.id}')" style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-weight:700;font-size:.85em;cursor:pointer;font-family:inherit">저장</button>
+      <button onclick="rollPin('${b.id}')" title="새 PIN 자동 생성" style="background:#f59e0b;color:#fff;border:0;border-radius:8px;padding:8px 10px;font-weight:700;font-size:.85em;cursor:pointer;font-family:inherit">🎲</button>
+    </div>`;
+  }).join('');
+}
+
+window.savePin = async function(branchId){
+  const inp = document.getElementById('pin_' + branchId);
+  if (!inp) return;
+  const pin = (inp.value || '').trim();
+  if (!/^\d{4}$/.test(pin)) { showToast('PIN은 4자리 숫자', true); return; }
+  await _persistPin(branchId, pin);
+  inp.value = '';
+};
+window.rollPin = async function(branchId){
+  const pin = _genPin();
+  await _persistPin(branchId, pin);
+};
+async function _persistPin(branchId, pin){
+  try {
+    await update(ref(db, 'joinPins'), { [branchId]: pin });
+    JOIN_PINS[branchId] = pin;
+    renderPinAdmin();
+    showToast('✅ PIN 저장됨 · ' + pin);
+  } catch(e){ showToast('Error: ' + e.message, true); }
+}
+
 window.approveUser = async function(uid){
   const branch = document.getElementById('br_' + uid).value;
   const role = document.getElementById('rl_' + uid).value;
@@ -367,6 +447,13 @@ function onAuthReady(profile){
   }
   document.getElementById('mainWrap').style.display = '';
   document.getElementById('noAccess').style.display = 'none';
+
+  // OWNER/EXECUTIVE 만 매장 가입 PIN 관리 보임
+  const isAdminTier = profile && (profile.role === 'OWNER' || profile.role === 'EXECUTIVE');
+  if (isAdminTier) {
+    document.getElementById('pinAdminBox').style.display = '';
+    loadJoinPins().then(() => { try { renderPinAdmin(); } catch(_){} });
+  }
 
   // 추정 매장에 쓸 employees 명단 먼저 로드
   loadEmployees().then(() => { try { render(); } catch(_){} });

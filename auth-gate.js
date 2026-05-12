@@ -149,6 +149,43 @@ function watchProfile(user){
           if (me.role) preRole = me.role;
         }
       } catch(_){}
+
+      // 신규 가입자 PIN 검증 — bootstrap admin 이 아니면 매장 PIN 일치해야 가입 허용.
+      // 모르는 사람이 본인 gmail 로 임의 가입하던 문제 차단.
+      if (!boot) {
+        let joinPin = '';
+        try { joinPin = sessionStorage.getItem('km.joinPin') || ''; } catch(_){}
+        // PIN 비어있거나 매장 안 골랐으면 가입 차단
+        if (!joinPin || !preBranch) {
+          await signOut(auth).catch(()=>{});
+          const msg = '🔐 매장 가입 PIN이 필요합니다.\n매니저에게 본인 매장 4자리 PIN을 받아 입력해주세요.';
+          try { alert(msg); } catch(_){}
+          try { sessionStorage.removeItem('km.joinPin'); } catch(_){}
+          location.replace('./auth.html');
+          return;
+        }
+        // RTDB 의 매장 PIN 과 비교
+        try {
+          const pinSnap = await get(ref(db, 'joinPins/' + preBranch));
+          const dbPin = pinSnap.val();
+          if (!dbPin || String(dbPin).trim() !== String(joinPin).trim()) {
+            await signOut(auth).catch(()=>{});
+            try { alert('❌ 매장 PIN이 일치하지 않습니다. 매니저에게 다시 확인하세요.'); } catch(_){}
+            try { sessionStorage.removeItem('km.joinPin'); } catch(_){}
+            location.replace('./auth.html');
+            return;
+          }
+        } catch(e){
+          console.warn('joinPin verify failed', e);
+          await signOut(auth).catch(()=>{});
+          try { alert('PIN 검증 실패. 다시 시도하세요.'); } catch(_){}
+          location.replace('./auth.html');
+          return;
+        }
+        // 검증 통과 — PIN 흔적 제거 (재사용 방지)
+        try { sessionStorage.removeItem('km.joinPin'); } catch(_){}
+      }
+
       profile = {
         email: user.email,
         name: boot?.name || preName || user.displayName || user.email.split('@')[0],
