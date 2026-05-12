@@ -113,9 +113,9 @@ const BRANCHES = [
 const ROLES = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR','CASHIER','STAFF','BOBA'];
 
 const I18N = {
-  ko:{ title:'👥 직원 승인', tabPending:'대기', tabApproved:'승인됨', tabBlocked:'차단', emptyPending:'승인 대기 중인 직원이 없습니다', emptyApproved:'승인된 직원이 없습니다', emptyBlocked:'차단된 직원이 없습니다', branch:'매장', role:'역할', selectBranch:'— 매장 선택 —', selectRole:'— 역할 선택 —', approve:'승인', reject:'거절', block:'차단', unblock:'복구', confirmReject:'이 가입 신청을 거절할까요?', confirmBlock:'이 직원을 차단할까요? 즉시 모든 데이터 접근 끊김.', confirmUnblock:'차단을 풀까요? 다시 정상 사용 가능.', needBranchRole:'매장과 역할 모두 선택하세요', saved:'✅ 처리됨', noAccessTitle:'접근 권한 없음', noAccessBody:'매니저 이상만 직원 승인 페이지에 입장할 수 있습니다.', joinedAt:'가입', approvedAt:'승인', by:'(승인:', branchAll:'전 지점' },
-  en:{ title:'👥 Staff Approvals', tabPending:'Pending', tabApproved:'Approved', tabBlocked:'Blocked', emptyPending:'No pending requests', emptyApproved:'No approved staff', emptyBlocked:'No blocked staff', branch:'Branch', role:'Role', selectBranch:'— Pick branch —', selectRole:'— Pick role —', approve:'Approve', reject:'Reject', block:'Block', unblock:'Restore', confirmReject:'Reject this signup?', confirmBlock:'Block this employee? Access ends immediately.', confirmUnblock:'Unblock this employee?', needBranchRole:'Pick both branch and role', saved:'✅ Done', noAccessTitle:'No access', noAccessBody:'Manager+ only can access the approvals page.', joinedAt:'Joined', approvedAt:'Approved', by:'(by', branchAll:'All stores' },
-  es:{ title:'👥 Aprobaciones', tabPending:'Pendiente', tabApproved:'Aprobado', tabBlocked:'Bloqueado', emptyPending:'No hay pendientes', emptyApproved:'Sin aprobados', emptyBlocked:'Sin bloqueados', branch:'Tienda', role:'Rol', selectBranch:'— Tienda —', selectRole:'— Rol —', approve:'Aprobar', reject:'Rechazar', block:'Bloquear', unblock:'Restaurar', confirmReject:'¿Rechazar esta solicitud?', confirmBlock:'¿Bloquear a este empleado? El acceso termina al instante.', confirmUnblock:'¿Desbloquear?', needBranchRole:'Selecciona tienda y rol', saved:'✅ Listo', noAccessTitle:'Sin acceso', noAccessBody:'Solo gerentes+ pueden acceder a esta página.', joinedAt:'Registrado', approvedAt:'Aprobado', by:'(por', branchAll:'Todas' },
+  ko:{ title:'👥 직원 승인', tabPending:'대기', tabApproved:'승인됨', tabBlocked:'차단', emptyPending:'승인 대기 중인 직원이 없습니다', emptyApproved:'승인된 직원이 없습니다', emptyBlocked:'차단된 직원이 없습니다', branch:'매장', role:'역할', selectBranch:'— 매장 선택 —', selectRole:'— 역할 선택 —', approve:'승인', reject:'거절', block:'차단', unblock:'복구', confirmReject:'이 가입 신청을 거절할까요?', confirmBlock:'이 직원을 차단할까요? 즉시 모든 데이터 접근 끊김.', confirmUnblock:'차단을 풀까요? 다시 정상 사용 가능.', needBranchRole:'매장과 역할 모두 선택하세요', saved:'✅ 처리됨', noAccessTitle:'접근 권한 없음', noAccessBody:'매니저 이상만 직원 승인 페이지에 입장할 수 있습니다.', joinedAt:'가입', approvedAt:'승인', by:'(승인:', branchAll:'전 지점', guessHint:'추정 매장', guessApply:'사용' },
+  en:{ title:'👥 Staff Approvals', tabPending:'Pending', tabApproved:'Approved', tabBlocked:'Blocked', emptyPending:'No pending requests', emptyApproved:'No approved staff', emptyBlocked:'No blocked staff', branch:'Branch', role:'Role', selectBranch:'— Pick branch —', selectRole:'— Pick role —', approve:'Approve', reject:'Reject', block:'Block', unblock:'Restore', confirmReject:'Reject this signup?', confirmBlock:'Block this employee? Access ends immediately.', confirmUnblock:'Unblock this employee?', needBranchRole:'Pick both branch and role', saved:'✅ Done', noAccessTitle:'No access', noAccessBody:'Manager+ only can access the approvals page.', joinedAt:'Joined', approvedAt:'Approved', by:'(by', branchAll:'All stores', guessHint:'Likely branch', guessApply:'Use' },
+  es:{ title:'👥 Aprobaciones', tabPending:'Pendiente', tabApproved:'Aprobado', tabBlocked:'Bloqueado', emptyPending:'No hay pendientes', emptyApproved:'Sin aprobados', emptyBlocked:'Sin bloqueados', branch:'Tienda', role:'Rol', selectBranch:'— Tienda —', selectRole:'— Rol —', approve:'Aprobar', reject:'Rechazar', block:'Bloquear', unblock:'Restaurar', confirmReject:'¿Rechazar esta solicitud?', confirmBlock:'¿Bloquear a este empleado? El acceso termina al instante.', confirmUnblock:'¿Desbloquear?', needBranchRole:'Selecciona tienda y rol', saved:'✅ Listo', noAccessTitle:'Sin acceso', noAccessBody:'Solo gerentes+ pueden acceder a esta página.', joinedAt:'Registrado', approvedAt:'Aprobado', by:'(por', branchAll:'Todas', guessHint:'Tienda probable', guessApply:'Usar' },
 };
 let LANG = (function(){
   for (const k of ['tasks.lang','kimchi_lang','hub.lang']) { const v = localStorage.getItem(k); if (v && I18N[v]) return v; }
@@ -141,6 +141,62 @@ function isMgr(profile){ return profile && profile.status === 'approved' && MGR_
 let TAB = 'pending';
 let USERS = {}; // { uid: profile }
 let SELF = null;
+let EMPLOYEES_BY_BRANCH = {}; // { branchId: [{ name, role, ... }] } — schedules 에서 로드
+
+// 이메일 도메인 → 매장 매핑 (도메인 패턴에서 자주 보이는 케이스)
+const EMAIL_DOMAIN_HINTS = {
+  'miamikimchi.com':         'MIAMI',
+  'hollywoodkimchi.com':     'HOLLYWOOD',
+  'pembrokekimchi.com':      'PEMBROKE_PINES',
+  'coralkimchi.com':         'CORAL_SPRINGS',
+  'lasolaskimchi.com':       'LASOLAS',
+  'westpalmkimchi.com':      'WEST_PALM',
+};
+
+function _normName(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]/g, ''); }
+function _emailLocal(em){ return String(em||'').split('@')[0] || ''; }
+function _emailDomain(em){ return String(em||'').split('@')[1] || ''; }
+
+// 추정 매장 — 1) 이름이 employees 명단에 있는 매장, 2) 이메일 도메인, 3) null
+function guessBranch(profile){
+  if (!profile) return null;
+  // 1) 이름 매칭 (employees 명단의 name 과 비교)
+  const candidates = [profile.name, _emailLocal(profile.email)].filter(Boolean);
+  for (const cand of candidates){
+    const n = _normName(cand);
+    if (n.length < 2) continue;
+    const hits = [];
+    for (const [branchId, emps] of Object.entries(EMPLOYEES_BY_BRANCH)){
+      if (!Array.isArray(emps)) continue;
+      const match = emps.find(e => e && e.name && _normName(e.name) === n);
+      if (match) hits.push({ branchId, role: match.role || '', via:'name' });
+    }
+    if (hits.length === 1) return hits[0];
+    // 여러 매장에 같은 이름이 있으면 첫 매치만 반환하지 않고 다음 단계로
+    if (hits.length > 1) return { branchId: hits[0].branchId, role: hits[0].role, via:'name-ambiguous', alts: hits.slice(1) };
+  }
+  // 2) 이메일 도메인 힌트
+  const dom = _emailDomain(profile.email).toLowerCase();
+  if (EMAIL_DOMAIN_HINTS[dom]) return { branchId: EMAIL_DOMAIN_HINTS[dom], role:'', via:'email-domain' };
+  return null;
+}
+
+async function loadEmployees(){
+  // 모든 지점의 employees 명단을 한 번에 로드
+  const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+  const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+  try {
+    const r = await fetch(cfg.databaseURL + '/schedules.json' + authQ, { cache:'no-store' });
+    if (!r.ok) return;
+    const data = await r.json() || {};
+    const next = {};
+    for (const [branchId, payload] of Object.entries(data)){
+      if (branchId === '_global') continue;
+      if (payload && Array.isArray(payload.employees)) next[branchId] = payload.employees;
+    }
+    EMPLOYEES_BY_BRANCH = next;
+  } catch(_){}
+}
 
 window.setTab = function(tab){ TAB = tab; document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.id === 'tab' + tab.charAt(0).toUpperCase() + tab.slice(1))); render(); };
 
@@ -185,6 +241,22 @@ function render(){
       <option value="">${t('selectRole')}</option>
       ${ROLES.map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
     </select>`;
+    // 추정 매장 — branch 가 비었을 때만 힌트 표시
+    let guessHtml = '';
+    if (!u.branch) {
+      const g = guessBranch(u);
+      if (g && g.branchId) {
+        const bName = branchName(g.branchId);
+        const viaTxt = g.via === 'name' ? '✓ name match'
+                     : g.via === 'name-ambiguous' ? '⚠ ambiguous name'
+                     : g.via === 'email-domain' ? '✉ email domain'
+                     : '';
+        guessHtml = `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:.82em;color:#92400e;display:flex;align-items:center;gap:8px">
+          <span>💡 ${t('guessHint')}: <b>${escHtml(bName)}</b>${g.role ? ' · ' + escHtml(g.role) : ''} <span style="opacity:.65;font-size:.85em">(${viaTxt})</span></span>
+          <button onclick="applyGuess('${u.uid}','${g.branchId}','${escHtml(g.role||'')}')" style="margin-left:auto;background:#f59e0b;color:#fff;border:0;border-radius:6px;padding:3px 10px;font-weight:700;font-size:.92em;cursor:pointer;font-family:inherit">${t('guessApply')}</button>
+        </div>`;
+      }
+    }
     let actions;
     if (u.status === 'pending') {
       actions = `
@@ -211,6 +283,7 @@ function render(){
           </div>
         </div>
       </div>
+      ${guessHtml}
       <div class="row2">
         <div class="field"><label>${t('branch')}</label>${branchSel}</div>
         <div class="field"><label>${t('role')}</label>${roleSel}</div>
@@ -219,6 +292,13 @@ function render(){
     </div>`;
   }).join('');
 }
+
+window.applyGuess = function(uid, branchId, role){
+  const br = document.getElementById('br_' + uid);
+  const rl = document.getElementById('rl_' + uid);
+  if (br && branchId) br.value = branchId;
+  if (rl && role) rl.value = role;
+};
 
 window.approveUser = async function(uid){
   const branch = document.getElementById('br_' + uid).value;
@@ -288,8 +368,11 @@ function onAuthReady(profile){
   document.getElementById('mainWrap').style.display = '';
   document.getElementById('noAccess').style.display = 'none';
 
+  // 추정 매장에 쓸 employees 명단 먼저 로드
+  loadEmployees().then(() => { try { render(); } catch(_){} });
   loadUsersRest();
   setInterval(loadUsersRest, 30000);
+  setInterval(loadEmployees, 5*60*1000);  // 5분마다 직원 명단 갱신
   // SDK live updates if WebSocket connects:
   try {
     onValue(ref(db, 'users'), (snap) => {

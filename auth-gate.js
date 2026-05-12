@@ -138,13 +138,24 @@ function watchProfile(user){
     if (!profile) {
       // First-time login — create record. Bootstrap admins get auto-approved.
       const boot = bootstrapFor(user.email);
+      // 사용자가 auth.html 에서 가입 직전 직접 고른 지점/이름이 chat.me 에 있으면
+      // users/{uid} 에도 미리 채워둠 — 어드민 승인 페이지에서 매장이 빈칸으로 뜨던 문제.
+      let preBranch = null, preName = null, preRole = null;
+      try {
+        const me = JSON.parse(localStorage.getItem('chat.me') || '{}');
+        if (me && typeof me === 'object') {
+          if (me.branch && me.branch !== '*') preBranch = me.branch;
+          if (me.name) preName = me.name;
+          if (me.role) preRole = me.role;
+        }
+      } catch(_){}
       profile = {
         email: user.email,
-        name: boot?.name || user.displayName || user.email.split('@')[0],
+        name: boot?.name || preName || user.displayName || user.email.split('@')[0],
         photoURL: user.photoURL || null,
         status: boot ? 'approved' : 'pending',
-        role: boot?.role || null,
-        branch: boot?.branch || null,
+        role: boot?.role || preRole || null,
+        branch: boot?.branch || preBranch || null,
         createdAt: Date.now(),
         approvedAt: boot ? Date.now() : null,
         approvedBy: boot ? 'bootstrap' : null,
