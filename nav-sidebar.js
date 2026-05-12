@@ -7,15 +7,14 @@
   // Manager-or-above tokens — 일반 매니저 권한 메뉴 (직원 승인, 지점 지출 등).
   // SUPERVISOR / 부매니저 도 포함 — 매장 운영 관리 자체는 가능해야 함.
   const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','SUPERVISORA','감독'];
-  // 더 엄격한 토큰 — 급여(현금/CPA) 등 민감 메뉴 전용. SUPERVISOR 명시적 제외.
-  const PAYROLL_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','EXECUTIVE','전무','상무','이사','DIRECTOR','VICE PRESIDENT','VP','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER'];
-  const STAFF_ONLY_TOKENS = ['SUPERVISOR','SUPERVISORA','STAFF','EMPLOYEE','STOCKER','CASHIER','직원','스태프','캐셔','스토커'];
+  // 🔒 급여 화이트리스트 — Firebase /config/payrollAccess 배열로 관리 (이름 정규화)
+  const _PW_DEFAULT = ['BHK','DJ'];
+  let _payrollWhitelist = _PW_DEFAULT.slice();
+  try { const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null'); if(Array.isArray(c)&&c.length) _payrollWhitelist=c; } catch(e){}
 
   function _loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }}
-  function _isExecName(name){
-    const n = String(name||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,'');
-    return n === 'BHK' || n === 'DJ';
-  }
+  function _normName(n){ return String(n||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
+  function _isExecName(name){ const n = _normName(name); return n === 'BHK' || n === 'DJ'; }
 
   function isManager(){
     const me = _loadMe();
@@ -25,18 +24,11 @@
     const r = String(me.role).toUpperCase();
     return MGR_TOKENS.some(t => r.includes(t.toUpperCase()));
   }
-  // 급여(현금/CPA) 같은 민감 메뉴 — SUPERVISOR 차단.
+  // 🔒 급여 — 화이트리스트 인원만 (Firebase /config/payrollAccess 로 관리)
   function canSeePayroll(){
     const me = _loadMe();
     if (!me) return false;
-    const r = String(me.role || '').toUpperCase();
-    // SUPERVISOR / STAFF / EMPLOYEE 등은 명시적 차단 (이름이 임원인 경우 예외)
-    if (r && STAFF_ONLY_TOKENS.some(t => r === t)) {
-      return _isExecName(me.name);
-    }
-    if (r && PAYROLL_TOKENS.some(t => r.includes(t.toUpperCase()))) return true;
-    if (_isExecName(me.name)) return true;
-    return false;
+    return _payrollWhitelist.includes(_normName(me.name));
   }
 
   const LINKS = [
@@ -546,10 +538,27 @@
       refreshChatBadge();
     }
   });
+  // ============ 급여 화이트리스트 Firebase 동기화 ============
+  async function _syncPayrollWhitelist(){
+    try {
+      const res = await fetch(FB_DB + '/config/payrollAccess.json?t=' + Date.now(), { cache:'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data) && data.length) {
+        _payrollWhitelist = data.map(n => _normName(n));
+      } else {
+        _payrollWhitelist = _PW_DEFAULT.slice();
+      }
+      localStorage.setItem('km.payrollWhitelist', JSON.stringify(_payrollWhitelist));
+      renderInner();
+    } catch(e){}
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { startUpdatesPolling(); startChatPolling(); });
+    document.addEventListener('DOMContentLoaded', () => { startUpdatesPolling(); startChatPolling(); _syncPayrollWhitelist(); });
   } else {
     startUpdatesPolling();
     startChatPolling();
+    _syncPayrollWhitelist();
   }
 })();

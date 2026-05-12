@@ -1259,8 +1259,26 @@ function _hasMgrAccess(){
   if (isExecNameStr(me.name)) return true;
   return false;
 }
-function canAccessPayrollRoom(){ return _hasMgrAccess(); }
-// 매니저 룸 / 매니저 전용 방 — payroll 과 동일한 엄격 기준 (SUPERVISOR 제외).
+// 🔒 급여 방 — 화이트리스트 인원만 (Firebase /config/payrollAccess)
+const _PW_DEFAULT = ['BHK','DJ'];
+let _payrollWhitelist = _PW_DEFAULT.slice();
+try { const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null'); if(Array.isArray(c)&&c.length) _payrollWhitelist=c; } catch(e){}
+function _normPW(n){ return String(n||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
+function canAccessPayrollRoom(){
+  if (!me) return false;
+  return _payrollWhitelist.includes(_normPW(me.name));
+}
+(async function(){
+  try {
+    const res = await fetch(FB_DB_URL+'/config/payrollAccess.json?t='+Date.now(),{cache:'no-store'});
+    if (!res.ok) return;
+    const d = await res.json();
+    if (Array.isArray(d)&&d.length) _payrollWhitelist=d.map(n=>_normPW(n)); else _payrollWhitelist=_PW_DEFAULT.slice();
+    localStorage.setItem('km.payrollWhitelist',JSON.stringify(_payrollWhitelist));
+    if (typeof renderRooms==='function') renderRooms();
+  } catch(e){}
+})();
+// 매니저 룸 / 매니저 전용 방 — SUPERVISOR 제외.
 function canAccessManagerRoom(){ return _hasMgrAccess(); }
 // HR 룸: OWNER · 전무 · HR 매니저만 열람. 누구나 제출(submitHRInquiry) 가능.
 const HR_ACCESS_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
@@ -1716,7 +1734,7 @@ function openRoom(id){
   // 그 외 모든 일반 룸은 모든 지점 누구나 입장 가능
   if (id === 'payroll') {
     if (!canAccessPayrollRoom()){
-      const m = ({ko:'이 방은 매니저 전용입니다.\nOWNER · MANAGER · ASSISTANT MANAGER만 입장 가능합니다.', en:'Manager-only room.\nOWNER · MANAGER · ASSISTANT MANAGER only.', es:'Sala solo para gerentes.\nSolo OWNER · MANAGER · ASSISTANT MANAGER.'})[LANG] || '';
+      const m = ({ko:'이 방은 지정된 인원만 입장 가능합니다.', en:'Access restricted to authorized personnel only.', es:'Acceso restringido a personal autorizado.'})[LANG] || '';
       alert(m);
       return;
     }
@@ -1927,8 +1945,12 @@ function renderMessages(){
           </a>`;
         }).join('')
       : '';
-    const canDel = isStrictOwner();
-    const delBtn = canDel ? `<button class="del owner-always" title="오너 삭제" onclick="deleteMessage('${m.id}')">✕</button>` : '';
+    // 오너/전무: 모든 메시지 삭제 가능. 일반 직원: 본인 메시지만 삭제 가능.
+    const isOwnerDel = isStrictOwner();
+    const canDel = isOwnerDel || mine;
+    const delBtn = canDel
+      ? `<button class="del owner-always" title="${isOwnerDel ? '오너 삭제' : ({ko:'내 메시지 삭제',en:'Delete my message',es:'Eliminar mi mensaje'}[LANG]||'내 메시지 삭제')}" onclick="deleteMessage('${m.id}')">✕</button>`
+      : '';
     const rxnHtml = renderReactions(m);
     const refCard = m.reference ? renderRef(m.reference) : '';
     const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'공유',en:'Share',es:'Compartir'}[LANG]||'공유')}</button>` : '';
@@ -2889,8 +2911,14 @@ document.addEventListener('click', function(e){
 async function deleteMessage(msgId){
   const m = MSGS.find(x => x.id === msgId);
   if (!m) return;
-  if (!isStrictOwner()) {
-    alert('사장님(DJ) / 전무님(B.H.K) 만 메시지를 삭제할 수 있습니다.');
+  // 오너/전무: 모든 메시지 삭제. 일반 직원: 본인 메시지만 삭제.
+  const mineMsg = !!(me && m.sender === me.name && m.senderBranch === me.branch);
+  const ownerDel = isStrictOwner();
+  if (!ownerDel && !mineMsg) {
+    alert({ko:'본인이 쓴 메시지만 삭제할 수 있습니다.\n(오너/전무는 모든 메시지 삭제 가능)',
+           en:'You can only delete your own messages.\n(Owner/Executive can delete any message)',
+           es:'Solo puedes eliminar tus propios mensajes.\n(Owner/Ejecutivo puede eliminar cualquier mensaje)'}[LANG]
+          || '본인이 쓴 메시지만 삭제할 수 있습니다.');
     return;
   }
   // 버튼 키운 만큼 폰에서 실수 누름 가능 — 확인 다이얼로그 추가.
