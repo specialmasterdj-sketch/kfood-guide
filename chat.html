@@ -1661,7 +1661,8 @@ window.openDmPicker = async function(){
       const tr = (x.role||'').toUpperCase();
       const isTarget_owner = /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(tr);
       const isTarget_exec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === (x.name||'').replace(/\s+/g,'').toUpperCase());
-      if ((isTarget_owner || isTarget_exec) && !iAmManager) return false;
+      const isTarget_strict = STRICT_OWNER_NAMES.map(_normName).includes(_normName(x.name));
+      if ((isTarget_owner || isTarget_exec || isTarget_strict) && !iAmManager) return false;
       return true;
     });
     // 중복 제거
@@ -1685,11 +1686,11 @@ window.startDmFromPicker = function(){
   if (!isManagerRole(me?.role)) {
     const otherUpper = (otherName||'').replace(/\s+/g,'').toUpperCase();
     const isTargetExec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherUpper);
-    // 스케줄에서 상대 역할 확인
+    const isTargetStrict = STRICT_OWNER_NAMES.map(_normName).includes(_normName(otherName));
     const selOpt = document.getElementById('dmEmpSelect')?.selectedOptions?.[0];
     const selText = selOpt ? selOpt.textContent : '';
     const isTargetOwner = /OWNER|BOSS|오너|사장|대표/i.test(selText);
-    if (isTargetExec || isTargetOwner) {
+    if (isTargetExec || isTargetOwner || isTargetStrict) {
       const msg = ({ko:'이 분에게는 매니저급 이상만 1:1 메시지를 보낼 수 있습니다.',en:'Only managers and above can send DMs to this person.',es:'Solo gerentes+ pueden enviar mensajes directos a esta persona.'})[LANG]||'';
       alert(msg); return;
     }
@@ -3284,17 +3285,26 @@ document.addEventListener('DOMContentLoaded', () => {
   if (dmMatch && _me && _me.name) {
     const otherName = decodeURIComponent(dmMatch[1]).trim();
     if (otherName && normName(otherName) !== normName(_me.name)) {
-      setTimeout(() => {
-        try {
-          const id = mkDmRoomId(me.name, otherName);
-          if (!id) return;
-          const meta = { name: otherName, private: true, members: [me.name, otherName], created: Date.now() };
-          ROOMS[id] = Object.assign(ROOMS[id]||{}, meta);
-          fetch(FB_DB_URL + '/chat/rooms/' + id + '.json', { method:'PATCH', body: JSON.stringify(meta) }).catch(()=>{});
-          renderRooms();
-          openRoom(id);
-        } catch(e){ console.warn('[dm-auto]', e); }
-      }, 1500);
+      const _isMgr = isManagerRole(_me.role);
+      const _isProtected = STRICT_OWNER_NAMES.map(_normName).includes(_normName(otherName))
+        || EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherName.replace(/\s+/g,'').toUpperCase());
+      if (_isProtected && !_isMgr) {
+        setTimeout(() => {
+          alert(({ko:'이 분에게는 매니저급 이상만 1:1 메시지를 보낼 수 있습니다.',en:'Only managers and above can send DMs to this person.',es:'Solo gerentes+ pueden enviar mensajes directos a esta persona.'})[LANG]||'Restricted');
+        }, 800);
+      } else {
+        setTimeout(() => {
+          try {
+            const id = mkDmRoomId(me.name, otherName);
+            if (!id) return;
+            const meta = { name: otherName, private: true, members: [me.name, otherName], created: Date.now() };
+            ROOMS[id] = Object.assign(ROOMS[id]||{}, meta);
+            fetch(FB_DB_URL + '/chat/rooms/' + id + '.json', { method:'PATCH', body: JSON.stringify(meta) }).catch(()=>{});
+            renderRooms();
+            openRoom(id);
+          } catch(e){ console.warn('[dm-auto]', e); }
+        }, 1500);
+      }
     }
   }
   // 환영 카드 첫 갱신 (시간대 인사 + 사용자 이름)
