@@ -1131,6 +1131,8 @@ const STRICT_OWNER_EMAILS = [
 // chat.me.name 기반 fallback — 공유 계정(staff@/manager@) 로그인 후 이름만
 // "DJ" 또는 "B.H.K" 로 선택한 케이스도 인정. email 매칭 실패해도 본인 식별됨.
 const STRICT_OWNER_NAMES = ['DJ', 'B.H.K', 'BHK'];
+const DM_OWNER_WHITELIST = ['DJ','BHK','HKIM','STEVEHONG','KWANGHONOH'];
+function _canDmOwner(senderName){ return DM_OWNER_WHITELIST.includes(_normName(senderName)); }
 function _normName(s){ return String(s||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
 function isStrictOwner(){
   try {
@@ -1655,14 +1657,14 @@ window.openDmPicker = async function(){
     const meKey = normName(me?.name || '');
     const raw = [...owners.map(o=>({name:o?.name, role:o?.role||'OWNER'})), ...emps.map(e=>({name:e?.name, role:e?.role||''}))]
       .filter(x => x.name && normName(x.name) !== meKey);
-    // OWNER/EXECUTIVE 에게 DM 가능 여부: 본인이 매니저급 이상이어야 함
-    const iAmManager = me && isManagerRole(me.role);
+    // OWNER/EXECUTIVE 에게 DM 가능 여부: DM_OWNER_WHITELIST 명단만 허용
+    const iCanDmOwner = me && _canDmOwner(me.name);
     const all = raw.filter(x => {
       const tr = (x.role||'').toUpperCase();
       const isTarget_owner = /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(tr);
       const isTarget_exec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === (x.name||'').replace(/\s+/g,'').toUpperCase());
       const isTarget_strict = STRICT_OWNER_NAMES.map(_normName).includes(_normName(x.name));
-      if ((isTarget_owner || isTarget_exec || isTarget_strict) && !iAmManager) return false;
+      if ((isTarget_owner || isTarget_exec || isTarget_strict) && !iCanDmOwner) return false;
       return true;
     });
     // 중복 제거
@@ -1682,8 +1684,8 @@ window.startDmFromPicker = function(){
   const otherName = (inp?.value || sel?.value || '').trim();
   if (!otherName) { alert('상대를 선택하거나 이름을 입력하세요'); return; }
   if (normName(otherName) === normName(me?.name || '')) { alert('본인과는 1:1 시작 불가'); return; }
-  // OWNER/EXECUTIVE 에게 DM: 매니저급 이상만 가능
-  if (!isManagerRole(me?.role)) {
+  // OWNER/EXECUTIVE 에게 DM: DM_OWNER_WHITELIST 명단만 허용
+  if (!_canDmOwner(me?.name)) {
     const otherUpper = (otherName||'').replace(/\s+/g,'').toUpperCase();
     const isTargetExec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherUpper);
     const isTargetStrict = STRICT_OWNER_NAMES.map(_normName).includes(_normName(otherName));
@@ -1691,7 +1693,7 @@ window.startDmFromPicker = function(){
     const selText = selOpt ? selOpt.textContent : '';
     const isTargetOwner = /OWNER|BOSS|오너|사장|대표/i.test(selText);
     if (isTargetExec || isTargetOwner || isTargetStrict) {
-      const msg = ({ko:'이 분에게는 매니저급 이상만 1:1 메시지를 보낼 수 있습니다.',en:'Only managers and above can send DMs to this person.',es:'Solo gerentes+ pueden enviar mensajes directos a esta persona.'})[LANG]||'';
+      const msg = ({ko:'지정된 인원만 이 분에게 메시지를 보낼 수 있습니다.',en:'Only authorized personnel can send DMs to this person.',es:'Solo personal autorizado puede enviar mensajes a esta persona.'})[LANG]||'';
       alert(msg); return;
     }
   }
@@ -3285,12 +3287,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (dmMatch && _me && _me.name) {
     const otherName = decodeURIComponent(dmMatch[1]).trim();
     if (otherName && normName(otherName) !== normName(_me.name)) {
-      const _isMgr = isManagerRole(_me.role);
+      const _canDm = _canDmOwner(_me.name);
       const _isProtected = STRICT_OWNER_NAMES.map(_normName).includes(_normName(otherName))
         || EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherName.replace(/\s+/g,'').toUpperCase());
-      if (_isProtected && !_isMgr) {
+      if (_isProtected && !_canDm) {
         setTimeout(() => {
-          alert(({ko:'이 분에게는 매니저급 이상만 1:1 메시지를 보낼 수 있습니다.',en:'Only managers and above can send DMs to this person.',es:'Solo gerentes+ pueden enviar mensajes directos a esta persona.'})[LANG]||'Restricted');
+          alert(({ko:'지정된 인원만 이 분에게 메시지를 보낼 수 있습니다.',en:'Only authorized personnel can send DMs to this person.',es:'Solo personal autorizado puede enviar mensajes a esta persona.'})[LANG]||'Restricted');
         }, 800);
       } else {
         setTimeout(() => {
