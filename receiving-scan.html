@@ -125,6 +125,11 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 .actions{display:flex;gap:8px;margin-top:14px}
 .actions .btn{flex:1}
 
+/* QTY PRESETS (case mapping) */
+.qty-preset{background:#fff;border:1.5px solid #d1d5db;border-radius:8px;padding:8px 4px;font-size:.95em;font-weight:800;cursor:pointer;color:#374151;font-family:inherit;transition:.1s}
+.qty-preset:active{transform:scale(.95)}
+.qty-preset.active{background:#1a5c3a;color:#fff;border-color:#1a5c3a}
+
 /* QTY KEYPAD */
 .qty-display{font-size:2.4em;font-weight:900;text-align:center;color:#1a5c3a;padding:14px;background:#f0fdf4;border-radius:12px;margin-bottom:10px;font-variant-numeric:tabular-nums}
 .qty-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
@@ -554,6 +559,18 @@ body.home-redesign .topbar .back-btn{background:#f1f5f9;color:#0f172a}
     <div class="field">
       <label id="lblCaseQty">📦 박스 입수 (몇 개)</label>
       <input type="number" id="caseQty" value="12" min="1" max="9999">
+      <div id="caseQtyPresets" style="display:grid;grid-template-columns:repeat(6,1fr);gap:5px;margin-top:6px">
+        <button type="button" class="qty-preset" onclick="setCaseQty(6)">6</button>
+        <button type="button" class="qty-preset" onclick="setCaseQty(12)">12</button>
+        <button type="button" class="qty-preset" onclick="setCaseQty(24)">24</button>
+        <button type="button" class="qty-preset" onclick="setCaseQty(30)">30</button>
+        <button type="button" class="qty-preset" onclick="setCaseQty(40)">40</button>
+        <button type="button" class="qty-preset" onclick="setCaseQty(48)">48</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:.85em;color:#374151;cursor:pointer">
+        <input type="checkbox" id="caseSaveAndScan" checked>
+        <span id="lblCaseSaveAndScan">저장 후 바로 1박스 입고 처리</span>
+      </label>
     </div>
     <div class="actions">
       <button class="btn sec" onclick="closeOv('caseOv')" id="lblCaseCancel">취소</button>
@@ -749,6 +766,7 @@ const I18N = {
   lblRdRecent:    {ko:'최근 스캔 내역',    en:'Recent scans',    es:'Escaneos recientes'},
   lblRdMore:      {ko:'전체 보기 ›',       en:'View all ›',      es:'Ver todo ›'},
   lblRdNoRecent:  {ko:'아직 스캔 내역 없음', en:'No scans yet',  es:'Sin escaneos aún'},
+  lblCaseSaveAndScan:{ko:'저장 후 바로 1박스 입고 처리', en:'Save and immediately receive 1 box', es:'Guardar y recibir 1 caja inmediatamente'},
 };
 function t(k){ const o = I18N[k]; return o ? (o[LANG]||o.ko) : k; }
 function applyLang(){
@@ -1761,6 +1779,32 @@ function onScan(code){
   LAST_SCAN = { code, ts: now };
   processBarcode(code, 1);
 }
+// ITF-14 → EAN-13 변환 시도 + 마스터에서 추정 상품 검색
+// 박스 바코드(14자리)면 앞 1자리 indicator 제거 → 13자리 후보 → 마스터 매치
+function _guessBoxItem(branchId, barcode){
+  const b = String(barcode||'').replace(/[^0-9]/g, '');
+  if (b.length < 13) return null;  // ITF-14는 14자리, 13자리도 일부 박스에 인쇄됨
+  const tries = [];
+  // 14자리: indicator digit 제거 (1~9 다양함)
+  if (b.length >= 14) {
+    tries.push(b.slice(1));        // 앞 1자리 제거 (가장 흔함)
+    tries.push(b.slice(0, -1));    // 끝 1자리 제거 (체크 디지트)
+    tries.push(b.slice(1, -1));    // 둘 다 제거
+  }
+  // 13자리도 박스/낱개 같은 경우 있음 — fuzzy로 매스터 매치되면 박스로 간주
+  if (b.length === 13) tries.push(b);
+  for (const cand of tries){
+    if (!cand) continue;
+    // 박스 바코드 자체가 마스터에 등록된 경우는 박스가 아니라 개별 상품으로 처리
+    if (cand === b) continue;
+    const m = lookupBarcode(branchId, cand);
+    if (m && m.barcode) return { suggestedBarcode: m.barcode, name: m.name || '', vendor: m.vendor || '' };
+    // lookupBarcode가 info 반환 — barcode 키가 없으면 cand 사용
+    if (m) return { suggestedBarcode: cand, name: m.name || '', vendor: m.vendor || '' };
+  }
+  return null;
+}
+
 function processBarcode(barcode, qty){
   if (!CUR) return;
   qty = qty || 1;
@@ -1833,6 +1877,18 @@ function processBarcode(barcode, qty){
     feedback('bad', 'bad');
     renderStats();
     renderRecent();
+    return;
+  }
+  // 2.5) 박스 자동 추정 — ITF-14 등 14자리 박스 코드를 13자리로 변환해 마스터 매치
+  const guess = _guessBoxItem(CUR.branch || BRANCH, barcode);
+  if (guess) {
+    feedback('over', 'over');
+    pushRecent({
+      name: '✨ ' + (guess.name || guess.suggestedBarcode) + ' — ' + ({ko:'박스 자동 추정',en:'Box auto-detected',es:'Caja auto-detectada'}[LANG]||'박스 자동 추정'),
+      kind:'unreg', qtyText:'?'
+    });
+    renderRecent();
+    openCaseMapping(barcode, { suggestedBarcode: guess.suggestedBarcode, qty: 12, saveAndScan: true });
     return;
   }
   // 3) 마스터에도 없음 — 미등록 모달
@@ -2013,16 +2069,49 @@ window.openCaseFromUnreg = function(){
   closeOv('unregOv');
   openCaseMapping(bc);
 };
-function openCaseMapping(barcode){
+function openCaseMapping(barcode, opts){
+  opts = opts || {};
   __caseSelectedItem = null;
   document.getElementById('caseBarcode').value = barcode;
   document.getElementById('caseItemSearch').value = '';
-  document.getElementById('caseQty').value = '12';
+  document.getElementById('caseQty').value = opts.qty || '12';
   document.getElementById('caseSelected').style.display = 'none';
+  // 자동 추정된 상품이 있으면 사전 선택
+  if (opts.suggestedBarcode){
+    const branchId = (CUR && CUR.branch) || BRANCH;
+    const m = (MASTER[branchId] || {})[opts.suggestedBarcode];
+    if (m){
+      __caseSelectedItem = { barcode: opts.suggestedBarcode, name: m.name || '', vendor: m.vendor || '' };
+      const lbl = document.getElementById('caseSelected');
+      lbl.style.display = '';
+      const autoLbl = ({ko:'자동 추정',en:'Auto-detected',es:'Auto-detectado'}[LANG]||'자동 추정');
+      lbl.innerHTML = '✨ <b>' + escHtml(m.name || opts.suggestedBarcode) + '</b> <span style="font-size:.75em;color:#16a34a;font-weight:700">('+autoLbl+')</span><div style="font-size:.78em;color:#6b7280;margin-top:2px">' + escHtml(opts.suggestedBarcode) + '</div>';
+    }
+  }
+  // saveAndScan 옵션 (기본 true: 박스 매핑 직후 1박스 자동 입고)
+  const cb = document.getElementById('caseSaveAndScan');
+  if (cb) cb.checked = opts.saveAndScan !== false;
+  // hint 메시지 — 자동 추정인 경우 다른 안내
+  if (opts.suggestedBarcode){
+    const hintEl = document.getElementById('lblCaseHint');
+    if (hintEl) hintEl.textContent = ({ko:'박스를 자동으로 추정했어요. 입수량만 확인하고 저장하세요.',en:'Box auto-detected. Confirm units per case and save.',es:'Caja auto-detectada. Confirme unidades y guarde.'}[LANG]||'박스를 자동으로 추정했어요. 입수량만 확인하고 저장하세요.');
+    setTimeout(() => { try { document.getElementById('caseQty').focus(); document.getElementById('caseQty').select(); } catch(e){} }, 80);
+  } else {
+    const hintEl = document.getElementById('lblCaseHint');
+    if (hintEl) hintEl.textContent = t('lblCaseHint');
+  }
   renderCaseItemSearch();
   document.getElementById('caseOv').classList.add('show');
 }
 window.openCaseMapping = openCaseMapping;
+// 빠른 입수량 프리셋
+window.setCaseQty = function(n){
+  const el = document.getElementById('caseQty');
+  if (el) el.value = n;
+  document.querySelectorAll('#caseQtyPresets .qty-preset').forEach(b => {
+    b.classList.toggle('active', parseInt(b.textContent, 10) === n);
+  });
+};
 // 박스 매핑 모달에서 📷 버튼 — 상품 바코드 1회성 스캔으로 검색 채우기
 async function scanForCaseSearch(){
   // 메인 스캐너 일시 정지 (카메라 충돌 방지)
@@ -2135,10 +2224,11 @@ window.saveCaseMapping = function(){
   map[caseBc] = entry;
   mp.set(caseBc, entry);
   saveCases();
+  const saveAndScan = !!(document.getElementById('caseSaveAndScan') && document.getElementById('caseSaveAndScan').checked);
   closeOv('caseOv');
   toast('✓ 📦 ' + ({ko:'매핑 저장됨',en:'Mapping saved',es:'Mapeo guardado'}[LANG]||'') + ' · ' + qty + ' ' + ({ko:'개입',en:'units',es:'unidades'}[LANG]||''), 'ok');
-  // 즉시 그 박스 바코드 처리 — 사용자가 방금 스캔한 상황 그대로 진행
-  if (CUR) processBarcode(caseBc, 1);
+  // 옵션: 즉시 1박스 입고 처리 (체크박스 켜진 경우만)
+  if (saveAndScan && CUR) processBarcode(caseBc, 1);
   __caseSelectedItem = null;
   __pendingUnregBarcode = null;
 };
