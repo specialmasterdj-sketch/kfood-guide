@@ -711,8 +711,6 @@ a{color:inherit;text-decoration:none}
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   const __auth = getAuth(app);
   window.__fb = { db: getDatabase(app), auth: __auth, ref, onValue, push, set, update };
-  // one-time: Sun Kim 이름 괄호 제거
-  try { update(ref(getDatabase(app),'schedules/_global/owners/1'),{name:'Sun Kim',dept:'Accounting Dep'}); } catch(_){}
   window.dispatchEvent(new Event('fb-ready'));
   // Firebase Auth currentUser 가 비동기로 복원되므로, 복원 직후 메시지 재렌더 →
   // 오너 이메일이면 isOwnerVerified() 가 true 가 되고 모든 메시지에 ✕ 버튼 표시.
@@ -809,6 +807,8 @@ const CHAT_T = {
   hr_sending:       { ko:'전송 중…',         en:'Sending…',          es:'Enviando…' },
 };
 let LANG = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || 'en';
+const TITLE_BLOCKED_NAMES = ['staff','manager','employee','admin','test','user','직원','매니저','스태프','사원','supervisor','cashier','stocker','owner','boss','gerente','cajero','empleado'];
+function _isTitleName(n){ return TITLE_BLOCKED_NAMES.includes(String(n||'').toLowerCase().trim()); }
 function setLang(l) {
   LANG = l;
   localStorage.setItem('kimchi_lang', l);
@@ -1401,7 +1401,7 @@ async function saveMe(){
   const fromCustom = document.getElementById('meCustom').value.trim();
   const name = fromCustom || fromSel;
   if (!name) { alert('이름을 입력하거나 선택하세요'); return; }
-  const BLOCKED_NAMES = ['staff','manager','employee','admin','test','user','직원','매니저','스태프','사원'];
+  const BLOCKED_NAMES = TITLE_BLOCKED_NAMES;
   if (BLOCKED_NAMES.includes(name.toLowerCase().trim())) {
     const msg = {ko:'❌ "'+name+'"은 사용할 수 없습니다. 본인 실제 이름을 입력해주세요.\n예: Cristopher Lopez, 김철수',
                  en:'❌ "'+name+'" cannot be used. Please enter your real name.\nEx: Cristopher Lopez, John Smith',
@@ -3299,6 +3299,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // 첫 액션(메시지 보내기·HR 건의 등)에서 ensureMe() 가 필요 시 띄워줌.
   let _me = null;
   try { _me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+  if (_me && _me.name && _isTitleName(_me.name)) {
+    localStorage.removeItem('chat.me');
+    _me = null;
+    markMePillStatus();
+    setTimeout(() => {
+      const msg = {ko:'직책이 아닌 본인 이름을 입력해 주세요.',en:'Please enter your real name, not a job title.',es:'Ingrese su nombre real, no un cargo.'}[LANG]||'Please enter your real name.';
+      alert(msg);
+      try { openMeModal(); } catch(e){}
+    }, 600);
+  }
   const openMeFromQuery = /(?:^|[?&])openMe=1(?:&|$)/.test(location.search);
   const openHRFromQuery = /(?:^|[?&])openHR=1(?:&|$)/.test(location.search);
   if (openMeFromQuery) {
