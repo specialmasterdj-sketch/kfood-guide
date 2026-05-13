@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>🔍 입고 스캔 진단</title>
+<script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif;background:#f4f6f9;color:#1f2937;padding:18px;font-size:15px;line-height:1.5;max-width:820px;margin:0 auto}
+  h1{font-size:1.25em;margin-bottom:12px}
+  .row{padding:10px 14px;margin-bottom:8px;border-radius:8px;border-left:5px solid #d1d5db}
+  .ok{background:#dcfce7;border-left-color:#16a34a}
+  .bad{background:#fee2e2;border-left-color:#dc2626}
+  .info{background:#dbeafe;border-left-color:#2563eb}
+  .label{font-weight:800;display:block;margin-bottom:3px;font-size:.92em}
+  .val{font-family:'SF Mono','Consolas',monospace;font-size:.88em;word-break:break-all;white-space:pre-wrap}
+  button{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.95em;cursor:pointer;margin:8px 4px}
+  .branch-pick{margin-bottom:10px}
+  .branch-pick select{padding:8px 12px;border-radius:8px;border:1.5px solid #d1d5db;font-size:.95em;font-family:inherit}
+</style>
+</head>
+<body>
+<h1>🔍 입고 스캔 데이터 진단</h1>
+<div class="branch-pick">
+  <select id="branchSel">
+    <option value="HOLLYWOOD" selected>HOLLYWOOD</option>
+    <option value="MIAMI">MIAMI</option>
+    <option value="PEMBROKE_PINES">PEMBROKE_PINES</option>
+    <option value="CORAL_SPRINGS">CORAL_SPRINGS</option>
+    <option value="LASOLAS">LASOLAS</option>
+    <option value="WEST_PALM">WEST_PALM</option>
+  </select>
+  <button onclick="runDiag()">▶ 진단 실행</button>
+  <button onclick="clearLocal()" style="background:#dc2626">🗑 로컬 캐시 비우기</button>
+</div>
+<div id="results">
+  <div class="row info">아래 버튼을 누르세요. fb-auth-fetch 로드 후 자동 실행도 시도합니다.</div>
+</div>
+
+<script type="module">
+const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+
+function addRow(label, val, cls){
+  const div = document.createElement('div');
+  div.className = 'row ' + (cls||'info');
+  const lab = document.createElement('span'); lab.className='label'; lab.textContent = label;
+  const vv  = document.createElement('span'); vv.className='val'; vv.textContent = (val == null || val === '') ? '(empty)' : String(val);
+  div.appendChild(lab); div.appendChild(vv);
+  document.getElementById('results').appendChild(div);
+}
+
+window.runDiag = async function(){
+  document.getElementById('results').innerHTML = '';
+  const branch = document.getElementById('branchSel').value;
+  addRow('📌 매장', branch, 'info');
+
+  // 1. Auth token
+  let token = null;
+  try {
+    token = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
+    if (token) addRow('1️⃣ Firebase Auth token', '✓ have (' + token.length + ' chars)', 'ok');
+    else addRow('1️⃣ Firebase Auth token', '❌ NULL — 로그인 안 됐거나 토큰 race', 'bad');
+  } catch(e){ addRow('1️⃣ Auth token', '❌ ' + e.message, 'bad'); }
+
+  // 2. chat.me
+  try {
+    const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+    if (me) addRow('2️⃣ chat.me', 'name=' + me.name + ' / branch=' + me.branch + ' / email=' + me.email, 'ok');
+    else addRow('2️⃣ chat.me', '❌ NULL', 'bad');
+  } catch(e){ addRow('2️⃣ chat.me', '❌ ' + e.message, 'bad'); }
+
+  // 3. RTDB fetch /products/{branch}.json
+  let p = null, body = '', status = 0, dt = 0;
+  try {
+    const t0 = Date.now();
+    const r = await fetch(FB_DB + '/products/' + branch + '.json?t=' + Date.now(), { cache:'no-store' });
+    dt = Date.now() - t0;
+    status = r.status;
+    body = await r.text();
+    addRow('3️⃣ RTDB fetch /products/' + branch, 'HTTP ' + status + ' · ' + dt + 'ms · ' + body.length.toLocaleString() + ' bytes', r.ok ? 'ok' : 'bad');
+    if (!r.ok) {
+      addRow('3️⃣ Error body (앞 200자)', body.slice(0,200), 'bad');
+    } else {
+      try { p = JSON.parse(body); }
+      catch(e){ addRow('4️⃣ JSON parse', '❌ ' + e.message, 'bad'); p = null; }
+    }
+  } catch(e){
+    addRow('3️⃣ RTDB fetch', '❌ ' + e.message, 'bad');
+  }
+
+  // 4. rows analysis
+  if (p) {
+    const isArr = Array.isArray(p.rows);
+    const arr = isArr ? p.rows : (p.rows && typeof p.rows === 'object' ? Object.values(p.rows) : null);
+    if (arr && arr.length) {
+      addRow('4️⃣ rows', (isArr ? 'Array' : 'Object→키 ' + Object.keys(p.rows).length + '개') + ' · 길이 ' + arr.length.toLocaleString(), 'ok');
+      if (arr[0]) addRow('5️⃣ sample row[0]', JSON.stringify(arr[0]).slice(0,250), 'ok');
+      // 6. items map simulation
+      let withBc = 0;
+      for (const row of arr) {
+        if (!row || typeof row !== 'object') continue;
+        const bc = String(row.FULL_BARCODE || row.CODE || '').trim();
+        if (bc) withBc++;
+      }
+      addRow('6️⃣ FULL_BARCODE/CODE 있는 행', withBc.toLocaleString() + ' / ' + arr.length.toLocaleString(), withBc > 0 ? 'ok' : 'bad');
+      addRow('7️⃣ p.timestamp', p.timestamp ? new Date(p.timestamp).toLocaleString() + ' (' + p.timestamp + ')' : '(없음)', 'info');
+      addRow('7️⃣ p.count', p.count || '(없음)', 'info');
+      addRow('7️⃣ p.date', p.date || '(없음)', 'info');
+    } else {
+      addRow('4️⃣ rows', '❌ rows 없음 또는 빈 배열', 'bad');
+    }
+  }
+
+  // 8. localStorage MASTER
+  try {
+    const keys = Object.keys(localStorage).filter(k => /master|recv/i.test(k));
+    addRow('8️⃣ localStorage 키 (recv/master)', keys.length ? keys.join(', ') : '(없음)', 'info');
+    for (const k of keys) {
+      try {
+        const v = JSON.parse(localStorage.getItem(k) || 'null');
+        if (v && typeof v === 'object') {
+          if (v[branch]) {
+            addRow('   └ ' + k + '.' + branch, Object.keys(v[branch]).length + ' items', 'ok');
+          } else {
+            addRow('   └ ' + k, JSON.stringify(v).slice(0, 120), 'info');
+          }
+        }
+      } catch(_){}
+    }
+  } catch(e){ addRow('8️⃣ localStorage', '❌ ' + e.message, 'bad'); }
+
+  // 9. UA
+  addRow('9️⃣ User-Agent', navigator.userAgent, 'info');
+  addRow('🔟 PWA?', window.matchMedia('(display-mode: standalone)').matches ? 'YES (PWA mode)' : 'NO (browser tab)', 'info');
+};
+
+window.clearLocal = function(){
+  if (!confirm('localStorage 의 receiving / master 키 모두 삭제할까요?\n로그인은 유지됨.')) return;
+  const keys = Object.keys(localStorage).filter(k => /master|recv|cloudMeta|cases/i.test(k));
+  keys.forEach(k => localStorage.removeItem(k));
+  alert('삭제됨: ' + keys.join(', '));
+};
+
+// 자동 실행 — fb-auth-ready 이벤트 또는 1초 후
+window.addEventListener('fb-auth-ready', () => { setTimeout(window.runDiag, 200); });
+setTimeout(() => { if (!document.querySelector('.row.ok, .row.bad')) window.runDiag(); }, 2500);
+</script>
+</body>
+</html>

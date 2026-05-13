@@ -996,11 +996,19 @@ async function pushAllBranchesToCloud(){
   }
   setSyncStatus(ok ? 'ok' : 'err');
 }
+// 마지막 sync 진단 정보 (toast 또는 home 카드에 표시) — '왜 0 인지' 사용자에게 노출
+window.__lastSyncDiag = '';
 async function pullBranchFromCloud(branchId, force){
   // 1순위: POS COST 필터가 push 한 /products/{branch} 에서 읽음 — 상품조회·입고 스캔 같은 데이터
   try {
     const r1 = await fetch(RECV_FB_URL + '/products/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' });
-    const p = await r1.json();
+    if (!r1.ok) {
+      const bodyPreview = await r1.text().then(t => t.slice(0, 80)).catch(() => '');
+      window.__lastSyncDiag = `[${branchId}] HTTP ${r1.status}: ${bodyPreview}`;
+      console.warn('[recv-pull]', window.__lastSyncDiag);
+      // 401 이면 auth 토큰 미부착 — fb-auth-fetch.js race / 미로그인. 2순위로 진행.
+    }
+    const p = r1.ok ? await r1.json() : null;
     // RTDB 가 큰 array (예: 21892개) 를 sparse/hole 때문에 object 로
     // deserialize 하는 경우가 있음 — Object.values 로 fallback.
     const rowsArr = p && Array.isArray(p.rows) ? p.rows
@@ -1073,6 +1081,7 @@ function setSyncStatus(state, msg){
 }
 async function cloudSync(){
   // 수동 트리거: pull all 후 push current branch (수동이라 force=true 로 안전장치 우회)
+  window.__lastSyncDiag = '';
   setSyncStatus('pulling');
   try {
     const pulled = await pullAllBranchesFromCloud(true);
@@ -1085,10 +1094,15 @@ async function cloudSync(){
     }
     setSyncStatus('ok');
     renderMasterList();
-    toast('✓ ' + ({ko:'동기화 완료',en:'Synced',es:'Sincronizado'}[LANG]||'') + ' (↓' + pulled + ' ↑' + pushed + ')', 'ok');
+    if (pulled === 0 && window.__lastSyncDiag) {
+      // pull 0 인데 진단 메시지 있음 → 사용자에게 원인 직접 노출
+      toast('⚠ ' + window.__lastSyncDiag, 'err');
+    } else {
+      toast('✓ ' + ({ko:'동기화 완료',en:'Synced',es:'Sincronizado'}[LANG]||'') + ' (↓' + pulled + ' ↑' + pushed + ')', 'ok');
+    }
   } catch(e) {
     setSyncStatus('err');
-    toast(({ko:'동기화 실패',en:'Sync failed',es:'Falló'}[LANG]||''), 'err');
+    toast('⚠ ' + (window.__lastSyncDiag || e.message || ({ko:'동기화 실패',en:'Sync failed',es:'Falló'}[LANG]||'')), 'err');
   }
 }
 window.cloudSync = cloudSync;
