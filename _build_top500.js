@@ -101,13 +101,24 @@ for (let r = 1; r < rows.length; r++) {
   }
   let cat  = String(row[I.cat]||'').trim();
   let dpt2 = dept;
-  // 이름 패턴 기반 카테고리 보정 — Vela POS 에서 RAMUNE 등 음료 SKU 가
-  // 가끔 SNACKS/ALCOHOL 로 잘못 분류돼 export 됨. 명백한 음료 키워드는
-  // DRINKS (F)/BEVERAGE 로 강제. 알콜 SKU 는 화이트리스트로 보호.
+  // 이름 패턴 기반 카테고리 보정 — Vela POS 에서 SKU 가 가끔 잘못 분류돼
+  // export 됨. 명백한 키워드는 올바른 카테고리로 강제.
+  // 보호장치: 알콜(BEER/WINE...), 김(LAVER/SEAWEED/NORI/KIM) 은
+  // 이름에 OIL/DRINK 단어가 들어있어도 원본 카테고리 유지.
+  // 우선순위: 아이스크림 > 식용오일 > 음료.
   const nameU = name.toUpperCase();
   const isAlcoholic = /\b(BEER|WINE|SOJU|WHISKY|WHISKEY|VODKA|RUM|TEQUILA|SAKE|MAKGEOLLI|MAKKOLI|LIQUOR|ALCOHOL)\b/.test(nameU);
+  const isSeaweed   = /\b(LAVER|SEAWEED|NORI|KIM)\b/.test(nameU);
+  const isIceCream  = /\b(ICE\s?CREAM|ICE\s?CRM|MONACA|MONAKA|SAMANCO|GELATO|SORBET|POPSICLE|MOCHI\s?ICE|FROZEN\s?YOGURT|FROYO)\b/.test(nameU);
+  const isEdibleOil = /\b(SESAME|OLIVE|COCONUT|CANOLA|VEGETABLE|SOYBEAN|CORN|SUNFLOWER|GRAPESEED|PERILLA|TOASTED)\s+OIL\b/.test(nameU);
   const looksLikeDrink = /\b(RAMUNE|COLA|COKE|PEPSI|SPRITE|FANTA|SODA|JUICE|DRINK|MILK|WATER|TEA|COFFEE|LEMONADE|SMOOTHIE|POWERADE|GATORADE|NECTAR|CIDER|KOMBUCHA|ADE)\b/.test(nameU);
-  if (looksLikeDrink && !isAlcoholic) {
+  if (isIceCream && !isAlcoholic) {
+    cat  = 'ICE CREAM & DESSERT (F)';
+    dpt2 = 'FROZEN';
+  } else if (isEdibleOil && !isAlcoholic && !isSeaweed) {
+    cat  = 'OIL,SEASONING,VINGER,SYRUP (F)';
+    dpt2 = 'GROCERY';
+  } else if (looksLikeDrink && !isAlcoholic && !isSeaweed) {
     cat  = 'DRINKS (F)';
     dpt2 = 'BEVERAGE';
   }
