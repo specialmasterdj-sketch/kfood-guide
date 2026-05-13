@@ -1001,7 +1001,11 @@ async function pullBranchFromCloud(branchId, force){
   try {
     const r1 = await fetch(RECV_FB_URL + '/products/' + branchId + '.json?t=' + Date.now(), { cache:'no-store' });
     const p = await r1.json();
-    if (p && Array.isArray(p.rows) && p.rows.length) {
+    // RTDB 가 큰 array (예: 21892개) 를 sparse/hole 때문에 object 로
+    // deserialize 하는 경우가 있음 — Object.values 로 fallback.
+    const rowsArr = p && Array.isArray(p.rows) ? p.rows
+                  : (p && p.rows && typeof p.rows === 'object' ? Object.values(p.rows) : null);
+    if (p && rowsArr && rowsArr.length) {
       const localCount = Object.keys(MASTER[branchId] || {}).length;
       const localTime = (__cloudMeta[branchId] || {}).updatedAt || 0;
       const remoteTime = p.timestamp || 0;
@@ -1009,7 +1013,8 @@ async function pullBranchFromCloud(branchId, force){
       if (!force && localCount > 0 && remoteTime && remoteTime <= localTime) return 0;
       // lookup 형식 → receiving master 형식 변환
       const items = {};
-      for (const row of p.rows) {
+      for (const row of rowsArr) {
+        if (!row || typeof row !== 'object') continue;
         const bc = String(row.FULL_BARCODE || row.CODE || '').trim();
         if (!bc) continue;
         items[bc] = {

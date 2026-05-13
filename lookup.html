@@ -1217,8 +1217,11 @@ function buildIndexes() {
       if (isStale){
         console.info('Stale localStorage override ignored — baked-in data is newer or equal.');
         // Keep baked-in Hollywood PRODUCTS_DATA as-is.
-      } else if (obj && Array.isArray(obj.rows) && obj.rows.length > 0) {
-        PRODUCTS_DATA = obj.rows;
+      } else {
+        // RTDB 가 큰 array 를 sparse 때문에 object 로 deserialize 하는 경우 fallback.
+        const rowsArr = obj && Array.isArray(obj.rows) ? obj.rows
+                      : (obj && obj.rows && typeof obj.rows === 'object' ? Object.values(obj.rows) : null);
+        if (rowsArr && rowsArr.length > 0) PRODUCTS_DATA = rowsArr;
       }
     } else if (CURRENT_BRANCH !== BAKED_IN_BRANCH){
       // Branch selected but no data yet, and this isn't the baked-in branch.
@@ -1242,14 +1245,18 @@ window.addEventListener('products-override', (ev) => {
   const d = ev.detail || {};
   const remote = d.remote;
   const branchId = d.branchId;
-  if (!remote || !Array.isArray(remote.rows) || !remote.rows.length) return;
+  if (!remote) return;
+  // RTDB 가 큰 array 를 sparse 때문에 object 로 deserialize 하는 경우 fallback.
+  const rowsArr = Array.isArray(remote.rows) ? remote.rows
+                : (remote.rows && typeof remote.rows === 'object' ? Object.values(remote.rows) : null);
+  if (!rowsArr || !rowsArr.length) return;
   if (branchId && typeof CURRENT_BRANCH !== 'undefined' && branchId !== CURRENT_BRANCH) return;
-  PRODUCTS_DATA = remote.rows;
+  PRODUCTS_DATA = rowsArr;
   buildIndexes();
   const badge = document.querySelector('.update-badge');
   if (badge){
     const date = remote.date || '';
-    const count = remote.count || remote.rows.length;
+    const count = remote.count || rowsArr.length;
     badge.innerHTML = '📅 ' + (date || (new Date().toISOString().slice(0,10))) + ' 업데이트 · ' + count.toLocaleString() + '개 상품';
   }
   // Clear the "no data" message if it's showing

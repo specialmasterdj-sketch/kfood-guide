@@ -1258,13 +1258,16 @@ async function loadBranchLookup(branch){
   try {
     const r = await fetch(`${FB_DB_URL}/products/${branch}.json`);
     const d = await r.json();
-    if (!d || !Array.isArray(d.rows)) { __LOOKUP_CACHE[branch] = {}; return {}; }
+    // RTDB 가 큰 array 를 sparse 때문에 object 로 deserialize 하는 경우 fallback.
+    const rowsArr = d && Array.isArray(d.rows) ? d.rows
+                  : (d && d.rows && typeof d.rows === 'object' ? Object.values(d.rows) : null);
+    if (!rowsArr) { __LOOKUP_CACHE[branch] = {}; return {}; }
     // Build a multi-key index: each row registered under FULL_BARCODE, CODE,
     // and digit-only variants so EAN-13 (13 chars from camera) matches POS
     // catalogs that store the 12-char no-checkdigit form (and vice versa).
     const idx = {};
     function addKey(k, row){ if (k && !idx[k]) idx[k] = row; }
-    d.rows.forEach(row => {
+    rowsArr.forEach(row => {
       const raw = [row.FULL_BARCODE, row.CODE, row.PID].map(v => v ? String(v).trim() : '');
       raw.forEach(k => {
         if (!k) return;
