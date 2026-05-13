@@ -2587,7 +2587,15 @@ let DASH_BRANCH = null;
 function dashSetBranch(b){
   DASH_BRANCH = b;
   try { localStorage.setItem('tasks.dashBranch', b); } catch(e){}
+  // 매장 변경 시 모든 탭 동기화 — '내 업무' 도 그 매장 직원들 업무 참고 모드로,
+  // 매니저 뷰 매장 필터도 같이 변경.
+  MGR_BRANCH = b;
+  const mgrBranchSel = document.getElementById('mgrBranchFilter');
+  if (mgrBranchSel) mgrBranchSel.value = b;
   renderDashboard();
+  // 다른 탭이 활성이거나 미리 데이터 그려놓기 위해 같이 재렌더
+  try { renderEmp(); } catch(_){}
+  try { renderMgr(); } catch(_){}
 }
 window.dashSetBranch = dashSetBranch;
 
@@ -3864,15 +3872,34 @@ function computeStatus(t){
 // ================= EMPLOYEE VIEW =================
 function renderEmp(){
   const list = document.getElementById('empList');
-  // 오너/전무가 6지점 '*' 업무 6번 중복 보지 않게 같은 이름·데드라인 dedup
-  const my = dedupAllBranchTasks(TASKS.filter(t => isAssignedToMe(t)));
+  // 대시보드에서 다른 매장을 선택하면 그 매장 직원들 업무를 참고용으로 표시
+  // (매니저/슈퍼바이저/오너 한정). 본인 매장이거나 권한 없으면 기존처럼 본인 업무.
+  const activeBranch = DASH_BRANCH || (me && me.branch) || '';
+  const myBranch = (me && me.branch) || '';
+  const isReferenceMode = !!(activeBranch && activeBranch !== myBranch
+                            && me && (isManager(me.role) || isOwner()));
+  let my;
+  if (isReferenceMode) {
+    // 참고 모드 — 그 매장의 오늘 모든 업무
+    my = TASKS.filter(t => t.branchId === activeBranch);
+  } else {
+    // 본인 업무 (오너/전무는 6지점 '*' 중복 제거)
+    my = dedupAllBranchTasks(TASKS.filter(t => isAssignedToMe(t)));
+  }
   my.sort((a,b) => (a.deadline||'99:99').localeCompare(b.deadline||'99:99'));
   const total = my.length;
   const done = my.filter(t => t.completedAt).length;
   document.getElementById('empSumBig').textContent = done + ' / ' + total;
   const localeMap = { ko:'ko-KR', en:'en-US', es:'es-ES' };
   document.getElementById('empSumDate').textContent = new Date().toLocaleDateString(localeMap[LANG]||'ko-KR',{month:'long',day:'numeric',weekday:'long'});
-  document.getElementById('empSumSub').textContent = total === 0 ? t('noTasksToday') : t('doneTotal');
+  // 참고 모드면 매장 이름 + '참고' 라벨 표시
+  if (isReferenceMode) {
+    const bLabel = localizeBranch(activeBranch);
+    const refLbl = LANG==='en' ? '(reference)' : LANG==='es' ? '(referencia)' : '(참고)';
+    document.getElementById('empSumSub').textContent = '📍 ' + bLabel + ' ' + refLbl;
+  } else {
+    document.getElementById('empSumSub').textContent = total === 0 ? t('noTasksToday') : t('doneTotal');
+  }
   document.getElementById('empSumFill').style.width = total ? (done/total*100) + '%' : '0%';
   const cnt = total - done;
   const cntEl = document.getElementById('empCount');
