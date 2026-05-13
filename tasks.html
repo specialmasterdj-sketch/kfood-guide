@@ -1381,12 +1381,27 @@ function populateTaskCheckList(){
     : uniq;
   const grouped = {};
   filtered.forEach(t => { (grouped[t.category||'기타'] = grouped[t.category||'기타'] || []).push(t); });
-  // 빈 결과 — 매니저가 새 직접 입력으로 만들거나 템플릿 편집 하라고 안내
+  // 인라인 추가/삭제 UI — 카테고리 선택 후 바로 그 자리에서 업무 추가/삭제 가능.
+  // 매니저가 따로 '템플릿 편집' 모달 안 가도 됨.
+  function inlineAdder(){
+    const ph = (LANG==='en') ? 'New task name…' : (LANG==='es') ? 'Nueva tarea…' : '새 업무명 입력…';
+    const btn = (LANG==='en') ? '+ Add' : (LANG==='es') ? '+ Añadir' : '＋ 추가';
+    const hint = (LANG==='en') ? `Add to '${curCat||'category'}'` : (LANG==='es') ? `Agregar a '${curCat||'categoría'}'` : `'${curCat||'카테고리'}' 에 추가`;
+    return `<div style="margin-top:8px;padding:8px;background:#f0fdf4;border:1px dashed #16a34a;border-radius:8px">
+      <div style="font-size:.74em;font-weight:700;color:#15803d;margin-bottom:5px">📌 ${escHtml(hint)}</div>
+      <div style="display:flex;gap:5px">
+        <input type="text" id="inlineNewTplName" placeholder="${escHtml(ph)}" style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:6px 9px;font-size:.88em" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddTpl();}">
+        <button type="button" class="btn" onclick="quickAddTpl()" style="white-space:nowrap;padding:6px 12px;font-size:.85em">${escHtml(btn)}</button>
+      </div>
+    </div>`;
+  }
+  // 빈 결과 — 인라인 추가 박스만 큼직하게 표시
   if (Object.keys(grouped).length === 0) {
-    const emptyMsg = (LANG==='en') ? `No ${curCat||'category'} templates yet — type your own below or pick another category.`
-                  : (LANG==='es') ? `No hay plantillas de ${curCat||'categoría'} aún — escribe abajo o elige otra.`
-                  :                 `${curCat||'카테고리'} 템플릿이 아직 없음 — 아래 직접 입력하거나 다른 카테고리 선택.`;
-    el.innerHTML = `<div style="font-size:.84em;color:#9ca3af;text-align:center;padding:18px 10px;line-height:1.5">${escHtml(emptyMsg)}</div>`;
+    const emptyMsg = (LANG==='en') ? `No ${curCat||'category'} templates yet. Type a new task below ↓`
+                  : (LANG==='es') ? `Aún sin plantillas de ${curCat||'categoría'}. Escribe abajo ↓`
+                  :                 `'${curCat||'카테고리'}' 에 업무가 없어요. 아래에 새 업무를 입력하세요 ↓`;
+    el.innerHTML = `<div style="font-size:.84em;color:#6b7280;text-align:center;padding:10px;line-height:1.5">${escHtml(emptyMsg)}</div>${inlineAdder()}`;
+    setTimeout(() => { try { document.getElementById('inlineNewTplName')?.focus(); } catch(_){} }, 50);
     return;
   }
   el.innerHTML = Object.entries(grouped).map(([cat, list], gi) => {
@@ -1396,13 +1411,17 @@ function populateTaskCheckList(){
     <div style="font-size:.78em;font-weight:700;color:#1a5c3a;margin:${gi===0?'0':'10px 0 0'};padding-bottom:3px;border-bottom:1px solid #e5e7eb;text-transform:uppercase;letter-spacing:.04em">${escHtml(localCat)}</div>
     ${list.map(tpl => {
       const dispName = (tpl.nameTr && (tpl.nameTr[LANG] || tpl.nameTr.ko)) || tpl.name;
+      const delTitle = (LANG==='en') ? 'Delete' : (LANG==='es') ? 'Eliminar' : '삭제';
       return `
-      <label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;font-size:.88em">
-        <input type="checkbox" class="task-pick" data-name="${escHtml(tpl.name)}" data-cat="${escHtml(tpl.category||'기타')}" style="width:16px;height:16px">
-        <span>${escHtml(dispName)}</span>
-      </label>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 6px">
+        <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;font-size:.88em">
+          <input type="checkbox" class="task-pick" data-name="${escHtml(tpl.name)}" data-cat="${escHtml(tpl.category||'기타')}" style="width:16px;height:16px;flex-shrink:0">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(dispName)}</span>
+        </label>
+        <button type="button" onclick="quickRmTpl('${escHtml(tpl.id||'')}', '${escHtml(tpl.name)}')" title="${escHtml(delTitle)}" style="background:transparent;border:0;color:#dc2626;font-weight:800;font-size:.95em;cursor:pointer;padding:2px 8px;border-radius:6px;flex-shrink:0">✕</button>
+      </div>
     `;}).join('')}
-  `;}).join('');
+  `;}).join('') + inlineAdder();
   // 체크박스 토글 시 장소 필드 노출 재평가 (진열 항목 체크 시 표시)
   el.querySelectorAll('.task-pick').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -1835,6 +1854,35 @@ async function rmTpl(id){
   await openTplEditor();
   refreshStageItemsIfOpen();
 }
+// 새 업무 지시 모달 안에서 카테고리 선택 후 바로 업무 추가 — 별도 템플릿 편집 모달 안 거침
+async function quickAddTpl(){
+  const input = document.getElementById('inlineNewTplName');
+  if (!input) return;
+  const name = (input.value || '').trim();
+  if (!name) { input.focus(); return; }
+  const cat = document.getElementById('aCat')?.value || '';
+  if (!cat) { alert((LANG==='en'?'Pick a category first':LANG==='es'?'Elige categoría primero':'카테고리 먼저 선택하세요')); return; }
+  if (!me || !me.branch) { alert((LANG==='en'?'Sign in first':LANG==='es'?'Inicia sesión':'이름/지점 먼저 설정')); return; }
+  try {
+    await saveBranchTemplate(me.branch, { name, category: cat });
+    input.value = '';
+    await populateTaskTemplates();   // 같은 카테고리에서 목록 즉시 갱신
+    setTimeout(() => { try { document.getElementById('inlineNewTplName')?.focus(); } catch(_){} }, 50);
+  } catch(e){ alert((LANG==='en'?'Add failed: ':LANG==='es'?'Falló: ':'추가 실패: ') + (e.message||e)); }
+}
+// 인라인 ✕ 삭제 버튼 — 한 번 확인 후 즉시 삭제 + 같은 화면에서 갱신
+async function quickRmTpl(id, name){
+  if (!id) return;
+  const msg = (LANG==='en') ? `Delete '${name}'?` : (LANG==='es') ? `¿Eliminar '${name}'?` : `'${name}' 삭제할까요?`;
+  if (!confirm(msg)) return;
+  if (!me || !me.branch) return;
+  try {
+    await deleteBranchTemplate(me.branch, id);
+    await populateTaskTemplates();
+  } catch(e){ alert((LANG==='en'?'Delete failed: ':LANG==='es'?'Falló: ':'삭제 실패: ') + (e.message||e)); }
+}
+window.quickAddTpl = quickAddTpl;
+window.quickRmTpl = quickRmTpl;
 // Re-render the stage-mode item list whenever templates change so the
 // 📝 항목 편집 flow reflects new/removed items immediately.
 function refreshStageItemsIfOpen(){
