@@ -692,6 +692,9 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
+    <select id="mgrBranchFilter" onchange="setMgrBranch(this.value)" title="다른 매장 진행 상황 참고용으로 보기" style="border:1.5px solid #1a5c3a;border-radius:8px;padding:6px 10px;font-size:.84em;background:#f0fdf4;font-weight:700;color:#15803d">
+      <!-- options 동적 채움 (refreshMgrBranchFilter) -->
+    </select>
     <select id="mgrPersonFilter" onchange="MGR_PERSON=this.value;renderMgr()" style="border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em;background:#fff">
       <option value="">👤 담당자: 전체</option>
     </select>
@@ -2503,6 +2506,7 @@ let MGR_FILTER = 'all';
 let MGR_PERSON = '';
 let MGR_CAT = '';
 let MGR_QUERY = '';
+let MGR_BRANCH = '';   // '' = 본인 매장(기본), 또는 특정 매장 ID — 참고용 다른 매장 보기
 let CURRENT_TASK = null;
 let DONE_PHOTOS = [];
 
@@ -3615,9 +3619,10 @@ function subscribeTasks(){
   // 정육 일일 보고 자동 생성은 비활성화 — 매니저가 '🥩 정육 일괄 발송'
   // 버튼으로 직접 트리거 (sendMeatDailyAll). 비활성 이유: 모든 직원에게
   // 자동 생성되면 정육 부서 아닌 직원 화면에도 task 가 떠 어수선했음.
-  // Owner/B.H.K reads ALL branches; managers read own branch
-  if (isOwner()) {
-    // For owner, subscribe to today across all branches and merge
+  // Owner/B.H.K + 매니저/슈퍼바이저 모두 ALL branches subscribe — 다른 지점 진행
+  // 상황 참고용으로 보기. 일반 직원은 본인 매장만.
+  if (isOwner() || isManager(me.role)) {
+    // subscribe to today across all branches and merge
     TASKS = [];
     let firstByBranch = {};
     BRANCHES.forEach(b => {
@@ -5321,17 +5326,53 @@ window.exportMgrCSV = exportMgrCSV;
 
 function resetMgrFilters(){
   MGR_FILTER = 'all'; MGR_PERSON = ''; MGR_CAT = ''; MGR_QUERY = '';
+  // 매장 필터는 본인 매장으로 복귀 (전체 매장 모드 해제)
+  MGR_BRANCH = (me && me.branch) || '';
   document.querySelectorAll('.mgr-toolbar .chip').forEach(c => c.classList.toggle('active', c.dataset.f === 'all'));
   const pSel = document.getElementById('mgrPersonFilter'); if (pSel) pSel.value = '';
   const cSel = document.getElementById('mgrCatFilter'); if (cSel) cSel.value = '';
   const sInp = document.getElementById('mgrSearch'); if (sInp) sInp.value = '';
+  const bSel = document.getElementById('mgrBranchFilter'); if (bSel) bSel.value = MGR_BRANCH;
   renderMgr();
 }
 window.resetMgrFilters = resetMgrFilters;
+
+// 매장 필터 드롭다운 채우기 — 매니저 본인 매장 default, 다른 매장 + 전체 옵션
+function refreshMgrBranchFilter(){
+  const sel = document.getElementById('mgrBranchFilter');
+  if (!sel || sel.options.length > 1) return;   // 한 번만 채움
+  const myBranch = (me && me.branch) || '';
+  const myBranchLabel = (BRANCHES.find(b => b.id === myBranch) || {})[LANG]
+    || (BRANCHES.find(b => b.id === myBranch) || {}).ko
+    || myBranch;
+  const opts = [];
+  // 본인 매장 (기본, 강조)
+  if (myBranch) opts.push(`<option value="${myBranch}">🏬 ${escHtml(myBranchLabel)} (${LANG==='en'?'mine':LANG==='es'?'mía':'본인'})</option>`);
+  // 전체 옵션
+  opts.push(`<option value="">🌐 ${LANG==='en'?'All stores':LANG==='es'?'Todas las tiendas':'전체 매장'}</option>`);
+  // 다른 매장들 (참고용)
+  BRANCHES.filter(b => b.id !== myBranch).forEach(b => {
+    opts.push(`<option value="${b.id}">📍 ${escHtml(b[LANG]||b.ko)} (${LANG==='en'?'reference':LANG==='es'?'referencia':'참고'})</option>`);
+  });
+  sel.innerHTML = opts.join('');
+  // 기본 선택
+  if (!MGR_BRANCH) MGR_BRANCH = myBranch;
+  sel.value = MGR_BRANCH;
+}
+function setMgrBranch(b){
+  MGR_BRANCH = b || '';
+  renderMgr();
+}
+window.setMgrBranch = setMgrBranch;
+window.refreshMgrBranchFilter = refreshMgrBranchFilter;
 function renderMgr(){
   const tbody = document.getElementById('mgrRows');
+  refreshMgrBranchFilter();
   populateMgrFilters();
+  // 매장 필터 — MGR_BRANCH 비어있으면 본인 매장 default, 특정 매장 선택 시 그 매장만
+  const activeBranch = MGR_BRANCH || (me && me.branch) || '';
   let rows = TASKS.slice();
+  if (activeBranch) rows = rows.filter(t => t.branchId === activeBranch);
   rows.forEach(t => t._status = computeStatus(t));
   if (MGR_FILTER !== 'all') rows = rows.filter(t => t._status === MGR_FILTER);
   if (MGR_PERSON) rows = rows.filter(t => t.assignedTo === MGR_PERSON);
