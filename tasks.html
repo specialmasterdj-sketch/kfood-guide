@@ -4007,6 +4007,7 @@ function renderTaskCard(t){
     ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}${labels.inProg[LANG]}</div>`:''}
     <div class="task-row" style="display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap">
       <div class="task-name" style="flex:1;min-width:160px">${escHtml(dispName)}</div>
+      ${(isManager(me?.role)||isOwner()) ? `<button onclick="event.stopPropagation();event.preventDefault();adminTaskMenu('${t.id}','${t.branchId}','${(dispName||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}',event)" title="⚙ 매니저 보정 — 업무명·데드라인·담당자·완료 처리 등 수정" style="background:#dbeafe;border:1.5px solid #2563eb;color:#1d4ed8;border-radius:8px;padding:3px 9px;font-size:.95em;font-weight:800;cursor:pointer;font-family:inherit;align-self:center">⚙ ${LANG==='en'?'Edit':LANG==='es'?'Editar':'수정'}</button>` : ''}
       ${pointsBadge}
     </div>
     <div class="task-meta">
@@ -5528,6 +5529,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     '5: ↩️  완료 취소 (다시 진행 중으로)',
     '6: 📨 채팅방 다시 보내기 (사진 누락 보정)',
     '7: ⭐ 포인트 변경 (1·2·3점)',
+    '8: 📝 업무명·메모 편집',
     '0: 닫기'
   ];
   const choice = prompt(
@@ -5544,8 +5546,50 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     if (choice.trim() === '5') return adminUncomplete(t);
     if (choice.trim() === '6') return adminRepostToChat(t);
     if (choice.trim() === '7') return adminChangePoints(t);
+    if (choice.trim() === '8') return adminEditNameMemo(t);
   } catch(e) { alert('보정 실패: ' + (e.message || e)); }
 }
+// 업무명 + 메모 인라인 편집 — prompt 로 빠르게. RTDB PATCH 후 채팅 알림은
+// 사용자가 별도로 #6(채팅방 다시 보내기) 선택 가능.
+async function adminEditNameMemo(t){
+  const curName = t.name || '';
+  const newName = prompt(
+    '📝 업무명 (원본 한국어 — 비워두면 변경 안 함)\n\n현재: ' + curName,
+    curName
+  );
+  if (newName === null) return;   // cancel
+  const trimmedName = newName.trim();
+  const curMemo = t.memo || '';
+  const newMemo = prompt(
+    '📝 메모/상세 설명 (비워두면 변경 안 함)\n\n현재: ' + (curMemo || '(없음)'),
+    curMemo
+  );
+  if (newMemo === null) return;   // cancel
+  const trimmedMemo = newMemo.trim();
+  // 둘 다 동일하면 no-op
+  if (trimmedName === curName && trimmedMemo === curMemo) {
+    alert('변경 사항 없음');
+    return;
+  }
+  const patch = { editedBy: me.name, editedAt: Date.now() };
+  if (trimmedName !== curName) {
+    patch.name = trimmedName || curName;
+    // 다국어 번역 자동 재생성 — 다른 언어 직원도 새 이름 보게
+    try { patch.nameTr = await translateMulti(patch.name); } catch(_){}
+  }
+  if (trimmedMemo !== curMemo) {
+    patch.memo = trimmedMemo;
+    if (trimmedMemo) {
+      try { patch.memoTr = await translateMulti(trimmedMemo); } catch(_){}
+    } else {
+      patch.memoTr = null;
+    }
+  }
+  const path = 'tasks/' + t.branchId + '/' + todayStr() + '/' + t.id;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, path), patch);
+  alert('✅ 수정 완료');
+}
+window.adminEditNameMemo = adminEditNameMemo;
 window.adminTaskMenu = adminTaskMenu;
 
 // ⏰+ 빠른 연장 — task 카드에서 직접 호출. 매니저+ 만 작동.
