@@ -1277,9 +1277,17 @@ function canAccessPayrollRoom(){
     const res = await fetch(FB_DB_URL+'/config/payrollAccess.json?t='+Date.now(),{cache:'no-store'});
     if (!res.ok) return;
     const d = await res.json();
-    if (Array.isArray(d)&&d.length) _payrollWhitelist=[...new Set([..._PW_DEFAULT,...d.map(n=>_normPW(n))])]; else _payrollWhitelist=_PW_DEFAULT.slice();
+    const fbList = Array.isArray(d)&&d.length ? d.map(n=>_normPW(n)) : [];
+    const merged = [...new Set([..._PW_DEFAULT, ...fbList])];
+    _payrollWhitelist = merged;
     localStorage.setItem('km.payrollWhitelist',JSON.stringify(_payrollWhitelist));
     if (typeof renderRooms==='function') renderRooms();
+    if (merged.length > fbList.length) {
+      try {
+        if (window.__fb) { const {db,ref,set}=window.__fb; set(ref(db,'config/payrollAccess'),merged); }
+        else fetch(FB_DB_URL+'/config/payrollAccess.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(merged)}).catch(()=>{});
+      } catch(_){}
+    }
   } catch(e){}
 })();
 // 매니저 룸 / 매니저 전용 방 — SUPERVISOR 제외.
