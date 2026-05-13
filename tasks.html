@@ -773,7 +773,11 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field" id="displayPlaceField" style="display:none">
       <label id="aPlaceLbl">📍 장소</label>
-      <select id="aDisplayPlace" onchange="onDisplayPlaceChange()">
+      <div style="display:flex;gap:4px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px">
+        <button type="button" onclick="addNewPlace()" title="이 지점에 새 장소 추가" style="background:#0891b2;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:800;cursor:pointer;white-space:nowrap">＋ 장소</button>
+        <button type="button" id="aPlaceDelete" onclick="rmPlaceFromSelect()" title="이 장소를 우리 지점 목록에서 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:700;cursor:pointer;white-space:nowrap">삭제</button>
+      </div>
+      <select id="aDisplayPlace" onchange="onDisplayPlaceChange();updatePlaceEditButtons()">
         <option value="" id="aPlaceDefault">— 장소 선택 (선택 시 업무명 앞에 표시) —</option>
         <option value="1번 통로">1번 통로</option>
         <option value="2번 통로">2번 통로</option>
@@ -1529,29 +1533,94 @@ function getDisplayPlaceValue(){
 
 // 지점별 커스텀 장소 목록 — RTDB /taskPlaces/{branch}/[names…] 에 저장.
 // 매니저가 "직접 입력 + 저장" 체크하면 다음 업무 등록 시 드롭다운에 자동 노출.
+let __BRANCH_PLACES = [];   // 매장 자체 추가 장소 (삭제 가능 표시에 사용)
 async function loadCustomPlaces(){
   if (!me || !me.branch) return;
   try {
     const r = await fetch(`${FB_DB_URL}/taskPlaces/${me.branch}.json?t=`+Date.now(), { cache:'no-store' });
-    if (!r.ok) return;
+    if (!r.ok) { __BRANCH_PLACES = []; return; }
     const list = await r.json();
-    if (!Array.isArray(list) || !list.length) return;
+    __BRANCH_PLACES = Array.isArray(list) ? list.filter(Boolean) : [];
+    if (!__BRANCH_PLACES.length) return;
     const sel = document.getElementById('aDisplayPlace');
     if (!sel) return;
     // 기존에 같은 장소가 이미 있으면 스킵 (하드코딩 옵션 + 이전 로드 결과)
+    // 단 매장 장소는 새로 들어왔을 수 있으니 ★ 마크로 다시 라벨링
     const existing = new Set(Array.from(sel.options).map(o => o.value));
     // "✏️ 직접 입력…" option 위에 삽입
     const customOpt = sel.querySelector('option[value="__custom__"]');
-    list.filter(name => name && !existing.has(name)).forEach(name => {
+    __BRANCH_PLACES.filter(name => name && !existing.has(name)).forEach(name => {
       const opt = document.createElement('option');
       opt.value = name;
-      // 커스텀 장소도 PLACE_I18N 에 있으면 다국어, 없으면 raw 그대로
-      opt.textContent = (typeof localizePlace === 'function') ? localizePlace(name) : name;
+      // 매장 자체 장소는 ★ 마크로 구분 (다국어 라벨 위에도 표시)
+      const label = (typeof localizePlace === 'function') ? localizePlace(name) : name;
+      opt.textContent = '★ ' + label;
       if (customOpt) sel.insertBefore(opt, customOpt);
       else sel.appendChild(opt);
     });
+    updatePlaceEditButtons();
   } catch(e){ console.warn('[loadCustomPlaces]', e); }
 }
+// 카테고리 [이름]/[삭제] 와 동일한 패턴 — 매장 장소 선택 시에만 [삭제] 노출
+function updatePlaceEditButtons(){
+  const sel = document.getElementById('aDisplayPlace');
+  const delBtn = document.getElementById('aPlaceDelete');
+  if (!sel || !delBtn) return;
+  delBtn.style.display = (sel.value && __BRANCH_PLACES.includes(sel.value)) ? '' : 'none';
+}
+// 새 장소 추가 — 드롭다운 옆 [＋ 장소] 버튼. prompt 입력 → RTDB 저장 → 즉시 선택
+async function addNewPlace(){
+  if (!me || !me.branch) { alert((LANG==='en'?'Sign in first':LANG==='es'?'Inicia sesión':'이름/지점 먼저 설정')); return; }
+  const ph = (LANG==='en') ? 'New place name (e.g. Andy Cap, Backroom entry)'
+          : (LANG==='es') ? 'Nombre del lugar (ej: Andy Cap)'
+          :                 '새 장소 이름 (예: 앤디 캡, 백룸 입구)';
+  const name = (prompt(ph) || '').trim();
+  if (!name) return;
+  const sel = document.getElementById('aDisplayPlace');
+  const existing = new Set(Array.from(sel.options).map(o => o.value));
+  if (existing.has(name)) { alert((LANG==='en'?'Already exists':LANG==='es'?'Ya existe':'이미 있는 장소입니다')); sel.value = name; updatePlaceEditButtons(); return; }
+  try {
+    await saveCustomPlace(name);
+    // dropdown 즉시 갱신
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = '★ ' + name;
+    const customOpt = sel.querySelector('option[value="__custom__"]');
+    if (customOpt) sel.insertBefore(opt, customOpt);
+    else sel.appendChild(opt);
+    if (!__BRANCH_PLACES.includes(name)) __BRANCH_PLACES.push(name);
+    sel.value = name;
+    onDisplayPlaceChange();
+    updatePlaceEditButtons();
+  } catch(e){ alert((LANG==='en'?'Add failed: ':LANG==='es'?'Falló: ':'추가 실패: ') + (e.message||e)); }
+}
+// 매장 장소 삭제 — 선택된 장소가 매장 자체 추가 항목일 때만 가능
+async function rmPlaceFromSelect(){
+  const sel = document.getElementById('aDisplayPlace');
+  if (!sel) return;
+  const name = sel.value;
+  if (!name || !__BRANCH_PLACES.includes(name)) return;
+  const msg = (LANG==='en') ? `Delete '${name}' from this branch list?`
+           : (LANG==='es') ? `¿Eliminar '${name}' de la lista?`
+           :                 `'${name}' 을 이 지점 장소 목록에서 삭제할까요?`;
+  if (!confirm(msg)) return;
+  try {
+    __BRANCH_PLACES = __BRANCH_PLACES.filter(p => p !== name);
+    await fetch(`${FB_DB_URL}/taskPlaces/${me.branch}.json`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(__BRANCH_PLACES)
+    });
+    // dropdown 에서 해당 option 제거 + 선택 초기화
+    const opt = Array.from(sel.options).find(o => o.value === name);
+    if (opt) opt.remove();
+    sel.value = '';
+    onDisplayPlaceChange();
+    updatePlaceEditButtons();
+  } catch(e){ alert((LANG==='en'?'Delete failed: ':LANG==='es'?'Falló: ':'삭제 실패: ') + (e.message||e)); }
+}
+window.addNewPlace = addNewPlace;
+window.rmPlaceFromSelect = rmPlaceFromSelect;
+window.updatePlaceEditButtons = updatePlaceEditButtons;
 async function saveCustomPlace(name){
   if (!name || !me || !me.branch) return;
   try {
