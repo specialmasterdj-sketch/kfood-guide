@@ -13,7 +13,7 @@
   try { const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null'); if(Array.isArray(c)&&c.length) _payrollWhitelist=c; } catch(e){}
 
   function _loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }}
-  function _normName(n){ return String(n||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
+  function _normName(n){ return String(n||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
   function _isExecName(name){ const n = _normName(name); return n === 'BHK' || n === 'DJ' || n === 'SUNKIM'; }
 
   function isManager(){
