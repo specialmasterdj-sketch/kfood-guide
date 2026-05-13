@@ -99,11 +99,23 @@ for (let r = 1; r < rows.length; r++) {
     excluded.total++;
     continue;
   }
+  let cat  = String(row[I.cat]||'').trim();
+  let dpt2 = dept;
+  // 이름 패턴 기반 카테고리 보정 — Vela POS 에서 RAMUNE 등 음료 SKU 가
+  // 가끔 SNACKS/ALCOHOL 로 잘못 분류돼 export 됨. 명백한 음료 키워드는
+  // DRINKS (F)/BEVERAGE 로 강제. 알콜 SKU 는 화이트리스트로 보호.
+  const nameU = name.toUpperCase();
+  const isAlcoholic = /\b(BEER|WINE|SOJU|WHISKY|WHISKEY|VODKA|RUM|TEQUILA|SAKE|MAKGEOLLI|MAKKOLI|LIQUOR|ALCOHOL)\b/.test(nameU);
+  const looksLikeDrink = /\b(RAMUNE|COLA|COKE|PEPSI|SPRITE|FANTA|SODA|JUICE|DRINK|MILK|WATER|TEA|COFFEE|LEMONADE|SMOOTHIE|POWERADE|GATORADE|NECTAR|CIDER|KOMBUCHA|ADE)\b/.test(nameU);
+  if (looksLikeDrink && !isAlcoholic) {
+    cat  = 'DRINKS (F)';
+    dpt2 = 'BEVERAGE';
+  }
   products.push({
     code,
     name,
-    dept,
-    cat: String(row[I.cat]||'').trim(),
+    dept: dpt2,
+    cat,
     vendor: String(row[I.ven]||'').trim(),
     qty,
     sbtls: num(row[I.sbtls]),
