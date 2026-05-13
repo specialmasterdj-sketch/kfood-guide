@@ -14,7 +14,7 @@
 
   function _loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }}
   function _normName(n){ return String(n||'').toUpperCase().replace(/\./g,'').replace(/\s+/g,''); }
-  function _isExecName(name){ const n = _normName(name); return n === 'BHK' || n === 'DJ'; }
+  function _isExecName(name){ const n = _normName(name); return n === 'BHK' || n === 'DJ' || n === 'SUNKIM'; }
 
   function isManager(){
     const me = _loadMe();
@@ -450,7 +450,7 @@
 
   // ============ 안 읽은 채팅 메시지 배지 ============
   // chat.html 의 lastVisit 맵을 읽어 각 방의 메시지 키 timestamp 와 비교
-  const EXEC_NAMES = ['B.H.K','BHK','B H K','비에이치케이'];
+  const EXEC_NAMES = ['B.H.K','BHK','B H K','비에이치케이','SUN KIM','SUNKIM'];
   // EXECUTIVE / 전무 / SUPERVISOR 추가 — chat 배지에서도 manager-only 방 (manager_only 등)
   // 카운트가 정상 작동하도록.
   const MGR_TOKENS_CHAT = ['OWNER','BOSS','MANAGER','매니저','점장','대표','사장','오너','GERENTE','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','감독','ASSISTANT MANAGER','부매니저'];
