@@ -78,6 +78,7 @@
     { sec: { ko:'기타', en:'Other', es:'Otros' } },
     { ic: '🚚', lbl: { ko:'물류',          en:'Logistics', es:'Logística' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-logistics/' },
     { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/' },
+    { ic: '🤖', lbl: { ko:'Claude Code',  en:'Claude Code', es:'Claude Code' }, href: 'https://claude.ai/code', target: '_blank', mgr: true },
     { ic: '⊞',  lbl: { ko:'모든 앱',       en:'All Apps',  es:'Todas Apps' }, href: './apps.html' },
   ];
 
