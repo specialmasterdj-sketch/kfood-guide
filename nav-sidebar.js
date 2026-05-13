@@ -546,7 +546,7 @@
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data) && data.length) {
-        _payrollWhitelist = data.map(n => _normName(n));
+        _payrollWhitelist = [...new Set([..._PW_DEFAULT, ...data.map(n => _normName(n))])];
       } else {
         _payrollWhitelist = _PW_DEFAULT.slice();
       }
