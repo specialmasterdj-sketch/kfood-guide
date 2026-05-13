@@ -258,6 +258,7 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
     <div class="last-check" id="qtyLastCheck"></div>
     <div class="actions">
       <button class="b-cancel" onclick="closeQtyOv()" id="cancelBtn">취소</button>
+      <button type="button" id="clearQtyBtn" onclick="clearQty()" style="display:none;background:#fff;color:#dc2626;border:1.5px solid #dc2626;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer">🗑 점검 취소</button>
       <button class="b-save" onclick="saveQty()" id="saveBtn">💾 저장</button>
     </div>
   </div>
@@ -379,6 +380,9 @@ const I18N = {
     boxPerPh: '입수',
     boxLoosePh: '낱개',
     boxApplyBtn: '📦 적용',
+    btnClearQty: '🗑 점검 취소',
+    confirmClearQty: '이 상품의 점검 기록을 지울까요?\n(사진은 그대로 유지됨)',
+    toastCleared: '🗑 점검 취소됨',
     photoDelBtn: '🗑️ 사진 삭제',
     photoCloseBtn: '닫기',
     photoBusy: '⏳ 업로드 중…',
@@ -458,6 +462,9 @@ const I18N = {
     boxPerPh: 'Per box',
     boxLoosePh: 'Loose',
     boxApplyBtn: '📦 Apply',
+    btnClearQty: '🗑 Clear check',
+    confirmClearQty: 'Clear the check record for this item?\n(Photo is kept.)',
+    toastCleared: '🗑 Check cleared',
     photoDelBtn: '🗑️ Delete photo',
     photoCloseBtn: 'Close',
     photoBusy: '⏳ Uploading…',
@@ -537,6 +544,9 @@ const I18N = {
     boxPerPh: 'Por caja',
     boxLoosePh: 'Sueltas',
     boxApplyBtn: '📦 Aplicar',
+    btnClearQty: '🗑 Borrar revisión',
+    confirmClearQty: '¿Borrar el registro de revisión de este artículo?\n(La foto se mantiene.)',
+    toastCleared: '🗑 Revisión borrada',
     photoDelBtn: '🗑️ Eliminar foto',
     photoCloseBtn: 'Cerrar',
     photoBusy: '⏳ Subiendo…',
@@ -803,6 +813,7 @@ function applyI18N(){
   if ($('qtyBoxN'))      $('qtyBoxN').placeholder      = t.boxNPh;
   if ($('qtyBoxPer'))    $('qtyBoxPer').placeholder    = t.boxPerPh;
   if ($('qtyBoxLoose'))  $('qtyBoxLoose').placeholder  = t.boxLoosePh;
+  if ($('clearQtyBtn'))  $('clearQtyBtn').textContent  = t.btnClearQty;
   // 스캔 모달 텍스트 — 카메라 열려있지 않아도 사전 세팅
   if ($('scanTitle')) $('scanTitle').textContent = t.scanTitle;
   if ($('scanHint')) $('scanHint').textContent = t.scanHint;
@@ -898,6 +909,16 @@ async function saveState(code, qty){
       body: JSON.stringify(entry)
     });
   } catch(e) { console.warn(e); showToast(T().errSave); }
+}
+// 점검 기록 삭제 — RTDB DELETE + 메모리 STATE 제거. 다시 'Unchecked' 상태로 복귀.
+async function clearState(code){
+  if (!BRANCH) return;
+  delete STATE[code];
+  try {
+    await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
+      method:'DELETE'
+    });
+  } catch(e) { console.warn('[clearState]', e); showToast(T().errSave); }
 }
 
 function setFilter(f, el){
@@ -1087,8 +1108,21 @@ function openQtyOv(code){
   $('qtyLastCheck').textContent = s
     ? t.lastCheck(s.by||'?', new Date(s.ts).toLocaleString(t.locale))
     : t.noCheck;
+  // 점검 데이터 있을 때만 [🗑 점검 취소] 버튼 노출
+  const clearBtn = $('clearQtyBtn');
+  if (clearBtn) clearBtn.style.display = (s && typeof s.qty === 'number') ? '' : 'none';
   $('qtyOv').classList.add('show');
 }
+async function clearQty(){
+  if (!CUR_CODE) return;
+  const t = T();
+  if (!confirm(t.confirmClearQty || '이 상품의 점검 기록을 지울까요? (사진은 유지됨)')) return;
+  await clearState(CUR_CODE);
+  showToast(t.toastCleared || '🗑 점검 취소됨');
+  closeQtyOv();
+  render();
+}
+window.clearQty = clearQty;
 function closeQtyOv(){ $('qtyOv').classList.remove('show'); CUR_CODE = null; NUMPAD_VAL = ''; }
 function numpadAdd(d){
   if (NUMPAD_VAL === '0') NUMPAD_VAL = '';
