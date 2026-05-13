@@ -784,7 +784,7 @@ function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','
 // ============== 직원 디렉토리 ==============
 let _dirData = [];
 const DIR_BRANCHES = ['LASOLAS','MIAMI','HOLLYWOOD','PEMBROKE_PINES','CORAL_SPRINGS'];
-const DIR_BRANCH_LABELS = {LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
+const DIR_BRANCH_LABELS = {_GLOBAL:'본사 / Executive',LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
 const DIR_ROLE_SEQ = [['OWNER',0],['ASSISTANT MANAGER',2],['ASSISTANT_MANAGER',2],['SENIOR SUPERVISOR',3],['VICE SUPERVISOR',5],['VICE_SUPERVISOR',5],['MANAGER',1],['SUPERVISOR',4]];
 function _dirRoleSort(r){ const u = String(r||'').toUpperCase(); for (const [k,v] of DIR_ROLE_SEQ) if (u.includes(k)) return v; return 9; }
 async function loadDirectory(){
@@ -802,8 +802,26 @@ async function loadDirectory(){
       arr.forEach(e => { if(e && e.name) _dirData.push({name:e.name, role:e.role||'', dept:e.dept||'', branch:br}); });
     } catch(e){}
   }
+  try {
+    const ownRes = await fetch(fb+'/schedules/_global/owners.json');
+    const owners = await ownRes.json();
+    if (Array.isArray(owners)) {
+      const existing = new Set(_dirData.map(e => e.name.toUpperCase().replace(/\s+/g,'')));
+      owners.forEach(o => {
+        if (!o || !o.name) return;
+        const raw = o.name;
+        const paren = raw.match(/\(([^)]+)\)/);
+        const cleanName = raw.replace(/\([^)]*\)/g,'').replace(/\s+/g,' ').trim();
+        const dept = o.dept || (paren ? paren[1] : '');
+        if (!existing.has(cleanName.toUpperCase().replace(/\s+/g,'')))
+          _dirData.push({name:cleanName, role:o.role||'OWNER', dept:dept, branch:'_GLOBAL'});
+      });
+    }
+  } catch(e){}
   _dirData.sort((a,b) => {
-    if (a.branch !== b.branch) return DIR_BRANCHES.indexOf(a.branch) - DIR_BRANCHES.indexOf(b.branch);
+    const bai = a.branch==='_GLOBAL'?-1:DIR_BRANCHES.indexOf(a.branch);
+    const bbi = b.branch==='_GLOBAL'?-1:DIR_BRANCHES.indexOf(b.branch);
+    if (bai !== bbi) return bai - bbi;
     const ra = _dirRoleSort(a.role), rb = _dirRoleSort(b.role);
     if (ra !== rb) return ra - rb;
     return a.name.localeCompare(b.name);
