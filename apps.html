@@ -1301,14 +1301,24 @@ document.addEventListener('DOMContentLoaded', function(){
     var all = owners.concat(employees);
     var me = loadMe();
     // 🔐 한/영/스페인어 매니저 라벨 모두 매칭. 단순 비교 X — 부분 매칭(.includes).
-    // 예: '전무님', '점장 (SM)', 'Asst. Manager' 같은 변형도 모두 잡아냄.
-    var MGR_TOK = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','SUPERVISOR'];
+    var MGR_TOK = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR'];
     function _isMgrRole(role){
       var u = String(role||'').toUpperCase();
       if (!u) return false;
       return MGR_TOK.some(function(t){ return u.indexOf(t.toUpperCase()) >= 0; });
     }
-    var meIsMgr = me && _isMgrRole(me.role);
+    // 🔐 SECURITY (2026-05-14): chat.me.role 이 이전 매니저 세션에서 남아있을 수
+    // 있어서, 이름을 schedule 에서 다시 조회해 진짜 역할 판단. 예) Erika 가 이름은
+    // 'Erika Garcia' 인데 chat.me.role 이 'EXECUTIVE' 로 남아있어도 staff 로 인식.
+    function _meIsActuallyManager(){
+      if (!me) return false;
+      if (me.name){
+        var entry = all.find(function(e){ return e.name === me.name; });
+        if (entry) return !!(entry._fromOwners || _isMgrRole(entry.role));
+      }
+      return _isMgrRole(me.role);
+    }
+    var meIsMgr = _meIsActuallyManager();
     var filtered = all.filter(function(e){
       var isMgrEntry = e._fromOwners || _isMgrRole(e.role);
       if (!isMgrEntry) return true;
