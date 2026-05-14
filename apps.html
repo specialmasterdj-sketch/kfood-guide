@@ -1054,6 +1054,34 @@ document.addEventListener('DOMContentLoaded', function(){
   refreshUserPill();
   window.addEventListener('storage', function(e){ if (e.key === 'chat.me') refreshUserPill(); });
   window.addEventListener('km-identity-changed', refreshUserPill);
+
+  // 🔐 DevTools 사칭 방어 (2026-05-14, PC 보호)
+  // 사용자가 F12 → chat.me.role 직접 박는 경우, auth-gate.js 가 RTDB 에서
+  // 받은 window.__currentUser.role 이 권위. 1초마다 비교해서 다르면 복구.
+  var MGR_LIST = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
+  function enforceAuthoritativeRole(){
+    try {
+      var cu = window.__currentUser;
+      if (!cu || !cu.uid) return;          // auth-gate 아직 미발화
+      var raw = localStorage.getItem('chat.me');
+      if (!raw) return;
+      var m = JSON.parse(raw);
+      var trueRole = String(cu.role || '');
+      var curRole = String(m.role || '');
+      if (curRole !== trueRole) {
+        m.role = trueRole;
+        m.isManager = MGR_LIST.indexOf(trueRole.toUpperCase()) >= 0;
+        localStorage.setItem('chat.me', JSON.stringify(m));
+        try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
+        console.warn('[security] chat.me.role tampering reverted');
+      }
+    } catch(_){}
+  }
+  window.addEventListener('km-auth-ready', enforceAuthoritativeRole);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') enforceAuthoritativeRole();
+  });
+  setInterval(enforceAuthoritativeRole, 1000);
 })();
 
 // ============ Quick stats fetch ============
