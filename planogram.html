@@ -28,6 +28,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .sec{display:none;padding:16px 12px}
 .sec.on{display:block}
 .sec-title{font-size:1.15rem;font-weight:800;color:#0D47A1;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.sel-all{margin-left:auto;background:#0D47A1;color:#fff;border:0;padding:6px 12px;border-radius:14px;font-size:.7rem;font-weight:700;cursor:pointer}
+.sel-all:hover{background:#1565C0}
+.sel-all.all-on{background:#dc2626}
 .sec-cnt{font-size:.82rem;color:#6b7280;font-weight:400}
 .sec-empty{text-align:center;padding:60px 16px;color:#9CA3AF;font-size:.9rem}
 
@@ -230,16 +233,45 @@ function movePhoto(fromDept,file,toDept){movePhotoCore(fromDept,file,toDept);ren
 function deletePhoto(fromDept,file){deletePhotoCore(fromDept,file);render()}
 
 var selectedSet=new Set();
-function toggleSelect(dept,file){
-  var k=dept+'::'+file;
-  if(selectedSet.has(k))selectedSet.delete(k);
-  else selectedSet.add(k);
+var lastClicked={dept:null,index:-1};
+function toggleSelect(dept,file,index,shiftKey){
+  if(shiftKey&&lastClicked.dept===dept&&lastClicked.index>=0){
+    var photos=HMART_PHOTOS[dept]||[];
+    var start=Math.min(lastClicked.index,index);
+    var end=Math.max(lastClicked.index,index);
+    for(var i=start;i<=end;i++){
+      if(photos[i])selectedSet.add(dept+'::'+photos[i]);
+    }
+  }else{
+    var k=dept+'::'+file;
+    if(selectedSet.has(k))selectedSet.delete(k);
+    else selectedSet.add(k);
+  }
+  lastClicked={dept:dept,index:index};
+  updateSelectionUI();
+}
+function selectAllInDept(dept){
+  var photos=HMART_PHOTOS[dept]||[];
+  if(!photos.length)return;
+  var allSel=photos.every(function(f){return selectedSet.has(dept+'::'+f)});
+  photos.forEach(function(f){
+    var k=dept+'::'+f;
+    if(allSel)selectedSet.delete(k);
+    else selectedSet.add(k);
+  });
   updateSelectionUI();
 }
 function updateSelectionUI(){
   document.querySelectorAll('.card').forEach(function(c){
     var k=c.dataset.key;
     c.classList.toggle('selected',selectedSet.has(k));
+  });
+  document.querySelectorAll('.sel-all').forEach(function(b){
+    var dept=b.dataset.dept;
+    var photos=HMART_PHOTOS[dept]||[];
+    var allSel=photos.length&&photos.every(function(f){return selectedSet.has(dept+'::'+f)});
+    b.classList.toggle('all-on',allSel);
+    b.textContent=allSel?'전체 해제':'전체 선택('+photos.length+')';
   });
   var bar=document.getElementById('batchBar');
   if(!bar)return;
@@ -334,7 +366,9 @@ function render(){
     var photos=getPhotos(d.id);
     var name=d[lang]||d.en;
     var h='<div class="sec'+(d.id===activeDept?' on':'')+'" id="sec-'+d.id+'">';
-    h+='<div class="sec-title">'+d.icon+' '+name+' <span class="sec-cnt">'+photos.length+(lang==='ko'?'장':'')+'</span></div>';
+    h+='<div class="sec-title">'+d.icon+' '+name+' <span class="sec-cnt">'+photos.length+(lang==='ko'?'장':'')+'</span>';
+    if(isAdmin&&photos.length){h+='<button class="sel-all" data-dept="'+d.id+'" onclick="selectAllInDept(\''+d.id+'\')">전체 선택('+photos.length+')</button>'}
+    h+='</div>';
     if(!photos.length){
       h+='<div class="sec-empty">'+TXT[lang].empty+'</div>';
     }else{
@@ -345,7 +379,7 @@ function render(){
       h+='<div class="grid">';
       photos.forEach(function(f,i){
         h+='<div class="card" data-key="'+d.id+'::'+f+'">'+
-          (isAdmin?'<div class="card-check admin-only" onclick="event.stopPropagation();toggleSelect(\''+d.id+'\',\''+f+'\')">✓</div>':'')+
+          (isAdmin?'<div class="card-check admin-only" onclick="event.stopPropagation();toggleSelect(\''+d.id+'\',\''+f+'\','+i+',event.shiftKey)">✓</div>':'')+
           '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" alt="" loading="lazy"></div>'+
           (isAdmin?'<div class="card-ctrl admin-only" onclick="event.stopPropagation()">'+
             '<select class="ctrl-sel" onchange="onMoveSel(this,\''+d.id+'\',\''+f+'\')">'+optsHtml+'</select>'+
