@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v530';
+const CACHE = 'kmtools-v531';
 
 const CORE = [
   './',
@@ -66,6 +66,41 @@ self.addEventListener('activate', e => {
           try { c.postMessage({ type: 'sw-updated' }); } catch (_) {}
         }
       })
+  );
+});
+
+// 📬 Push notification handler — FCM 또는 Web Push 서비스에서 보낸 푸시 메시지 수신.
+// 현재는 sender 측 (FCM 서버/Cloud Function) 미설정이라 실제로는 안 옴.
+// 단, 추후 FCM 도입 시 이 핸들러가 그대로 동작하도록 준비.
+self.addEventListener('push', e => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch(_) { try { data = { title: e.data.text() }; } catch(__){} }
+  const title = data.title || '📨 새 업무 지시';
+  const body  = data.body  || data.message || '확인해 주세요.';
+  const tag   = data.tag   || 'kimchi-push';
+  const url   = data.url   || './tasks.html';
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body, tag, renotify: true,
+      icon: './pwa-assets/icon-192.png',
+      badge: './pwa-assets/icon-192.png',
+      data: { url },
+      vibrate: [200, 80, 200, 80, 400],
+    })
+  );
+});
+
+// 푸시 알림 클릭 → 해당 페이지로 이동 (이미 열려있으면 focus)
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const targetUrl = (e.notification.data && e.notification.data.url) || './tasks.html';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      for (const c of clients) {
+        if (c.url.includes(targetUrl) && 'focus' in c) return c.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
   );
 });
 

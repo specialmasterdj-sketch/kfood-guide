@@ -3810,15 +3810,110 @@ function showToast(title, body, opts){
   wrap.appendChild(el);
   setTimeout(() => { if (el.parentNode) el.remove(); }, 6000);
 }
+// 🔊 오디오 알림 — iOS 가 백그라운드 푸시 미지원이라, 앱이 열려있을 때 비프 + 진동으로 확실히 인지.
+let _BEEP_CTX = null;
+function _ensureAudioCtx(){
+  if (_BEEP_CTX) return _BEEP_CTX;
+  try { _BEEP_CTX = new (window.AudioContext || window.webkitAudioContext)(); } catch(_){}
+  return _BEEP_CTX;
+}
+// 사용자의 첫 탭/클릭으로 AudioContext 깨움 — iOS 는 user gesture 없으면 audio 차단
+document.addEventListener('click', function _unlockAudio(){
+  const ctx = _ensureAudioCtx();
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(()=>{});
+  document.removeEventListener('click', _unlockAudio);
+}, { once: true });
+function _playTaskAlert(){
+  try {
+    const ctx = _ensureAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(()=>{});
+    [880, 660, 880].forEach((freq, i) => {
+      setTimeout(() => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = freq;
+        o.type = 'sine';
+        g.gain.setValueAtTime(0.35, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+        o.start(); o.stop(ctx.currentTime + 0.28);
+      }, i * 200);
+    });
+  } catch(_){}
+}
+function _vibrateTaskAlert(){ try { if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 400]); } catch(_){} }
+
 function fireNotify(title, body, opts){
   opts = opts || {};
   showToast(title, body, opts);
+  // 🔊 비프 + 📳 진동 — 권한 거부됐어도 동작. iOS Safari 에서 가장 확실한 인지 수단.
+  if (!opts.silent){
+    _playTaskAlert();
+    _vibrateTaskAlert();
+  }
   if (notifySupported() && Notification.permission === 'granted') {
     try {
       const n = new Notification(title, { body: body || '', tag: opts.tag || 'kimchi-task', renotify: true, icon: 'pwa-assets/icon-192.png' });
       if (opts.onClick) n.onclick = () => { window.focus(); opts.onClick(); n.close(); };
     } catch(e){}
   }
+}
+
+// 💬 채팅 백업 알림 — Notification API 가 iOS PWA 에서 백그라운드 미지원이라,
+// 매니저가 업무 지시하면 해당 직원과의 1:1 DM 방에 메시지도 자동 발송.
+// 직원은 chat.html unread 뱃지 (apps.html / 사이드바) 로 확실히 알아챔.
+async function sendTaskChatBackup(toName, taskName, deadline){
+  try {
+    if (!toName || toName === '*') return;
+    if (!me || !me.name) return;
+    if (toName === me.name) return;
+    function _norm(s){ return String(s||'').trim().replace(/\s+/g,'_').replace(/[^A-Za-z0-9_가-힣]/g,'').toUpperCase(); }
+    const a = _norm(me.name), b = _norm(toName);
+    if (!a || !b || a === b) return;
+    const roomId = 'dm__' + [a,b].sort().join('__');
+    const ts = Date.now();
+    const msgId = 'm' + ts + Math.floor(Math.random()*900);
+    const text = '📨 새 업무 지시: ' + taskName + (deadline ? '\n⏰ 데드라인 ' + deadline : '');
+    const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+    // 방 존재 여부 확인 후 생성/업데이트
+    let existing = null;
+    try {
+      const rr = await fetch(`${FB}/chat/rooms/${roomId}.json`);
+      existing = await rr.json();
+    } catch(_){}
+    if (!existing || !existing.members){
+      await fetch(`${FB}/chat/rooms/${roomId}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: toName, private: true,
+          members: [me.name, toName],
+          created: ts, lastMsg: text, lastTs: ts, lastSender: me.name
+        })
+      });
+    } else {
+      await fetch(`${FB}/chat/rooms/${roomId}.json`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastMsg: text, lastTs: ts, lastSender: me.name })
+      });
+    }
+    await fetch(`${FB}/chat/messages/${roomId}/${msgId}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: me.name,
+        senderBranch: me.branch || '',
+        senderRole: me.role || '',
+        isManager: !!me.isManager,
+        color: '#1a5c3a',
+        text, ts,
+        photos: [], files: [],
+        _taskNotify: true
+      })
+    });
+  } catch(e){ console.warn('[task chat backup] failed', e); }
 }
 function detectNewTasks(){
   if (!SEEN_INIT) {
@@ -6186,6 +6281,8 @@ async function sendAssign(){
           stageFrom, stageTo,
           points: getAssignPoints(),
         });
+        // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
+        sendTaskChatBackup(stageAssignee, stageName, stageTo);
         sentCount++;
       }
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
@@ -6227,6 +6324,8 @@ async function sendAssign(){
     // 그 벤더 이름이 노출되어 직원이 어느 거래처 주문서를 작성할지 명확.
     vendor: (document.getElementById('aVendor')?.value || null) || null,
   });
+  // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
+  sendTaskChatBackup(to, name, deadline);
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   // Optionally save this task name as a reusable template for the user's branch
   const saveTpl = document.getElementById('aSaveTpl');
