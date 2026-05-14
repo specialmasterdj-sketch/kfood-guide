@@ -1,0 +1,33 @@
+name: Daily Morning Tasks (Hollywood 4am ET)
+
+# 매장(플로리다) 시간 기준 매일 4am 자동 발송.
+# cron 은 UTC 기준이라 DST 따라 두 시간 등록 + 스크립트가 idempotent.
+#   - 4am EDT (3월~11월, 일광절약 적용) = 08:00 UTC
+#   - 4am EST (11월~3월, 표준시)         = 09:00 UTC
+# 두 발화 모두 같은 task ID 로 PUT 하지만 이미 있으면 skip 처리 (스크립트
+# 안에서 checklist 길이 비교) → 중복 발송 위험 없음.
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 08:00 UTC = 4am EDT (여름)
+    - cron: '0 9 * * *'   # 09:00 UTC = 4am EST (겨울)
+  workflow_dispatch:       # 수동 발송 — Actions 탭에서 'Run workflow' 클릭
+    inputs:
+      branch:
+        description: '대상 매장 ID (예: HOLLYWOOD, MIAMI)'
+        required: false
+        default: 'HOLLYWOOD'
+
+jobs:
+  send-daily-tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Send daily reports
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.branch || 'HOLLYWOOD' }}
+        run: node scripts/daily-tasks.js
