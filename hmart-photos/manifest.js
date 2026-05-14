@@ -1,5 +1,5 @@
 // H-Mart: Auto-classified Apr 29-30 2026 Google Photos
-// 1824 photos in 18 departments
+// 1824 photos in 19 departments
 const HMART_PHOTOS = {
   "hotfood": [
     "20260430_122255.jpg",
@@ -1857,5 +1857,6 @@ const HMART_PHOTOS = {
     "20260430_160416.jpg",
     "20260430_160422.jpg"
   ],
-  "sale_zone": []
+  "sale_zone": [],
+  "facility": []
 };
