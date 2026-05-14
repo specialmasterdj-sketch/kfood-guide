@@ -49,6 +49,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 body.admin .admin-only{display:flex}
 .exit-btn{background:rgba(255,255,255,.15);border:0;color:#fff;font-size:.65rem;padding:5px 9px;border-radius:12px;cursor:pointer}
 
+.card-check{position:absolute;top:4px;left:4px;width:26px;height:26px;background:rgba(255,255,255,.95);border:2px solid #aaa;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:6;font-size:.9rem;font-weight:bold;color:transparent;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.card.selected .card-check{background:#0D47A1;border-color:#0D47A1;color:#fff}
+.card.selected{outline:3px solid #0D47A1;outline-offset:-1px}
+
+.batch-bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#0D47A1;color:#fff;padding:10px 14px;border-radius:30px;display:none !important;align-items:center;gap:8px;box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:200;flex-wrap:wrap;max-width:95vw}
+body.admin .batch-bar.show{display:flex !important}
+.batch-cnt{font-weight:700;font-size:.8rem;white-space:nowrap}
+.batch-sel{background:rgba(255,255,255,.2);color:#fff;border:0;padding:6px 8px;border-radius:14px;font-size:.7rem;font-weight:600;cursor:pointer;max-width:160px}
+.batch-sel option{color:#000}
+.batch-btn{background:rgba(255,255,255,.2);border:0;color:#fff;padding:6px 10px;border-radius:14px;font-size:.7rem;font-weight:700;cursor:pointer}
+.batch-btn:hover{background:rgba(255,255,255,.3)}
+.batch-del{background:rgba(239,68,68,.9)}
+.batch-del:hover{background:#dc2626}
+
 @media(min-width:540px){.grid{grid-template-columns:repeat(3,1fr)}}
 @media(min-width:780px){.grid{grid-template-columns:repeat(4,1fr)}}
 
@@ -82,6 +96,14 @@ body.admin .admin-only{display:flex}
 
 <div class="tabs" id="tabs"></div>
 <div id="content"></div>
+
+<div class="batch-bar" id="batchBar">
+  <span class="batch-cnt" id="batchCnt">0장 선택</span>
+  <select class="batch-sel" id="batchSel"><option value="">→ 이동할 카테고리</option></select>
+  <button class="batch-btn" onclick="batchMove()">이동</button>
+  <button class="batch-btn batch-del" onclick="batchDelete()">✕ 삭제</button>
+  <button class="batch-btn" onclick="clearSelection()">해제</button>
+</div>
 
 <div class="lb-overlay" id="lightbox">
   <button class="lb-close" onclick="closeLB()">&times;</button>
@@ -168,8 +190,8 @@ function applyChanges(){
     }
   });
 }
-function movePhoto(fromDept,file,toDept){
-  if(!toDept||toDept===fromDept)return;
+function movePhotoCore(fromDept,file,toDept){
+  if(!toDept||toDept===fromDept)return false;
   var chgs=loadChanges();
   chgs.push({action:'move',from:fromDept,to:toDept,file:file});
   saveChanges(chgs);
@@ -178,16 +200,62 @@ function movePhoto(fromDept,file,toDept){
   if(!HMART_PHOTOS[toDept])HMART_PHOTOS[toDept]=[];
   HMART_PHOTOS[toDept].push(file);
   HMART_PHOTOS[toDept].sort();
-  render();
+  return true;
 }
-function deletePhoto(fromDept,file){
+function deletePhotoCore(fromDept,file){
   var chgs=loadChanges();
   chgs.push({action:'delete',from:fromDept,file:file});
   saveChanges(chgs);
   var idx=HMART_PHOTOS[fromDept].indexOf(file);
   if(idx>=0)HMART_PHOTOS[fromDept].splice(idx,1);
+}
+function movePhoto(fromDept,file,toDept){movePhotoCore(fromDept,file,toDept);render()}
+function deletePhoto(fromDept,file){deletePhotoCore(fromDept,file);render()}
+
+var selectedSet=new Set();
+function toggleSelect(dept,file){
+  var k=dept+'::'+file;
+  if(selectedSet.has(k))selectedSet.delete(k);
+  else selectedSet.add(k);
+  updateSelectionUI();
+}
+function updateSelectionUI(){
+  document.querySelectorAll('.card').forEach(function(c){
+    var k=c.dataset.key;
+    c.classList.toggle('selected',selectedSet.has(k));
+  });
+  var bar=document.getElementById('batchBar');
+  if(!bar)return;
+  bar.classList.toggle('show',selectedSet.size>0);
+  var cnt=document.getElementById('batchCnt');
+  if(cnt)cnt.textContent=selectedSet.size+'장 선택';
+}
+function refreshBatchSel(){
+  var sel=document.getElementById('batchSel');
+  if(!sel)return;
+  var html='<option value="">→ 이동할 카테고리</option>';
+  DEPTS.forEach(function(d){html+='<option value="'+d.id+'">'+d.icon+' '+(d[lang]||d.en)+'</option>'});
+  sel.innerHTML=html;
+}
+function batchMove(){
+  var dept=document.getElementById('batchSel').value;
+  if(!dept){alert('이동할 카테고리를 선택하세요');return}
+  var moved=0;
+  selectedSet.forEach(function(k){
+    var p=k.split('::');
+    if(p[0]!==dept&&movePhotoCore(p[0],p[1],dept))moved++;
+  });
+  selectedSet.clear();
+  render();
+  alert(moved+'장 이동됨');
+}
+function batchDelete(){
+  if(!confirm(selectedSet.size+'장을 삭제하시겠습니까?'))return;
+  selectedSet.forEach(function(k){var p=k.split('::');deletePhotoCore(p[0],p[1])});
+  selectedSet.clear();
   render();
 }
+function clearSelection(){selectedSet.clear();updateSelectionUI()}
 function exportChanges(){
   var chgs=loadChanges();
   if(!chgs.length){alert('변경사항 없음');return}
@@ -259,7 +327,8 @@ function render(){
       });
       h+='<div class="grid">';
       photos.forEach(function(f,i){
-        h+='<div class="card">'+
+        h+='<div class="card" data-key="'+d.id+'::'+f+'">'+
+          (isAdmin?'<div class="card-check admin-only" onclick="event.stopPropagation();toggleSelect(\''+d.id+'\',\''+f+'\')">✓</div>':'')+
           '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" alt="" loading="lazy"></div>'+
           (isAdmin?'<div class="card-ctrl admin-only" onclick="event.stopPropagation()">'+
             '<select class="ctrl-sel" onchange="onMoveSel(this,\''+d.id+'\',\''+f+'\')">'+optsHtml+'</select>'+
@@ -272,11 +341,15 @@ function render(){
     h+='</div>';
     return h;
   }).join('');
+  refreshBatchSel();
+  updateSelectionUI();
 }
 
 applyChanges();
 render();
 updateChgCnt();
+refreshBatchSel();
+updateSelectionUI();
 
 var lbPhotos=[],lbIdx=0;
 
