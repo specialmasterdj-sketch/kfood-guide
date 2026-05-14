@@ -688,7 +688,21 @@ window.goHome = function(){
 };
 
 let __unsub = null;
+// 🚪 ?fresh=1 — apps.html 의 강제 로그아웃에서 도착. 살아남은 Firebase 세션이
+// 있어도 자동 입장 시키지 말고 명시적 로그인 화면 노출.
+const __fresh = (function(){ try { return new URLSearchParams(location.search).get('fresh') === '1'; } catch(_){ return false; } })();
+let __freshSignoutHandled = false;
 onAuthStateChanged(auth, async (user) => {
+  if (__fresh && user && !__freshSignoutHandled) {
+    __freshSignoutHandled = true;
+    try { await signOut(auth); } catch(_){}
+    try { localStorage.removeItem('chat.me'); } catch(_){}
+    try { localStorage.removeItem('hub.branch'); } catch(_){}
+    show('signinView');
+    // ?fresh=1 한 번만 사용 — replaceState 로 URL 깨끗하게 (재발화 방지)
+    try { history.replaceState({}, '', location.pathname); } catch(_){}
+    return;
+  }
   if (!user) {
     if (__unsub) { try{__unsub();}catch(e){} __unsub = null; }
     show('signinView');

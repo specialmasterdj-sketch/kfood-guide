@@ -1404,23 +1404,38 @@ document.addEventListener('DOMContentLoaded', function(){
       es:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.'
     })[L] || '로그아웃 하시겠습니까?';
     if (!confirm(msg)) return;
-    try {
-      // 1) Firebase Auth 세션 종료 (auth-gate 가 노출한 함수 우선, 없으면 직접 import)
-      if (window.__authGate && typeof window.__authGate.signOut === 'function'){
-        await window.__authGate.signOut();
-        return;   // __authGate.signOut 안에서 auth.html 로 이동
-      }
-      var mod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js');
-      var appMod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
-      var app = appMod.getApps().length ? appMod.getApp() : null;
-      if (app) await mod.signOut(mod.getAuth(app));
-    } catch(e){ console.warn('signOut failed', e); }
-    // 2) 로컬 신원 정보 클리어 (chat.me, hub.branch, sessionStorage)
+
+    // 🚪 강제 로그아웃 — 이전 버전이 race 로 다시 들어오던 문제 해결
+    // 1) localStorage / sessionStorage 먼저 클리어 — auth-gate 의 "restore" 대기 발화 방지
     try { localStorage.removeItem('chat.me'); } catch(_){}
     try { localStorage.removeItem('hub.branch'); } catch(_){}
     try { sessionStorage.clear(); } catch(_){}
-    // 3) auth.html 로 이동 (return path 없이 — 새 로그인 후 apps.html 로 정상 진입)
-    location.replace('./auth.html');
+
+    // 2) Firebase signOut 직접 호출 (auth-gate 의 redirect 안 기다림)
+    try {
+      var appMod  = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+      var authMod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js');
+      var app = appMod.getApps().length ? appMod.getApp() : null;
+      if (app) await authMod.signOut(authMod.getAuth(app));
+    } catch(e){ console.warn('signOut failed', e); }
+
+    // 3) Firebase IndexedDB 강제 삭제 — signOut 이 race 로 안 지운 케이스 보강
+    try {
+      if (indexedDB.databases) {
+        var dbs = await indexedDB.databases();
+        dbs.forEach(function(d){
+          if (d.name && (d.name.toLowerCase().indexOf('firebase') >= 0)) {
+            try { indexedDB.deleteDatabase(d.name); } catch(_){}
+          }
+        });
+      } else {
+        // 구형 브라우저 — 알려진 Firebase Auth DB 이름 직접 삭제
+        try { indexedDB.deleteDatabase('firebaseLocalStorageDb'); } catch(_){}
+      }
+    } catch(_){}
+
+    // 4) ?fresh=1 플래그 — auth.html 이 살아남은 세션으로 자동 진입 못 하게
+    location.replace('./auth.html?fresh=1');
   };
 
   window.saveIdentityPicker = function(){
