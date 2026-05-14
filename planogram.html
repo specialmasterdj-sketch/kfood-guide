@@ -45,6 +45,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .chg-btn{background:rgba(255,200,0,.25);border:0;color:#fff;padding:6px 10px;border-radius:14px;font-size:.7rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px}
 .chg-btn:hover{background:rgba(255,200,0,.4)}
 .chg-cnt{background:#fbbf24;color:#000;border-radius:10px;padding:1px 6px;font-size:.65rem;font-weight:800}
+.admin-only{display:none}
+body.admin .admin-only{display:flex}
+.exit-btn{background:rgba(255,255,255,.15);border:0;color:#fff;font-size:.65rem;padding:5px 9px;border-radius:12px;cursor:pointer}
 
 @media(min-width:540px){.grid{grid-template-columns:repeat(3,1fr)}}
 @media(min-width:780px){.grid{grid-template-columns:repeat(4,1fr)}}
@@ -67,7 +70,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="hd-row">
     <button class="back-btn" onclick="history.back()">&#8592;</button>
     <h1 id="hdTitle"></h1>
-    <button class="chg-btn" onclick="exportChanges()" title="변경사항 내보내기">💾<span class="chg-cnt" id="chgCnt">0</span></button>
+    <button class="chg-btn admin-only" onclick="exportChanges()" title="변경사항 내보내기">💾<span class="chg-cnt" id="chgCnt">0</span></button>
+    <button class="exit-btn admin-only" onclick="exitAdmin()" title="관리자 종료">🔒</button>
     <div class="lang-pill">
       <button class="on" onclick="setLang('ko')">KO</button>
       <button onclick="setLang('en')">EN</button>
@@ -121,11 +125,36 @@ var PHOTO_BASE='hmart-photos/';
 var lang=localStorage.getItem('km-lang')||'ko';
 var activeDept=location.hash.slice(1)||'hotfood';
 var CHG_KEY='planogram-changes-v1';
+var ADMIN_KEY='planogram-admin-v1';
+var ADMIN_PW='kimchi2026';
+var isAdmin=false;
+(function(){
+  var url=new URLSearchParams(location.search);
+  var pw=url.get('edit');
+  if(pw){
+    var input=pw==='1'?prompt('관리자 비밀번호:'):pw;
+    if(input===ADMIN_PW){
+      localStorage.setItem(ADMIN_KEY,'1');
+    }
+    history.replaceState(null,'',location.pathname+location.hash);
+  }
+  isAdmin=localStorage.getItem(ADMIN_KEY)==='1';
+  if(isAdmin&&document.body)document.body.classList.add('admin');
+})();
+window.addEventListener('DOMContentLoaded',function(){if(isAdmin)document.body.classList.add('admin')});
+function exitAdmin(){
+  if(confirm('관리자 모드를 종료하시겠습니까?')){
+    localStorage.removeItem(ADMIN_KEY);
+    localStorage.removeItem(CHG_KEY);
+    location.reload();
+  }
+}
 
 function loadChanges(){try{return JSON.parse(localStorage.getItem(CHG_KEY)||'[]')}catch(e){return[]}}
 function saveChanges(arr){localStorage.setItem(CHG_KEY,JSON.stringify(arr));updateChgCnt()}
 function updateChgCnt(){var el=document.getElementById('chgCnt');if(el)el.textContent=loadChanges().length}
 function applyChanges(){
+  if(!isAdmin)return;
   var chgs=loadChanges();
   chgs.forEach(function(c){
     if(!HMART_PHOTOS[c.from])return;
@@ -232,10 +261,10 @@ function render(){
       photos.forEach(function(f,i){
         h+='<div class="card">'+
           '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" alt="" loading="lazy"></div>'+
-          '<div class="card-ctrl" onclick="event.stopPropagation()">'+
+          (isAdmin?'<div class="card-ctrl admin-only" onclick="event.stopPropagation()">'+
             '<select class="ctrl-sel" onchange="onMoveSel(this,\''+d.id+'\',\''+f+'\')">'+optsHtml+'</select>'+
             '<button class="ctrl-del" onclick="onDelBtn(event,\''+d.id+'\',\''+f+'\')" title="삭제">✕</button>'+
-          '</div>'+
+          '</div>':'')+
         '</div>';
       });
       h+='</div>';
