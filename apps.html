@@ -1266,12 +1266,24 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     var all = owners.concat(employees);
     var me = loadMe();
-    if (!all.length) {
+    // 🔐 SECURITY (2026-05-14): 매니저급 이름은 본인이 본인을 다시 고르는 경우만 노출.
+    // 스태프 화면에서 DJ/오너/매니저 옵션이 보이면 핀까지 가지 않아도 시각적 사칭이 가능.
+    var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
+    var meIsMgr = me && MGR.indexOf(String(me.role||'').toUpperCase()) >= 0;
+    var filtered = all.filter(function(e){
+      var r = String(e.role||'').toUpperCase().replace(/\s+/g,'_');
+      var isMgrEntry = MGR.indexOf(r) >= 0;
+      if (!isMgrEntry) return true;
+      if (meIsMgr) return true;                       // 매니저는 다른 매니저 이름도 볼 수 있음
+      if (me && me.name && me.name === e.name) return true; // 본인 항목은 항상 노출
+      return false;                                    // 그 외엔 숨김
+    });
+    if (!filtered.length) {
       sel.innerHTML = '<option value="">'+escHtml(noListMsg)+'</option>';
       return;
     }
     sel.innerHTML = '<option value="">— ' + ({ko:'직접 입력', en:'Type custom', es:'Personalizado'})[L] + ' —</option>'
-      + all.map(function(e){
+      + filtered.map(function(e){
           var r = String(e.role||'').toUpperCase();
           var hideOwner = (r === 'OWNER' && String(e.name||'').toUpperCase() !== 'DJ');
           var suffix = (r && !hideOwner) ? ' ('+e.role+')' : '';
@@ -1315,13 +1327,19 @@ document.addEventListener('DOMContentLoaded', function(){
       var existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
       var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
       // 🔐 SECURITY FIX (2026-05-14): 스태프가 본인을 OWNER/매니저로 가장하던 구멍 차단.
-      // 매니저급 role 은 사용자가 자유롭게 박을 수 없음. 진짜 권한은 Firebase Auth
-      // 에 묶인 RTDB users/{uid}/role 에서 옴 — auth-gate.js 가 syncToChatMe 할 때
-      // 그 값으로 덮어쓴다. 여기서는 임시로 일반 직원 라벨만 저장.
-      var safeRole = existing.role || '';   // 기존 role 보존 (auth-gate가 RTDB 에서 채움)
-      // 사용자가 dropdown 에서 매니저급 이름을 골랐어도, 그건 기존 role 이 매니저였을 때만 유효
-      // (예: DJ 본인이 자기 이름 다시 고른 케이스). 이전 role 이 일반 직원이었다면 그대로.
+      // 1) role 사칭 차단 — 매니저급 role 은 기존이 매니저였을 때만 허용
+      // 2) 이름 사칭 차단 — 일반 직원이 매니저급 이름(예: DJ)을 고르면 거부
       var isExistingMgr = MGR.indexOf(String(existing.role||'').toUpperCase()) >= 0;
+      var isPickedMgr   = MGR.indexOf(String(pickedRole||'').toUpperCase()) >= 0;
+      if (isPickedMgr && !isExistingMgr) {
+        alert(({
+          ko:'⚠️ 매니저 계정 이름은 매니저만 선택할 수 있습니다.\n본인 이름을 직접 입력하세요.',
+          en:'⚠️ Manager names can only be selected by managers. Please type your own name.',
+          es:'⚠️ Solo los gerentes pueden seleccionar nombres de gerentes. Escriba su propio nombre.'
+        })[getLang()] || '매니저 이름 사용 금지');
+        return;
+      }
+      var safeRole = existing.role || '';
       if (pickedRole && (isExistingMgr || pickedRole === existing.role)) {
         safeRole = pickedRole;
       }
