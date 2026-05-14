@@ -32,9 +32,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .sec-empty{text-align:center;padding:60px 16px;color:#9CA3AF;font-size:.9rem}
 
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-.card{border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.1);cursor:pointer;transition:.2s}
+.card{position:relative;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.1);transition:.2s}
 .card:hover{box-shadow:0 4px 16px rgba(13,71,161,.25);transform:translateY(-2px)}
+.card-img{cursor:pointer}
 .card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
+
+.card-ctrl{position:absolute;top:4px;right:4px;display:flex;gap:4px;z-index:5}
+.ctrl-sel{font-size:.6rem;padding:3px 4px;border-radius:8px;border:1px solid rgba(0,0,0,.2);background:rgba(255,255,255,.95);cursor:pointer;max-width:90px;font-weight:600}
+.ctrl-del{background:rgba(239,68,68,.95);color:#fff;border:0;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:.85rem;font-weight:bold;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.ctrl-del:hover{background:#dc2626}
+
+.chg-btn{background:rgba(255,200,0,.25);border:0;color:#fff;padding:6px 10px;border-radius:14px;font-size:.7rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px}
+.chg-btn:hover{background:rgba(255,200,0,.4)}
+.chg-cnt{background:#fbbf24;color:#000;border-radius:10px;padding:1px 6px;font-size:.65rem;font-weight:800}
 
 @media(min-width:540px){.grid{grid-template-columns:repeat(3,1fr)}}
 @media(min-width:780px){.grid{grid-template-columns:repeat(4,1fr)}}
@@ -57,6 +67,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="hd-row">
     <button class="back-btn" onclick="history.back()">&#8592;</button>
     <h1 id="hdTitle"></h1>
+    <button class="chg-btn" onclick="exportChanges()" title="변경사항 내보내기">💾<span class="chg-cnt" id="chgCnt">0</span></button>
     <div class="lang-pill">
       <button class="on" onclick="setLang('ko')">KO</button>
       <button onclick="setLang('en')">EN</button>
@@ -109,10 +120,78 @@ var DEPTS=[
 var PHOTO_BASE='hmart-photos/';
 var lang=localStorage.getItem('km-lang')||'ko';
 var activeDept=location.hash.slice(1)||'hotfood';
+var CHG_KEY='planogram-changes-v1';
+
+function loadChanges(){try{return JSON.parse(localStorage.getItem(CHG_KEY)||'[]')}catch(e){return[]}}
+function saveChanges(arr){localStorage.setItem(CHG_KEY,JSON.stringify(arr));updateChgCnt()}
+function updateChgCnt(){var el=document.getElementById('chgCnt');if(el)el.textContent=loadChanges().length}
+function applyChanges(){
+  var chgs=loadChanges();
+  chgs.forEach(function(c){
+    if(!HMART_PHOTOS[c.from])return;
+    var idx=HMART_PHOTOS[c.from].indexOf(c.file);
+    if(idx<0)return;
+    HMART_PHOTOS[c.from].splice(idx,1);
+    if(c.action==='move'){
+      if(!HMART_PHOTOS[c.to])HMART_PHOTOS[c.to]=[];
+      HMART_PHOTOS[c.to].push(c.file);
+      HMART_PHOTOS[c.to].sort();
+    }
+  });
+}
+function movePhoto(fromDept,file,toDept){
+  if(!toDept||toDept===fromDept)return;
+  var chgs=loadChanges();
+  chgs.push({action:'move',from:fromDept,to:toDept,file:file});
+  saveChanges(chgs);
+  var idx=HMART_PHOTOS[fromDept].indexOf(file);
+  if(idx>=0)HMART_PHOTOS[fromDept].splice(idx,1);
+  if(!HMART_PHOTOS[toDept])HMART_PHOTOS[toDept]=[];
+  HMART_PHOTOS[toDept].push(file);
+  HMART_PHOTOS[toDept].sort();
+  render();
+}
+function deletePhoto(fromDept,file){
+  var chgs=loadChanges();
+  chgs.push({action:'delete',from:fromDept,file:file});
+  saveChanges(chgs);
+  var idx=HMART_PHOTOS[fromDept].indexOf(file);
+  if(idx>=0)HMART_PHOTOS[fromDept].splice(idx,1);
+  render();
+}
+function exportChanges(){
+  var chgs=loadChanges();
+  if(!chgs.length){alert('변경사항 없음');return}
+  var summary={};
+  chgs.forEach(function(c){
+    var k=c.action==='delete'?(c.from+' → 삭제'):(c.from+' → '+c.to);
+    summary[k]=(summary[k]||0)+1;
+  });
+  var s='변경사항 '+chgs.length+'건:\n';
+  for(var k in summary)s+='  '+k+': '+summary[k]+'\n';
+  var json=JSON.stringify(chgs);
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(json).then(function(){
+      if(confirm(s+'\n✅ 클립보드에 복사됨.\nClaude에게 붙여넣고 "변경사항 적용해줘"라고 보내세요.\n\n변경사항을 초기화할까요?')){
+        localStorage.removeItem(CHG_KEY);location.reload();
+      }
+    });
+  }else{
+    prompt(s+'\n복사하세요:',json);
+  }
+}
 
 function getPhotos(id){
   if(typeof HMART_PHOTOS==='undefined')return[];
   return(HMART_PHOTOS[id]||[]);
+}
+
+function onMoveSel(sel,fromDept,file){
+  if(sel.value)movePhoto(fromDept,file,sel.value);
+}
+function onDelBtn(ev,fromDept,file){
+  ev.stopPropagation();
+  if(confirm('이 사진을 삭제하시겠습니까?\n'+file))deletePhoto(fromDept,file);
 }
 
 function setLang(l){
@@ -145,9 +224,19 @@ function render(){
     if(!photos.length){
       h+='<div class="sec-empty">'+TXT[lang].empty+'</div>';
     }else{
+      var optsHtml='<option value="">→</option>';
+      DEPTS.forEach(function(dd){
+        if(dd.id!==d.id)optsHtml+='<option value="'+dd.id+'">'+dd.icon+' '+(dd[lang]||dd.en)+'</option>';
+      });
       h+='<div class="grid">';
       photos.forEach(function(f,i){
-        h+='<div class="card" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" alt="" loading="lazy"></div>';
+        h+='<div class="card">'+
+          '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" alt="" loading="lazy"></div>'+
+          '<div class="card-ctrl" onclick="event.stopPropagation()">'+
+            '<select class="ctrl-sel" onchange="onMoveSel(this,\''+d.id+'\',\''+f+'\')">'+optsHtml+'</select>'+
+            '<button class="ctrl-del" onclick="onDelBtn(event,\''+d.id+'\',\''+f+'\')" title="삭제">✕</button>'+
+          '</div>'+
+        '</div>';
       });
       h+='</div>';
     }
@@ -156,7 +245,9 @@ function render(){
   }).join('');
 }
 
+applyChanges();
 render();
+updateChgCnt();
 
 var lbPhotos=[],lbIdx=0;
 
