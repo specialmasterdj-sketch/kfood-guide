@@ -1307,25 +1307,35 @@ document.addEventListener('DOMContentLoaded', function(){
       alert(({ko:'지점과 이름을 모두 선택해주세요', en:'Please pick branch and name', es:'Seleccione sucursal y nombre'})[getLang()] || '지점과 이름을 모두 선택해주세요');
       return;
     }
-    var role = '';
+    var pickedRole = '';
     if (nsel.selectedIndex >= 0 && nsel.options[nsel.selectedIndex]) {
-      role = nsel.options[nsel.selectedIndex].dataset.role || '';
+      pickedRole = nsel.options[nsel.selectedIndex].dataset.role || '';
     }
     try {
       var existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
       var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
+      // 🔐 SECURITY FIX (2026-05-14): 스태프가 본인을 OWNER/매니저로 가장하던 구멍 차단.
+      // 매니저급 role 은 사용자가 자유롭게 박을 수 없음. 진짜 권한은 Firebase Auth
+      // 에 묶인 RTDB users/{uid}/role 에서 옴 — auth-gate.js 가 syncToChatMe 할 때
+      // 그 값으로 덮어쓴다. 여기서는 임시로 일반 직원 라벨만 저장.
+      var safeRole = existing.role || '';   // 기존 role 보존 (auth-gate가 RTDB 에서 채움)
+      // 사용자가 dropdown 에서 매니저급 이름을 골랐어도, 그건 기존 role 이 매니저였을 때만 유효
+      // (예: DJ 본인이 자기 이름 다시 고른 케이스). 이전 role 이 일반 직원이었다면 그대로.
+      var isExistingMgr = MGR.indexOf(String(existing.role||'').toUpperCase()) >= 0;
+      if (pickedRole && (isExistingMgr || pickedRole === existing.role)) {
+        safeRole = pickedRole;
+      }
       var next = Object.assign({}, existing, {
         name: name,
         branch: branch,
-        role: role || existing.role || '',
-        isManager: MGR.indexOf(String(role||existing.role||'').toUpperCase()) >= 0,
+        role: safeRole,
+        isManager: MGR.indexOf(String(safeRole||'').toUpperCase()) >= 0,
       });
       localStorage.setItem('chat.me', JSON.stringify(next));
       try { localStorage.setItem('hub.branch', branch); } catch(_){}
       try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
     } catch(e){ console.warn('save identity failed', e); }
     closeIdentityPicker();
-    // pill 즉시 갱신
     var nm = document.getElementById('apps-user-name');
     if (nm) nm.textContent = name + ' · ' + branch;
   };

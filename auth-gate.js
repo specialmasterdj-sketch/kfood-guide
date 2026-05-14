@@ -107,16 +107,22 @@ function syncToChatMe(profile){
     } else {
       finalName = '';   // ← me-modal 강제 트리거
     }
+    // 🔐 SECURITY (2026-05-14): role 은 무조건 RTDB users/{uid}/role 값 강제.
+    // 이전엔 'profile.role || existing.role' 라 사용자가 localStorage chat.me.role
+    // 을 'OWNER' 로 직접 박아두면 다음 페이지 진입 시에도 그 값 유지 → 권한 가장
+    // 가능했음. 이제 RTDB profile.role 이 권위 있는 값 (auth-gate 가 user 레코드를
+    // 직접 만들어 채우거나 bootstrap admin 만 가능). existing.role 무시.
+    const authoritativeRole = profile.role || '';
     const next = {
       ...existing,
       uid: profile.uid,
       email: profile.email,
       name: finalName,
       status: profile.status || existing.status,
-      role: profile.role || existing.role,
+      role: authoritativeRole,
       branch: existing.branch || (profile.branch === '*' ? 'HOLLYWOOD' : profile.branch) || 'HOLLYWOOD',
       photoURL: profile.photoURL || existing.photoURL,
-      isManager: !!profile.role && ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(profile.role),
+      isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(authoritativeRole),
       authProvider: 'google',
     };
     localStorage.setItem('chat.me', JSON.stringify(next));
