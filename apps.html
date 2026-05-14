@@ -1215,9 +1215,9 @@ document.addEventListener('DOMContentLoaded', function(){
     if (document.getElementById('idPickerOv')) return;
     var L = getLang();
     var TXT = {
-      ko: { title:'본인 정보 변경', branch:'📍 지점', name:'👤 이름 선택', custom:'또는 직접 입력', save:'💾 저장', cancel:'취소', loading:'⏳ 로딩…', noList:'— 명단 없음, 직접 입력 —', sel:'— 직접 입력 —' },
-      en: { title:'Change Identity', branch:'📍 Branch', name:'👤 Pick name', custom:'Or type name', save:'💾 Save', cancel:'Cancel', loading:'⏳ Loading…', noList:'— No list, type name —', sel:'— Type custom —' },
-      es: { title:'Cambiar Identidad', branch:'📍 Sucursal', name:'👤 Elegir nombre', custom:'O escribir nombre', save:'💾 Guardar', cancel:'Cancelar', loading:'⏳ Cargando…', noList:'— Sin lista, escriba —', sel:'— Personalizado —' },
+      ko: { title:'본인 정보 변경', branch:'📍 지점', name:'👤 이름 선택', custom:'또는 직접 입력', save:'💾 저장', cancel:'취소', loading:'⏳ 로딩…', noList:'— 명단 없음, 직접 입력 —', sel:'— 직접 입력 —', logout:'🚪 로그아웃 (다른 계정)', confirmLogout:'정말 로그아웃 하시겠습니까?\n다른 사람이 이 PC/폰을 쓸 때 필요합니다.' },
+      en: { title:'Change Identity', branch:'📍 Branch', name:'👤 Pick name', custom:'Or type name', save:'💾 Save', cancel:'Cancel', loading:'⏳ Loading…', noList:'— No list, type name —', sel:'— Type custom —', logout:'🚪 Sign out (different account)', confirmLogout:'Sign out?\nUse this when someone else needs this PC/phone.' },
+      es: { title:'Cambiar Identidad', branch:'📍 Sucursal', name:'👤 Elegir nombre', custom:'O escribir nombre', save:'💾 Guardar', cancel:'Cancelar', loading:'⏳ Cargando…', noList:'— Sin lista, escriba —', sel:'— Personalizado —', logout:'🚪 Cerrar sesión (otra cuenta)', confirmLogout:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.' },
     };
     var t = TXT[L] || TXT.ko;
     var ov = document.createElement('div');
@@ -1235,9 +1235,12 @@ document.addEventListener('DOMContentLoaded', function(){
       + '    <option value="">'+escHtml(t.loading)+'</option>'
       + '  </select>'
       + '  <input id="idPickCustom" type="text" placeholder="'+escHtml(t.custom)+'" autocomplete="name" autocapitalize="words" style="width:100%;padding:13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:16px;font-family:inherit;outline:0;margin-bottom:14px;min-height:48px;box-sizing:border-box">'
-      + '  <div style="display:flex;gap:8px">'
+      + '  <div style="display:flex;gap:8px;margin-bottom:10px">'
       + '    <button type="button" onclick="closeIdentityPicker()" style="flex:1;background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:13px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;min-height:48px">'+escHtml(t.cancel)+'</button>'
       + '    <button type="button" onclick="saveIdentityPicker()" style="flex:1;background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:13px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;min-height:48px">'+escHtml(t.save)+'</button>'
+      + '  </div>'
+      + '  <div style="border-top:1px solid #e5e7eb;padding-top:10px">'
+      + '    <button type="button" onclick="signOutIdentity()" style="width:100%;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:10px;padding:11px;font-weight:700;font-size:.9em;cursor:pointer;font-family:inherit;min-height:44px">'+escHtml(t.logout)+'</button>'
       + '  </div>'
       + '</div>';
     document.body.appendChild(ov);
@@ -1392,6 +1395,33 @@ document.addEventListener('DOMContentLoaded', function(){
     if (!u) return false;
     return MGR_NAMES_CACHE.indexOf(u) >= 0;
   }
+
+  window.signOutIdentity = async function(){
+    var L = getLang();
+    var msg = ({
+      ko:'정말 로그아웃 하시겠습니까?\n다른 사람이 이 PC/폰을 쓸 때 필요합니다.',
+      en:'Sign out?\nUse this when someone else needs this PC/phone.',
+      es:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.'
+    })[L] || '로그아웃 하시겠습니까?';
+    if (!confirm(msg)) return;
+    try {
+      // 1) Firebase Auth 세션 종료 (auth-gate 가 노출한 함수 우선, 없으면 직접 import)
+      if (window.__authGate && typeof window.__authGate.signOut === 'function'){
+        await window.__authGate.signOut();
+        return;   // __authGate.signOut 안에서 auth.html 로 이동
+      }
+      var mod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js');
+      var appMod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+      var app = appMod.getApps().length ? appMod.getApp() : null;
+      if (app) await mod.signOut(mod.getAuth(app));
+    } catch(e){ console.warn('signOut failed', e); }
+    // 2) 로컬 신원 정보 클리어 (chat.me, hub.branch, sessionStorage)
+    try { localStorage.removeItem('chat.me'); } catch(_){}
+    try { localStorage.removeItem('hub.branch'); } catch(_){}
+    try { sessionStorage.clear(); } catch(_){}
+    // 3) auth.html 로 이동 (return path 없이 — 새 로그인 후 apps.html 로 정상 진입)
+    location.replace('./auth.html');
+  };
 
   window.saveIdentityPicker = function(){
     var bsel = document.getElementById('idPickBranch');
