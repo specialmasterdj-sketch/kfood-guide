@@ -107,12 +107,12 @@ function syncToChatMe(profile){
     } else {
       finalName = '';   // ← me-modal 강제 트리거
     }
-    // 🔐 SECURITY (2026-05-14): role 은 무조건 RTDB users/{uid}/role 값 강제.
-    // 이전엔 'profile.role || existing.role' 라 사용자가 localStorage chat.me.role
-    // 을 'OWNER' 로 직접 박아두면 다음 페이지 진입 시에도 그 값 유지 → 권한 가장
-    // 가능했음. 이제 RTDB profile.role 이 권위 있는 값 (auth-gate 가 user 레코드를
-    // 직접 만들어 채우거나 bootstrap admin 만 가능). existing.role 무시.
-    const authoritativeRole = profile.role || '';
+    // 🔐 SECURITY (2026-05-14): role 은 RTDB users/{uid}/role 이 권위 — 다만
+    // 정상 매니저들 (RTDB users 레코드에 role 미설정인 케이스가 있음) 의
+    // 권한이 사라지지 않도록 existing.role fallback 유지. 진짜 OWNER 가장
+    // 차단은 RTDB rules (users/{uid}/role write 권한) + apps.html identity
+    // picker 의 매니저급 role 픽 거부로 처리.
+    const authoritativeRole = profile.role || existing.role || '';
     const next = {
       ...existing,
       uid: profile.uid,
