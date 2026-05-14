@@ -1297,11 +1297,17 @@ document.addEventListener('DOMContentLoaded', function(){
     owners = owners.map(function(e){ return Object.assign({}, e, { role: e.role || 'OWNER', _fromOwners: true }); });
     var all = owners.concat(employees);
     var me = loadMe();
-    var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
-    var meIsMgr = me && MGR.indexOf(String(me.role||'').toUpperCase()) >= 0;
+    // 🔐 한/영/스페인어 매니저 라벨 모두 매칭. 단순 비교 X — 부분 매칭(.includes).
+    // 예: '전무님', '점장 (SM)', 'Asst. Manager' 같은 변형도 모두 잡아냄.
+    var MGR_TOK = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','SUPERVISOR'];
+    function _isMgrRole(role){
+      var u = String(role||'').toUpperCase();
+      if (!u) return false;
+      return MGR_TOK.some(function(t){ return u.indexOf(t.toUpperCase()) >= 0; });
+    }
+    var meIsMgr = me && _isMgrRole(me.role);
     var filtered = all.filter(function(e){
-      var r = String(e.role||'').toUpperCase().replace(/\s+/g,'_');
-      var isMgrEntry = e._fromOwners || MGR.indexOf(r) >= 0;
+      var isMgrEntry = e._fromOwners || _isMgrRole(e.role);
       if (!isMgrEntry) return true;
       if (meIsMgr) return true;
       if (me && me.name && me.name === e.name) return true;
@@ -1336,23 +1342,45 @@ document.addEventListener('DOMContentLoaded', function(){
     var ov = document.getElementById('idPickerOv');
     if (ov) ov.style.display = 'none';
   };
-  // 🔐 알려진 매니저 이름 캐시 — RTDB owners 리스트 + 하드코드 (가입 안 한 사장님 보호용)
+  // 🔐 알려진 매니저 이름 캐시 — RTDB owners + 전 지점 employees 중 매니저급 + 하드코드
   var MGR_NAMES_CACHE = ['DJ','B.H.K','BHK'];
+  var MGR_TOK_SAVE = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR'];
+  function _isMgrRoleSave(role){
+    var u = String(role||'').toUpperCase();
+    if (!u) return false;
+    return MGR_TOK_SAVE.some(function(t){ return u.indexOf(t.toUpperCase()) >= 0; });
+  }
   async function refreshMgrNamesCache(){
     try {
+      var union = ['DJ','B.H.K','BHK'];
       var rg = await fetch(FB_DB_URL + '/schedules/_global.json', { cache:'no-store' });
-      if (!rg.ok) return;
-      var dg = await rg.json();
-      if (!dg || !dg.owners) return;
-      var fresh = [];
-      (Array.isArray(dg.owners) ? dg.owners : []).forEach(function(o){
-        if (!o) return;
-        if (typeof o === 'string'){ if (o.trim()) fresh.push(o.trim()); return; }
-        var n = String(o.name||o.fullName||o.displayName||'').trim();
-        if (n) fresh.push(n);
-      });
-      // 하드코드 + RTDB 합집합
-      var union = ['DJ','B.H.K','BHK'].concat(fresh);
+      if (rg.ok) {
+        var dg = await rg.json();
+        if (dg && dg.owners) {
+          (Array.isArray(dg.owners) ? dg.owners : []).forEach(function(o){
+            if (!o) return;
+            if (typeof o === 'string'){ if (o.trim()) union.push(o.trim()); return; }
+            var n = String(o.name||o.fullName||o.displayName||'').trim();
+            if (n) union.push(n);
+          });
+        }
+      }
+      // 전 지점 employees 중 role 이 매니저급인 사람 이름도 차단 대상
+      var BRANCHES = ['HOLLYWOOD','MIAMI','CORAL_SPRINGS','LASOLAS','PEMBROKE_PINES','KENDALL'];
+      await Promise.all(BRANCHES.map(async function(b){
+        try {
+          var r2 = await fetch(FB_DB_URL + '/schedules/' + b + '.json', { cache:'no-store' });
+          if (!r2.ok) return;
+          var d2 = await r2.json();
+          var emps = (d2 && d2.employees) || [];
+          (Array.isArray(emps) ? emps : Object.values(emps||{})).forEach(function(e){
+            if (!e) return;
+            var n = (typeof e === 'string') ? e : String(e.name||e.fullName||e.displayName||'');
+            n = n.trim();
+            if (n && _isMgrRoleSave(e.role||'')) union.push(n);
+          });
+        } catch(_){}
+      }));
       MGR_NAMES_CACHE = Array.from(new Set(union.map(function(s){ return s.toUpperCase(); })));
     } catch(_){}
   }
@@ -1384,12 +1412,12 @@ document.addEventListener('DOMContentLoaded', function(){
     try {
       var existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
       var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
-      var isExistingMgr = MGR.indexOf(String(existing.role||'').toUpperCase()) >= 0;
-      var isPickedMgr   = MGR.indexOf(String(pickedRole||'').toUpperCase()) >= 0;
-      // 🔐 SECURITY FIX (2026-05-14): 3중 차단
+      var isExistingMgr = _isMgrRoleSave(existing.role);
+      var isPickedMgr   = _isMgrRoleSave(pickedRole);
+      // 🔐 SECURITY FIX (2026-05-14): 3중 차단 (한/영/스페인어 라벨 모두 매칭)
       // 1) role 사칭 — 매니저급 role 은 기존이 매니저였을 때만 허용
       // 2) dropdown 이름 사칭 — 매니저급 role 선택 거부
-      // 3) custom 입력 사칭 — 알려진 매니저 이름(DJ, B.H.K 등) 직접 타이핑 거부
+      // 3) custom 입력 사칭 — 알려진 매니저 이름(DJ, B.H.K, 전무, 점장 등) 직접 타이핑 거부
       var blocked = isPickedMgr || isMgrNameBlocked(name, isExistingMgr);
       if (blocked && !isExistingMgr) {
         alert(({
