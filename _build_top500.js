@@ -111,10 +111,17 @@ for (let r = 1; r < rows.length; r++) {
   const isSeaweed   = /\b(LAVER|SEAWEED|NORI|KIM)\b/.test(nameU);
   const isIceCream  = /\b(ICE\s?CREAM|ICE\s?CRM|MONACA|MONAKA|SAMANCO|GELATO|SORBET|POPSICLE|MOCHI\s?ICE|FROZEN\s?YOGURT|FROYO)\b/.test(nameU);
   const isEdibleOil = /\b(SESAME|OLIVE|COCONUT|CANOLA|VEGETABLE|SOYBEAN|CORN|SUNFLOWER|GRAPESEED|PERILLA|TOASTED)\s+OIL\b/.test(nameU);
-  const looksLikeDrink = /\b(RAMUNE|COLA|COKE|PEPSI|SPRITE|FANTA|SODA|JUICE|DRINK|MILK|WATER|TEA|COFFEE|LEMONADE|SMOOTHIE|POWERADE|GATORADE|NECTAR|CIDER|KOMBUCHA|ADE)\b/.test(nameU);
+  // SOYMILK / OAT MILK / ALMOND MILK 처럼 MILK 가 다른 단어와 붙은 경우도 잡기
+  const looksLikeDrink = /\b(RAMUNE|COLA|COKE|PEPSI|SPRITE|FANTA|SODA|JUICE|DRINK|MILK|SOYMILK|OATMILK|WATER|TEA|COFFEE|LEMONADE|SMOOTHIE|POWERADE|GATORADE|NECTAR|CIDER|KOMBUCHA|ADE)\b/.test(nameU)
+    || /\b(SOY\s?MILK|OAT\s?MILK|ALMOND\s?MILK|RICE\s?MILK|COCONUT\s?MILK)\b/.test(nameU);
+  // 김밥/주먹밥 (R/BALL = Rice Ball) — 'SNACKS' 가 아니라 냉장 도시락 카테고리로
+  const isRiceBall = /(R\s*\/\s*BALL|RICE\s?BALL|RICEBALL|KIMBAP|GIMBAP|GIMBOP|ONIGIRI|JUMUKBAP)/i.test(name);
   if (isIceCream && !isAlcoholic) {
     cat  = 'ICE CREAM & DESSERT (F)';
     dpt2 = 'FROZEN';
+  } else if (isRiceBall && !isAlcoholic) {
+    cat  = '(F)REFRIGERATED-NOODLES,RICECAKE';
+    dpt2 = 'GROCERY';
   } else if (isEdibleOil && !isAlcoholic && !isSeaweed) {
     cat  = 'OIL,SEASONING,VINGER,SYRUP (F)';
     dpt2 = 'GROCERY';
