@@ -4108,7 +4108,7 @@ function renderTaskCard(t){
     ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}${labels.inProg[LANG]}</div>`:''}
     <div class="task-row" style="display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap">
       <div class="task-name" style="flex:1;min-width:160px">${escHtml(dispName)}</div>
-      ${(isManager(me?.role)||isOwner()) ? `<button onclick="event.stopPropagation();event.preventDefault();adminTaskMenu('${t.id}','${t.branchId}','${(dispName||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}',event)" title="⚙ 매니저 보정 — 업무명·데드라인·담당자·완료 처리 등 수정" style="background:#dbeafe;border:1.5px solid #2563eb;color:#1d4ed8;border-radius:8px;padding:3px 9px;font-size:.95em;font-weight:800;cursor:pointer;font-family:inherit;align-self:center">⚙ ${LANG==='en'?'Edit':LANG==='es'?'Editar':'수정'}</button>` : ''}
+      ${(isManager(me?.role)||isOwner()) ? `<button onclick="event.stopPropagation();event.preventDefault();adminTaskMenu('${t.id}','${t.branchId}','${(dispName||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}',event)" title="⚙ 매니저 보정 — 업무명·데드라인·담당자·완료 처리 등 수정" style="background:#dbeafe;border:1.5px solid #2563eb;color:#1d4ed8;border-radius:8px;padding:3px 9px;font-size:.95em;font-weight:800;cursor:pointer;font-family:inherit;align-self:center">⚙ ${LANG==='en'?'Edit':LANG==='es'?'Editar':'수정'}</button><button onclick="event.stopPropagation();event.preventDefault();deleteTaskInline('${t.id}','${t.branchId}','${(dispName||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')" title="🗑️ 이 업무 삭제 (매니저 전용)" style="background:#fef2f2;border:1.5px solid #dc2626;color:#dc2626;border-radius:8px;padding:3px 9px;font-size:.95em;font-weight:800;cursor:pointer;font-family:inherit;align-self:center;margin-left:4px">🗑️</button>` : ''}
       ${pointsBadge}
     </div>
     <div class="task-meta">
@@ -5844,6 +5844,61 @@ async function adminEditNameMemo(t){
 }
 window.adminEditNameMemo = adminEditNameMemo;
 window.adminTaskMenu = adminTaskMenu;
+
+// 🗑️ 카드 안 빨간 휴지통 버튼 — 매니저+ 만. 직접 RTDB DELETE.
+window.deleteTaskInline = async function(taskId, branchId, displayName){
+  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
+  const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
+  if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
+  // 진행 흔적 계산해서 사용자에게 보여줌 — 직원이 작업 중인지 명확히 알리기 위해
+  let checked = 0, entries = 0, photos = 0;
+  const cl = Array.isArray(t.checklist) ? t.checklist : [];
+  cl.forEach(item => {
+    if (!item) return;
+    if (item.done) checked++;
+    const es = Array.isArray(item.entries) ? item.entries : (item.entries ? Object.values(item.entries) : []);
+    entries += es.length;
+    es.forEach(e => photos += (e.photos||[]).length);
+    photos += (item.photos||[]).length;
+    if (item.memo) entries++;
+  });
+  const totalProgress = checked + entries + photos;
+  let warning = '';
+  if (totalProgress > 0) {
+    warning = '\n\n⚠️ 직원이 이미 작업 중!\n  · 체크 ' + checked + ' · 입력 ' + entries + ' · 사진 ' + photos + '\n\n그래도 삭제하시겠습니까? (복구 불가)';
+  } else {
+    warning = '\n\n✨ 빈 업무 — 안전하게 삭제 가능.';
+  }
+  const msg = '🗑️ 정말 삭제할까요?\n\n· ' + branchId + ' / ' + todayStr() + '\n· ' + displayName + '\n· id=' + taskId + warning;
+  if (!confirm(msg)) return;
+  // 진행 중인 task 면 한 번 더 확인
+  if (totalProgress > 0) {
+    if (!confirm('한 번 더 확인합니다.\n진행 흔적 ' + totalProgress + '건이 영구 삭제됩니다.\n계속할까요?')) return;
+  }
+  try {
+    // SDK remove 시도 → 실패하면 REST DELETE 폴백 (fb-auth-fetch 가 토큰 첨부)
+    let ok = false;
+    try {
+      await window.__fb.remove(window.__fb.ref(window.__fb.db, 'tasks/' + branchId + '/' + todayStr() + '/' + taskId));
+      ok = true;
+    } catch(e) {
+      console.warn('[deleteTaskInline] SDK remove failed:', e?.message);
+      try {
+        const r = await fetch(`https://kimchi-mart-order-default-rtdb.firebaseio.com/tasks/${branchId}/${todayStr()}/${taskId}.json`, { method:'DELETE' });
+        ok = r.ok;
+        if (!r.ok) console.warn('[deleteTaskInline] REST DELETE failed:', r.status);
+      } catch(e2) { console.warn('[deleteTaskInline] REST exception:', e2?.message); }
+    }
+    if (!ok) { alert('❌ 삭제 실패 — 네트워크 확인 후 재시도'); return; }
+    // 메모리에서도 제거 → 다음 onValue 가 RTDB 빈 값으로 또 갱신해도 OK
+    TASKS = TASKS.filter(x => !(x.id === taskId && x.branchId === branchId));
+    if (typeof renderAllNow === 'function') renderAllNow();
+    else if (typeof renderAll === 'function') renderAll();
+    if (typeof showToast === 'function') showToast('✅ 삭제됨', displayName);
+  } catch(e) {
+    alert('❌ 예외: ' + (e?.message || e));
+  }
+};
 
 // ⏰+ 빠른 연장 — task 카드에서 직접 호출. 매니저+ 만 작동.
 window.quickExtendDeadline = async function(taskId, branchId){
