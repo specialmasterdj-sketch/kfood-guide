@@ -346,42 +346,44 @@ function refreshBatchSel(){
   var sel=document.getElementById('batchSel');
   if(!sel)return;
   var html='<option value="">→ 이동할 카테고리</option>';
-  DEPTS.forEach(function(d){html+='<option value="'+d.id+'">'+d.icon+' '+(d[lang]||d.en)+'</option>'});
+  DEPTS.forEach(function(d){
+    var dis=d.id===activeDept?' disabled':'';
+    var suffix=d.id===activeDept?' (현재 탭)':'';
+    html+='<option value="'+d.id+'"'+dis+'>'+d.icon+' '+(d[lang]||d.en)+suffix+'</option>';
+  });
   sel.innerHTML=html;
 }
 function batchMove(){
+  if(selectedSet.size===0){alert('선택된 사진이 없습니다');return}
   var dept=document.getElementById('batchSel').value;
   if(!dept){alert('이동할 카테고리를 선택하세요');return}
-  var moved=0;
+  var moved=0,sameDept=0;
   selectedSet.forEach(function(k){
     var p=k.split('::');
-    if(p[0]!==dept&&movePhotoCore(p[0],p[1],dept))moved++;
+    if(p[0]===dept)sameDept++;
+    else if(movePhotoCore(p[0],p[1],dept))moved++;
   });
   selectedSet.clear();
   render();
-  alert(moved+'장 이동됨');
+  var deptName=(function(){var d=DEPTS.find(function(x){return x.id===dept});return d?(d[lang]||d.en):dept})();
+  if(moved===0&&sameDept>0)alert('⚠️ 0장 이동.\n선택된 '+sameDept+'장은 이미 "'+deptName+'"에 있습니다.\n다른 카테고리로 이동하려면 대상을 바꿔주세요.');
+  else if(sameDept>0)alert('✓ '+moved+'장 이동됨.\n'+sameDept+'장은 이미 "'+deptName+'"에 있어 건너뜀.');
+  else alert('✓ '+moved+'장 이동됨');
 }
 function batchDelete(){
+  if(selectedSet.size===0){alert('선택된 사진이 없습니다');return}
   if(!confirm(selectedSet.size+'장을 삭제하시겠습니까?'))return;
   selectedSet.forEach(function(k){var p=k.split('::');deletePhotoCore(p[0],p[1])});
   selectedSet.clear();
   render();
 }
 function batchRotate(deg){
-  var n=0;
-  selectedSet.forEach(function(k){
-    var p=k.split('::');
-    setRotation(p[1],deg);
-    n++;
-  });
+  if(selectedSet.size===0){alert('선택된 사진이 없습니다');return}
+  selectedSet.forEach(function(k){var p=k.split('::');setRotation(p[1],deg)});
 }
 function batchRotateReset(){
-  var n=0;
-  selectedSet.forEach(function(k){
-    var p=k.split('::');
-    setRotation(p[1],0);
-    n++;
-  });
+  if(selectedSet.size===0){alert('선택된 사진이 없습니다');return}
+  selectedSet.forEach(function(k){var p=k.split('::');setRotation(p[1],0)});
 }
 function clearSelection(){selectedSet.clear();updateSelectionUI()}
 function exportChanges(){
@@ -433,6 +435,7 @@ function setDept(id){
   location.hash=id;
   document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t.dataset.id===id)});
   document.querySelectorAll('.sec').forEach(function(s){s.classList.toggle('on',s.id==='sec-'+id)});
+  refreshBatchSel();
 }
 
 function render(){
