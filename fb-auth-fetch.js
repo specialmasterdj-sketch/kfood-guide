@@ -10,7 +10,7 @@
 // Pages that already explicitly append ?auth=<token> stay compatible —
 // the patch's "auth=" check skips re-appending.
 import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getAuth, onAuthStateChanged, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 
 const cfg = {
   apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
@@ -88,9 +88,33 @@ window.fetch = async function (input, init) {
 // has been restored from IndexedDB (auth state isn't ready synchronously).
 // Also flips the __authReady gate so any fetch that started early
 // can stop waiting and use the now-known auth state.
-onAuthStateChanged(auth, () => {
+//
+// 🛡️ 2026-05-15: tasks.html / top500.html 의 Firebase SDK 호출 (onValue 등)
+// 이 빈 결과 받는 사건 — REST fetch 는 monkey-patch 로 토큰 첨부했지만
+// SDK 의 WebSocket 채널은 별도. SDK 는 auth.currentUser 의 토큰을 자동 사용.
+// 사용자 currentUser 가 null 이면 SDK 도 토큰 없이 통신 → 401 silent fail.
+// 해결: currentUser 없을 때 signInAnonymously() 트리거 → SDK 가 익명 토큰 사용.
+onAuthStateChanged(auth, (user) => {
   __authResolved = true;
   if (__authReadyResolve) { __authReadyResolve(); __authReadyResolve = null; }
+  if (!user) {
+    // chat.me 에 본인 uid 가 있는데도 currentUser 가 null 이면 = Firebase Auth
+    // IndexedDB 가 손실됨. auth-gate 가 8초 후 auth.html 로 redirect 함. 그
+    // 동안 signInAnonymously 하면 auth-gate 가 익명 사용자를 "pending approval"
+    // 로 보고 UI 막힘. 그래서 chat.me uid 있는 케이스는 손대지 않음.
+    let hasPriorAuth = false;
+    try {
+      const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+      hasPriorAuth = !!(me && (me.uid || me.email));
+    } catch(_) {}
+    const p = (location.pathname || '').toLowerCase();
+    const isAuthPage = p.endsWith('/auth.html');
+    if (!hasPriorAuth && !isAuthPage) {
+      // 진짜 익명 방문자 (rewards 공개 페이지 등) — Firebase Auth SDK 가 토큰
+      // 받아야 RTDB onValue/get 호출도 동작.
+      signInAnonymously(auth).catch(e => console.warn('[fb-auth-fetch] anon sign-in failed', e));
+    }
+  }
   try { window.dispatchEvent(new Event('fb-auth-ready')); } catch (_) {}
 });
 
