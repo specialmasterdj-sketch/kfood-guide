@@ -8,7 +8,8 @@
   // SUPERVISOR / 부매니저 도 포함 — 매장 운영 관리 자체는 가능해야 함.
   const MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO','MANAGER','GERENTE','매니저','점장','부매니저','GERENTE ASISTENTE','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR','SUPERVISORA','감독'];
   // 🔒 급여 화이트리스트 — Firebase /config/payrollAccess 배열로 관리 (이름 정규화)
-  const _PW_DEFAULT = ['BHK','DJ','SUNKIM'];
+  // 정규화 규칙: 대문자 + 점/괄호/공백 제거 → 'H.Kim' → 'HKIM', 'Sun Kim' → 'SUNKIM'
+  const _PW_DEFAULT = ['BHK','DJ','SUNKIM','HKIM'];
   let _payrollWhitelist = _PW_DEFAULT.slice();
   try { const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null'); if(Array.isArray(c)&&c.length) _payrollWhitelist=c; } catch(e){}
 
