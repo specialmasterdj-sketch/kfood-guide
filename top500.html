@@ -717,7 +717,13 @@ async function savePhotoToDB(code, dataURL){
   const key = photoStorageKey(code);
   PHOTOS[code] = dataURL;
   PHOTOS[key] = dataURL;
-  // 🛡️ 2026-05-15: 401 silent fail 사건 — fetch 응답 체크 + localStorage 백업
+  // 🛡️ 2026-05-15: *항상* localStorage 먼저 저장 — RTDB 실패해도 데이터 무조건 살아남음.
+  try {
+    const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
+    backup[key] = { dataURL, ts: Date.now() };
+    localStorage.setItem('top500.photoBackup', JSON.stringify(backup));
+  } catch(_){}
+  // 그 다음 RTDB 시도
   let resp = null;
   try {
     resp = await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
@@ -726,14 +732,15 @@ async function savePhotoToDB(code, dataURL){
       body: JSON.stringify(dataURL)
     });
   } catch(e) { resp = null; }
-  if (!resp || !resp.ok) {
-    // 백업: localStorage 에 임시 저장 → 다음 페이지 로드 때 자동 재시도
+  if (resp && resp.ok) {
+    // RTDB 성공 — backup 에서 이 사진 제거
     try {
       const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
-      backup[key] = { dataURL, ts: Date.now() };
+      delete backup[key];
       localStorage.setItem('top500.photoBackup', JSON.stringify(backup));
     } catch(_){}
-    alert('⚠️ 사진 저장 실패 — 서버 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 임시 백업했습니다. 페이지 새로고침하면 자동 재시도됩니다.');
+  } else {
+    alert('⚠️ 사진 서버 저장 실패 — 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 안전하게 백업됐습니다. 페이지 새로고침 시 자동 재시도됩니다.');
   }
 }
 
@@ -916,9 +923,15 @@ async function saveState(code, qty){
   const entry = { qty, ts: Date.now(), by: ME.name||'', status: 'manual' };
   STATE[code] = entry;
   // 🛡️ 2026-05-15: 401 silent fail 로 재고 점검 기록이 통째로 사라진 사건 후 보강.
-  //   - 응답 status 체크 (예전엔 await 만 하고 결과 무시)
-  //   - 실패 시 localStorage 백업 → 다음 페이지 로드 때 자동 재시도
-  //   - 사용자에게 명확한 alert (이전엔 toast 만 떠서 묻혔음)
+  // *항상* localStorage 먼저 저장 — RTDB 가 어떤 이유로든 실패해도 데이터 무조건 살아남음.
+  // 다음 페이지 로드 시 retryBackedUpWrites() 가 RTDB 로 자동 sync.
+  try {
+    const backup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}');
+    if (!backup[BRANCH]) backup[BRANCH] = {};
+    backup[BRANCH][code] = entry;
+    localStorage.setItem('top500.stateBackup', JSON.stringify(backup));
+  } catch(_){}
+  // 그 다음 RTDB 시도 — 성공하면 backup 에서 제거
   let resp = null;
   try {
     resp = await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
@@ -927,14 +940,18 @@ async function saveState(code, qty){
       body: JSON.stringify(entry)
     });
   } catch(e) { resp = null; }
-  if (!resp || !resp.ok) {
+  if (resp && resp.ok) {
+    // RTDB 성공 — backup 에서 이 항목 제거 (다음 retry 때 중복 시도 안 하도록)
     try {
       const backup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}');
-      if (!backup[BRANCH]) backup[BRANCH] = {};
-      backup[BRANCH][code] = entry;
-      localStorage.setItem('top500.stateBackup', JSON.stringify(backup));
+      if (backup[BRANCH]) {
+        delete backup[BRANCH][code];
+        if (Object.keys(backup[BRANCH]).length === 0) delete backup[BRANCH];
+        localStorage.setItem('top500.stateBackup', JSON.stringify(backup));
+      }
     } catch(_){}
-    alert('⚠️ 재고 저장 실패 — 서버 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 임시 백업했습니다. 페이지 새로고침 시 자동 재시도됩니다.\n\n계속 실패하면 로그아웃 후 다시 로그인하세요.');
+  } else {
+    alert('⚠️ 재고 서버 저장 실패 — 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 안전하게 백업됐습니다. 페이지 새로고침 시 자동 재시도됩니다.\n\n계속 실패하면 로그아웃 후 다시 로그인하세요.');
   }
 }
 // 점검 기록 삭제 — RTDB DELETE + 메모리 STATE 제거. 다시 'Unchecked' 상태로 복귀.
