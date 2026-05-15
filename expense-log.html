@@ -290,7 +290,7 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
          공과금 등 용도별로 구분해 리포트에서 깔끔히 집계. -->
     <div class="field">
       <label id="lblFieldPurpose">💼 용도 (분류)</label>
-      <select id="entryPurpose" style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;background:#fff;outline:0">
+      <select id="entryPurpose" onchange="refreshVendorDatalist()" style="width:100%;padding:11px 13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.95em;font-family:inherit;background:#fff;outline:0">
         <option value="">— 선택 / Select —</option>
         <option value="payroll">👥 직원 급여 (Payroll)</option>
         <option value="vendor">📦 벤더 / 거래처 결제 (Vendor)</option>
@@ -922,12 +922,36 @@ function mergeIntoLocalCache(key, values){
   });
   if (changed) saveCacheList(key, existing);
 }
-function refreshVendorDatalist(){
+// 🧑 전 직원 명단 — 급여(Payroll) 카테고리 선택 시 dropdown 에 노출
+async function fetchAllStaff(branch){
+  try {
+    const r = await fetch(`${FB_DB_URL}/schedules/${branch}/employees.json`, { cache:'no-store' });
+    const arr = (await r.json()) || [];
+    return arr.map(e => e?.name).filter(Boolean);
+  } catch(e){ return []; }
+}
+async function refreshVendorDatalist(){
   const set = new Map(); // 대소문자 통합 키 → 첫 등장 표기 유지
-  loadCacheList(VENDOR_CACHE_KEY).forEach(v => { if (v) set.set(v.toUpperCase(), v); });
+  // 1) 카테고리가 직원 급여면 — 현재 지점 직원 + 오너 명단 먼저
+  const purpose = (document.getElementById('entryPurpose')?.value || '').toLowerCase();
+  if (purpose === 'payroll') {
+    try {
+      const [staff, owners] = await Promise.all([fetchAllStaff(BRANCH), fetchOwners()]);
+      [...staff, ...owners].forEach(n => { if (n) { const k = n.toUpperCase(); if (!set.has(k)) set.set(k, n); } });
+    } catch(_){}
+  }
+  // 2) 기존 벤더 캐시 + 과거 입력 벤더
+  loadCacheList(VENDOR_CACHE_KEY).forEach(v => { if (v) { const k = v.toUpperCase(); if (!set.has(k)) set.set(k, v); } });
   EXPENSES.forEach(e => { if (e.vendor) { const k = e.vendor.toUpperCase(); if (!set.has(k)) set.set(k, e.vendor); } });
   const list = Array.from(set.values()).sort((a,b) => a.localeCompare(b));
   document.getElementById('vendorList').innerHTML = list.map(v => `<option value="${escAttr(v)}">`).join('');
+  // placeholder 도 카테고리 맞춰 변경
+  const inp = document.getElementById('entryVendor');
+  if (inp && purpose === 'payroll') {
+    inp.placeholder = '직원 이름 선택 또는 직접 입력 (처음인 분도 OK)';
+  } else if (inp) {
+    inp.placeholder = '예: ASAMI FOODS 또는 cash';
+  }
 }
 // 발행자 = 현재 지점 매니저/부매니저 + 전체 오너 (스케줄표 기준)
 const SCHED_CACHE = { owners: null, byBranch: {} };
