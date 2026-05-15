@@ -4364,10 +4364,40 @@ function _entriesFromDOM(taskId, branchId, idx){
 
 async function addClEntry(taskId, branchId, idx){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
+  // 🛡️ 2026-05-15: 폰에서 "한 줄 추가" 누르면 팅겨나가는 현상 — RTDB write 후
+  // onValue 가 발화해 task 카드 전체를 renderAll 로 재구성 → 사용자 스크롤·
+  // 포커스 사라짐. 사진 업로드처럼 defer render + 스크롤 복원으로 부드럽게.
+  const savedY = window.scrollY || window.pageYOffset || 0;
+  const savedX = window.scrollX || window.pageXOffset || 0;
+  const newId = _newEntryId();
   // 입력 중이던 텍스트(아직 onchange 발화 전) 까지 모두 보존하면서 새 빈 줄 추가.
   const arr = _entriesFromDOM(taskId, branchId, idx);
-  arr.push({ id: _newEntryId(), text: '', photos: [], ts: Date.now(), by: me.name });
-  await _writeEntries(taskId, branchId, idx, arr);
+  arr.push({ id: newId, text: '', photos: [], ts: Date.now(), by: me.name });
+  // 사진 업로드 중과 동일한 가드 — renderAll 잠깐 차단해서 DOM 점프 방지
+  window.__PHOTO_UPLOADING = (window.__PHOTO_UPLOADING || 0) + 1;
+  try {
+    await _writeEntries(taskId, branchId, idx, arr);
+  } finally {
+    window.__PHOTO_UPLOADING = Math.max(0, (window.__PHOTO_UPLOADING || 1) - 1);
+  }
+  // 부드러운 재렌더 — defer 됐던 render 한 번만 실행
+  setTimeout(() => {
+    try {
+      if (window.__PHOTO_UPLOADING === 0 && (typeof renderAllNow === 'function')) renderAllNow();
+    } catch(_){}
+    // 스크롤 복원 + 새 입력칸 포커스 (폰에서 자연스럽게 키보드 뜨도록)
+    let attempts = 0;
+    const tick = () => {
+      if (savedY >= 5) { try { window.scrollTo(savedX, savedY); } catch(_){} }
+      const newInput = document.querySelector('input[data-entry-id="' + newId + '"]');
+      if (newInput) { try { newInput.focus({ preventScroll: true }); } catch(_) { try { newInput.focus(); } catch(__){} } }
+      attempts++;
+      if (attempts < 12 && (savedY >= 5 && Math.abs((window.scrollY||0) - savedY) > 5)) {
+        setTimeout(tick, 25);
+      }
+    };
+    tick();
+  }, 80);
 }
 async function removeClEntry(taskId, branchId, idx, entryId){
   if (!confirm(({ko:'이 줄 삭제할까요?',en:'Remove this row?',es:'¿Quitar esta fila?'})[LANG] || '이 줄 삭제할까요?')) return;
