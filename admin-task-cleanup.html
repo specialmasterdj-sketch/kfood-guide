@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>업무 청소 — 김치마트</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;padding-bottom:80px;color:#0f172a;font-size:14px}
+.wrap{max-width:1100px;margin:0 auto;padding:14px}
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:16px 20px;border-radius:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.topbar h1{font-size:1.2em;font-weight:900}
+.topbar .sub{font-size:.82em;opacity:.85;margin-top:2px}
+.warn{background:#fff8e1;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:.88em;line-height:1.5;color:#5d4037}
+.controls{background:#fff;padding:12px 14px;border-radius:10px;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:.86em;border:1px solid #e5e7eb}
+.controls label{font-weight:700;color:#374151}
+.controls input, .controls select, .controls button{border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-family:inherit;font-size:.95em}
+.controls button{background:#1a5c3a;color:#fff;border:0;cursor:pointer;font-weight:700}
+.controls button.danger{background:#dc2626}
+.controls button.danger.bulk{background:#b91c1c}
+.controls button:hover{opacity:.9}
+.branch-block{background:#fff;border-radius:12px;margin-bottom:14px;border:1px solid #e5e7eb;overflow:hidden}
+.branch-head{background:#f1f5f9;padding:10px 16px;font-weight:800;color:#1a5c3a;font-size:1em;display:flex;justify-content:space-between;align-items:center}
+.branch-head .cnt{font-size:.78em;color:#6b7280;font-weight:600}
+.task-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;padding:10px 14px;border-top:1px solid #f1f5f9;align-items:center;font-size:.86em}
+.task-row:hover{background:#fafbfc}
+.task-row input[type=checkbox]{width:18px;height:18px;cursor:pointer}
+.task-row .nm{min-width:0}
+.task-row .nm .title{font-weight:700;color:#0f172a;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-row .nm .meta{font-size:.78em;color:#6b7280}
+.task-row .nm .meta .cat{display:inline-block;background:#f0fdf4;color:#15803d;padding:1px 6px;border-radius:4px;font-weight:600;margin-right:4px}
+.task-row .nm .meta .auto{background:#fef3c7;color:#92400e}
+.task-row .progress{font-size:.78em;color:#374151;font-weight:600;white-space:nowrap}
+.task-row .progress.empty{color:#9ca3af;font-weight:500}
+.task-row .progress.active{color:#16a34a}
+.task-row button.del{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:.84em;font-weight:700}
+.task-row button.del:hover{background:#dc2626;color:#fff}
+.dup-mark{background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:.74em;font-weight:700;margin-left:4px}
+.empty-state{padding:30px;text-align:center;color:#9ca3af}
+#busy{position:fixed;top:0;left:0;right:0;background:#1a5c3a;color:#fff;text-align:center;padding:6px;font-size:.85em;font-weight:700;z-index:1000;display:none}
+.bulk-bar{position:sticky;top:0;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;gap:8px;align-items:center;font-size:.86em;z-index:50;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.bulk-bar.has-selection{background:#fef2f2;border-color:#fca5a5}
+.bulk-bar .count{font-weight:800;color:#dc2626}
+</style>
+</head>
+<body>
+<div id="busy">⏳ 처리 중…</div>
+<div class="wrap">
+
+<div class="topbar">
+  <div>
+    <h1>🧹 업무 청소</h1>
+    <div class="sub">매니저 전용 — 잘못 만든 업무 / 중복 업무 직접 골라서 삭제</div>
+  </div>
+  <button onclick="location.href='./tasks.html'" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-family:inherit">← 업무 페이지</button>
+</div>
+
+<div class="warn">
+  ⚠️ <b>삭제는 즉시 RTDB 에서 사라지고 복구 불가</b>입니다. 직원이 작업 중인 업무 (진행 표시 ✏️) 는 신중히 확인 후 삭제하세요.
+  <br>빈 채로 인 업무 (✨) 는 안전하게 지워도 됩니다.
+</div>
+
+<div class="controls">
+  <label>날짜:</label>
+  <input type="date" id="dateInput">
+  <label style="margin-left:8px">필터:</label>
+  <select id="filterSel">
+    <option value="all">전체</option>
+    <option value="empty">✨ 빈 채로 만</option>
+    <option value="active">✏️ 진행 중 만</option>
+    <option value="auto">자동 발송 (AUTO)</option>
+    <option value="manual">수동 발송 (매니저)</option>
+  </select>
+  <input type="text" id="searchInput" placeholder="이름·카테고리 검색…" style="flex:1;min-width:160px">
+  <button onclick="loadAll()">🔄 새로고침</button>
+</div>
+
+<div class="bulk-bar" id="bulkBar">
+  <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)">
+  <label for="selectAll" style="font-weight:700;cursor:pointer">전체 선택</label>
+  <span style="flex:1"></span>
+  <span class="count" id="selCount">0개 선택됨</span>
+  <button class="danger bulk" onclick="bulkDelete()" id="bulkBtn" disabled style="opacity:.5">🗑️ 선택 삭제</button>
+</div>
+
+<div id="branchesArea"></div>
+
+</div>
+
+<script type="module">
+import { db, ref, onValue, get, remove, authReady, safeFetch } from './km-firebase.js?v=1';
+
+const BRANCHES = [
+  { id:'HOLLYWOOD',       ko:'할리우드' },
+  { id:'MIAMI',           ko:'마이애미' },
+  { id:'CORAL_SPRINGS',   ko:'코럴 스프링스' },
+  { id:'LASOLAS',         ko:'라스올라스' },
+  { id:'PEMBROKE_PINES',  ko:'펨브로크 파인즈' },
+];
+const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+let ALL_TASKS = [];   // [{branchId, id, ...task}]
+let SELECTED = new Set();   // composite key "branch|taskId"
+
+function todayET(){ return new Date().toLocaleDateString('en-CA', { timeZone:'America/New_York' }); }
+document.getElementById('dateInput').value = todayET();
+
+function setBusy(show, msg){
+  const b = document.getElementById('busy');
+  b.textContent = msg || '⏳ 처리 중…';
+  b.style.display = show ? 'block' : 'none';
+}
+
+function progressOf(t){
+  let checked = 0, entries = 0, photos = 0;
+  const cl = Array.isArray(t.checklist) ? t.checklist : [];
+  cl.forEach(item => {
+    if (!item) return;
+    if (item.done) checked++;
+    const es = Array.isArray(item.entries) ? item.entries : (item.entries ? Object.values(item.entries) : []);
+    entries += es.length;
+    es.forEach(e => photos += (e.photos||[]).length);
+    photos += (item.photos||[]).length;
+    if (item.memo) entries++;
+  });
+  if (Array.isArray(t.photos)) photos += t.photos.length;
+  if (t.completedAt) checked++;
+  return { checked, entries, photos, total: checked + entries + photos };
+}
+
+async function loadAll(){
+  setBusy(true, '⏳ 5 지점 task 가져오는 중…');
+  const date = document.getElementById('dateInput').value;
+  ALL_TASKS = [];
+  for (const b of BRANCHES) {
+    const r = await safeFetch('tasks/' + b.id + '/' + date);
+    if (!r.ok || !r.data) continue;
+    Object.entries(r.data).forEach(([id, t]) => {
+      if (t && typeof t === 'object') ALL_TASKS.push(Object.assign({ branchId: b.id, branchName: b.ko, _id: id }, t));
+    });
+  }
+  setBusy(false);
+  render();
+}
+
+function detectDuplicates(){
+  // 같은 branch + 같은 (name + category) → 중복으로 표시
+  const seen = new Map();
+  const dupKeys = new Set();
+  ALL_TASKS.forEach(t => {
+    const k = t.branchId + '|' + (t.name||'') + '|' + (t.category||'');
+    if (seen.has(k)) {
+      dupKeys.add(k);
+      dupKeys.add(seen.get(k));
+    } else {
+      seen.set(k, k);
+    }
+  });
+  return dupKeys;
+}
+
+function render(){
+  const filter = document.getElementById('filterSel').value;
+  const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  const area = document.getElementById('branchesArea');
+  area.innerHTML = '';
+
+  const grouped = {};
+  ALL_TASKS.forEach(t => {
+    const p = progressOf(t);
+    const isAuto = (t._id || '').startsWith('auto_') || (t.from && t.from.startsWith('AUTO'));
+    // 필터
+    if (filter === 'empty' && p.total > 0) return;
+    if (filter === 'active' && p.total === 0) return;
+    if (filter === 'auto' && !isAuto) return;
+    if (filter === 'manual' && isAuto) return;
+    // 검색
+    if (search) {
+      const blob = ((t.name||'') + ' ' + (t.category||'') + ' ' + (t.from||'')).toLowerCase();
+      if (!blob.includes(search)) return;
+    }
+    if (!grouped[t.branchId]) grouped[t.branchId] = [];
+    grouped[t.branchId].push(t);
+  });
+
+  // 중복 감지
+  const dupKeys = detectDuplicates();
+  const allSeen = new Map();
+
+  let totalShown = 0;
+  for (const b of BRANCHES) {
+    const arr = grouped[b.id] || [];
+    if (!arr.length) continue;
+    // 정렬: 카테고리 → 생성시간
+    arr.sort((a,c) => (a.category||'').localeCompare(c.category||'') || (a.createdAt||0) - (c.createdAt||0));
+    const block = document.createElement('div');
+    block.className = 'branch-block';
+    block.innerHTML = '<div class="branch-head"><span>📍 ' + b.ko + '</span><span class="cnt">' + arr.length + '개</span></div>';
+    arr.forEach(t => {
+      totalShown++;
+      const p = progressOf(t);
+      const isAuto = (t._id || '').startsWith('auto_') || (t.from && t.from.startsWith('AUTO'));
+      const dt = t.createdAt ? new Date(t.createdAt).toLocaleString('en-US',{timeZone:'America/New_York',month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'}) : '?';
+      const dupKey = t.branchId + '|' + (t.name||'') + '|' + (t.category||'');
+      const isDup = dupKeys.has(dupKey);
+      const compKey = t.branchId + '|' + t._id;
+      const isSelected = SELECTED.has(compKey);
+      const progBadge = p.total === 0
+        ? '<span class="progress empty">✨ 빈 채로</span>'
+        : '<span class="progress active">✏️ 체크 ' + p.checked + ' · 입력 ' + p.entries + ' · 사진 ' + p.photos + '</span>';
+      const dupBadge = isDup ? '<span class="dup-mark">⚠️ 중복</span>' : '';
+      const autoBadge = isAuto ? '<span class="cat auto">AUTO</span>' : '';
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      row.innerHTML = ''
+        + '<input type="checkbox" data-key="' + compKey + '" ' + (isSelected?'checked':'') + '>'
+        + '<div class="nm">'
+        +   '<div class="title">' + escHtml(t.name || '(이름 없음)') + dupBadge + '</div>'
+        +   '<div class="meta">'
+        +     autoBadge + '<span class="cat">' + escHtml(t.category||'?') + '</span>'
+        +     ' · ' + dt + ' · ' + escHtml(t.from||'?')
+        +     ' · id=<code style="font-size:.92em">' + escHtml(t._id) + '</code>'
+        +   '</div>'
+        + '</div>'
+        + progBadge
+        + '<button class="del" data-branch="' + t.branchId + '" data-id="' + t._id + '" data-name="' + escHtml((t.name||'').slice(0,40)) + '">🗑️ 삭제</button>';
+      block.appendChild(row);
+    });
+    area.appendChild(block);
+  }
+  if (!totalShown) {
+    area.innerHTML = '<div class="empty-state">조건에 맞는 업무 없음</div>';
+  }
+
+  // 체크박스 이벤트
+  area.querySelectorAll('input[type=checkbox][data-key]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const k = cb.dataset.key;
+      if (cb.checked) SELECTED.add(k); else SELECTED.delete(k);
+      updateBulkBar();
+    });
+  });
+  // 삭제 버튼 이벤트
+  area.querySelectorAll('button.del').forEach(btn => {
+    btn.addEventListener('click', () => deleteOne(btn.dataset.branch, btn.dataset.id, btn.dataset.name));
+  });
+  updateBulkBar();
+}
+
+function updateBulkBar(){
+  const bar = document.getElementById('bulkBar');
+  const cnt = document.getElementById('selCount');
+  const btn = document.getElementById('bulkBtn');
+  const n = SELECTED.size;
+  cnt.textContent = n + '개 선택됨';
+  btn.disabled = n === 0;
+  btn.style.opacity = n === 0 ? '.5' : '1';
+  bar.classList.toggle('has-selection', n > 0);
+}
+
+window.toggleSelectAll = function(checked){
+  document.querySelectorAll('#branchesArea input[type=checkbox][data-key]').forEach(cb => {
+    cb.checked = checked;
+    const k = cb.dataset.key;
+    if (checked) SELECTED.add(k); else SELECTED.delete(k);
+  });
+  updateBulkBar();
+};
+
+async function deleteOne(branchId, taskId, displayName){
+  const date = document.getElementById('dateInput').value;
+  if (!confirm('정말 삭제할까요?\n\n· ' + branchId + ' / ' + date + '\n· ' + displayName + '\n· id=' + taskId + '\n\n삭제하면 복구 불가합니다.')) return;
+  setBusy(true, '⏳ 삭제 중…');
+  try {
+    const r = await fetch(FB_DB + '/tasks/' + branchId + '/' + date + '/' + taskId + '.json', { method:'DELETE' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    // 메모리에서도 제거
+    ALL_TASKS = ALL_TASKS.filter(t => !(t.branchId === branchId && t._id === taskId));
+    SELECTED.delete(branchId + '|' + taskId);
+    render();
+  } catch(e) {
+    alert('❌ 삭제 실패: ' + (e.message || e));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function bulkDelete(){
+  if (!SELECTED.size) return;
+  const date = document.getElementById('dateInput').value;
+  if (!confirm('선택한 ' + SELECTED.size + '개 업무를 모두 삭제할까요?\n\n복구 불가합니다.')) return;
+  setBusy(true, '⏳ ' + SELECTED.size + '개 삭제 중…');
+  let ok = 0, fail = 0;
+  for (const k of Array.from(SELECTED)) {
+    const [branchId, taskId] = k.split('|');
+    try {
+      const r = await fetch(FB_DB + '/tasks/' + branchId + '/' + date + '/' + taskId + '.json', { method:'DELETE' });
+      if (r.ok) {
+        ok++;
+        ALL_TASKS = ALL_TASKS.filter(t => !(t.branchId === branchId && t._id === taskId));
+        SELECTED.delete(k);
+      } else fail++;
+    } catch(_) { fail++; }
+  }
+  setBusy(false);
+  render();
+  alert('✅ 삭제 ' + ok + '건 · 실패 ' + fail + '건');
+}
+window.bulkDelete = bulkDelete;
+
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// 필터 / 검색 / 날짜 변경 시 자동 새로고침
+document.getElementById('filterSel').addEventListener('change', render);
+document.getElementById('searchInput').addEventListener('input', () => { setTimeout(render, 150); });
+document.getElementById('dateInput').addEventListener('change', loadAll);
+
+// 최초 로드
+authReady.then(() => loadAll());
+</script>
+</body>
+</html>
