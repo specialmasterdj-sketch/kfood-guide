@@ -261,6 +261,20 @@ let __waitingForRestore = false;
 
 async function _maybeRedirect(user){
   if (isExemptPath()) return;
+  // 🚨 2026-05-15: 익명 사용자 함정 차단 — fb-auth-fetch / km-firebase 가
+  // 익명 가입 fallback 으로 만든 user 가 managed 페이지에 도달하면 auth-gate
+  // 가 watchProfile → joinPin 체크 → signOut → redirect 사이클 hang.
+  // 익명 user 는 무조건 로그아웃 + auth.html 로.
+  if (user && user.isAnonymous) {
+    console.warn('[auth-gate] anonymous user on managed page → forcing sign-out + redirect');
+    try { await signOut(auth); } catch(_){}
+    if (!__redirected) {
+      __redirected = true;
+      const ret = encodeURIComponent(location.pathname + location.search);
+      location.replace('./auth.html?fresh=1&return=' + ret);
+    }
+    return;
+  }
   if (user) {
     __waitingForRestore = false;
     watchProfile(user);
@@ -305,6 +319,32 @@ async function _maybeRedirect(user){
 }
 
 onAuthStateChanged(auth, (user) => { _maybeRedirect(user); });
+
+// 🚨 2026-05-15: 로딩 무한 spinner 방지 — 페이지 로드 15초 후에도 auth 결정 안
+// 났으면 사용자에게 escape 옵션 (강제 재로그인) 제공.
+setTimeout(() => {
+  if (isExemptPath()) return;
+  // 이미 watchProfile 이 도는 중 (profile 받음) 이면 통과
+  if (__unsubProfile) return;
+  // 익명 사용자거나 user 없는 상태로 15초 → escape
+  if (auth.currentUser && !auth.currentUser.isAnonymous) return;
+  // 매니저/직원이 spinner 만 보고 있는 경우 — 강제 escape UI
+  if (document.getElementById('__authGateEscape')) return;
+  const esc = document.createElement('div');
+  esc.id = '__authGateEscape';
+  esc.style.cssText = 'position:fixed;inset:0;background:rgba(245,247,250,.98);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;font-family:"Segoe UI","Malgun Gothic",Arial,sans-serif';
+  esc.innerHTML = ''
+    + '<div style="background:#fff;border-radius:18px;padding:34px 28px;max-width:420px;width:100%;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.10)">'
+    +   '<div style="font-size:3em;margin-bottom:8px">⏳</div>'
+    +   '<h1 style="font-size:1.2em;color:#dc2626;margin-bottom:14px;font-weight:800">로딩이 너무 오래 걸려요</h1>'
+    +   '<div style="color:#6b7280;font-size:.92em;line-height:1.6;margin-bottom:18px">'
+    +     '15초 동안 로그인 확인이 안 됐습니다.<br>다시 로그인 화면으로 이동해서 새로 시도해 주세요.'
+    +   '</div>'
+    +   '<button onclick="location.replace(\'./auth.html?fresh=1\')" style="background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:13px 28px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;width:100%;margin-bottom:8px">🔁 로그인 화면으로</button>'
+    +   '<button onclick="location.reload()" style="background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:11px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;width:100%">🔄 페이지 새로고침</button>'
+    + '</div>';
+  document.body.appendChild(esc);
+}, 15000);
 
 // PWA / 모바일 브라우저 — 백그라운드에서 돌아왔을 때 IndexedDB 가
 // 늦게 깨면 잘못된 logout 으로 보임. visibilitychange 에서 currentUser
