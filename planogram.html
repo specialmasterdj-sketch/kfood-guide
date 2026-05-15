@@ -413,10 +413,121 @@ function exportChanges(){
   }
 }
 
+// RTDB 에 추가된 사진들 (admin 이 직접 업로드한 dataURL) — 정적 manifest 와 병합
+var UPLOADED_PHOTOS = {};   // { categoryId: [dataURL or {id, url}, ...] }
+var FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+
 function getPhotos(id){
   if(typeof HMART_PHOTOS==='undefined')return[];
-  return(HMART_PHOTOS[id]||[]);
+  var stat = HMART_PHOTOS[id]||[];
+  var uploaded = UPLOADED_PHOTOS[id]||[];
+  return stat.concat(uploaded);
 }
+
+// 사진 src 자동 분기 — dataURL/http 면 그대로, 일반 파일명이면 hmart-photos/ 프리픽스
+function photoSrc(f){
+  if(!f) return '';
+  if(typeof f === 'string'){
+    if(f.startsWith('data:') || f.startsWith('http')) return f;
+    return PHOTO_BASE + f;
+  }
+  return '';
+}
+
+// 페이지 로드 시 RTDB 에서 추가 사진 가져오기
+async function loadUploadedPhotos(){
+  try {
+    var r = await fetch(FB_DB_URL + '/catalog/planogramUploads.json?cache=' + Date.now(), { cache:'no-store' });
+    if(!r.ok) return;
+    var data = await r.json() || {};
+    UPLOADED_PHOTOS = {};
+    Object.entries(data).forEach(function(entry){
+      var cat = entry[0], items = entry[1];
+      if(!items) return;
+      UPLOADED_PHOTOS[cat] = Object.values(items)
+        .filter(function(v){ return v && (typeof v === 'string' || v.url); })
+        .map(function(v){ return typeof v === 'string' ? v : v.url; });
+    });
+    var total = 0;
+    Object.values(UPLOADED_PHOTOS).forEach(function(arr){ total += arr.length; });
+    if(total > 0) console.info('[planogram] RTDB 추가 사진', total, '장 로드됨');
+  } catch(e){ console.warn('[planogram] uploads load failed', e); }
+}
+
+// 📷 사진 추가 버튼 클릭 → 파일 선택 → 자동 압축 → RTDB 저장
+window.openUploader = function(categoryId){
+  if(!isAdmin){ alert('관리자 모드만 가능합니다.'); return; }
+  var input = document.getElementById('__planogramUploader');
+  if(!input){
+    input = document.createElement('input');
+    input.type = 'file';
+    input.id = '__planogramUploader';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.multiple = true;
+    input.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0';
+    document.body.appendChild(input);
+  }
+  input.value = '';
+  input.onchange = async function(){
+    var files = Array.from(input.files || []);
+    if(!files.length) return;
+    var btn = document.querySelector('button[onclick*="' + categoryId + '"][onclick^="openUploader"]');
+    var origText = btn ? btn.innerHTML : '';
+    if(btn) { btn.innerHTML = '⏳ 업로드 중 0/' + files.length; btn.disabled = true; }
+    var ok = 0, fail = 0;
+    for(var i = 0; i < files.length; i++){
+      try {
+        var dataUrl = await compressImage(files[i]);
+        var id = 'p' + Date.now() + Math.floor(Math.random()*900);
+        var meta = { url: dataUrl, by: 'admin', ts: Date.now(), origName: files[i].name };
+        var r = await fetch(FB_DB_URL + '/catalog/planogramUploads/' + categoryId + '/' + id + '.json', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(meta)
+        });
+        if(r.ok){
+          ok++;
+          if(!UPLOADED_PHOTOS[categoryId]) UPLOADED_PHOTOS[categoryId] = [];
+          UPLOADED_PHOTOS[categoryId].push(dataUrl);
+        } else fail++;
+      } catch(e){ console.warn('upload failed', e); fail++; }
+      if(btn) btn.innerHTML = '⏳ 업로드 중 ' + (ok+fail) + '/' + files.length;
+    }
+    if(btn) { btn.innerHTML = origText; btn.disabled = false; }
+    render();
+    alert('✅ 업로드 완료 — 성공 ' + ok + ' · 실패 ' + fail);
+  };
+  input.click();
+};
+
+// 이미지 압축 — 가로 1024px 이하, JPEG 0.8 → 평균 100-300KB
+async function compressImage(file){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      var img = new Image();
+      img.onload = function(){
+        var maxSide = 1024;
+        var w = img.naturalWidth, h = img.naturalHeight;
+        var ratio = Math.min(1, maxSide / Math.max(w, h));
+        var nw = Math.round(w * ratio), nh = Math.round(h * ratio);
+        var canvas = document.createElement('canvas');
+        canvas.width = nw; canvas.height = nh;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, nw, nh);
+        try { resolve(canvas.toDataURL('image/jpeg', 0.8)); }
+        catch(err){ reject(err); }
+      };
+      img.onerror = function(){ reject(new Error('image load failed')); };
+      img.src = e.target.result;
+    };
+    reader.onerror = function(){ reject(new Error('file read failed')); };
+    reader.readAsDataURL(file);
+  });
+}
+
+// 페이지 로드 시 RTDB 사진 가져온 후 재렌더
+loadUploadedPhotos().then(function(){ render(); });
 
 function onMoveSel(sel,fromDept,file){
   if(sel.value)movePhoto(fromDept,file,sel.value);
@@ -454,6 +565,7 @@ function render(){
     var photos=getPhotos(d.id);
     var h='<div class="sec'+(d.id===activeDept?' on':'')+'" id="sec-'+d.id+'">';
     h+='<div class="sec-title">'+d.icon+' '+name+' <span class="sec-cnt">'+photos.length+(lang==='ko'?'장':'')+'</span>';
+    if(isAdmin){h+='<button class="upload-btn" onclick="openUploader(\''+d.id+'\')" style="margin-left:8px;background:#dc2626;color:#fff;border:0;border-radius:8px;padding:6px 12px;font-size:.78rem;font-weight:700;cursor:pointer">📷 사진 추가</button>'}
     if(isAdmin&&photos.length){h+='<button class="sel-all" data-dept="'+d.id+'" onclick="selectAllInDept(\''+d.id+'\')">전체 선택('+photos.length+')</button>'}
     h+='</div>';
     if(!photos.length){
@@ -470,7 +582,7 @@ function render(){
         var rBadge=rot?'<div class="rot-badge">↻'+rot+'°</div>':'';
         h+='<div class="card" data-key="'+d.id+'::'+f+'">'+
           (isAdmin?'<div class="card-check admin-only" onclick="event.stopPropagation();toggleSelect(\''+d.id+'\',\''+f+'\','+i+',event.shiftKey)">✓</div>':'')+
-          '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" data-file="'+f+'" alt="" loading="lazy"'+rAttr+'></div>'+
+          '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+photoSrc(f)+'" data-file="'+f+'" alt="" loading="lazy"'+rAttr+'></div>'+
           rBadge+
           (isAdmin?'<div class="card-ctrl admin-only" onclick="event.stopPropagation()">'+
             '<button class="ctrl-rot" onclick="onRotBtn(event,\''+f+'\')" title="90° 회전">↻</button>'+
