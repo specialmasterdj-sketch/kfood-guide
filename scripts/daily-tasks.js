@@ -197,6 +197,39 @@ async function main() {
   }
 
   console.log(`\n[daily-tasks] 완료 — 신규 ${created} · 스킵 ${skipped} · 실패 ${failed}`);
+
+  // 📬 매일 발화 확인용 chat 알림 — '김치마트 앱 랩' 방에 결과 한 줄.
+  // 이게 매일 아침 안 오면 = cron 안 돌았다는 뜻 → 즉시 인지 가능.
+  // 단, skip 만 일어났으면 (이미 발송됨) 알림 안 보냄 — 채팅방 도배 방지.
+  if (created > 0 || failed > 0) {
+    try {
+      const room = 'kimchi_mart_app_lab';
+      const status = failed > 0 ? '⚠️' : '✅';
+      const text = `${status} ${BRANCH} 일일 보고 자동 발송 (${todayInBranch()})\n` +
+                   `· 신규: ${created}건 · 스킵: ${skipped}건 · 실패: ${failed}건`;
+      const ts = Date.now();
+      const msgId = 'm' + ts + Math.floor(Math.random()*900);
+      await fetch(`${FB_DB}/chat/messages/${room}/${msgId}.json?auth=${encodeURIComponent(token)}`, {
+        method:'PUT', headers:{'Content-Type':'application/json; charset=utf-8'},
+        body: Buffer.from(JSON.stringify({
+          sender: 'AUTO 일일 발송',
+          senderBranch: 'SYSTEM',
+          senderRole: 'AUTO',
+          isManager: true,
+          color: failed > 0 ? '#dc2626' : '#16a34a',
+          text, ts, photos:[], files:[]
+        }), 'utf8')
+      });
+      await fetch(`${FB_DB}/chat/rooms/${room}.json?auth=${encodeURIComponent(token)}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json; charset=utf-8'},
+        body: Buffer.from(JSON.stringify({ lastMsg: text.split('\n')[0], lastTs: ts, lastSender: 'AUTO 일일 발송' }), 'utf8')
+      });
+      console.log('[daily-tasks] ✓ chat 알림 발송');
+    } catch(e) {
+      console.warn('[daily-tasks] chat 알림 실패:', e.message);
+    }
+  }
+
   if (failed > 0) process.exit(1);
 }
 
