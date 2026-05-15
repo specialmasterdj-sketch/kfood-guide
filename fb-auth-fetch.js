@@ -31,6 +31,25 @@ let __authReadyResolve;
 const __authReady = new Promise(res => { __authReadyResolve = res; });
 let __authResolved = false;
 
+// 🛡️ 익명 토큰 fallback — Firebase Auth 사용자가 없을 때도 RTDB 쓰기 가능하게.
+// 2026-05-15: top500 재고/사진 저장이 401 silent fail 로 사라진 사건 후 추가.
+// auth.currentUser 가 null 이면 익명 가입 → 그 토큰으로 RTDB 호출.
+// 토큰 1시간 캐싱.
+let __anonTokenCache = null;
+async function __getAnonToken() {
+  if (__anonTokenCache && __anonTokenCache.expires > Date.now() + 60000) return __anonTokenCache.token;
+  try {
+    const r = await originalFetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${cfg.apiKey}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ returnSecureToken: true })
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    __anonTokenCache = { token: d.idToken, expires: Date.now() + (parseInt(d.expiresIn,10)||3600)*1000 };
+    return d.idToken;
+  } catch(_) { return null; }
+}
+
 async function getIdToken() {
   try {
     if (!__authResolved) await Promise.race([
@@ -40,7 +59,8 @@ async function getIdToken() {
     const u = auth.currentUser;
     if (u) return await u.getIdToken();
   } catch (e) {}
-  return null;
+  // 사용자 인증 없으면 익명 토큰 fallback — 그래야 RTDB 쓰기 silent fail 안 함.
+  return await __getAnonToken();
 }
 window.__getAuthToken = getIdToken;
 

@@ -717,11 +717,24 @@ async function savePhotoToDB(code, dataURL){
   const key = photoStorageKey(code);
   PHOTOS[code] = dataURL;
   PHOTOS[key] = dataURL;
-  await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(dataURL)
-  });
+  // 🛡️ 2026-05-15: 401 silent fail 사건 — fetch 응답 체크 + localStorage 백업
+  let resp = null;
+  try {
+    resp = await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dataURL)
+    });
+  } catch(e) { resp = null; }
+  if (!resp || !resp.ok) {
+    // 백업: localStorage 에 임시 저장 → 다음 페이지 로드 때 자동 재시도
+    try {
+      const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
+      backup[key] = { dataURL, ts: Date.now() };
+      localStorage.setItem('top500.photoBackup', JSON.stringify(backup));
+    } catch(_){}
+    alert('⚠️ 사진 저장 실패 — 서버 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 임시 백업했습니다. 페이지 새로고침하면 자동 재시도됩니다.');
+  }
 }
 
 async function deletePhotoFromDB(code){
@@ -902,23 +915,82 @@ async function saveState(code, qty){
   if (!BRANCH || !ME) { showToast(T().errNoUser); return; }
   const entry = { qty, ts: Date.now(), by: ME.name||'', status: 'manual' };
   STATE[code] = entry;
+  // 🛡️ 2026-05-15: 401 silent fail 로 재고 점검 기록이 통째로 사라진 사건 후 보강.
+  //   - 응답 status 체크 (예전엔 await 만 하고 결과 무시)
+  //   - 실패 시 localStorage 백업 → 다음 페이지 로드 때 자동 재시도
+  //   - 사용자에게 명확한 alert (이전엔 toast 만 떠서 묻혔음)
+  let resp = null;
   try {
-    await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
+    resp = await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
       method:'PUT',
       headers: { 'Content-Type':'application/json' },
       body: JSON.stringify(entry)
     });
-  } catch(e) { console.warn(e); showToast(T().errSave); }
+  } catch(e) { resp = null; }
+  if (!resp || !resp.ok) {
+    try {
+      const backup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}');
+      if (!backup[BRANCH]) backup[BRANCH] = {};
+      backup[BRANCH][code] = entry;
+      localStorage.setItem('top500.stateBackup', JSON.stringify(backup));
+    } catch(_){}
+    alert('⚠️ 재고 저장 실패 — 서버 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 임시 백업했습니다. 페이지 새로고침 시 자동 재시도됩니다.\n\n계속 실패하면 로그아웃 후 다시 로그인하세요.');
+  }
 }
 // 점검 기록 삭제 — RTDB DELETE + 메모리 STATE 제거. 다시 'Unchecked' 상태로 복귀.
 async function clearState(code){
   if (!BRANCH) return;
   delete STATE[code];
+  let resp = null;
   try {
-    await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
+    resp = await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
       method:'DELETE'
     });
-  } catch(e) { console.warn('[clearState]', e); showToast(T().errSave); }
+  } catch(e) { resp = null; }
+  if (!resp || !resp.ok) {
+    showToast('⚠️ 삭제 저장 실패 (' + (resp ? resp.status : 'network') + ')');
+  }
+}
+
+// 🔄 페이지 로드 시 localStorage 백업 자동 재시도 — 401 silent fail 복구.
+async function retryBackedUpWrites(){
+  // (1) 재고 점검 백업 재시도
+  let stateBackup = {};
+  try { stateBackup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}'); } catch(_){}
+  const stateBranches = Object.keys(stateBackup);
+  let stateOk = 0, stateFail = 0;
+  for (const br of stateBranches) {
+    for (const [code, entry] of Object.entries(stateBackup[br]||{})) {
+      try {
+        const r = await fetch(`${FB_DB}/inventory/top500/${br}/${encodeURIComponent(code)}.json`, {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(entry)
+        });
+        if (r.ok) { stateOk++; delete stateBackup[br][code]; }
+        else stateFail++;
+      } catch(_) { stateFail++; }
+    }
+    if (Object.keys(stateBackup[br]||{}).length === 0) delete stateBackup[br];
+  }
+  try { localStorage.setItem('top500.stateBackup', JSON.stringify(stateBackup)); } catch(_){}
+
+  // (2) 사진 백업 재시도
+  let photoBackup = {};
+  try { photoBackup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}'); } catch(_){}
+  let photoOk = 0, photoFail = 0;
+  for (const [key, item] of Object.entries(photoBackup)) {
+    try {
+      const r = await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.dataURL)
+      });
+      if (r.ok) { photoOk++; delete photoBackup[key]; }
+      else photoFail++;
+    } catch(_) { photoFail++; }
+  }
+  try { localStorage.setItem('top500.photoBackup', JSON.stringify(photoBackup)); } catch(_){}
+
+  if (stateOk + photoOk > 0) {
+    showToast('✅ 미저장 데이터 ' + (stateOk + photoOk) + '건 복구됨' + (stateFail + photoFail > 0 ? ' (실패 ' + (stateFail + photoFail) + '건)' : ''));
+  }
 }
 
 function setFilter(f, el){
@@ -1525,6 +1597,9 @@ function init(){
 }
 (async function(){
   init();
+  // 🔄 401 silent fail 로 못 들어간 백업 데이터 자동 재시도 — 이번 fix 이후
+  // 토큰이 정상이면 이전에 실패했던 사진/재고가 알아서 RTDB 에 들어감.
+  try { await retryBackedUpWrites(); } catch(_){}
   // 사진은 전 지점 공통이라 병렬 로드. 첫 로드는 빈 객체로 시작해도 OK.
   await Promise.all([loadTop500(), loadState(), loadPhotos()]);
   render();
