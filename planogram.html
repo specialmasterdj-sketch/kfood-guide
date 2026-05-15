@@ -37,13 +37,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .card{position:relative;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.1);transition:.2s}
 .card:hover{box-shadow:0 4px 16px rgba(13,71,161,.25);transform:translateY(-2px)}
-.card-img{cursor:pointer}
-.card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
+.card-img{cursor:pointer;background:#000;aspect-ratio:4/3;overflow:hidden;position:relative}
+.card img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
+.card img[data-r="90"]{transform:rotate(90deg) scale(.75)}
+.card img[data-r="180"]{transform:rotate(180deg)}
+.card img[data-r="270"]{transform:rotate(270deg) scale(.75)}
 
 .card-ctrl{position:absolute;top:4px;right:4px;display:flex;gap:4px;z-index:5}
 .ctrl-sel{font-size:.6rem;padding:3px 4px;border-radius:8px;border:1px solid rgba(0,0,0,.2);background:rgba(255,255,255,.95);cursor:pointer;max-width:90px;font-weight:600}
 .ctrl-del{background:rgba(239,68,68,.95);color:#fff;border:0;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:.85rem;font-weight:bold;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.3)}
 .ctrl-del:hover{background:#dc2626}
+.ctrl-rot{position:absolute;bottom:6px;right:6px;background:rgba(59,130,246,.95);color:#fff;border:0;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:1rem;font-weight:bold;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 2px 6px rgba(0,0,0,.4);z-index:5}
+.ctrl-rot:hover{background:#2563eb}
+.rot-badge{position:absolute;bottom:4px;left:4px;background:rgba(59,130,246,.92);color:#fff;font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:8px;z-index:4;pointer-events:none}
 
 .chg-btn{background:rgba(255,200,0,.25);border:0;color:#fff;padding:6px 10px;border-radius:14px;font-size:.7rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px}
 .chg-btn:hover{background:rgba(255,200,0,.4)}
@@ -73,7 +79,12 @@ body.admin .batch-bar.show{display:flex !important}
 .lb-overlay.show{display:flex}
 .lb-close{position:absolute;top:12px;right:16px;background:0;border:0;color:#fff;font-size:2rem;cursor:pointer;z-index:1001;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
 .lb-img-wrap{flex:1;display:flex;align-items:center;justify-content:center;width:100%;max-width:900px;overflow:hidden}
-.lb-img-wrap img{max-width:100%;max-height:82vh;object-fit:contain;border-radius:8px}
+.lb-img-wrap img{max-width:100%;max-height:82vh;object-fit:contain;border-radius:8px;transition:transform .25s ease}
+.lb-img-wrap img[data-r="90"]{transform:rotate(90deg);max-width:82vh;max-height:90vw}
+.lb-img-wrap img[data-r="180"]{transform:rotate(180deg)}
+.lb-img-wrap img[data-r="270"]{transform:rotate(270deg);max-width:82vh;max-height:90vw}
+.lb-rot{background:#2563eb !important}
+.lb-rot:hover{background:#1d4ed8 !important}
 .lb-nav{display:flex;gap:12px;padding:12px;align-items:center}
 .lb-nav button{background:rgba(255,255,255,.15);border:0;color:#fff;width:44px;height:44px;border-radius:50%;font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .lb-nav button:hover{background:rgba(255,255,255,.3)}
@@ -107,6 +118,7 @@ body.admin .batch-bar.show{display:flex !important}
   <div class="lb-caption" id="lbCaption"></div>
   <div class="lb-nav">
     <button onclick="navLB(-1)">&#9664;</button>
+    <button class="lb-rot" onclick="rotateLBPhoto()" title="90° 회전 (R)">&#8635;</button>
     <span class="lb-counter" id="lbCounter"></span>
     <button onclick="navLB(1)">&#9654;</button>
   </div>
@@ -143,12 +155,16 @@ var DEPTS=[
   {id:'frozen',icon:'🧊',ko:'냉동',en:'Frozen',es:'Congelados'},
   {id:'poultry',icon:'🍗',ko:'가금류',en:'Poultry',es:'Aves'},
   {id:'seaweed',icon:'🌿',ko:'해조류',en:'Seaweed',es:'Algas'},
-  {id:'dried_food',icon:'🍂',ko:'건조식품',en:'Dried Food',es:'Alimentos Secos'}
+  {id:'dried_food',icon:'🍂',ko:'건조식품',en:'Dried Food',es:'Alimentos Secos'},
+  {id:'supply',icon:'🧰',ko:'소모품·비품',en:'Supply',es:'Suministros'},
+  {id:'manual',icon:'📖',ko:'매뉴얼',en:'Manual',es:'Manual'},
+  {id:'usa_items',icon:'🇺🇸',ko:'미국 상품',en:'USA Items',es:'Productos EE.UU.'}
 ];
 var PHOTO_BASE='hmart-photos/';
 var lang=localStorage.getItem('km-lang')||'ko';
 var activeDept=location.hash.slice(1)||'hotfood';
 var CHG_KEY='planogram-changes-v1';
+var ROT_KEY='planogram-rotations-v1';
 var ADMIN_KEY='planogram-admin-v1';
 var ADMIN_PW='kimchi2026';
 var isAdmin=false;
@@ -180,6 +196,10 @@ function injectAdminUI(){
       '<span class="batch-cnt" id="batchCnt">0장 선택</span>'+
       '<select class="batch-sel" id="batchSel"><option value="">→ 이동할 카테고리</option></select>'+
       '<button class="batch-btn" onclick="batchMove()">이동</button>'+
+      '<button class="batch-btn" onclick="batchRotate(90)" title="90도 시계방향">↻90</button>'+
+      '<button class="batch-btn" onclick="batchRotate(180)" title="180도 뒤집기">↻180</button>'+
+      '<button class="batch-btn" onclick="batchRotate(270)" title="90도 반시계방향">↻270</button>'+
+      '<button class="batch-btn" onclick="batchRotateReset()" title="회전 초기화">↺0</button>'+
       '<button class="batch-btn batch-del" onclick="batchDelete()">✕ 삭제</button>'+
       '<button class="batch-btn" onclick="clearSelection()">해제</button>'+
     '</div>';
@@ -197,6 +217,41 @@ function exitAdmin(){
 function loadChanges(){try{return JSON.parse(localStorage.getItem(CHG_KEY)||'[]')}catch(e){return[]}}
 function saveChanges(arr){localStorage.setItem(CHG_KEY,JSON.stringify(arr));updateChgCnt()}
 function updateChgCnt(){var el=document.getElementById('chgCnt');if(el)el.textContent=loadChanges().length}
+
+function loadRotations(){try{return JSON.parse(localStorage.getItem(ROT_KEY)||'{}')}catch(e){return{}}}
+function saveRotations(obj){localStorage.setItem(ROT_KEY,JSON.stringify(obj))}
+function getRotation(file){
+  var local=loadRotations();
+  if(local[file]!==undefined)return local[file];
+  if(typeof HMART_ROTATIONS!=='undefined'&&HMART_ROTATIONS[file]!==undefined)return HMART_ROTATIONS[file];
+  return 0;
+}
+function setRotation(file,deg){
+  var rots=loadRotations();
+  deg=((deg%360)+360)%360;
+  if(deg===0)delete rots[file];
+  else rots[file]=deg;
+  saveRotations(rots);
+  var chgs=loadChanges();
+  chgs=chgs.filter(function(c){return!(c.action==='rotate'&&c.file===file)});
+  if(deg!==0)chgs.push({action:'rotate',file:file,rotation:deg});
+  saveChanges(chgs);
+  applyRotationDOM(file,deg);
+  return deg;
+}
+function applyRotationDOM(file,deg){
+  document.querySelectorAll('img[data-file="'+file+'"]').forEach(function(img){
+    if(deg)img.setAttribute('data-r',deg);else img.removeAttribute('data-r');
+    var badge=img.parentElement&&img.parentElement.parentElement&&img.parentElement.parentElement.querySelector('.rot-badge');
+    if(badge){if(deg)badge.textContent='↻'+deg+'°';else badge.remove();}
+    else if(deg&&img.parentElement&&img.parentElement.parentElement){
+      var b=document.createElement('div');b.className='rot-badge';b.textContent='↻'+deg+'°';
+      img.parentElement.parentElement.appendChild(b);
+    }
+  });
+}
+function rotatePhotoCW(file){return setRotation(file,getRotation(file)+90)}
+function onRotBtn(ev,file){ev.stopPropagation();rotatePhotoCW(file)}
 function applyChanges(){
   if(!isAdmin)return;
   var chgs=loadChanges();
@@ -306,13 +361,32 @@ function batchDelete(){
   selectedSet.clear();
   render();
 }
+function batchRotate(deg){
+  var n=0;
+  selectedSet.forEach(function(k){
+    var p=k.split('::');
+    setRotation(p[1],deg);
+    n++;
+  });
+}
+function batchRotateReset(){
+  var n=0;
+  selectedSet.forEach(function(k){
+    var p=k.split('::');
+    setRotation(p[1],0);
+    n++;
+  });
+}
 function clearSelection(){selectedSet.clear();updateSelectionUI()}
 function exportChanges(){
   var chgs=loadChanges();
   if(!chgs.length){alert('변경사항 없음');return}
   var summary={};
   chgs.forEach(function(c){
-    var k=c.action==='delete'?(c.from+' → 삭제'):(c.from+' → '+c.to);
+    var k;
+    if(c.action==='delete')k=c.from+' → 삭제';
+    else if(c.action==='rotate')k='회전 '+c.rotation+'°';
+    else k=c.from+' → '+c.to;
     summary[k]=(summary[k]||0)+1;
   });
   var s='변경사항 '+chgs.length+'건:\n';
@@ -365,8 +439,8 @@ function render(){
 
   var c=document.getElementById('content');
   c.innerHTML=DEPTS.map(function(d){
-    var photos=getPhotos(d.id);
     var name=d[lang]||d.en;
+    var photos=getPhotos(d.id);
     var h='<div class="sec'+(d.id===activeDept?' on':'')+'" id="sec-'+d.id+'">';
     h+='<div class="sec-title">'+d.icon+' '+name+' <span class="sec-cnt">'+photos.length+(lang==='ko'?'장':'')+'</span>';
     if(isAdmin&&photos.length){h+='<button class="sel-all" data-dept="'+d.id+'" onclick="selectAllInDept(\''+d.id+'\')">전체 선택('+photos.length+')</button>'}
@@ -380,10 +454,15 @@ function render(){
       });
       h+='<div class="grid">';
       photos.forEach(function(f,i){
+        var rot=getRotation(f);
+        var rAttr=rot?' data-r="'+rot+'"':'';
+        var rBadge=rot?'<div class="rot-badge">↻'+rot+'°</div>':'';
         h+='<div class="card" data-key="'+d.id+'::'+f+'">'+
           (isAdmin?'<div class="card-check admin-only" onclick="event.stopPropagation();toggleSelect(\''+d.id+'\',\''+f+'\','+i+',event.shiftKey)">✓</div>':'')+
-          '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" alt="" loading="lazy"></div>'+
+          '<div class="card-img" onclick="openLB(\''+d.id+'\','+i+')"><img src="'+PHOTO_BASE+f+'" data-file="'+f+'" alt="" loading="lazy"'+rAttr+'></div>'+
+          rBadge+
           (isAdmin?'<div class="card-ctrl admin-only" onclick="event.stopPropagation()">'+
+            '<button class="ctrl-rot" onclick="onRotBtn(event,\''+f+'\')" title="90° 회전">↻</button>'+
             '<select class="ctrl-sel" onchange="onMoveSel(this,\''+d.id+'\',\''+f+'\')">'+optsHtml+'</select>'+
             '<button class="ctrl-del" onclick="onDelBtn(event,\''+d.id+'\',\''+f+'\')" title="삭제">✕</button>'+
           '</div>':'')+
@@ -424,9 +503,21 @@ function navLB(dir){
 function showLB(){
   if(!lbPhotos.length)return;
   var f=lbPhotos[lbIdx];
-  document.getElementById('lbImg').src=PHOTO_BASE+f;
+  var img=document.getElementById('lbImg');
+  img.src=PHOTO_BASE+f;
+  img.setAttribute('data-file',f);
+  var rot=getRotation(f);
+  if(rot)img.setAttribute('data-r',rot);else img.removeAttribute('data-r');
   document.getElementById('lbCounter').textContent=(lbIdx+1)+' / '+lbPhotos.length;
-  document.getElementById('lbCaption').textContent=f.replace('.jpg','').replace(/_/g,' ');
+  var cap=f.replace('.jpg','').replace(/_/g,' ');
+  if(rot)cap+=' · ↻'+rot+'°';
+  document.getElementById('lbCaption').textContent=cap;
+}
+function rotateLBPhoto(){
+  if(!lbPhotos.length)return;
+  var f=lbPhotos[lbIdx];
+  rotatePhotoCW(f);
+  showLB();
 }
 
 document.getElementById('lightbox').addEventListener('click',function(e){
@@ -437,6 +528,7 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Escape')closeLB();
   if(e.key==='ArrowLeft')navLB(-1);
   if(e.key==='ArrowRight')navLB(1);
+  if(e.key==='r'||e.key==='R')rotateLBPhoto();
 });
 (function(){
   var sx=0;
