@@ -4235,8 +4235,102 @@ function _entriesArrayLive(taskId, branchId, idx){
 }
 async function _writeEntries(taskId, branchId, idx, entries){
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
-  await window.__fb.update(window.__fb.ref(window.__fb.db, path), { entries });
+  const backupKey = branchId + '|' + todayStr() + '|' + taskId + '|' + idx;
+  // 🛡️ 2026-05-15: 정육 직원 entries 사라짐 사건 — SDK update 가 토큰 없으면
+  // 조용히 reject. 응답 안 보고 진행 → 사용자 입력 소실. 3중 보호:
+  //   1) localStorage 백업 먼저
+  //   2) SDK update — 실패하면 REST PUT 으로 한 번 더 (fb-auth-fetch 가 토큰 첨부)
+  //   3) 둘 다 실패 시 toast (alert 는 카메라 흐름 깨므로)
+  try {
+    const backup = JSON.parse(localStorage.getItem('tasks.entriesBackup') || '{}');
+    backup[backupKey] = { entries, ts: Date.now(), taskId, branchId, idx, date: todayStr() };
+    localStorage.setItem('tasks.entriesBackup', JSON.stringify(backup));
+  } catch(_){}
+  let ok = false;
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), { entries });
+    ok = true;
+  } catch(e) {
+    console.warn('[_writeEntries] SDK failed:', e?.message || e);
+  }
+  if (!ok) {
+    // REST 폴백 — fb-auth-fetch 가 익명/유저 토큰 자동 첨부
+    try {
+      const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+      const r = await fetch(`${FB}/${path}/entries.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entries),
+      });
+      ok = r.ok;
+      if (!r.ok) console.warn('[_writeEntries] REST failed:', r.status);
+    } catch(e2) {
+      console.warn('[_writeEntries] REST exception:', e2?.message || e2);
+    }
+  }
+  if (ok) {
+    // 성공 → backup 제거
+    try {
+      const backup = JSON.parse(localStorage.getItem('tasks.entriesBackup') || '{}');
+      delete backup[backupKey];
+      localStorage.setItem('tasks.entriesBackup', JSON.stringify(backup));
+    } catch(_){}
+  } else {
+    if (typeof showToast === 'function') {
+      showToast('⚠️ 서버 저장 실패', '로컬에 백업됨 — 새로고침 시 자동 재시도');
+    }
+  }
 }
+
+// 페이지 로드/visibility change 시 백업된 entries 재전송
+async function _retryEntriesBackup(){
+  let backup = {};
+  try { backup = JSON.parse(localStorage.getItem('tasks.entriesBackup') || '{}'); } catch(_){}
+  if (!Object.keys(backup).length) return;
+  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  let ok = 0, fail = 0;
+  for (const [key, item] of Object.entries(backup)) {
+    try {
+      const r = await fetch(`${FB}/tasks/${item.branchId}/${item.date}/${item.taskId}/checklist/${item.idx}/entries.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item.entries),
+      });
+      if (r.ok) { delete backup[key]; ok++; } else fail++;
+    } catch(_) { fail++; }
+  }
+  try { localStorage.setItem('tasks.entriesBackup', JSON.stringify(backup)); } catch(_){}
+  if (ok > 0) {
+    console.info('[tasks] 백업 entries', ok, '개 자동 복구');
+    if (typeof showToast === 'function') showToast('✅ 미저장 작업 ' + ok + '건 복구', '');
+  }
+}
+// 메모 백업도 같이 자동 복구
+async function _retryMemoBackup(){
+  let backup = {};
+  try { backup = JSON.parse(localStorage.getItem('tasks.memoBackup') || '{}'); } catch(_){}
+  if (!Object.keys(backup).length) return;
+  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  let ok = 0;
+  for (const [key, item] of Object.entries(backup)) {
+    try {
+      const r = await fetch(`${FB}/tasks/${item.branchId}/${item.date}/${item.taskId}/checklist/${item.idx}.json`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memo: item.memo, memoBy: item.memoBy, memoAt: item.memoAt }),
+      });
+      if (r.ok) { delete backup[key]; ok++; }
+    } catch(_){}
+  }
+  try { localStorage.setItem('tasks.memoBackup', JSON.stringify(backup)); } catch(_){}
+  if (ok > 0 && typeof showToast === 'function') showToast('✅ 미저장 메모 ' + ok + '건 복구', '');
+}
+
+// 페이지 로드 시 자동 실행
+setTimeout(() => { _retryEntriesBackup(); _retryMemoBackup(); }, 3000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { _retryEntriesBackup(); _retryMemoBackup(); }
+});
 
 // DOM 의 현재 입력 값까지 읽어서 live entries 배열을 만든다.
 // onchange 는 blur 에서만 발화하므로, 사용자가 입력 중이던 텍스트가
@@ -4464,17 +4558,45 @@ window.onClMemoInput = onClMemoInput;
 async function saveChecklistMemo(taskId, branchId, idx, value){
   if (!me) return;
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
+  const memoPayload = {
+    memo: (value||'').trim() || null,
+    memoBy: me.name,
+    memoAt: Date.now(),
+  };
+  // 🛡️ 2026-05-15: 메모도 entries 와 동일하게 localStorage 백업 + REST 폴백.
+  const backupKey = 'memo|' + branchId + '|' + todayStr() + '|' + taskId + '|' + idx;
   try {
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
-      memo: (value||'').trim() || null,
-      memoBy: me.name,
-      memoAt: Date.now(),
-    });
-    // 저장 성공 → 메모리 백업 비움
-    delete __PENDING_MEMO[taskId + '|' + idx];
+    const backup = JSON.parse(localStorage.getItem('tasks.memoBackup') || '{}');
+    backup[backupKey] = Object.assign({}, memoPayload, { taskId, branchId, idx, date: todayStr() });
+    localStorage.setItem('tasks.memoBackup', JSON.stringify(backup));
+  } catch(_){}
+  let ok = false;
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), memoPayload);
+    ok = true;
   } catch(e) {
-    console.warn('[saveChecklistMemo]', e);
-    alert('메모 저장 실패: ' + (e.message || e));
+    console.warn('[saveChecklistMemo] SDK failed:', e?.message || e);
+  }
+  if (!ok) {
+    try {
+      const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+      const r = await fetch(`${FB}/${path}.json`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(memoPayload),
+      });
+      ok = r.ok;
+    } catch(_){}
+  }
+  if (ok) {
+    delete __PENDING_MEMO[taskId + '|' + idx];
+    try {
+      const backup = JSON.parse(localStorage.getItem('tasks.memoBackup') || '{}');
+      delete backup[backupKey];
+      localStorage.setItem('tasks.memoBackup', JSON.stringify(backup));
+    } catch(_){}
+  } else {
+    if (typeof showToast === 'function') showToast('⚠️ 메모 서버 저장 실패', '로컬 백업됨 — 새로고침 시 자동 재시도');
   }
 }
 window.saveChecklistMemo = saveChecklistMemo;
