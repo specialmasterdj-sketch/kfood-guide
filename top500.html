@@ -713,27 +713,62 @@ function handleThumbError(img){
 window.handleThumbError = handleThumbError;
 
 async function savePhotoToDB(code, dataURL){
-  // 정규화된 키 + 원형 둘 다 PHOTOS 에 등록 — 다음 페이지 로드 전까지 즉시 반영
   const key = photoStorageKey(code);
+  // 🔍 옵션 C (2026-05-15): 이미 사진 있으면 누가/언제 올린지 확인 후 덮어쓰기 동의.
+  // 메타정보는 별도 path (/catalog/photoMeta/{key}) — 기존 dataURL 만 있는 row 와 호환.
+  let existingMeta = null;
+  try {
+    const mr = await fetch(`${FB_DB}/catalog/photoMeta/${encodeURIComponent(key)}.json?t=` + Date.now(), { cache:'no-store' });
+    if (mr.ok) existingMeta = await mr.json();
+  } catch(_){}
+  const existingDataUrl = PHOTOS[key] || PHOTOS[code];
+  if (existingDataUrl && String(existingDataUrl).startsWith('data:')) {
+    // 이미 누가 올린 사진 있음 — 확인 모달
+    const who = existingMeta && existingMeta.by ? existingMeta.by : '(이전 사용자)';
+    const where = existingMeta && existingMeta.branch ? existingMeta.branch : '?';
+    const when = existingMeta && existingMeta.ts
+      ? new Date(existingMeta.ts).toLocaleString('en-US', { timeZone:'America/New_York', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
+      : '시간 미상';
+    const ok = confirm(
+      '📷 이미 사진이 있습니다.\n\n' +
+      '· 올린 사람: ' + who + '\n' +
+      '· 지점: ' + where + '\n' +
+      '· 시간: ' + when + '\n\n' +
+      '교체하시겠습니까? (기존 사진은 사라집니다)'
+    );
+    if (!ok) return;   // 사용자가 취소 — 메모리도 안 건드림
+  }
+  // 정규화된 키 + 원형 둘 다 PHOTOS 에 등록 — 다음 페이지 로드 전까지 즉시 반영
   PHOTOS[code] = dataURL;
   PHOTOS[key] = dataURL;
-  // 🛡️ 2026-05-15: *항상* localStorage 먼저 저장 — RTDB 실패해도 데이터 무조건 살아남음.
+  const meta = {
+    by: (ME && ME.name) || '',
+    branch: BRANCH || '',
+    ts: Date.now(),
+  };
+  // 🛡️ *항상* localStorage 먼저 저장 — RTDB 실패해도 데이터 무조건 살아남음.
   try {
     const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
-    backup[key] = { dataURL, ts: Date.now() };
+    backup[key] = { dataURL, meta };
     localStorage.setItem('top500.photoBackup', JSON.stringify(backup));
   } catch(_){}
-  // 그 다음 RTDB 시도
-  let resp = null;
+  // 사진 본체 + 메타정보 동시 PUT
+  let resp = null, metaResp = null;
   try {
-    resp = await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dataURL)
-    });
+    [resp, metaResp] = await Promise.all([
+      fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dataURL)
+      }),
+      fetch(`${FB_DB}/catalog/photoMeta/${encodeURIComponent(key)}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(meta)
+      }),
+    ]);
   } catch(e) { resp = null; }
   if (resp && resp.ok) {
-    // RTDB 성공 — backup 에서 이 사진 제거
     try {
       const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
       delete backup[key];
@@ -990,15 +1025,20 @@ async function retryBackedUpWrites(){
   }
   try { localStorage.setItem('top500.stateBackup', JSON.stringify(stateBackup)); } catch(_){}
 
-  // (2) 사진 백업 재시도
+  // (2) 사진 백업 재시도 — 본체 + 메타정보 동시 push
   let photoBackup = {};
   try { photoBackup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}'); } catch(_){}
   let photoOk = 0, photoFail = 0;
   for (const [key, item] of Object.entries(photoBackup)) {
     try {
-      const r = await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
-        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.dataURL)
-      });
+      const [r, mr] = await Promise.all([
+        fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.dataURL)
+        }),
+        item.meta ? fetch(`${FB_DB}/catalog/photoMeta/${encodeURIComponent(key)}.json`, {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.meta)
+        }) : Promise.resolve({ ok: true }),
+      ]);
       if (r.ok) { photoOk++; delete photoBackup[key]; }
       else photoFail++;
     } catch(_) { photoFail++; }
