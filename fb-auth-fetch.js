@@ -98,21 +98,27 @@ onAuthStateChanged(auth, (user) => {
   __authResolved = true;
   if (__authReadyResolve) { __authReadyResolve(); __authReadyResolve = null; }
   if (!user) {
-    // chat.me 에 본인 uid 가 있는데도 currentUser 가 null 이면 = Firebase Auth
-    // IndexedDB 가 손실됨. auth-gate 가 8초 후 auth.html 로 redirect 함. 그
-    // 동안 signInAnonymously 하면 auth-gate 가 익명 사용자를 "pending approval"
-    // 로 보고 UI 막힘. 그래서 chat.me uid 있는 케이스는 손대지 않음.
-    let hasPriorAuth = false;
-    try {
-      const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
-      hasPriorAuth = !!(me && (me.uid || me.email));
-    } catch(_) {}
     const p = (location.pathname || '').toLowerCase();
     const isAuthPage = p.endsWith('/auth.html');
-    if (!hasPriorAuth && !isAuthPage) {
-      // 진짜 익명 방문자 (rewards 공개 페이지 등) — Firebase Auth SDK 가 토큰
-      // 받아야 RTDB onValue/get 호출도 동작.
+    // auth-gate 면제 페이지 — lookup.html 처럼 매니저 인증 없이 매장 직원/손님 모두
+    // 쓸 수 있는 공개 페이지. 여기서는 Firebase SDK 가 토큰 받아야 RTDB onValue 동작.
+    const isExempt = p.endsWith('/lookup.html');
+    if (isAuthPage) {
+      // 명시적 로그인 페이지 — 손대지 않음
+    } else if (isExempt) {
+      // 공개 페이지: SDK 토큰 필요. chat.me 상태 무관하게 익명 sign-in.
       signInAnonymously(auth).catch(e => console.warn('[fb-auth-fetch] anon sign-in failed', e));
+    } else {
+      // auth-gate 가 도는 페이지 — chat.me uid 있으면 auth-gate 가 redirect 처리.
+      // chat.me 없으면 진짜 익명 방문자 → 익명 sign-in.
+      let hasPriorAuth = false;
+      try {
+        const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+        hasPriorAuth = !!(me && (me.uid || me.email));
+      } catch(_) {}
+      if (!hasPriorAuth) {
+        signInAnonymously(auth).catch(e => console.warn('[fb-auth-fetch] anon sign-in failed', e));
+      }
     }
   }
   try { window.dispatchEvent(new Event('fb-auth-ready')); } catch (_) {}
