@@ -25,11 +25,22 @@
     const r = String(me.role).toUpperCase();
     return MGR_TOKENS.some(t => r.includes(t.toUpperCase()));
   }
-  // 🔒 급여 — 화이트리스트 인원만 (Firebase /config/payrollAccess 로 관리)
+  // 🔒 급여 — 화이트리스트 인원 OR 매니저급 role.
+  // 2026-05-15: H.Kim 케이스 — 이름 정규화 매치 실패해도 RTDB users/{uid}/role
+  // 이 MANAGER 이상이면 보임. 이름 변형 (Hyojoo Kim, Hojin Kim 등) 매번 추가
+  // 하는 대신 role-based 가드로 대체.
   function canSeePayroll(){
     const me = _loadMe();
     if (!me) return false;
-    return _payrollWhitelist.includes(_normName(me.name));
+    // 1순위: 화이트리스트 정확 매치
+    if (_payrollWhitelist.includes(_normName(me.name))) return true;
+    // 2순위: MANAGER/SUPERVISOR/OWNER/EXECUTIVE/ASSISTANT — RTDB role 매치
+    if (me.role) {
+      const r = String(me.role).toUpperCase();
+      const MGR_PAYROLL = ['OWNER','EXECUTIVE','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','SUPERVISOR','SUPERVISORA','감독'];
+      if (MGR_PAYROLL.some(t => r.includes(t))) return true;
+    }
+    return false;
   }
 
   const LINKS = [
