@@ -1363,6 +1363,29 @@ document.addEventListener('DOMContentLoaded', function(){
     var csel = document.getElementById('idPickCustom');
     if (me && me.branch) bsel.value = me.branch;
     csel.value = (me && me.name) || '';
+    // 🔒 2026-05-15: 비매니저 (스태프) 는 본인 지점만 — 다른 지점 못 고르게.
+    // 코럴 직원이 헐리우드 들어와서 입력하던 사건 해결.
+    // 매니저급은 다른 지점 참고할 수 있도록 그대로 둠.
+    var MGR_ROLES = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
+    var meIsMgr = me && _isMgrRoleSave && _isMgrRoleSave(me.role);
+    if (!meIsMgr && me && me.branch) {
+      bsel.disabled = true;
+      bsel.style.background = '#f3f4f6';
+      bsel.style.cursor = 'not-allowed';
+      bsel.title = '본인 지점만 사용 가능합니다. 변경하려면 매니저에게 문의하세요.';
+      // 지점 라벨 옆에 안내 추가 (중복 추가 방지)
+      var lbls = bsel.parentNode.querySelectorAll('label');
+      var brLbl = lbls && lbls[0];
+      if (brLbl && brLbl.dataset.lockNote !== '1') {
+        brLbl.dataset.lockNote = '1';
+        brLbl.innerHTML += ' <span style="color:#dc2626;font-weight:600;font-size:.85em">🔒 잠김</span>';
+      }
+    } else {
+      bsel.disabled = false;
+      bsel.style.background = '#fff';
+      bsel.style.cursor = 'pointer';
+      bsel.title = '';
+    }
     ov.style.display = 'flex';
     loadIdPickerNames();
   };
@@ -1459,6 +1482,16 @@ document.addEventListener('DOMContentLoaded', function(){
       var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
       var isExistingMgr = _isMgrRoleSave(existing.role);
       var isPickedMgr   = _isMgrRoleSave(pickedRole);
+      // 🔒 2026-05-15: 비매니저 — 본인 지점 외에는 저장 거부.
+      // dropdown 이 disabled 상태지만 DevTools 로 우회 가능성 차단.
+      if (!isExistingMgr && existing.branch && branch !== existing.branch) {
+        alert(({
+          ko:'⚠️ 본인 지점만 사용할 수 있습니다.\n다른 지점이 필요하면 매니저에게 문의하세요.',
+          en:'⚠️ Only your branch is allowed. Ask a manager if you need another.',
+          es:'⚠️ Solo tu sucursal está permitida. Habla con un gerente si necesitas otra.'
+        })[getLang()] || '본인 지점만 사용 가능');
+        return;
+      }
       // 🔐 SECURITY FIX (2026-05-14): 3중 차단 (한/영/스페인어 라벨 모두 매칭)
       // 1) role 사칭 — 매니저급 role 은 기존이 매니저였을 때만 허용
       // 2) dropdown 이름 사칭 — 매니저급 role 선택 거부

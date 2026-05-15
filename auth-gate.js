@@ -113,6 +113,22 @@ function syncToChatMe(profile){
     // 차단은 RTDB rules (users/{uid}/role write 권한) + apps.html identity
     // picker 의 매니저급 role 픽 거부로 처리.
     const authoritativeRole = profile.role || existing.role || '';
+    const isMgr = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(authoritativeRole);
+    // 🔒 2026-05-15: 비매니저(스태프)는 RTDB users/{uid}/branch 가 권위 —
+    // chat.me.branch 가 다르면 강제 보정. 코럴 직원이 헐리우드 들어가 입력하던
+    // 사건 해결. profile.branch === '*' 는 글로벌 admin(DJ/B.H.K) 한정으로만 의미.
+    let authoritativeBranch;
+    if (isMgr) {
+      // 매니저급은 다른 지점 참고 가능 — 기존 chat.me 우선
+      authoritativeBranch = existing.branch || (profile.branch === '*' ? 'HOLLYWOOD' : profile.branch) || 'HOLLYWOOD';
+    } else {
+      // 스태프 — RTDB profile.branch 강제. '*' 면 폴백.
+      authoritativeBranch = (profile.branch && profile.branch !== '*') ? profile.branch
+                          : (existing.branch || 'HOLLYWOOD');
+      if (existing.branch && existing.branch !== authoritativeBranch) {
+        console.warn('[auth-gate] 스태프 chat.me.branch (' + existing.branch + ') ≠ RTDB (' + authoritativeBranch + ') — 강제 보정');
+      }
+    }
     const next = {
       ...existing,
       uid: profile.uid,
@@ -120,9 +136,9 @@ function syncToChatMe(profile){
       name: finalName,
       status: profile.status || existing.status,
       role: authoritativeRole,
-      branch: existing.branch || (profile.branch === '*' ? 'HOLLYWOOD' : profile.branch) || 'HOLLYWOOD',
+      branch: authoritativeBranch,
       photoURL: profile.photoURL || existing.photoURL,
-      isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(authoritativeRole),
+      isManager: isMgr,
       authProvider: 'google',
     };
     localStorage.setItem('chat.me', JSON.stringify(next));
