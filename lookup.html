@@ -1890,6 +1890,29 @@ window.setBranch = function(id){
   if (id && id !== currentSub) subscribeProducts(id);
 };
 
+// 🛡️ 2026-05-15: SDK onValue 가 race 로 토큰 못 받아 빈 데이터 받는 사건 후 백업.
+// fb-auth-fetch 의 monkey-patch 가 익명 토큰 자동 첨부 → REST fetch 는 인증됨.
+// 페이지 로드 후 (auth ready 기다린 다음) 한 번 직접 REST 로 가져와 적용.
+async function initialRestFetchProducts(branchId) {
+  if (!branchId) return;
+  try {
+    // fb-auth-ready 기다려서 토큰 부착 보장
+    await new Promise(res => {
+      if (window.__authReady) return res();
+      window.addEventListener('fb-auth-ready', res, { once:true });
+      setTimeout(res, 4000);
+    });
+    const r = await fetch(`https://kimchi-mart-order-default-rtdb.firebaseio.com/products/${branchId}.json?cache=${Date.now()}`, { cache:'no-store' });
+    if (!r.ok) { console.warn('[initial-fetch] HTTP', r.status); return; }
+    const remote = await r.json();
+    if (!remote || (!remote.rows && typeof remote === 'object' && !Object.keys(remote).length)) return;
+    // onValue handler 와 같은 이벤트 발생 → PRODUCTS_DATA + badge 자동 갱신
+    window.dispatchEvent(new CustomEvent('products-override', { detail: { branchId, remote } }));
+    console.info('[initial-fetch] REST products applied:', remote.count || (remote.rows?.length||0), 'for', branchId);
+  } catch(e) { console.warn('[initial-fetch] failed:', e); }
+}
+if (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) initialRestFetchProducts(CURRENT_BRANCH);
+
 // One-shot fetch of every other branch's snapshot so the "전체 지점 비교" panel
 // shows real per-branch prices instead of repeating the current branch's
 // PRICE for every row. Cached in localStorage and the in-memory
