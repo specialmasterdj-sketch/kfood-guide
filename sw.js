@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v567';
+const CACHE = 'kmtools-v568';
 
 const CORE = [
   './',
@@ -61,14 +61,13 @@ self.addEventListener('activate', e => {
       .then(() => self.clients.claim())
       .then(() => self.clients.matchAll({ type: 'window' }))
       .then(clients => {
-        // Force every open page to reload itself once the new SW takes
-        // over. Both `navigate` (works in older pages without message
-        // listeners) and `postMessage` (newer planogram listens for it)
-        // are fired so stale UI/cache combinations resolve themselves
-        // without the user having to hard-refresh.
+        // Notify newer pages (v565+) so they can reload themselves.
+        // Older pages without the listener stay put — they'll pick up
+        // the new SW on their next manual reload. (navigate() removed
+        // because it caused blank-image flashes when the cache was
+        // cleared mid-flight.)
         for (const c of clients) {
           try { c.postMessage({ type: 'sw-updated' }); } catch (_) {}
-          try { c.navigate(c.url); } catch (_) {}
         }
       })
   );
