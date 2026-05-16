@@ -186,6 +186,9 @@ a{color:inherit;text-decoration:none}
 /* FORWARD */
 .fwd-btn{background:transparent;border:0;color:#0369a1;font-size:.8em;font-weight:600;cursor:pointer;padding:3px 8px;border-radius:6px;margin-top:6px;margin-left:4px}
 .fwd-btn:hover{background:#dbeafe}
+.translate-btn{background:transparent;border:0;color:#7c3aed;font-size:.8em;font-weight:600;cursor:pointer;padding:3px 8px;border-radius:6px;margin-top:6px;margin-left:4px}
+.translate-btn:hover{background:#ede9fe}
+.translate-btn:disabled{opacity:.6;cursor:wait}
 .fwd-from{font-size:.72em;color:#0369a1;background:#dbeafe;border-radius:6px;padding:3px 8px;margin-bottom:4px;display:inline-block;font-style:italic}
 .fwd-room-item{padding:10px 14px;border-bottom:1px solid #f3f4f6;cursor:pointer;transition:.1s}
 .fwd-room-item:hover{background:#f0fdf4}
@@ -1916,6 +1919,71 @@ function localizePayrollMessage(m){
   return m.text || '';
 }
 
+// 🌐 메시지 번역 헬퍼 — 한글/스페인어/영어 자동 감지 + viewer LANG 과 다르면 번역 버튼 표시.
+// MyMemory 무료 API 사용 (5000자 / 50k chars 일일 한도, API key 불필요).
+function detectMsgLang(text){
+  if (!text) return null;
+  const s = String(text);
+  if (/[ㄱ-힝가-힣]/.test(s)) return 'ko';
+  // 스페인어 특유 글자 → 영어와 구분
+  if (/[ñáéíóúüÑÁÉÍÓÚÜ¡¿]/.test(s)) return 'es';
+  if (/[a-zA-Z]/.test(s)) return 'en';
+  return null;
+}
+function needsTranslate(text){
+  if (!text || text.length < 4) return false;
+  const detected = detectMsgLang(text);
+  return detected && detected !== LANG;
+}
+const __TRANSLATE_CACHE = new Map();   // key: `${from}|${to}|${text}` → 번역 결과
+async function fetchTranslation(text, from, to){
+  const k = from + '|' + to + '|' + text;
+  if (__TRANSLATE_CACHE.has(k)) return __TRANSLATE_CACHE.get(k);
+  try {
+    const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text)
+              + '&langpair=' + from + '|' + to;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const out = (d && d.responseData && d.responseData.translatedText) || '';
+    if (out) __TRANSLATE_CACHE.set(k, out);
+    return out;
+  } catch (e) {
+    console.warn('[translate] failed', e);
+    return '';
+  }
+}
+window.translateMessage = async function(msgId, btn){
+  const row = document.querySelector('.msg[data-msg-id="' + msgId + '"]');
+  if (!row) return;
+  const txtEl = row.querySelector('.text');
+  if (!txtEl) return;
+  const showingOriginal = !txtEl.dataset.translatedText;
+  if (!showingOriginal){
+    // 토글 — 원본으로 복귀
+    if (txtEl.dataset.original){
+      txtEl.innerHTML = linkifyText(txtEl.dataset.original);
+      delete txtEl.dataset.translatedText;
+      btn.textContent = '🌐 ' + ({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate');
+    }
+    return;
+  }
+  const text = txtEl.dataset.original || txtEl.textContent || '';
+  const from = detectMsgLang(text) || 'auto';
+  const labels = {ko:'번역 중...', en:'Translating...', es:'Traduciendo...'};
+  btn.textContent = '⏳ ' + (labels[LANG]||labels.en);
+  btn.disabled = true;
+  const translated = await fetchTranslation(text, from, LANG);
+  btn.disabled = false;
+  if (!translated){
+    btn.textContent = '⚠️ ' + ({ko:'번역 실패',en:'Translation failed',es:'Error de traducción'}[LANG]||'failed');
+    return;
+  }
+  txtEl.innerHTML = linkifyText(translated) + ' <span style="font-size:.72em;color:#9ca3af">· ' + ({ko:'번역됨',en:'translated',es:'traducido'}[LANG]||'translated') + '</span>';
+  txtEl.dataset.translatedText = translated;
+  btn.textContent = '↩ ' + ({ko:'원본',en:'Original',es:'Original'}[LANG]||'Original');
+};
+
 function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
@@ -1974,18 +2042,21 @@ function renderMessages(){
     const dateBadgeHtml = dateBadge ? ` <span class="date-badge">${escapeHtml(dateBadge)}</span>` : '';
     // payroll 룸 메시지 — viewer 언어로 동적 재포맷 (옛 메시지의 한국어 텍스트도 localize)
     const localizedText = localizePayrollMessage(m);
+    const translateBtn = needsTranslate(localizedText)
+      ? `<button class="translate-btn" onclick="translateMessage('${m.id}', this)" title="${({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate')}">🌐 ${({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate')}</button>`
+      : '';
     html += `<div class="msg ${mine?'mine':''}" data-msg-id="${m.id}">
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
         ${delBtn}
         <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}${dateBadgeHtml}</div>
         ${refCard}
-        ${localizedText ? `<div class="text">${linkifyText(localizedText)}</div>` : ''}
+        ${localizedText ? `<div class="text" data-original="${escapeHtml(localizedText)}">${linkifyText(localizedText)}</div>` : ''}
         ${photoHtml}
         ${fileHtml}
         <div class="ts">${time}</div>
         ${rxnHtml}
-        ${renderReplies(m)}${fwdBtn}
+        ${renderReplies(m)}${fwdBtn}${translateBtn}
       </div>
     </div>`;
   }
