@@ -191,8 +191,35 @@ function initTabs(){
 // /users/{uid} → { name, email, role, branch }
 let USERS = {};                  // uid → profile
 let NAME_TO_PROFILE = new Map(); // name(lower) → profile (best-effort match for chat senders)
+// 🔧 2026-05-15: schedules/{branch}/employees 를 권위 source 로 사용.
+// task hint 따라 branch 잘못 박히던 사건 (Anderson Godoy 가 HOLLYWOOD 인데
+// 코럴/마이애미로 표시) 해결. 같은 이름이 여러 매장에 있으면 첫번째 매장으로.
+let NAME_TO_BRANCH = new Map();  // name(normalized, no spaces, uppercase) → branchId
+function _normForBranchLookup(s){
+  return String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9_가-힣]/g,'');
+}
+async function loadBranchEmployees(){
+  const aq = await authParam();
+  NAME_TO_BRANCH.clear();
+  await Promise.all(BRANCHES.map(async b => {
+    try {
+      const r = await fetch(`${FB_DB}/schedules/${b.id}/employees.json${aq}`, { cache:'no-store' });
+      if (!r.ok) return;
+      const arr = await r.json();
+      if (!Array.isArray(arr)) return;
+      arr.forEach(e => {
+        if (!e || !e.name) return;
+        const key = _normForBranchLookup(e.name);
+        if (key && !NAME_TO_BRANCH.has(key)) NAME_TO_BRANCH.set(key, b.id);
+      });
+    } catch(_){}
+  }));
+  console.info('[lb] schedules NAME_TO_BRANCH ready —', NAME_TO_BRANCH.size, 'employees mapped');
+}
 async function loadUsers(){
   const aq = await authParam();
+  // schedules 기반 매장 매핑 먼저
+  await loadBranchEmployees();
   const r = await fetch(`${FB_DB}/users.json${aq}`, { cache: 'no-store' });
   if (!r.ok) { USERS = {}; return; }
   const d = await r.json();
@@ -226,13 +253,18 @@ const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskC
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
-  if (!agg[k]) agg[k] = Object.assign({ name: k, branch: branchHint || '', color: color || '' }, _DEFAULT_ROW());
+  // 🔧 2026-05-15: 우선순위 1 — schedules/{branch}/employees 에 등록된 매장 (권위).
+  //   같은 이름이 다른 매장 task 를 도와줘도 본인 등록 매장으로 표시.
+  // 우선순위 2 — users/{uid}.branch
+  // 우선순위 3 — branchHint (task.branchId / senderBranch)
+  const schedBranch = NAME_TO_BRANCH.get(_normForBranchLookup(k));
+  const usersProfile = NAME_TO_PROFILE.get(k.toLowerCase());
+  const usersBranch = (usersProfile && usersProfile.branch && usersProfile.branch !== '*') ? usersProfile.branch : null;
+  const authoritativeBranch = schedBranch || usersBranch || branchHint || '';
+  if (!agg[k]) agg[k] = Object.assign({ name: k, branch: authoritativeBranch, color: color || '' }, _DEFAULT_ROW());
   agg[k][key] = (agg[k][key] || 0) + n;
-  // Resolve / update branch from /users if missing
-  if (!agg[k].branch || agg[k].branch === '?') {
-    const p = NAME_TO_PROFILE.get(k.toLowerCase());
-    if (p && p.branch && p.branch !== '*') agg[k].branch = p.branch;
-  }
+  // 권위 branch 가 있으면 항상 그걸로 — task hint 가 다른 매장이었어도 무시
+  if (schedBranch || usersBranch) agg[k].branch = authoritativeBranch;
 }
 function colorFor(name){
   let h = 0; for (const c of (name||'')) h = (h * 31 + c.charCodeAt(0)) >>> 0;
