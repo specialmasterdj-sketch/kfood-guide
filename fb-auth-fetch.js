@@ -124,6 +124,72 @@ onAuthStateChanged(auth, (user) => {
   try { window.dispatchEvent(new Event('fb-auth-ready')); } catch (_) {}
 });
 
+// 🍎 iOS PWA revive — 백그라운드 갔다 돌아올 때 / 네트워크 끊겼다 복귀할 때
+// Firebase Auth 토큰 만료 + RTDB WebSocket 끊김 + localStorage ITP 만료 등
+// "가끔 작동 안 됨" 사건들의 가장 큰 원인. 다음 이벤트들에 자동 재활성화:
+//   · visibilitychange (visible)   — 폰 잠금 풀거나 다른 앱에서 돌아왔을 때
+//   · focus                          — 다른 탭에서 돌아왔을 때 (PC + iPadOS)
+//   · online                         — 네트워크 다시 연결됐을 때
+//   · iOS standalone PWA 4분마다 — 토큰 만료 (1시간) 직전 자동 갱신
+// throttle: 90초 안에 같은 revive 중복 방지 (한 이벤트가 여러 번 발화해도 1회만)
+let __lastRevive = 0;
+let __reviveInflight = false;
+async function _revive(why){
+  const now = Date.now();
+  if (__reviveInflight) return;
+  if (now - __lastRevive < 90 * 1000) return;   // 90초 throttle
+  __lastRevive = now;
+  __reviveInflight = true;
+  try {
+    const u = auth.currentUser;
+    if (u) {
+      // 토큰 강제 갱신 — 만료 임박해도 OK
+      try { await u.getIdToken(true); } catch (e) { console.warn('[fb-auth] token refresh failed', e); }
+    } else {
+      // currentUser 잃었으면 익명 가입 fallback (auth.html 제외)
+      const p = (location.pathname || '').toLowerCase();
+      if (!p.endsWith('/auth.html')) {
+        let hasPriorAuth = false;
+        try {
+          const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+          hasPriorAuth = !!(me && (me.uid || me.email));
+        } catch (_) {}
+        if (!hasPriorAuth || p.endsWith('/lookup.html')) {
+          try { await signInAnonymously(auth); } catch (e) { console.warn('[fb-auth] anon sign-in failed', e); }
+        }
+      }
+    }
+    // SW 업데이트 체크 — 새 코드 있으면 다음 페이지 로드 때 적용
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        try { await reg.update(); } catch (_) {}
+      }
+    } catch (_) {}
+    // 페이지에게 알림 — RTDB onValue 재구독, 데이터 새로고침 등 필요한 작업
+    try { window.dispatchEvent(new CustomEvent('fb-auth-revived', { detail: { why, ts: now } })); } catch (_) {}
+    console.info('[fb-auth-fetch] revived (' + why + ')');
+  } finally {
+    __reviveInflight = false;
+  }
+}
+
+// 이벤트 핸들러
+const _isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent || '');
+const _isStandalone = (typeof navigator !== 'undefined' && navigator.standalone === true)
+                   || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _revive('visibility');
+});
+window.addEventListener('focus', () => _revive('focus'));
+window.addEventListener('online', () => _revive('online'));
+// iOS PWA — 더 적극적으로 4분마다 토큰 갱신 (Firebase 토큰 1시간 만료, 미리 갱신)
+if (_isIOS || _isStandalone) {
+  setInterval(() => {
+    if (document.visibilityState === 'visible') _revive('ios-periodic');
+  }, 4 * 60 * 1000);
+}
+
 // When the service worker activates a new version it posts {type:'sw-updated'}
 // to every open client. Reload the page once so the user sees the new HTML/JS
 // immediately instead of having to close + reopen the PWA. Guarded with a
