@@ -470,6 +470,11 @@ a{color:inherit;text-decoration:none}
       <input id="searchInput" type="text" placeholder="이 방에서 검색…" oninput="applySearch()">
       <button class="close" onclick="toggleSearch()" title="닫기">✕</button>
     </div>
+    <!-- 자동 번역 토글 — viewer 의 LANG 과 다른 언어 메시지를 자동으로 번역해서 보여줌. -->
+    <div id="autoTranslateBar" style="display:none;background:#faf5ff;border-bottom:1px solid #ede9fe;padding:6px 12px;align-items:center;justify-content:space-between;gap:8px">
+      <button id="autoTranslateBtn" type="button" onclick="setAutoTranslate(!AUTO_TRANSLATE)" style="background:transparent;color:#7c3aed;border:1px solid #c4b5fd;border-radius:14px;padding:5px 14px;font-size:.82em;font-weight:700;cursor:pointer">🌐 자동 번역 OFF</button>
+      <span style="font-size:.72em;color:#7c3aed">한국어/영어/스페인어 자동 감지</span>
+    </div>
     <!-- Date filter — only visible in the '유통기한/파손' room so managers
          can browse one day at a time and see who did how much each day. -->
     <div id="dailyFilterBar" style="display:none;background:#f0fdf4;border-bottom:1px solid #bbf7d0;padding:8px 12px;align-items:center;gap:6px;flex-wrap:wrap">
@@ -1921,6 +1926,28 @@ function localizePayrollMessage(m){
 
 // 🌐 메시지 번역 헬퍼 — 한글/스페인어/영어 자동 감지 + viewer LANG 과 다르면 번역 버튼 표시.
 // MyMemory 무료 API 사용 (5000자 / 50k chars 일일 한도, API key 불필요).
+// 2026-05-16: 클릭 안 해도 자동 번역하는 AUTO_TRANSLATE 모드 추가.
+let AUTO_TRANSLATE = (function(){
+  try { return localStorage.getItem('chat.autoTranslate') === '1'; } catch(_){ return false; }
+})();
+function setAutoTranslate(on){
+  AUTO_TRANSLATE = !!on;
+  try { localStorage.setItem('chat.autoTranslate', on ? '1' : '0'); } catch(_){}
+  const btn = document.getElementById('autoTranslateBtn');
+  if (btn) updateAutoTranslateBtn();
+  if (typeof renderMessages === 'function') renderMessages();
+}
+function updateAutoTranslateBtn(){
+  const btn = document.getElementById('autoTranslateBtn');
+  if (!btn) return;
+  const labels = {
+    on:  {ko:'🌐 자동 번역 ON', en:'🌐 Auto-translate ON', es:'🌐 Traducción auto. ON'},
+    off: {ko:'🌐 자동 번역 OFF', en:'🌐 Auto-translate OFF', es:'🌐 Traducción auto. OFF'},
+  };
+  btn.textContent = AUTO_TRANSLATE ? (labels.on[LANG]||labels.on.en) : (labels.off[LANG]||labels.off.en);
+  btn.style.background = AUTO_TRANSLATE ? '#7c3aed' : '';
+  btn.style.color = AUTO_TRANSLATE ? '#fff' : '';
+}
 function detectMsgLang(text){
   if (!text) return null;
   const s = String(text);
@@ -1934,6 +1961,28 @@ function needsTranslate(text){
   if (!text || text.length < 4) return false;
   const detected = detectMsgLang(text);
   return detected && detected !== LANG;
+}
+// 렌더 후 자동 번역 실행 — AUTO_TRANSLATE 가 켜져있을 때만.
+// 한 번에 너무 많이 API 호출하지 않게 순차 처리.
+async function applyAutoTranslate(){
+  if (!AUTO_TRANSLATE) return;
+  const els = document.querySelectorAll('.msg .text[data-original]');
+  for (const el of els){
+    if (el.dataset.translatedText) continue;   // 이미 번역됨
+    const text = el.dataset.original || '';
+    const from = detectMsgLang(text);
+    if (!from || from === LANG) continue;
+    const translated = await fetchTranslation(text, from, LANG);
+    if (!translated) continue;
+    el.innerHTML = linkifyText(translated) + ' <span style="font-size:.72em;color:#9ca3af">· ' + ({ko:'번역됨',en:'translated',es:'traducido'}[LANG]||'translated') + '</span>';
+    el.dataset.translatedText = translated;
+    // 같은 메시지의 번역 버튼도 'Original' 토글 상태로
+    const row = el.closest('.msg');
+    if (row){
+      const btn = row.querySelector('.translate-btn');
+      if (btn) btn.textContent = '↩ ' + ({ko:'원본',en:'Original',es:'Original'}[LANG]||'Original');
+    }
+  }
 }
 const __TRANSLATE_CACHE = new Map();   // key: `${from}|${to}|${text}` → 번역 결과
 async function fetchTranslation(text, from, to){
@@ -2067,6 +2116,14 @@ function renderMessages(){
   });
   if (wasNearBottom) cont.scrollTop = cont.scrollHeight;
   else cont.scrollTop = prevScrollTop;
+  // 자동 번역 토글바 — 채팅방에 진입했고 viewer LANG 이 ko 외이거나 메시지가 있는 경우
+  const atBar = document.getElementById('autoTranslateBar');
+  if (atBar){
+    atBar.style.display = (ACTIVE_ROOM && MSGS.length > 0) ? 'flex' : 'none';
+    updateAutoTranslateBtn();
+  }
+  // 자동 번역 적용 (비동기)
+  applyAutoTranslate().catch(e => console.warn('[autoTranslate]', e));
 }
 // 시간만 (HH:MM) — 시간은 항상 메시지 하단에 단독 표시
 function fmtMsgTime(d){
