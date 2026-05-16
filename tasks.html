@@ -4156,13 +4156,24 @@ function detectNewTasks(){
   });
 }
 // Detect newly delayed tasks for managers (per minute tick)
+// 2026-05-16: 첫 실행 (페이지 로드 직후) 에는 이미 지연된 업무들에 대해 토스트를 발사하지 않음.
+// 이전엔 LAST_DELAYED 가 빈 Set 으로 시작해 → 첫 tick 에 모든 지연 업무가 "신규" 로 잡혀
+// 10+개 토스트가 한꺼번에 도배되는 현상. 페이지 열리는 그 순간 새로 발생한 지연이 아니라
+// 그 이후 새로 지연된 것만 알려야 매니저가 진짜 변화를 인지함.
 let LAST_DELAYED = new Set();
+let _DELAY_INIT_DONE = false;
 function detectDelays(){
   if (!me) return;
   const showMgr = isManager(me.role) || isOwner();
   if (!showMgr) return;
   const nowDelayed = new Set();
   TASKS.forEach(t => { if (computeStatus(t) === 'delayed' && !t.completedAt) nowDelayed.add(t.branchId+'/'+t.id); });
+  // 첫 실행 — baseline 만 잡고 토스트 발사 안 함
+  if (!_DELAY_INIT_DONE){
+    LAST_DELAYED = nowDelayed;
+    _DELAY_INIT_DONE = true;
+    return;
+  }
   nowDelayed.forEach(k => {
     if (!LAST_DELAYED.has(k)) {
       const t = TASKS.find(x => x.branchId+'/'+x.id === k);
