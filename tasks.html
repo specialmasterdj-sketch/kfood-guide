@@ -811,7 +811,11 @@ button{font-family:inherit;cursor:pointer}
          23+ 벤더 목록 (kimchi-mart-order 와 동기화). 선택값은 task.vendor 로 저장. -->
     <div class="field" id="vendorField" style="display:none">
       <label id="aVendorLbl">📦 <span id="aVendorLblTxt">벤더 (주문할 거래처)</span></label>
-      <select id="aVendor" style="width:100%">
+      <div style="display:flex;gap:4px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px">
+        <button type="button" onclick="addNewVendor()" title="새 벤더 추가" style="background:#0891b2;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:800;cursor:pointer;white-space:nowrap">＋ 벤더</button>
+        <button type="button" id="aVendorDelete" onclick="rmVendorFromSelect()" title="이 벤더를 목록에서 삭제 (매장 추가 항목만)" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:700;cursor:pointer;white-space:nowrap">삭제</button>
+      </div>
+      <select id="aVendor" onchange="updateVendorEditButton()" style="width:100%">
         <option value="">— 벤더 선택 / Select vendor —</option>
         <option value="Rhee Bros">Rhee Bros</option>
         <option value="Seoul Trading">Seoul Trading</option>
@@ -831,6 +835,7 @@ button{font-family:inherit;cursor:pointer}
         <option value="Lucky 8 Trading">Lucky 8 Trading</option>
         <option value="Walong Marketing">Walong Marketing</option>
         <option value="Eastern Wine">Eastern Wine</option>
+        <option value="Eastland">Eastland</option>
         <option value="Link">Link</option>
         <option value="Pocas">Pocas</option>
         <option value="FAF">FAF</option>
@@ -1732,6 +1737,112 @@ async function rmPlaceFromSelect(){
 window.addNewPlace = addNewPlace;
 window.rmPlaceFromSelect = rmPlaceFromSelect;
 window.updatePlaceEditButtons = updatePlaceEditButtons;
+
+// ============= 📦 커스텀 벤더 (매니저 직접 추가) =============
+// RTDB /taskVendors/global (전 매장 공유) + localStorage 백업.
+// 매니저가 [+ 벤더] 누르면 prompt 입력 → 저장 → 즉시 dropdown 노출.
+let __CUSTOM_VENDORS = [];
+async function loadCustomVendors(){
+  try {
+    // 로컬 캐시 먼저 (오프라인 / RTDB 권한 없어도 동작)
+    try {
+      const cached = JSON.parse(localStorage.getItem('tasks.customVendors') || '[]');
+      if (Array.isArray(cached)) __CUSTOM_VENDORS = cached.filter(Boolean);
+    } catch(_){}
+    // RTDB 동기화 시도 (공유)
+    try {
+      const r = await fetch(`${FB_DB_URL}/taskVendors/global.json?t=`+Date.now(), { cache:'no-store' });
+      if (r.ok) {
+        const list = await r.json();
+        if (Array.isArray(list)) {
+          __CUSTOM_VENDORS = list.filter(Boolean);
+          try { localStorage.setItem('tasks.customVendors', JSON.stringify(__CUSTOM_VENDORS)); } catch(_){}
+        }
+      }
+    } catch(_){}
+    // dropdown 에 ★ 마크 추가
+    const sel = document.getElementById('aVendor');
+    if (!sel) return;
+    // 기존 ★ 옵션 제거 후 다시 추가
+    Array.from(sel.options).forEach(o => {
+      if ((o.textContent||'').startsWith('★ ')) o.remove();
+    });
+    const existing = new Set(Array.from(sel.options).map(o => o.value.toLowerCase()));
+    const lastOpt = sel.querySelector('option[value="기타 / Other"]');
+    __CUSTOM_VENDORS.forEach(name => {
+      if (!name || existing.has(name.toLowerCase())) return;
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = '★ ' + name;
+      if (lastOpt) sel.insertBefore(opt, lastOpt);
+      else sel.appendChild(opt);
+    });
+  } catch(e){ console.warn('[loadCustomVendors]', e); }
+}
+function updateVendorEditButton(){
+  const sel = document.getElementById('aVendor');
+  const delBtn = document.getElementById('aVendorDelete');
+  if (!sel || !delBtn) return;
+  delBtn.style.display = (sel.value && __CUSTOM_VENDORS.includes(sel.value)) ? '' : 'none';
+}
+async function addNewVendor(){
+  const ph = (LANG==='en') ? 'New vendor name (e.g. Eastland Food)'
+          : (LANG==='es') ? 'Nombre del proveedor (ej: Eastland Food)'
+          :                 '새 벤더 이름 (예: Eastland Food)';
+  const name = (prompt(ph) || '').trim();
+  if (!name) return;
+  const sel = document.getElementById('aVendor');
+  const existing = new Set(Array.from(sel.options).map(o => o.value.toLowerCase()));
+  if (existing.has(name.toLowerCase())) {
+    alert((LANG==='en'?'Already exists':LANG==='es'?'Ya existe':'이미 있는 벤더입니다'));
+    sel.value = Array.from(sel.options).find(o => o.value.toLowerCase() === name.toLowerCase())?.value || '';
+    updateVendorEditButton();
+    return;
+  }
+  // localStorage 즉시 저장 + dropdown 갱신 (RTDB 실패해도 동작)
+  if (!__CUSTOM_VENDORS.includes(name)) __CUSTOM_VENDORS.push(name);
+  try { localStorage.setItem('tasks.customVendors', JSON.stringify(__CUSTOM_VENDORS)); } catch(_){}
+  const opt = document.createElement('option');
+  opt.value = name;
+  opt.textContent = '★ ' + name;
+  const lastOpt = sel.querySelector('option[value="기타 / Other"]');
+  if (lastOpt) sel.insertBefore(opt, lastOpt); else sel.appendChild(opt);
+  sel.value = name;
+  updateVendorEditButton();
+  // RTDB 동기화 시도 (전 매장 공유) — 실패해도 사용자는 이미 사용 가능
+  try {
+    await fetch(`${FB_DB_URL}/taskVendors/global.json`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(__CUSTOM_VENDORS)
+    });
+  } catch(e){ console.warn('[addNewVendor] RTDB sync failed (local only)', e); }
+}
+async function rmVendorFromSelect(){
+  const sel = document.getElementById('aVendor');
+  if (!sel) return;
+  const name = sel.value;
+  if (!name || !__CUSTOM_VENDORS.includes(name)) return;
+  const msg = (LANG==='en') ? `Delete '${name}' from vendor list?`
+           : (LANG==='es') ? `¿Eliminar '${name}'?`
+           :                 `'${name}' 벤더 목록에서 삭제할까요?`;
+  if (!confirm(msg)) return;
+  __CUSTOM_VENDORS = __CUSTOM_VENDORS.filter(v => v !== name);
+  try { localStorage.setItem('tasks.customVendors', JSON.stringify(__CUSTOM_VENDORS)); } catch(_){}
+  // dropdown 에서도 제거
+  Array.from(sel.options).forEach(o => { if (o.value === name) o.remove(); });
+  sel.value = '';
+  updateVendorEditButton();
+  // RTDB 동기화
+  try {
+    await fetch(`${FB_DB_URL}/taskVendors/global.json`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(__CUSTOM_VENDORS)
+    });
+  } catch(_){}
+}
+window.addNewVendor = addNewVendor;
+window.rmVendorFromSelect = rmVendorFromSelect;
+window.updateVendorEditButton = updateVendorEditButton;
 async function saveCustomPlace(name){
   if (!name || !me || !me.branch) return;
   try {
@@ -6407,6 +6518,8 @@ async function openAssignModal(){
   // — 발송 대상 매장 (branchSel.value) 기준. 처음 모달 열 때도 마이애미 발송이면
   // 마이애미 빌트인 25개 노출되도록 파라미터 명시.
   try { await loadCustomPlaces(branchSel.value); } catch(_){}
+  // 📦 매니저가 추가한 커스텀 벤더 (전 매장 공유, ★ 표시)
+  try { await loadCustomVendors(); } catch(_){}
   document.getElementById('assignOv').classList.add('show');
 }
 
