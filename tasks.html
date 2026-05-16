@@ -1571,35 +1571,51 @@ const BUILTIN_PLACES_BY_BRANCH = {
   'MIAMI': MIAMI_BUILTIN_PLACES,
 };
 
+// 정적 HTML 옵션 (1번~7번 통로 등 헐리우드 기준) 의 원본 백업.
+// 매장 변경 시 빌트인 매장 (마이애미 등) 으로 가면 정적 옵션 제거 → 다시
+// 빌트인 없는 매장으로 돌아오면 정적 옵션 복원. 첫 호출 시 1회만 백업.
+let __STATIC_PLACES_HTML = null;
+function _backupStaticPlaces(){
+  const sel = document.getElementById('aDisplayPlace');
+  if (sel && __STATIC_PLACES_HTML === null) __STATIC_PLACES_HTML = sel.innerHTML;
+}
+
 async function loadCustomPlaces(targetBranch){
   // targetBranch 파라미터 우선 — 발송 대상 매장 기준. 없으면 me.branch fallback.
   const branchForPlaces = targetBranch || (me && me.branch);
   if (!branchForPlaces) return;
   try {
-    // 🧹 기존에 추가된 동적 옵션 (🏢 빌트인 / ★ 매장 추가) 제거 — 새 매장 옵션으로 갱신
+    _backupStaticPlaces();   // 1회만 백업
     const selX = document.getElementById('aDisplayPlace');
-    if (selX) {
+    if (!selX) return;
+    const hasBuiltin = !!(BUILTIN_PLACES_BY_BRANCH[branchForPlaces] && BUILTIN_PLACES_BY_BRANCH[branchForPlaces].length);
+    // 현재 선택값 보존 — 갱신 후 복원 시도
+    const prevValue = selX.value;
+    if (hasBuiltin) {
+      // 🏢 빌트인 매장 (마이애미) — 정적 옵션 다 제거 후 default + __custom__ 만 유지
+      const keepValues = new Set(['', '__custom__']);
       Array.from(selX.options).forEach(o => {
-        const t = o.textContent || '';
-        if (t.startsWith('🏢 ') || t.startsWith('★ ')) o.remove();
+        if (!keepValues.has(o.value)) o.remove();
       });
+    } else {
+      // 빌트인 없는 매장 (헐리우드/코럴/라스올라스/펨브로크) — 정적 옵션 복원 + 동적만 제거
+      if (__STATIC_PLACES_HTML !== null) selX.innerHTML = __STATIC_PLACES_HTML;
     }
-    // 🏢 지점별 빌트인 장소 먼저 추가 (RTDB 권한 없어도 동작)
+    // 선택값 복원 (이전 선택이 새 옵션 list 에 있으면)
+    try { if (prevValue && Array.from(selX.options).some(o => o.value === prevValue)) selX.value = prevValue; } catch(_){}
+    // 🏢 지점별 빌트인 장소 추가 (마이애미만)
     const builtin = BUILTIN_PLACES_BY_BRANCH[branchForPlaces] || [];
     if (builtin.length) {
-      const sel0 = document.getElementById('aDisplayPlace');
-      if (sel0) {
-        const existing0 = new Set(Array.from(sel0.options).map(o => o.value));
-        const customOpt0 = sel0.querySelector('option[value="__custom__"]');
-        builtin.forEach(name => {
-          if (existing0.has(name)) return;
-          const opt = document.createElement('option');
-          opt.value = name;
-          opt.textContent = '🏢 ' + name;   // 빌트인은 🏢 마크
-          if (customOpt0) sel0.insertBefore(opt, customOpt0);
-          else sel0.appendChild(opt);
-        });
-      }
+      const existing0 = new Set(Array.from(selX.options).map(o => o.value));
+      const customOpt0 = selX.querySelector('option[value="__custom__"]');
+      builtin.forEach(name => {
+        if (existing0.has(name)) return;
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = '🏢 ' + name;
+        if (customOpt0) selX.insertBefore(opt, customOpt0);
+        else selX.appendChild(opt);
+      });
     }
     const r = await fetch(`${FB_DB_URL}/taskPlaces/${branchForPlaces}.json?t=`+Date.now(), { cache:'no-store' });
     if (!r.ok) { __BRANCH_PLACES = []; return; }
