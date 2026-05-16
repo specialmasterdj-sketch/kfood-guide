@@ -68,7 +68,7 @@ const TASKS = [
         es: 'BEEF / PORK / CHICKEN / Marinado / Limpieza — adjunta foto + memo breve por ítem',
       },
       checklist: TPL.meat,
-      autoMeatDaily: true, noAutoChat: true, points: 3,
+      autoMeatDaily: true, points: 3,
     },
   },
   { key:'kfood',
