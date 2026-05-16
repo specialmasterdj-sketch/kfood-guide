@@ -1571,11 +1571,21 @@ const BUILTIN_PLACES_BY_BRANCH = {
   'MIAMI': MIAMI_BUILTIN_PLACES,
 };
 
-async function loadCustomPlaces(){
-  if (!me || !me.branch) return;
+async function loadCustomPlaces(targetBranch){
+  // targetBranch 파라미터 우선 — 발송 대상 매장 기준. 없으면 me.branch fallback.
+  const branchForPlaces = targetBranch || (me && me.branch);
+  if (!branchForPlaces) return;
   try {
+    // 🧹 기존에 추가된 동적 옵션 (🏢 빌트인 / ★ 매장 추가) 제거 — 새 매장 옵션으로 갱신
+    const selX = document.getElementById('aDisplayPlace');
+    if (selX) {
+      Array.from(selX.options).forEach(o => {
+        const t = o.textContent || '';
+        if (t.startsWith('🏢 ') || t.startsWith('★ ')) o.remove();
+      });
+    }
     // 🏢 지점별 빌트인 장소 먼저 추가 (RTDB 권한 없어도 동작)
-    const builtin = BUILTIN_PLACES_BY_BRANCH[me.branch] || [];
+    const builtin = BUILTIN_PLACES_BY_BRANCH[branchForPlaces] || [];
     if (builtin.length) {
       const sel0 = document.getElementById('aDisplayPlace');
       if (sel0) {
@@ -1591,7 +1601,7 @@ async function loadCustomPlaces(){
         });
       }
     }
-    const r = await fetch(`${FB_DB_URL}/taskPlaces/${me.branch}.json?t=`+Date.now(), { cache:'no-store' });
+    const r = await fetch(`${FB_DB_URL}/taskPlaces/${branchForPlaces}.json?t=`+Date.now(), { cache:'no-store' });
     if (!r.ok) { __BRANCH_PLACES = []; return; }
     const list = await r.json();
     __BRANCH_PLACES = Array.isArray(list) ? list.filter(Boolean) : [];
@@ -6358,6 +6368,8 @@ async function onAssignBranchChange(){
   const branchId = branchSel.value;
   window.__ASSIGN_BRANCH = branchId;   // 다음 모달 열 때 default 로 기억
   await loadAssignEmployees(branchId);
+  // 🏢 발송 대상 매장 기준으로 places dropdown 도 갱신
+  try { await loadCustomPlaces(branchId); } catch(_){}
 }
 window.onAssignBranchChange = onAssignBranchChange;
 
