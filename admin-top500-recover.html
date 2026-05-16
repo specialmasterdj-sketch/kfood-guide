@@ -6,6 +6,7 @@
 <title>Top500 복구 도구 — 긴급</title>
 <meta name="theme-color" content="#dc2626">
 <script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<script src="./km-storage.js?v=1"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#fef2f2;padding:14px;color:#0f172a;font-size:14px;padding-bottom:80px}
@@ -67,6 +68,21 @@ select,input{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-fa
       <button class="btn warn" onclick="exportLocalBackup()">💾 JSON 다운로드 (안전 백업)</button>
       <button class="btn" onclick="forceSyncToRTDB()">⬆️ RTDB 로 강제 동기화</button>
     </div>
+  </div>
+
+  <!-- ②.5 IndexedDB 백업 검사 -->
+  <div class="section">
+    <h2>②-B IndexedDB 백업 검사 <span id="idbBadge" class="badge">확인 중...</span></h2>
+    <div id="idbInfo" class="kv"></div>
+    <pre id="idbPreview"></pre>
+  </div>
+
+  <!-- ②.6 JSON 백업 복원 -->
+  <div class="section">
+    <h2>② -C JSON 백업 파일 복원 <span class="badge">긴급</span></h2>
+    <p style="font-size:.85em;color:#374151;margin-bottom:8px">전에 다운받은 <code>top500-backup-*.json</code> 파일을 다시 불러올 때:</p>
+    <input type="file" id="importFile" accept="application/json" style="margin-bottom:6px">
+    <button class="btn warn" onclick="importJsonBackup()">📥 파일 불러와 RTDB 로 PUT</button>
   </div>
 
   <!-- ③ RTDB 현재 상태 -->
@@ -175,7 +191,98 @@ function inspectLocalStorage(){
 
   window.__LS_STATE = stateBk;
   window.__LS_PHOTO = photoBk;
+
+  // IndexedDB 검사 병행
+  inspectIndexedDB();
 }
+
+async function inspectIndexedDB(){
+  if (!window.kmStorage){
+    setBadge('idbBadge', '⚠️ kmStorage 로드 안됨', 'empty');
+    return;
+  }
+  try {
+    await window.kmStorage.ready();
+    const state = await window.kmStorage.getAllState();
+    const photos = await window.kmStorage.getAllPhotos();
+    const stateBranches = Object.keys(state||{});
+    let stateCount = 0;
+    stateBranches.forEach(b => { stateCount += Object.keys(state[b]||{}).length; });
+    const photoCount = Object.keys(photos||{}).length;
+    const est = await window.kmStorage.estimate();
+    const info = document.getElementById('idbInfo');
+    info.innerHTML = `
+      <b>재고 매장 수:</b><span>${stateBranches.length} (${stateBranches.join(', ') || '없음'})</span>
+      <b>재고 항목 수:</b><span>${stateCount}</span>
+      <b>사진 항목 수:</b><span>${photoCount}</span>
+      <b>IndexedDB 사용량:</b><span>${est && est.usage != null ? (est.usage/1024/1024).toFixed(2) + ' MB / ' + (est.quota/1024/1024).toFixed(0) + ' MB' : '측정 불가'}</span>
+    `;
+    const preview = {
+      state_summary: stateBranches.map(b => ({ branch:b, count:Object.keys(state[b]||{}).length })),
+      photo_keys_first10: Object.keys(photos).slice(0,10),
+    };
+    document.getElementById('idbPreview').textContent = JSON.stringify(preview, null, 2);
+    window.__IDB_STATE = state;
+    window.__IDB_PHOTO = photos;
+    if (stateCount + photoCount > 0){
+      setBadge('idbBadge', '✅ IndexedDB 데이터 있음 (' + (stateCount + photoCount) + '건)', 'ok');
+      log('IndexedDB 백업 발견 — 재고 ' + stateCount + ', 사진 ' + photoCount, 'ok');
+      // 자동 merge — forceSyncToRTDB 가 IDB 도 함께 push 하도록
+      mergeIDBIntoLS();
+    } else {
+      setBadge('idbBadge', '❌ IndexedDB 비어있음', 'empty');
+      log('IndexedDB 도 비어있음', 'err');
+    }
+  } catch(e){
+    setBadge('idbBadge', '❌ ' + e.message, 'empty');
+    log('IndexedDB 검사 오류: ' + e.message, 'err');
+  }
+}
+
+// IndexedDB 내용을 LS 백업 객체에 머지 → 강제 동기화 한 번에 처리
+function mergeIDBIntoLS(){
+  const ls = window.__LS_STATE || {};
+  const idb = window.__IDB_STATE || {};
+  for (const [br, items] of Object.entries(idb||{})){
+    if (!ls[br]) ls[br] = {};
+    for (const [code, entry] of Object.entries(items||{})){
+      if (!ls[br][code]) ls[br][code] = entry;
+    }
+  }
+  window.__LS_STATE = ls;
+  const lp = window.__LS_PHOTO || {};
+  const ip = window.__IDB_PHOTO || {};
+  for (const [k, v] of Object.entries(ip||{})){
+    if (!lp[k] && v && v.dataURL){
+      lp[k] = { dataURL: v.dataURL, meta: v.meta };
+    }
+  }
+  window.__LS_PHOTO = lp;
+}
+
+// 📥 JSON 백업 파일 → RTDB 강제 push
+window.importJsonBackup = async function(){
+  const f = document.getElementById('importFile').files[0];
+  if (!f){ alert('파일 선택하세요'); return; }
+  log('JSON 파일 읽기: ' + f.name, 'warn');
+  try {
+    const txt = await f.text();
+    const data = JSON.parse(txt);
+    const stateBk = data.stateBackup || {};
+    const photoBk = data.photoBackup || {};
+    window.__LS_STATE = stateBk;
+    window.__LS_PHOTO = photoBk;
+    let stateCount = 0;
+    Object.values(stateBk).forEach(items => { stateCount += Object.keys(items||{}).length; });
+    const photoCount = Object.keys(photoBk).length;
+    log('JSON 에서 읽음 — 재고 ' + stateCount + ', 사진 ' + photoCount + '. 강제 동기화 시작', 'ok');
+    if (!confirm('재고 ' + stateCount + ' + 사진 ' + photoCount + ' 건을 RTDB 에 PUT 합니다. 진행?')) return;
+    await forceSyncToRTDB();
+  } catch(e){
+    log('JSON 불러오기 오류: ' + e.message, 'err');
+    alert('파일 읽기 실패: ' + e.message);
+  }
+};
 
 function estimateLSSize(){
   let total = 0;

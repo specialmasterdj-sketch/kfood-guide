@@ -8,6 +8,9 @@
 <meta name="theme-color" content="#1a5c3a">
 <!-- fb-auth-fetch 먼저 — RTDB fetch 에 토큰 자동 부착. 빠지면 저장 시 401. -->
 <script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<!-- km-storage — IndexedDB 영구 저장 (localStorage 5MB 쿼터 / ITP 7일 만료 회피).
+     2026-05-16 데이터 손실 사건 후 도입. localStorage 와 mirror 로 동작. -->
+<script src="./km-storage.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=4"></script>
 <script src="./nav-sidebar.js?v=20" defer></script>
 <script src="./back-nav.js?v=1"></script>
@@ -746,12 +749,21 @@ async function savePhotoToDB(code, dataURL){
     branch: BRANCH || '',
     ts: Date.now(),
   };
-  // 🛡️ *항상* localStorage 먼저 저장 — RTDB 실패해도 데이터 무조건 살아남음.
+  // 🛡️ 3겹 안전망 — IndexedDB + localStorage + RTDB. 어느 하나라도 살아남으면 데이터 보존.
+  // 2026-05-16: localStorage 만 의지하던 백업이 통째로 사라진 사건 후 IndexedDB 추가.
+  let lsOk = false, idbOk = false;
   try {
     const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
     backup[key] = { dataURL, meta };
     localStorage.setItem('top500.photoBackup', JSON.stringify(backup));
-  } catch(_){}
+    lsOk = true;
+  } catch(e){ console.warn('[savePhoto] localStorage failed', e); }
+  try {
+    if (window.kmStorage) {
+      await window.kmStorage.setPhoto(key, dataURL, meta);
+      idbOk = true;
+    }
+  } catch(e){ console.warn('[savePhoto] IndexedDB failed', e); }
   // 사진 본체 + 메타정보 동시 PUT
   let resp = null, metaResp = null;
   try {
@@ -768,14 +780,28 @@ async function savePhotoToDB(code, dataURL){
       }),
     ]);
   } catch(e) { resp = null; }
-  if (resp && resp.ok) {
+  const rtdbOk = resp && resp.ok;
+  if (rtdbOk) {
     try {
       const backup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}');
       delete backup[key];
       localStorage.setItem('top500.photoBackup', JSON.stringify(backup));
     } catch(_){}
+    try { if (window.kmStorage) await window.kmStorage.deletePhoto(key); } catch(_){}
+  }
+  // 비주얼 확인 — 어느 곳에 저장됐는지 명확히 표시. silent fail 방지.
+  const badges = [];
+  if (rtdbOk) badges.push('🌐');
+  if (idbOk) badges.push('💾');
+  if (lsOk) badges.push('📱');
+  if (badges.length === 0){
+    alert('🚨 사진 저장 완전 실패 — 어디에도 저장 안 됨!\n' +
+          '응답: ' + (resp ? resp.status : 'no-response') + '\n' +
+          '즉시 다시 시도하거나 매니저에게 알리세요.');
+  } else if (!rtdbOk) {
+    showToast('⚠️ 서버 ❌  로컬 ' + badges.join('') + ' — 다음 새로고침 때 자동 재시도');
   } else {
-    alert('⚠️ 사진 서버 저장 실패 — 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 안전하게 백업됐습니다. 페이지 새로고침 시 자동 재시도됩니다.');
+    showToast('✅ 사진 저장 ' + badges.join(''));
   }
 }
 
@@ -957,16 +983,23 @@ async function saveState(code, qty){
   if (!BRANCH || !ME) { showToast(T().errNoUser); return; }
   const entry = { qty, ts: Date.now(), by: ME.name||'', status: 'manual' };
   STATE[code] = entry;
-  // 🛡️ 2026-05-15: 401 silent fail 로 재고 점검 기록이 통째로 사라진 사건 후 보강.
-  // *항상* localStorage 먼저 저장 — RTDB 가 어떤 이유로든 실패해도 데이터 무조건 살아남음.
-  // 다음 페이지 로드 시 retryBackedUpWrites() 가 RTDB 로 자동 sync.
+  // 🛡️ 3겹 안전망 — IndexedDB + localStorage + RTDB.
+  // 2026-05-16: localStorage 단일 백업이 통째로 사라진 사건 후 IndexedDB 추가.
+  let lsOk = false, idbOk = false;
   try {
     const backup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}');
     if (!backup[BRANCH]) backup[BRANCH] = {};
     backup[BRANCH][code] = entry;
     localStorage.setItem('top500.stateBackup', JSON.stringify(backup));
-  } catch(_){}
-  // 그 다음 RTDB 시도 — 성공하면 backup 에서 제거
+    lsOk = true;
+  } catch(e){ console.warn('[saveState] localStorage failed', e); }
+  try {
+    if (window.kmStorage) {
+      await window.kmStorage.setState(BRANCH, code, entry);
+      idbOk = true;
+    }
+  } catch(e){ console.warn('[saveState] IndexedDB failed', e); }
+  // 그 다음 RTDB 시도
   let resp = null;
   try {
     resp = await fetch(`${FB_DB}/inventory/top500/${BRANCH}/${encodeURIComponent(code)}.json`, {
@@ -975,8 +1008,9 @@ async function saveState(code, qty){
       body: JSON.stringify(entry)
     });
   } catch(e) { resp = null; }
-  if (resp && resp.ok) {
-    // RTDB 성공 — backup 에서 이 항목 제거 (다음 retry 때 중복 시도 안 하도록)
+  const rtdbOk = resp && resp.ok;
+  if (rtdbOk) {
+    // 모든 백업에서 제거 — 다음 retry 때 중복 시도 안 함
     try {
       const backup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}');
       if (backup[BRANCH]) {
@@ -985,8 +1019,22 @@ async function saveState(code, qty){
         localStorage.setItem('top500.stateBackup', JSON.stringify(backup));
       }
     } catch(_){}
+    try { if (window.kmStorage) await window.kmStorage.deleteState(BRANCH, code); } catch(_){}
+  }
+  // 비주얼 확인 — silent fail 방지
+  const badges = [];
+  if (rtdbOk) badges.push('🌐');
+  if (idbOk) badges.push('💾');
+  if (lsOk) badges.push('📱');
+  if (badges.length === 0){
+    alert('🚨 재고 저장 완전 실패 — 어디에도 저장 안 됨!\n' +
+          '코드 ' + code + ' / 수량 ' + qty + '\n' +
+          '응답: ' + (resp ? resp.status : 'no-response') + '\n' +
+          '즉시 다시 시도하거나 매니저에게 알리세요.');
+  } else if (!rtdbOk) {
+    showToast('⚠️ 서버 ❌  로컬 ' + badges.join('') + ' — 다음 새로고침 때 자동 재시도');
   } else {
-    alert('⚠️ 재고 서버 저장 실패 — 응답 ' + (resp ? resp.status : 'no-response') + '\n로컬에 안전하게 백업됐습니다. 페이지 새로고침 시 자동 재시도됩니다.\n\n계속 실패하면 로그아웃 후 다시 로그인하세요.');
+    showToast('✅ ' + qty + '개 저장 ' + badges.join(''));
   }
 }
 // 점검 기록 삭제 — RTDB DELETE + 메모리 STATE 제거. 다시 'Unchecked' 상태로 복귀.
@@ -1004,11 +1052,24 @@ async function clearState(code){
   }
 }
 
-// 🔄 페이지 로드 시 localStorage 백업 자동 재시도 — 401 silent fail 복구.
+// 🔄 페이지 로드 시 localStorage + IndexedDB 백업 자동 재시도 — 401 silent fail 복구.
+// 2026-05-16: IndexedDB 도 함께 읽어서 localStorage 가 지워진 경우에도 복구 가능.
 async function retryBackedUpWrites(){
-  // (1) 재고 점검 백업 재시도
+  // (1) 재고 점검 백업 재시도 — localStorage + IndexedDB merge
   let stateBackup = {};
   try { stateBackup = JSON.parse(localStorage.getItem('top500.stateBackup') || '{}'); } catch(_){}
+  try {
+    if (window.kmStorage){
+      const idbState = await window.kmStorage.getAllState();
+      // IndexedDB 의 항목을 stateBackup 에 merge (localStorage 우선이지만, 없으면 IDB 사용)
+      for (const [br, items] of Object.entries(idbState||{})){
+        if (!stateBackup[br]) stateBackup[br] = {};
+        for (const [code, entry] of Object.entries(items||{})){
+          if (!stateBackup[br][code]) stateBackup[br][code] = entry;
+        }
+      }
+    }
+  } catch(e){ console.warn('[retry] IndexedDB state read failed', e); }
   const stateBranches = Object.keys(stateBackup);
   let stateOk = 0, stateFail = 0;
   for (const br of stateBranches) {
@@ -1017,17 +1078,31 @@ async function retryBackedUpWrites(){
         const r = await fetch(`${FB_DB}/inventory/top500/${br}/${encodeURIComponent(code)}.json`, {
           method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(entry)
         });
-        if (r.ok) { stateOk++; delete stateBackup[br][code]; }
-        else stateFail++;
+        if (r.ok) {
+          stateOk++;
+          delete stateBackup[br][code];
+          // IndexedDB 에서도 제거
+          try { if (window.kmStorage) await window.kmStorage.deleteState(br, code); } catch(_){}
+        } else stateFail++;
       } catch(_) { stateFail++; }
     }
     if (Object.keys(stateBackup[br]||{}).length === 0) delete stateBackup[br];
   }
   try { localStorage.setItem('top500.stateBackup', JSON.stringify(stateBackup)); } catch(_){}
 
-  // (2) 사진 백업 재시도 — 본체 + 메타정보 동시 push
+  // (2) 사진 백업 재시도 — localStorage + IndexedDB merge
   let photoBackup = {};
   try { photoBackup = JSON.parse(localStorage.getItem('top500.photoBackup') || '{}'); } catch(_){}
+  try {
+    if (window.kmStorage){
+      const idbPhotos = await window.kmStorage.getAllPhotos();
+      for (const [k, v] of Object.entries(idbPhotos||{})){
+        if (!photoBackup[k] && v && v.dataURL){
+          photoBackup[k] = { dataURL: v.dataURL, meta: v.meta };
+        }
+      }
+    }
+  } catch(e){ console.warn('[retry] IndexedDB photo read failed', e); }
   let photoOk = 0, photoFail = 0;
   for (const [key, item] of Object.entries(photoBackup)) {
     try {
@@ -1039,8 +1114,11 @@ async function retryBackedUpWrites(){
           method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.meta)
         }) : Promise.resolve({ ok: true }),
       ]);
-      if (r.ok) { photoOk++; delete photoBackup[key]; }
-      else photoFail++;
+      if (r.ok) {
+        photoOk++;
+        delete photoBackup[key];
+        try { if (window.kmStorage) await window.kmStorage.deletePhoto(key); } catch(_){}
+      } else photoFail++;
     } catch(_) { photoFail++; }
   }
   try { localStorage.setItem('top500.photoBackup', JSON.stringify(photoBackup)); } catch(_){}
