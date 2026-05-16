@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>매장 가입 PIN — 어드민</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<script type="module" src="./auth-gate.js?v=4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;padding:14px;color:#0f172a;font-size:14px;padding-bottom:80px}
+.wrap{max-width:760px;margin:0 auto}
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:16px 20px;border-radius:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.topbar h1{font-size:1.15em;font-weight:900}
+.topbar .sub{font-size:.82em;opacity:.85;margin-top:4px}
+.topbar a{color:#fff;text-decoration:none;font-size:.85em;opacity:.85}
+.warn{background:#fff8e1;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:.86em;line-height:1.5;color:#5d4037}
+.row{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin-bottom:10px;display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center}
+.row .br{font-weight:800;font-size:1em;color:#1a5c3a}
+.row input{border:1.5px solid #d1d5db;border-radius:8px;padding:8px 12px;font-family:Menlo,Consolas,monospace;font-size:1.1em;font-weight:800;letter-spacing:2px;text-align:center;width:120px}
+.row input.empty{border-color:#fca5a5;background:#fef2f2}
+.row button{background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:9px 14px;font-weight:800;cursor:pointer;font-size:.85em}
+.row button:disabled{opacity:.5;cursor:wait}
+.row .status{font-size:.74em;color:#9ca3af;grid-column:1/-1;margin-top:2px}
+.row .status.ok{color:#16a34a}
+.row .status.err{color:#dc2626}
+.empty{text-align:center;color:#9ca3af;padding:30px;font-size:.9em}
+#busy{position:fixed;top:0;left:0;right:0;background:#1a5c3a;color:#fff;text-align:center;padding:6px;font-size:.85em;font-weight:700;z-index:1000;display:none}
+.tools{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.tools button{background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:.85em}
+.tools button.danger{border-color:#fca5a5;color:#dc2626}
+</style>
+</head>
+<body>
+<div id="busy">⏳ 처리 중…</div>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>🔐 매장 가입 PIN</h1>
+      <div class="sub">신규 직원이 본인 매장 가입 시 입력해야 하는 4자리 PIN</div>
+    </div>
+    <a href="apps.html">← apps</a>
+  </div>
+
+  <div class="warn">
+    ⚠️ Owner/Executive 전용. 매장별 PIN 을 설정하면 신규 직원은 auth.html 가입 시
+    매장 + PIN 을 입력해야 가입됩니다 (외부인 임의 가입 차단). PIN 은 매니저가
+    직접 직원에게 구두로 전달하세요. 노출되면 즉시 재설정 권장.
+  </div>
+
+  <div class="tools">
+    <button onclick="loadPins()">🔄 다시 불러오기</button>
+    <button onclick="randomFillEmpty()">🎲 비어있는 PIN 랜덤 생성</button>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+
+const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const cfg = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: FB_DB,
+  projectId: "kimchi-mart-order"
+};
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const auth = getAuth(app);
+
+const BRANCHES = [
+  { id:'HOLLYWOOD',       label:'HOLLYWOOD'      },
+  { id:'MIAMI',           label:'MIAMI'          },
+  { id:'LASOLAS',         label:'LASOLAS'        },
+  { id:'CORAL_SPRINGS',   label:'CORAL SPRINGS'  },
+  { id:'PEMBROKE_PINES',  label:'PEMBROKE PINES' },
+];
+
+const busy = (on) => document.getElementById('busy').style.display = on ? 'block' : 'none';
+
+async function authQ(){
+  try {
+    const u = auth.currentUser;
+    if (u) { const t = await u.getIdToken(); return '?auth=' + encodeURIComponent(t); }
+  } catch(_){}
+  return '';
+}
+
+window.loadPins = async function(){
+  busy(true);
+  try {
+    const q = await authQ();
+    const list = document.getElementById('list');
+    list.innerHTML = '<div class="empty">불러오는 중...</div>';
+    const r = await fetch(`${FB_DB}/joinPins.json${q}`, { cache:'no-store' });
+    if (!r.ok){
+      const errTxt = await r.text().catch(()=>'');
+      list.innerHTML = '<div class="empty" style="color:#dc2626">읽기 실패: ' + r.status + '<br><small>' + errTxt + '</small><br><br>Firebase RTDB 규칙에 joinPins 읽기 권한 추가 필요. Owner/Executive 만 읽기 가능하도록 설정.</small></div>';
+      return;
+    }
+    const data = await r.json() || {};
+    renderList(data);
+  } catch(e){
+    document.getElementById('list').innerHTML = '<div class="empty" style="color:#dc2626">오류: ' + e.message + '</div>';
+  } finally {
+    busy(false);
+  }
+};
+
+function renderList(data){
+  const list = document.getElementById('list');
+  list.innerHTML = BRANCHES.map(b => {
+    const pin = data[b.id] || '';
+    const empty = !pin;
+    return `
+      <div class="row" data-id="${b.id}">
+        <div class="br">${b.label}</div>
+        <input type="text" id="pin-${b.id}" value="${pin}" maxlength="6" class="${empty ? 'empty' : ''}" placeholder="----">
+        <button onclick="savePin('${b.id}')">💾 저장</button>
+        <div class="status" id="st-${b.id}">${empty ? '⚠️ PIN 미설정 — 이 매장 신규 가입 불가' : '✓ 설정됨'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+window.savePin = async function(branch){
+  const inp = document.getElementById('pin-'+branch);
+  const pin = (inp.value || '').trim();
+  const st = document.getElementById('st-'+branch);
+  if (!pin || !/^\d{4,6}$/.test(pin)){
+    st.textContent = '⚠️ PIN 은 4-6자리 숫자';
+    st.className = 'status err';
+    return;
+  }
+  busy(true);
+  try {
+    const q = await authQ();
+    const r = await fetch(`${FB_DB}/joinPins/${branch}.json${q}`, {
+      method:'PUT',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify(pin)
+    });
+    if (!r.ok){
+      const t = await r.text();
+      st.textContent = '❌ 저장 실패: ' + r.status + ' ' + t.slice(0,80);
+      st.className = 'status err';
+      return;
+    }
+    st.textContent = '✅ ' + new Date().toLocaleTimeString('ko-KR') + ' 저장됨';
+    st.className = 'status ok';
+    inp.classList.remove('empty');
+  } catch(e){
+    st.textContent = '❌ ' + e.message;
+    st.className = 'status err';
+  } finally {
+    busy(false);
+  }
+};
+
+window.randomFillEmpty = function(){
+  BRANCHES.forEach(b => {
+    const inp = document.getElementById('pin-'+b.id);
+    if (!inp || inp.value.trim()) return;
+    const pin = String(1000 + Math.floor(Math.random()*9000));
+    inp.value = pin;
+    inp.classList.remove('empty');
+  });
+  alert('비어있던 PIN 에 4자리 랜덤 숫자 생성됨. 각 매장 행의 💾 저장 버튼을 눌러 적용하세요.');
+};
+
+// auth ready 후 자동 로드
+window.addEventListener('fb-auth-ready', () => loadPins(), { once: true });
+setTimeout(() => { if (!document.getElementById('list').innerHTML.includes('row')) loadPins(); }, 3000);
+</script>
+</body>
+</html>
