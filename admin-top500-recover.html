@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Top500 복구 도구 — 긴급</title>
+<meta name="theme-color" content="#dc2626">
+<script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#fef2f2;padding:14px;color:#0f172a;font-size:14px;padding-bottom:80px}
+.wrap{max-width:1000px;margin:0 auto}
+.topbar{background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;padding:16px 20px;border-radius:14px;margin-bottom:14px}
+.topbar h1{font-size:1.15em;font-weight:900}
+.topbar .sub{font-size:.82em;opacity:.9;margin-top:4px;line-height:1.4}
+.warn{background:#fff8e1;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:.86em;line-height:1.5;color:#5d4037}
+.section{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.section h2{font-size:1em;font-weight:800;color:#1a5c3a;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.section h2 .badge{font-size:.7em;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-weight:700}
+.section h2 .badge.empty{background:#fee2e2;color:#dc2626}
+.section h2 .badge.ok{background:#dcfce7;color:#15803d}
+.btn{display:inline-block;background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-weight:800;cursor:pointer;font-size:.92em;margin:4px 4px 4px 0}
+.btn.danger{background:#dc2626}
+.btn.warn{background:#f59e0b}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+pre{background:#0f172a;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:.78em;overflow-x:auto;max-height:280px;overflow-y:auto;font-family:Menlo,Consolas,monospace}
+table{width:100%;font-size:.84em;border-collapse:collapse;margin-top:8px}
+table th{background:#f1f5f9;padding:6px 8px;text-align:left;font-weight:700;color:#374151}
+table td{padding:6px 8px;border-top:1px solid #f1f5f9}
+.log{background:#0f172a;color:#22c55e;padding:10px 12px;border-radius:8px;font-size:.78em;font-family:Menlo,Consolas,monospace;min-height:60px;max-height:240px;overflow-y:auto;white-space:pre-wrap}
+.log .err{color:#fca5a5}
+.log .ok{color:#86efac}
+.log .warn{color:#fde68a}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:.85em;color:#374151}
+.kv b{color:#0f172a}
+select,input{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-family:inherit;font-size:.92em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>🚨 Top500 긴급 복구 도구</h1>
+    <div class="sub">폰 localStorage 의 백업 데이터 검사 + RTDB 강제 동기화 + JSON 내보내기</div>
+  </div>
+
+  <div class="warn">
+    📞 작업한 폰에서 이 페이지를 열어주세요. localStorage 는 기기마다 따로라서 PC 에서 열면 폰 데이터가 안 보입니다.
+  </div>
+
+  <!-- ① 인증 상태 -->
+  <div class="section">
+    <h2>① 인증 상태 <span id="authBadge" class="badge">확인 중...</span></h2>
+    <div id="authInfo" class="kv">
+      <b>User UID:</b><span id="uid">-</span>
+      <b>Email:</b><span id="email">-</span>
+      <b>익명 여부:</b><span id="isAnon">-</span>
+      <b>Token 발급:</b><span id="tokenOk">-</span>
+    </div>
+  </div>
+
+  <!-- ② localStorage 백업 검사 -->
+  <div class="section">
+    <h2>② localStorage 백업 검사 <span id="lsBadge" class="badge">확인 중...</span></h2>
+    <div id="lsInfo" class="kv"></div>
+    <pre id="lsPreview"></pre>
+    <div style="margin-top:10px">
+      <button class="btn warn" onclick="exportLocalBackup()">💾 JSON 다운로드 (안전 백업)</button>
+      <button class="btn" onclick="forceSyncToRTDB()">⬆️ RTDB 로 강제 동기화</button>
+    </div>
+  </div>
+
+  <!-- ③ RTDB 현재 상태 -->
+  <div class="section">
+    <h2>③ RTDB 현재 상태 <span id="rtdbBadge" class="badge">확인 중...</span></h2>
+    <label style="font-size:.85em;color:#374151;font-weight:700">매장 선택: </label>
+    <select id="branchSel">
+      <option value="HOLLYWOOD">HOLLYWOOD</option>
+      <option value="MIAMI">MIAMI</option>
+      <option value="LASOLAS">LASOLAS</option>
+      <option value="CORAL_SPRINGS">CORAL SPRINGS</option>
+      <option value="PEMBROKE_PINES">PEMBROKE PINES</option>
+    </select>
+    <button class="btn" onclick="checkRTDB()">🔍 확인</button>
+    <div id="rtdbInfo" class="kv" style="margin-top:10px"></div>
+    <pre id="rtdbPreview"></pre>
+  </div>
+
+  <!-- ④ 작업 로그 -->
+  <div class="section">
+    <h2>④ 작업 로그</h2>
+    <div id="log" class="log">대기 중...</div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+
+const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const cfg = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: FB_DB,
+  projectId: "kimchi-mart-order"
+};
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const auth = getAuth(app);
+
+function log(msg, kind){
+  const d = document.getElementById('log');
+  const ts = new Date().toLocaleTimeString('ko-KR');
+  const cls = kind ? ' class="'+kind+'"' : '';
+  d.innerHTML += `<div${cls}>[${ts}] ${msg}</div>`;
+  d.scrollTop = d.scrollHeight;
+}
+function setBadge(id, text, kind){
+  const b = document.getElementById(id);
+  b.className = 'badge' + (kind ? ' '+kind : '');
+  b.textContent = text;
+}
+
+// ① 인증 확인
+onAuthStateChanged(auth, async (u) => {
+  if (u){
+    document.getElementById('uid').textContent = u.uid;
+    document.getElementById('email').textContent = u.email || '(없음)';
+    document.getElementById('isAnon').textContent = u.isAnonymous ? '예 (익명)' : '아니오';
+    try {
+      const t = await u.getIdToken();
+      document.getElementById('tokenOk').textContent = t ? '✅ 정상 (' + t.length + ' chars)' : '❌ 실패';
+      setBadge('authBadge', '✅ 로그인됨', 'ok');
+      log('인증 OK — uid=' + u.uid.slice(0,8) + '...', 'ok');
+    } catch(e){
+      document.getElementById('tokenOk').textContent = '❌ ' + e.message;
+      setBadge('authBadge', '⚠️ 토큰 실패', 'empty');
+    }
+  } else {
+    setBadge('authBadge', '❌ 로그인 안됨', 'empty');
+    log('인증 실패 — auth.html 가서 로그인 필요', 'err');
+  }
+  // 인증 확인 후 자동 진단
+  inspectLocalStorage();
+});
+
+// ② localStorage 검사
+function inspectLocalStorage(){
+  const stateBk = (()=>{ try { return JSON.parse(localStorage.getItem('top500.stateBackup')||'{}'); } catch(_){ return {};}})();
+  const photoBk = (()=>{ try { return JSON.parse(localStorage.getItem('top500.photoBackup')||'{}'); } catch(_){ return {};}})();
+  const stateBranches = Object.keys(stateBk);
+  let stateCount = 0;
+  stateBranches.forEach(b => { stateCount += Object.keys(stateBk[b]||{}).length; });
+  const photoCount = Object.keys(photoBk).length;
+
+  const info = document.getElementById('lsInfo');
+  info.innerHTML = `
+    <b>재고 백업 매장 수:</b><span>${stateBranches.length} (${stateBranches.join(', ') || '없음'})</span>
+    <b>재고 백업 항목 수:</b><span>${stateCount}</span>
+    <b>사진 백업 항목 수:</b><span>${photoCount}</span>
+    <b>localStorage 전체 크기:</b><span>${estimateLSSize()}</span>
+  `;
+  const preview = {
+    stateBackup_summary: stateBranches.map(b => ({ branch:b, count:Object.keys(stateBk[b]||{}).length, sample:Object.keys(stateBk[b]||{}).slice(0,3) })),
+    photoBackup_keys_first10: Object.keys(photoBk).slice(0,10),
+    photoBackup_total: photoCount,
+  };
+  document.getElementById('lsPreview').textContent = JSON.stringify(preview, null, 2);
+
+  if (stateCount + photoCount > 0){
+    setBadge('lsBadge', '✅ 데이터 있음 ('+ (stateCount+photoCount) +'건)', 'ok');
+    log('localStorage 백업 발견 — 재고 ' + stateCount + ', 사진 ' + photoCount, 'ok');
+  } else {
+    setBadge('lsBadge', '❌ 비어있음', 'empty');
+    log('localStorage 백업 비어있음 — 데이터 사라진 원인 다른 곳', 'err');
+  }
+
+  window.__LS_STATE = stateBk;
+  window.__LS_PHOTO = photoBk;
+}
+
+function estimateLSSize(){
+  let total = 0;
+  for (let i=0; i<localStorage.length; i++){
+    const k = localStorage.key(i);
+    const v = localStorage.getItem(k) || '';
+    total += k.length + v.length;
+  }
+  const mb = (total / 1024 / 1024).toFixed(2);
+  return total + ' chars (~' + mb + ' MB)';
+}
+
+// 💾 JSON 다운로드
+window.exportLocalBackup = function(){
+  const out = {
+    exportedAt: new Date().toISOString(),
+    stateBackup: window.__LS_STATE || {},
+    photoBackup: window.__LS_PHOTO || {},
+  };
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'top500-backup-' + Date.now() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  log('JSON 다운로드 시작 — 안전한 곳에 보관하세요', 'ok');
+};
+
+// ⬆️ RTDB 강제 동기화
+window.forceSyncToRTDB = async function(){
+  const stateBk = window.__LS_STATE || {};
+  const photoBk = window.__LS_PHOTO || {};
+  let okState = 0, failState = 0, okPhoto = 0, failPhoto = 0;
+  const errors = [];
+
+  log('강제 동기화 시작...', 'warn');
+
+  for (const branch of Object.keys(stateBk)){
+    for (const [code, entry] of Object.entries(stateBk[branch]||{})){
+      try {
+        const r = await fetch(`${FB_DB}/inventory/top500/${branch}/${encodeURIComponent(code)}.json`, {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(entry)
+        });
+        if (r.ok){ okState++; }
+        else { failState++; errors.push(`state ${branch}/${code}: ${r.status}`); }
+      } catch(e){ failState++; errors.push(`state ${branch}/${code}: ${e.message}`); }
+    }
+  }
+  log(`재고 동기화 — 성공 ${okState}, 실패 ${failState}`, failState ? 'err' : 'ok');
+
+  for (const [key, item] of Object.entries(photoBk)){
+    try {
+      const r = await fetch(`${FB_DB}/catalog/photos/${encodeURIComponent(key)}.json`, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.dataURL || item)
+      });
+      if (item.meta){
+        await fetch(`${FB_DB}/catalog/photoMeta/${encodeURIComponent(key)}.json`, {
+          method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item.meta)
+        });
+      }
+      if (r.ok) okPhoto++;
+      else { failPhoto++; errors.push(`photo ${key}: ${r.status}`); }
+    } catch(e){ failPhoto++; errors.push(`photo ${key}: ${e.message}`); }
+  }
+  log(`사진 동기화 — 성공 ${okPhoto}, 실패 ${failPhoto}`, failPhoto ? 'err' : 'ok');
+
+  if (errors.length){
+    log('오류 샘플:\n' + errors.slice(0,5).join('\n'), 'err');
+  }
+
+  if (okState + okPhoto > 0){
+    alert(`동기화 완료 ✅\n재고: ${okState} / 사진: ${okPhoto}\n실패: ${failState + failPhoto}`);
+  } else if (failState + failPhoto > 0){
+    alert(`전부 실패 ❌\n재고 ${failState} + 사진 ${failPhoto}\n로그 확인하세요`);
+  } else {
+    alert('동기화할 데이터가 없습니다');
+  }
+};
+
+// ③ RTDB 현재 상태 확인
+window.checkRTDB = async function(){
+  const branch = document.getElementById('branchSel').value;
+  log('RTDB 검사 — ' + branch + '...', 'warn');
+  try {
+    const r = await fetch(`${FB_DB}/inventory/top500/${branch}.json?t=`+Date.now(), { cache:'no-store' });
+    if (!r.ok){
+      log('RTDB 응답 실패: ' + r.status, 'err');
+      setBadge('rtdbBadge', '❌ HTTP ' + r.status, 'empty');
+      return;
+    }
+    const data = await r.json() || {};
+    const cnt = Object.keys(data).length;
+    const info = document.getElementById('rtdbInfo');
+    info.innerHTML = `<b>${branch} 항목 수:</b><span>${cnt}</span>`;
+    document.getElementById('rtdbPreview').textContent = JSON.stringify({
+      count: cnt,
+      sample_keys: Object.keys(data).slice(0,10),
+      sample_entries: Object.entries(data).slice(0,3).map(([k,v]) => ({code:k, ...v}))
+    }, null, 2);
+    if (cnt > 0){
+      setBadge('rtdbBadge', `✅ ${cnt}건`, 'ok');
+      log('RTDB 에 ' + cnt + '건 발견 — 데이터 살아있음', 'ok');
+    } else {
+      setBadge('rtdbBadge', '❌ 비어있음', 'empty');
+      log('RTDB 도 비어있음 — localStorage 에 의지', 'err');
+    }
+  } catch(e){
+    log('RTDB fetch 오류: ' + e.message, 'err');
+    setBadge('rtdbBadge', '❌ 네트워크 오류', 'empty');
+  }
+};
+
+// auto-check RTDB on load
+setTimeout(() => checkRTDB(), 1500);
+</script>
+</body>
+</html>
