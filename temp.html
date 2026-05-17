@@ -1270,11 +1270,16 @@ async function saveSettings(){
 }
 window.saveSettings = saveSettings;
 
-// QR 스캔 없이 매니저가 직접 장비 추가 — 가상 QR ID 자동 생성
+// QR 스캔 없이 매니저가 직접 장비 추가 — QR1, QR2, QR3... 순번으로 자동 생성
 function addEqManually(){
   if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만':'Manager only', true); return; }
-  // 가상 QR ID 생성 — 'MANUAL-' + 타임스탬프 (등록 후 나중에 진짜 QR 부착해도 무관)
-  const manualQr = 'MANUAL-' + Date.now().toString(36).toUpperCase();
+  // 기존 QR# 중 가장 큰 번호 찾아 +1 (QR1, QR2, ... 형식만 카운트)
+  let maxN = 0;
+  for (const eq of EQUIPMENT) {
+    const m = (eq.qr || '').match(/^QR(\d+)$/);
+    if (m) { const n = parseInt(m[1], 10); if (n > maxN) maxN = n; }
+  }
+  const manualQr = 'QR' + (maxN + 1);
   __pendingQr = manualQr;
   $('neQr').value = manualQr;
   $('neName').value = '';
@@ -1297,7 +1302,9 @@ function openEquipMgr(){
     list.innerHTML = `<div class="empty-state"><div class="ic">📦</div><div class="msg">${t('emptyEqMgr')}</div></div>`;
   } else {
     // 등록 통계 — 매니저가 한눈에 파악
-    const manualCount = EQUIPMENT.filter(e => (e.qr||'').startsWith('MANUAL-')).length;
+    // 수동 등록: QR1/QR2... 또는 MANUAL- 형식 (스캔 없이 매니저가 직접 추가한 것)
+    const isManualQr = (q) => /^QR\d+$/.test(q || '') || (q || '').startsWith('MANUAL-');
+    const manualCount = EQUIPMENT.filter(e => isManualQr(e.qr)).length;
     const qrCount = EQUIPMENT.length - manualCount;
     const summaryHtml = `
       <div style="background:#f0f9ff;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:.84em;font-weight:700;color:#0369a1;display:flex;justify-content:space-between;align-items:center">
@@ -1307,7 +1314,7 @@ function openEquipMgr(){
         </span>
       </div>`;
     list.innerHTML = summaryHtml + EQUIPMENT.map(eq => {
-      const isManual = (eq.qr||'').startsWith('MANUAL-');
+      const isManual = isManualQr(eq.qr);
       const regBadge = isManual
         ? `<span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">✏️ ${LANG==='ko'?'수동 (QR 없음)':LANG==='en'?'Manual (no QR)':'Manual (sin QR)'}</span>`
         : `<span style="background:#dcfce7;color:#15803d;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">🏷 QR</span>`;
