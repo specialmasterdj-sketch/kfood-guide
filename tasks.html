@@ -4283,7 +4283,12 @@ function renderTaskCard(t){
   // two people don't duplicate work on the same item.
   const isAllTask = t.assignedTo === '*';
   const claimedByOther = isAllTask && t.startedBy && t.startedBy !== (me?.name||'') && !t.completedAt;
-  if (status === 'completed') actions = `<span class="btn gray">${labels.done[LANG]} ${fmtTime(t.completedAt)}</span>`;
+  if (status === 'completed') {
+    actions = `<span class="btn gray">${labels.done[LANG]} ${fmtTime(t.completedAt)}</span>`;
+    if (isOwner() || isManager(me?.role)){
+      actions += ` <button class="btn" style="background:#7c3aed;color:#fff" onclick="forceCompleteTask('${t.id}','${t.branchId}')" title="평가방에 보고 다시 발송">📤 보고 재발송</button>`;
+    }
+  }
   else if (claimedByOther) {
     actions = `<span class="btn gray" title="다른 직원이 먼저 시작했습니다">🔒 ${escHtml(t.startedBy)} 진행 중</span>`;
     if (isOwner() || isManager(me?.role)){
@@ -5602,15 +5607,20 @@ window.forceCompleteTask = async function(taskId, branchId){
   const t = (typeof TASKS !== 'undefined' ? TASKS : []).find(x => x.id === taskId && x.branchId === branchId);
   if (!t){ alert('❌ 업무 없음 — id=' + taskId + ' / branch=' + branchId); return; }
   if (!isOwner() && !isManager(me?.role)){ alert('❌ 오너/매니저 권한 필요 — 현재 role: ' + (me?.role||'?')); return; }
-  if (t.completedAt){ alert('이미 완료된 업무'); return; }
-  const credit = t.startedBy || me.name;
-  if (!confirm(`⚡ 강제 완료\n\n업무: ${t.name}\n매장: ${t.branchId}\n크레딧: ${credit}${credit !== me.name ? ' (원래 진행자)' : ''}\n\n사진은 이미 첨부된 것 그대로 사용.\n평가방에 보고도 자동 발송.\n\n진행하시겠습니까?`)) return;
+  const alreadyDone = !!t.completedAt;
+  const credit = t.completedBy || t.startedBy || me.name;
+  const confirmMsg = alreadyDone
+    ? `📤 보고 재발송\n\n업무: ${t.name}\n매장: ${t.branchId}\n담당: ${credit}\n\n이미 완료된 업무 — 평가방에만 보고 다시 보냅니다.\n\n진행하시겠습니까?`
+    : `⚡ 강제 완료\n\n업무: ${t.name}\n매장: ${t.branchId}\n크레딧: ${credit}${credit !== me.name ? ' (원래 진행자)' : ''}\n\n사진은 이미 첨부된 것 그대로 사용.\n평가방에 보고도 자동 발송.\n\n진행하시겠습니까?`;
+  if (!confirm(confirmMsg)) return;
   try {
-    const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
-    const upd = { completedAt: Date.now(), completedBy: credit, forceCompletedBy: me.name, forceCompletedAt: Date.now() };
-    if (!t.startedAt) upd.startedAt = Date.now();
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
-    Object.assign(t, upd);
+    if (!alreadyDone){
+      const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+      const upd = { completedAt: Date.now(), completedBy: credit, forceCompletedBy: me.name, forceCompletedAt: Date.now() };
+      if (!t.startedAt) upd.startedAt = Date.now();
+      await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+      Object.assign(t, upd);
+    }
     // 강제 완료는 noAutoChat 플래그 무시 — 매니저가 명시적으로 보고 발송 의도.
     // 2026-05-16: 정육 일일 보고가 noAutoChat:true 로 막혀 있어 채팅 안 가던 버그.
     const allTaskPhotos = [...(t.photos||[])];
