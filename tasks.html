@@ -5651,21 +5651,27 @@ window.forceCompleteTask = async function(taskId, branchId){
     if (!t.startedAt) upd.startedAt = Date.now();
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
     Object.assign(t, upd);
-    if (!t.noAutoChat){
-      const allTaskPhotos = [...(t.photos||[])];
-      const allClPhotos = Array.isArray(t.checklist)
-        ? t.checklist.flatMap(c => {
-            const entries = (c && Array.isArray(c.entries)) ? c.entries : [];
-            if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
-            return Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []);
-          })
-        : [];
-      const chatPhotos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
-      const memoText = `(${me.name} 매니저가 ${credit} 의 업무를 강제 종료)`;
-      try { await postCompletionToChat(t, chatPhotos, memoText); }
-      catch(e){ console.warn('[force→chat]', e); }
+    // 강제 완료는 noAutoChat 플래그 무시 — 매니저가 명시적으로 보고 발송 의도.
+    // 2026-05-16: 정육 일일 보고가 noAutoChat:true 로 막혀 있어 채팅 안 가던 버그.
+    const allTaskPhotos = [...(t.photos||[])];
+    const allClPhotos = Array.isArray(t.checklist)
+      ? t.checklist.flatMap(c => {
+          const entries = (c && Array.isArray(c.entries)) ? c.entries : [];
+          if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
+          return Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []);
+        })
+      : [];
+    const chatPhotos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
+    const memoText = `(${me.name} 매니저가 ${credit} 의 업무를 강제 종료)`;
+    let chatOk = false;
+    try {
+      await postCompletionToChat(t, chatPhotos, memoText, { senderOverride: credit, senderBranch: t.branchId });
+      chatOk = true;
     }
-    alert('✅ 완료 처리됨 + 평가방 보고 발송 완료');
+    catch(e){
+      console.error('[force→chat] failed', e);
+    }
+    alert(chatOk ? '✅ 완료 처리 + 평가방 보고 발송 완료 (' + credit + ' 이름으로)' : '⚠️ 완료 처리됨 / 채팅 발송 실패 — F12 콘솔 확인');
     if (typeof render === 'function') render();
     if (typeof renderEmp === 'function') renderEmp();
   } catch(e){
