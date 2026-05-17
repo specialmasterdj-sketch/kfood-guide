@@ -5612,6 +5612,46 @@ function renderDonePreviews(){
   ).join('');
 }
 window.DONE_PHOTOS = DONE_PHOTOS;
+
+// ⚡ 오너/매니저 강제 완료 — 사진 모달 없이 즉시 종료 + 평가방 자동 보고.
+// 직원이 작업 중간에 시프트 끝나서 매니저가 마무리해주는 경우용.
+// completedBy 는 원래 시작한 직원 (startedBy) 으로 크레딧 (매니저가 가로채지 않음).
+window.forceCompleteTask = async function(taskId, branchId){
+  console.log('[forceCompleteTask] called', taskId, branchId);
+  const t = (typeof TASKS !== 'undefined' ? TASKS : []).find(x => x.id === taskId && x.branchId === branchId);
+  if (!t){ alert('❌ 업무 없음 — id=' + taskId + ' / branch=' + branchId); return; }
+  if (!isOwner() && !isManager(me?.role)){ alert('❌ 오너/매니저 권한 필요 — 현재 role: ' + (me?.role||'?')); return; }
+  if (t.completedAt){ alert('이미 완료된 업무'); return; }
+  const credit = t.startedBy || me.name;
+  if (!confirm(`⚡ 강제 완료\n\n업무: ${t.name}\n매장: ${t.branchId}\n크레딧: ${credit}${credit !== me.name ? ' (원래 진행자)' : ''}\n\n사진은 이미 첨부된 것 그대로 사용.\n평가방에 보고도 자동 발송.\n\n진행하시겠습니까?`)) return;
+  try {
+    const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+    const upd = { completedAt: Date.now(), completedBy: credit, forceCompletedBy: me.name, forceCompletedAt: Date.now() };
+    if (!t.startedAt) upd.startedAt = Date.now();
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+    Object.assign(t, upd);
+    if (!t.noAutoChat){
+      const allTaskPhotos = [...(t.photos||[])];
+      const allClPhotos = Array.isArray(t.checklist)
+        ? t.checklist.flatMap(c => {
+            const entries = (c && Array.isArray(c.entries)) ? c.entries : [];
+            if (entries.length) return entries.flatMap(e => Array.isArray(e.photos) ? e.photos : []);
+            return Array.isArray(c?.photos) ? c.photos : (c?.photo ? [c.photo] : []);
+          })
+        : [];
+      const chatPhotos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
+      const memoText = `(${me.name} 매니저가 ${credit} 의 업무를 강제 종료)`;
+      try { await postCompletionToChat(t, chatPhotos, memoText); }
+      catch(e){ console.warn('[force→chat]', e); }
+    }
+    alert('✅ 완료 처리됨 + 평가방 보고 발송 완료');
+    if (typeof render === 'function') render();
+    if (typeof renderEmp === 'function') renderEmp();
+  } catch(e){
+    console.error('[forceCompleteTask]', e);
+    alert('강제 완료 실패: ' + (e?.message || e));
+  }
+};
 async function finishTask(){
   if (!CURRENT_TASK) return;
   // 사진 3장 이상 강제 (인정 안 됨)
