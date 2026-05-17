@@ -865,6 +865,8 @@ function renderCheckList(){
     list.innerHTML = `<div class="empty-state"><div class="ic">📦</div><div class="msg">${t('emptyEq')}</div></div>`;
     return;
   }
+  // QR ID에서 숫자만 뽑아 큰 뱃지로 표시 — TEMP-EQ005 → #5
+  const _qrNumOf = (q) => { const m = (q||'').match(/(\d+)/); return m ? String(parseInt(m[1],10)) : '?'; };
   list.innerHTML = EQUIPMENT.map(eq => {
     const last = lastCheckFor(eq.id);
     // 오늘 체크 안 했으면 'missing' (눈에 확 띄게), 체크했으면 status 컬러
@@ -879,7 +881,11 @@ function renderCheckList(){
       ? (LANG==='ko'?'다시 입력':LANG==='en'?'Re-enter':'Re-ingresar')
       : (LANG==='ko'?'📝 입력':LANG==='en'?'📝 Enter':'📝 Ingresar');
     const btnStyle = last ? '' : 'background:#dc2626;color:#fff;border-color:#dc2626;font-weight:800';
+    // 큰 QR 번호 뱃지 — 카드 왼쪽에 #N (status 색상과 매칭)
+    const bg = last ? (last.status==='normal' ? '#16a34a' : last.status==='warn' ? '#f59e0b' : '#dc2626') : '#dc2626';
+    const numBadge = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;background:${bg};color:#fff;border-radius:8px;font-size:1.05em;font-weight:900;margin-right:6px">#${_qrNumOf(eq.qr)}</span>`;
     return `<div class="eq-card ${cls}">
+      ${numBadge}
       ${eqIcon(eq)}
       <div class="info">
         <div class="nm">${escHtml(eq.name||eq.qr||'?')}</div>
@@ -1323,6 +1329,12 @@ function openEquipMgr(){
     // 등록 통계 — 매니저가 한눈에 파악
     // 수동 등록: QR1/QR2... 또는 MANUAL- 형식 (스캔 없이 매니저가 직접 추가한 것)
     const isManualQr = (q) => /^QR\d+$/.test(q || '') || (q || '').startsWith('MANUAL-');
+    // QR ID 에서 숫자만 추출해서 짧게 표시: TEMP-EQ005 → 5, QR1 → 1, MANUAL-XXX → ?
+    const qrShortNum = (q) => {
+      const s = q || '';
+      const m = s.match(/(\d+)/);
+      return m ? String(parseInt(m[1], 10)) : '?';
+    };
     const manualCount = EQUIPMENT.filter(e => isManualQr(e.qr)).length;
     const qrCount = EQUIPMENT.length - manualCount;
     const summaryHtml = `
@@ -1334,16 +1346,18 @@ function openEquipMgr(){
       </div>`;
     list.innerHTML = summaryHtml + EQUIPMENT.map(eq => {
       const isManual = isManualQr(eq.qr);
+      const qrNum = qrShortNum(eq.qr);
+      // 큰 숫자 뱃지 — QR 번호를 한눈에 식별 (1, 2, 3, 5, 7...)
+      const numBadge = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;background:${isManual?'#fef3c7':'#0369a1'};color:${isManual?'#92400e':'#fff'};border-radius:8px;font-size:1.1em;font-weight:900;margin-right:6px">#${qrNum}</span>`;
       const regBadge = isManual
-        ? `<span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">✏️ ${LANG==='ko'?'수동 (QR 없음)':LANG==='en'?'Manual (no QR)':'Manual (sin QR)'}</span>`
+        ? `<span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">✏️ ${LANG==='ko'?'수동':LANG==='en'?'Manual':'Manual'}</span>`
         : `<span style="background:#dcfce7;color:#15803d;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">🏷 QR</span>`;
-      const qrLabel = isManual ? '' : escHtml(eq.qr||'');
       return `<div class="eq-card" style="border-left-color:${isManual?'#f59e0b':'#16a34a'};border-left-width:5px">
+        ${numBadge}
         ${eqIcon(eq)}
         <div class="info">
           <div class="nm">${escHtml(eq.name||'?')} ${regBadge}</div>
           <div class="meta">
-            ${qrLabel ? `<span style="font-size:.72em;color:#9ca3af">${qrLabel}</span>` : ''}
             <span style="font-size:.72em;color:#9ca3af">${eqRangeText(eq)}</span>
             <span style="font-size:.72em;color:#9ca3af">${escHtml(eq.location||'')}</span>
           </div>
