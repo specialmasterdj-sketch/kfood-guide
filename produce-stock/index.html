@@ -42,6 +42,9 @@
   .item input.cnt{flex:1;max-width:90px;padding:7px;border:2px solid var(--line);border-radius:7px;text-align:center;font-size:1.1em;font-weight:800;background:#fff}
   .item input.cnt:focus{border-color:var(--primary);outline:none}
   .item .badge{padding:3px 7px;border-radius:9px;font-size:.66em;font-weight:700;text-transform:uppercase;white-space:nowrap}
+  .vendor-pill{display:inline-block;font-size:.62em;font-weight:800;padding:1px 5px;border-radius:5px;vertical-align:middle;margin-right:2px;letter-spacing:.3px}
+  .vendor-pill.fp{background:#dbeafe;color:#1e40af}
+  .vendor-pill.av{background:#dcfce7;color:#15803d}
   .badge.urgent{background:var(--urgent);color:#fff}
   .badge.low{background:var(--low);color:#fff}
   .badge.ok{background:var(--ok);color:#fff}
@@ -183,19 +186,22 @@ const NO_SEED_BRANCHES = new Set(['MIAMI']);
 
 const TODAY = new Date().toISOString().slice(0,10);
 
-// ===== 카테고리 그룹핑 (시각용만) =====
+// ===== 카테고리 그룹핑 (시각용만) — ASIA VEG 품목까지 자동 매칭 =====
 const CAT_GROUPS = [
   { name:'🍅 토마토',         match: /TOMATO/i },
   { name:'🥑 아보카도/오이/호박', match: /AVOCADO|CUCUMBER|SQUASH|ZUCCHINI|CHAYOTE|CALABAZA/i },
   { name:'🫐 베리',           match: /BERRY|BLUEBERRY|RASPBERRY|BLACKBERRY|STRAWBERRY/i },
   { name:'🍋 시트러스/감귤',    match: /LEMON|LIME|ORANGE|CLEMENTINE|GRAPEFRUIT|KUMQUAT|TANGERINE/i },
   { name:'🥭 열대과일',        match: /MANGO|PAPAYA|PINEAPPLE|DRAGONFRUIT|COCONUT|PLANTAIN|KIWI|POMEGRANATE|BANANA/i },
-  { name:'🍎 사과/배/포도/멜론', match: /APPLE|PEAR|GRAPE|MELON|WATERMELON|CANTALOUPE/i },
-  { name:'🥬 잎채소',         match: /LETTUCE|SPINACH|KALE|CABBAGE|ARUGULA|CHARD|BOK CHOY|NAPA|ROMAINE|CELERY|PARSLEY|CILANTRO|HERB|MINT|BASIL|DILL|KAFFIR|LEMONGRASS/i },
-  { name:'🌶️ 고추/피망',       match: /PEPPER|JALAPENO|CHILI/i },
-  { name:'🧅 양파/마늘',       match: /ONION|GARLIC|SHALLOT|SCALLION|LEEK|GINGER/i },
-  { name:'🥕 뿌리채소/감자',    match: /CARROT|BEET|RADISH|TURNIP|PARSNIP|DAIKON|POTATO|YAM/i },
-  { name:'🍆 가지/콩/옥수수',   match: /EGGPLANT|BEAN|CORN|LEGUME|LENTIL|OKRA|MUSHROOM/i },
+  { name:'🍉 멜론/박',        match: /WATERMELON|CANTALOUPE|HAMI|HONEYDEW|BITTER MELON|KOREAN MELON|\bMELON\b/i },
+  { name:'🍎 사과/배/포도',    match: /APPLE|PEAR|\bGRAPE\b/i },
+  { name:'🍄 버섯',           match: /MUSHROOM/i },
+  { name:'🥬 잎채소/허브',     match: /LETTUCE|SPINACH|KALE|CABBAGE|ARUGULA|CHARD|BOK CHOY|NAPA|ROMAINE|CELERY|PARSLEY|CILANTRO|CULANTRO|HERB|MINT|BASIL|DILL|KAFFIR|LEMONGRASS|LEMON GRASS|THYME|ROSEMARY|WATERCRESS/i },
+  { name:'🌶️ 고추/피망',       match: /PEPPER|JALAPENO|CHILI|SHISHITO/i },
+  { name:'🧅 양파/마늘',       match: /ONION|GARLIC|SHALLOT|SCALLION|LEEK|GINGER|CHIVES/i },
+  { name:'🥕 뿌리채소/감자',    match: /CARROT|BEET|RADISH|TURNIP|PARSNIP|DAIKON|POTATO|YAM|LOTUS|NAGAIMO|TARO/i },
+  { name:'🥦 브로콜리/꽃양배추', match: /BROCCOLI|CAULIFLOWER/i },
+  { name:'🍆 가지/콩/옥수수',   match: /EGGPLANT|BEAN|CORN|LEGUME|LENTIL|OKRA|SNOW PEA|PEAS/i },
   { name:'🥚 계란/유제품',     match: /EGG|MILK|CHEESE|YOGURT|CREAM|BUTTER/i },
   { name:'📦 기타',           match: /.*/ },
 ];
@@ -204,11 +210,20 @@ function groupOf(name){
   return '📦 기타';
 }
 
+// ===== ASIA VEG 카탈로그 (FreshPoint 와 별도 벤더) =====
+let ASIA_VEG = null;   // { vendor:{...}, items:[...] }
+
 // ===== 데이터 로드 =====
 async function loadData(){
   try {
     const res = await fetch('./data/orders.json?t=' + Date.now());
     if (res.ok) ORDERS = await res.json();
+  } catch(e){}
+
+  // ASIA VEGETABLE 카탈로그 로드 — 4매장 (Miami 제외) 공통 표시
+  try {
+    const av = await fetch('./data/asia-veg.json?t=' + Date.now());
+    if (av.ok) ASIA_VEG = await av.json();
   } catch(e){}
 
   // localStorage 의 사용자 추가 주문도 합치기 (Apps Script 결과 import 시)
@@ -260,6 +275,7 @@ function buildItemsByBranch(){
           lastQty: it.qty,
           lastDate: o.orderDate || '',
           unitPrice: it.unitPrice,
+          vendor: 'FP',   // FreshPoint
         };
       }
     }
@@ -280,6 +296,25 @@ function buildItemsByBranch(){
           // seeded:true 마크 — 매장 자체 발주 이력 아닌 시드 데이터임을 표시
           ITEMS_BY_BRANCH[br.id][itemNo] = { ...item, seeded: true };
         }
+      }
+    }
+  }
+
+  // 🟢 ASIA VEGETABLE 품목 — Miami 제외한 모든 매장에 공통 표시 (같은 벤더에서 4매장 다 받음)
+  if (ASIA_VEG && Array.isArray(ASIA_VEG.items)){
+    for (const br of BRANCHES){
+      if (NO_SEED_BRANCHES.has(br.id)) continue;
+      for (const it of ASIA_VEG.items){
+        // FreshPoint 품목과 겹치지 않도록 AV- 접두어 보존, 별도 itemNo
+        ITEMS_BY_BRANCH[br.id][it.itemNo] = {
+          itemNo: it.itemNo,
+          product: it.product,
+          size: it.size || 'CASE',
+          lastQty: it.lastQty || 0,
+          lastDate: it.lastDate || '',
+          unitPrice: it.unitPrice || 0,
+          vendor: 'AV',   // ASIA VEGETABLE
+        };
       }
     }
   }
@@ -435,10 +470,15 @@ function renderList(){
         : it.seeded
           ? `<span class="sub">🌱 기본 품목 · 참고: ${it.lastQty} ${(it.size||'').replace('CASE','').trim()} (Las Olas 기준)</span>`
           : `<span class="sub">마지막 입고: <span class="last">${it.lastQty} ${(it.size||'').replace('CASE','').trim()}</span> · ${it.lastDate}</span>`;
+      // 벤더 뱃지 — FP (FreshPoint, 파랑) / AV (ASIA VEGETABLE, 초록)
+      const vendor = it.vendor || 'FP';
+      const vendorBadge = vendor === 'AV'
+        ? '<span class="vendor-pill av" title="ASIA VEGETABLE">AV</span>'
+        : '<span class="vendor-pill fp" title="FreshPoint">FP</span>';
       list.insertAdjacentHTML('beforeend', `
         <div class="item ${a.status}" data-key="${it.itemNo}">
           <div class="name">
-            <b>${it.product}</b>
+            <b>${vendorBadge} ${it.product}</b>
             ${subInfo}
           </div>
           <div class="ctrl">
@@ -488,13 +528,26 @@ function showOrderList(){
   if (!need.length){
     text += '🎉 발주 필요 품목 없음';
   } else {
+    // 벤더별 그룹화 — FreshPoint 따로, ASIA VEGETABLE 따로 출력 → 매니저가 각 영업한테 따로 보내기 쉬움
+    const byVendor = { FP: [], AV: [] };
     for (const a of need){
-      const it = a.item;
-      const cntPart = a.count === '' ? '미카운트' : `현재 ${a.count}`;
-      const lastPart = it.lastDate ? `마지막 ${it.lastQty} (${it.lastDate})` : '신규';
-      text += `• ${it.product}  —  ${cntPart} · ${lastPart}\n`;
+      const v = a.item.vendor || 'FP';
+      (byVendor[v] || byVendor.FP).push(a);
     }
-    text += `\n총 ${need.length} 품목\n`;
+    const writeGroup = (label, arr) => {
+      if (!arr.length) return '';
+      let s = `\n[${label}]\n`;
+      for (const a of arr){
+        const it = a.item;
+        const cntPart = a.count === '' ? '미카운트' : `현재 ${a.count}`;
+        const lastPart = it.lastDate ? `마지막 ${it.lastQty} (${it.lastDate})` : '신규';
+        s += `• ${it.product}  —  ${cntPart} · ${lastPart}\n`;
+      }
+      return s;
+    };
+    text += writeGroup('🔵 FreshPoint (Tanya)', byVendor.FP);
+    text += writeGroup('🟢 ASIA VEGETABLE', byVendor.AV);
+    text += `\n총 ${need.length} 품목 (FP ${byVendor.FP.length} · AV ${byVendor.AV.length})\n`;
   }
   document.getElementById('orderText').value = text;
   document.getElementById('orderModal').classList.remove('hidden');
