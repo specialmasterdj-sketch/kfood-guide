@@ -3177,6 +3177,32 @@ async function ensureMeatDailyTask(branchId){
   } catch(e) { console.warn('[ensureMeatDailyTask]', branchId, e); }
 }
 
+// Branch picker modal — replaces the old `prompt('enter number')` flow.
+// Returns the picked branch id, or null when canceled.
+function pickBranchModal(emoji, title, allowedBranches){
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:99999;padding:16px';
+    const cancelTxt = LANG==='en'?'Cancel':LANG==='es'?'Cancelar':'취소';
+    ov.innerHTML = `
+      <div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.35);font-family:inherit">
+        <h3 style="margin:0 0 14px;font-size:1.08em;color:#0f172a">${emoji} ${title}</h3>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+          ${allowedBranches.map(b => `<button class="_pb-opt" data-id="${b.id}" style="border:1.5px solid #d1d5db;background:#f9fafb;border-radius:12px;padding:18px 10px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.95em;color:#0f172a;transition:.12s">📍 ${b[LANG]||b.ko}</button>`).join('')}
+        </div>
+        <button class="_pb-cancel" style="margin-top:14px;width:100%;background:#f3f4f6;border:0;border-radius:10px;padding:11px;cursor:pointer;font-family:inherit;font-weight:600;color:#374151">${cancelTxt}</button>
+      </div>`;
+    ov.querySelectorAll('._pb-opt').forEach(btn => {
+      btn.addEventListener('mouseenter', () => { btn.style.background='#dbeafe'; btn.style.borderColor='#2563eb'; });
+      btn.addEventListener('mouseleave', () => { btn.style.background='#f9fafb'; btn.style.borderColor='#d1d5db'; });
+      btn.addEventListener('click', () => { document.body.removeChild(ov); resolve(btn.dataset.id); });
+    });
+    ov.querySelector('._pb-cancel').addEventListener('click', () => { document.body.removeChild(ov); resolve(null); });
+    ov.addEventListener('click', e => { if (e.target === ov) { document.body.removeChild(ov); resolve(null); } });
+    document.body.appendChild(ov);
+  });
+}
+
 // 매니저용 정육 일괄 발송 — 매니저 뷰의 '🥩 정육 일괄 발송' 버튼이 호출.
 // 6개 지점에 각각 정육 직원의 task 가 없으면 새로 만들고, 이미 있으면 건너뜀.
 // 매니저는 본인 지점만, 오너/전무는 6지점 전체 발송.
@@ -3190,12 +3216,8 @@ async function sendMeatDailyAll(){
   if (allowedBranches.length === 1) {
     chosenBranch = allowedBranches[0].id;
   } else {
-    const list = allowedBranches.map((b, i) => (i+1) + ': ' + (b[LANG]||b.ko)).join('\n');
-    const pick = prompt((LANG==='en'?'🥩 Send daily meat report — Which branch?\n\n':LANG==='es'?'🥩 Enviar reporte diario de carne — ¿Qué sucursal?\n\n':'🥩 정육 일일 발송 — 어느 지점에 보낼까요?\n\n') + list + (LANG==='en'?'\n\nEnter number:':LANG==='es'?'\n\nIngrese número:':'\n\n번호 입력:'), '1');
-    if (pick === null) return;
-    const idx = parseInt(pick.trim(), 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert(LANG==='en'?'Invalid number':LANG==='es'?'Número inválido':'번호 잘못됨'); return; }
-    chosenBranch = allowedBranches[idx].id;
+    chosenBranch = await pickBranchModal('🥩', LANG==='en'?'Send daily meat report — Which branch?':LANG==='es'?'Enviar reporte diario de carne — ¿Qué sucursal?':'정육 일일 발송 — 어느 지점에 보낼까요?', allowedBranches);
+    if (!chosenBranch) return;
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
@@ -3283,12 +3305,8 @@ async function sendKFoodDailyAll(){
   if (allowedBranches.length === 1) {
     chosenBranch = allowedBranches[0].id;
   } else {
-    const list = allowedBranches.map((b, i) => (i+1) + ': ' + (b[LANG]||b.ko)).join('\n');
-    const pick = prompt((LANG==='en'?'🍙 Send daily K-Food report — Which branch?\n\n':LANG==='es'?'🍙 Enviar reporte diario de K-Food — ¿Qué sucursal?\n\n':'🍙 K-Food 일일 발송 — 어느 지점에 보낼까요?\n\n') + list + (LANG==='en'?'\n\nEnter number:':LANG==='es'?'\n\nIngrese número:':'\n\n번호 입력:'), '1');
-    if (pick === null) return;
-    const idx = parseInt(pick.trim(), 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert(LANG==='en'?'Invalid number':LANG==='es'?'Número inválido':'번호 잘못됨'); return; }
-    chosenBranch = allowedBranches[idx].id;
+    chosenBranch = await pickBranchModal('🍙', LANG==='en'?'Send daily K-Food report — Which branch?':LANG==='es'?'Enviar reporte diario de K-Food — ¿Qué sucursal?':'K-Food 일일 발송 — 어느 지점에 보낼까요?', allowedBranches);
+    if (!chosenBranch) return;
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
@@ -3373,12 +3391,8 @@ async function sendSeafoodDailyAll(){
   if (allowedBranches.length === 1) {
     chosenBranch = allowedBranches[0].id;
   } else {
-    const list = allowedBranches.map((b, i) => (i+1) + ': ' + (b[LANG]||b.ko)).join('\n');
-    const pick = prompt((LANG==='en'?'🐟 Send daily seafood report — Which branch?\n\n':LANG==='es'?'🐟 Enviar reporte diario de mariscos — ¿Qué sucursal?\n\n':'🐟 해산물 일일 발송 — 어느 지점에 보낼까요?\n\n') + list + (LANG==='en'?'\n\nEnter number:':LANG==='es'?'\n\nIngrese número:':'\n\n번호 입력:'), '1');
-    if (pick === null) return;
-    const idx = parseInt(pick.trim(), 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert(LANG==='en'?'Invalid number':LANG==='es'?'Número inválido':'번호 잘못됨'); return; }
-    chosenBranch = allowedBranches[idx].id;
+    chosenBranch = await pickBranchModal('🐟', LANG==='en'?'Send daily seafood report — Which branch?':LANG==='es'?'Enviar reporte diario de mariscos — ¿Qué sucursal?':'해산물 일일 발송 — 어느 지점에 보낼까요?', allowedBranches);
+    if (!chosenBranch) return;
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
@@ -3461,12 +3475,8 @@ async function sendProduceDailyAll(){
   if (allowedBranches.length === 1) {
     chosenBranch = allowedBranches[0].id;
   } else {
-    const list = allowedBranches.map((b, i) => (i+1) + ': ' + (b[LANG]||b.ko)).join('\n');
-    const pick = prompt((LANG==='en'?'🥬 Send daily produce report — Which branch?\n\n':LANG==='es'?'🥬 Enviar reporte diario de productos — ¿Qué sucursal?\n\n':'🥬 농산물 일일 발송 — 어느 지점에 보낼까요?\n\n') + list + (LANG==='en'?'\n\nEnter number:':LANG==='es'?'\n\nIngrese número:':'\n\n번호 입력:'), '1');
-    if (pick === null) return;
-    const idx = parseInt(pick.trim(), 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert(LANG==='en'?'Invalid number':LANG==='es'?'Número inválido':'번호 잘못됨'); return; }
-    chosenBranch = allowedBranches[idx].id;
+    chosenBranch = await pickBranchModal('🥬', LANG==='en'?'Send daily produce report — Which branch?':LANG==='es'?'Enviar reporte diario de productos — ¿Qué sucursal?':'농산물 일일 발송 — 어느 지점에 보낼까요?', allowedBranches);
+    if (!chosenBranch) return;
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
@@ -3579,12 +3589,8 @@ async function sendFrozenDailyAll(){
   if (allowedBranches.length === 1) {
     chosenBranch = allowedBranches[0].id;
   } else {
-    const list = allowedBranches.map((b, i) => (i+1) + ': ' + (b[LANG]||b.ko)).join('\n');
-    const pick = prompt((LANG==='en'?'🧊 Send full frozen display report — Which branch?\n\n':LANG==='es'?'🧊 Enviar reporte de exhibición congelada — ¿Qué sucursal?\n\n':'🧊 냉동고 전체 진열 — 어느 지점에 보낼까요?\n\n') + list + (LANG==='en'?'\n\nEnter number:':LANG==='es'?'\n\nIngrese número:':'\n\n번호 입력:'), '1');
-    if (pick === null) return;
-    const idx = parseInt(pick.trim(), 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= allowedBranches.length) { alert(LANG==='en'?'Invalid number':LANG==='es'?'Número inválido':'번호 잘못됨'); return; }
-    chosenBranch = allowedBranches[idx].id;
+    chosenBranch = await pickBranchModal('🧊', LANG==='en'?'Send full frozen display report — Which branch?':LANG==='es'?'Enviar reporte de exhibición congelada — ¿Qué sucursal?':'냉동고 전체 진열 — 어느 지점에 보낼까요?', allowedBranches);
+    if (!chosenBranch) return;
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
