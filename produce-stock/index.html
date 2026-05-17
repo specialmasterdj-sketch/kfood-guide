@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>🥬 KIMCHI 재고 체크</title>
+<style>
+  :root{
+    --bg:#f8fafc; --card:#fff; --line:#e2e8f0; --text:#0f172a; --mute:#64748b;
+    --primary:#16a34a; --primary-dark:#15803d;
+    --ok:#16a34a; --low:#f59e0b; --urgent:#dc2626; --untouched:#94a3b8;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:"Segoe UI","Malgun Gothic",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px;padding-bottom:80px}
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;padding:10px 14px;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+  header .top{display:flex;align-items:center;gap:10px}
+  header h1{margin:0;font-size:1.02em;font-weight:700;flex:1}
+  header select{padding:5px 8px;border:none;border-radius:5px;font-weight:700;background:#fff;color:var(--text);font-size:.92em}
+  header .date{font-size:.82em;opacity:.85;margin-left:6px}
+
+  .summary{display:flex;gap:6px;margin-top:8px}
+  .pill{flex:1;background:rgba(255,255,255,.15);padding:6px 8px;border-radius:6px;text-align:center;cursor:pointer;border:1px solid transparent;font-size:.84em;font-weight:600}
+  .pill.active{background:#fff;color:var(--text)}
+  .pill .n{font-size:1.1em;font-weight:800;display:block}
+  .pill.urgent{background:rgba(220,38,38,.2)}
+  .pill.urgent.active{background:#fff;color:var(--urgent)}
+  .pill.low{background:rgba(245,158,11,.2)}
+  .pill.low.active{background:#fff;color:var(--low)}
+  .pill.ok{background:rgba(34,197,94,.2)}
+  .pill.ok.active{background:#fff;color:var(--ok)}
+
+  main{padding:10px}
+  .item{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--untouched);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px}
+  .item.urgent{border-left-color:var(--urgent);background:#fef2f2}
+  .item.low{border-left-color:var(--low);background:#fffbeb}
+  .item.ok{border-left-color:var(--ok)}
+  .item .name{flex:1;min-width:0}
+  .item .name b{display:block;font-size:.96em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .item .name .sub{font-size:.75em;color:var(--mute);margin-top:2px}
+  .item .name .sub .last{font-weight:600;color:#0891b2}
+  .item input.cnt{width:64px;padding:8px;border:2px solid var(--line);border-radius:8px;text-align:center;font-size:1.2em;font-weight:800;background:#fff}
+  .item input.cnt:focus{border-color:var(--primary);outline:none}
+  .item .badge{padding:3px 8px;border-radius:10px;font-size:.7em;font-weight:700;text-transform:uppercase;white-space:nowrap}
+  .badge.urgent{background:var(--urgent);color:#fff}
+  .badge.low{background:var(--low);color:#fff}
+  .badge.ok{background:var(--ok);color:#fff}
+  .badge.untouched{background:var(--untouched);color:#fff}
+
+  .group-hdr{font-size:.78em;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.5px;margin:14px 4px 6px;display:flex;align-items:center;gap:6px}
+  .group-hdr::after{content:'';flex:1;height:1px;background:var(--line);margin-left:8px}
+
+  .empty{text-align:center;padding:30px 20px;color:var(--mute)}
+  .toolbar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:10px;display:flex;gap:8px;z-index:10;box-shadow:0 -2px 8px rgba(0,0,0,.06)}
+  .btn{flex:1;padding:11px;border:none;border-radius:8px;font-size:.94em;font-weight:700;cursor:pointer}
+  .btn.primary{background:var(--primary);color:#fff}
+  .btn.sec{background:#e0e7ff;color:#3730a3}
+
+  /* 발주 리스트 모달 */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:20;padding:14px}
+  .modal.hidden{display:none}
+  .modal .box{background:#fff;border-radius:12px;max-width:480px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal .hdr{padding:14px;border-bottom:1px solid var(--line);font-weight:700;display:flex;align-items:center;gap:10px}
+  .modal .body{padding:14px;overflow:auto;flex:1}
+  .modal textarea{width:100%;min-height:280px;padding:10px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:.86em;resize:vertical}
+  .modal .ftr{padding:10px;border-top:1px solid var(--line);display:flex;gap:8px}
+
+  /* 설정/메뉴 */
+  details.menu{position:relative}
+  details.menu summary{list-style:none;cursor:pointer;padding:6px;color:#fff;font-size:1.2em}
+  details.menu summary::-webkit-details-marker{display:none}
+  details.menu[open] .menu-pop{display:block}
+  .menu-pop{display:none;position:absolute;right:0;top:100%;background:#fff;color:var(--text);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:200px;padding:6px;z-index:30}
+  .menu-pop button{display:block;width:100%;text-align:left;padding:9px 12px;border:none;background:none;cursor:pointer;font-size:.92em;border-radius:5px;color:var(--text)}
+  .menu-pop button:hover{background:#f1f5f9}
+
+  /* 새 품목 추가 폼 */
+  .add-form{background:var(--card);border:1px dashed var(--line);border-radius:8px;padding:10px;margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .add-form input{flex:1;padding:8px;border:1px solid var(--line);border-radius:6px;font-size:.9em}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top">
+    <h1>🥬 재고 체크</h1>
+    <select id="branchSel" onchange="changeBranch()"></select>
+    <span class="date" id="todayLbl"></span>
+    <details class="menu">
+      <summary>⋮</summary>
+      <div class="menu-pop">
+        <button onclick="document.getElementById('addRow').scrollIntoView({behavior:'smooth'})">➕ 새 품목 추가</button>
+        <button onclick="exportData()">📤 백업 (JSON)</button>
+        <button onclick="document.getElementById('fileImport').click()">📥 복원</button>
+        <button onclick="clearTodayConfirm()">🔄 오늘 카운트 초기화</button>
+        <button onclick="showHistory()">📅 지난 카운트 보기</button>
+        <input type="file" id="fileImport" accept=".json" style="display:none" onchange="importData(event)">
+      </div>
+    </details>
+  </div>
+  <div class="summary">
+    <div class="pill urgent active" data-filter="urgent" onclick="setFilter('urgent')">
+      <span class="n" id="cUrgent">0</span>🔴 발주
+    </div>
+    <div class="pill low" data-filter="low" onclick="setFilter('low')">
+      <span class="n" id="cLow">0</span>🟡 부족
+    </div>
+    <div class="pill ok" data-filter="ok" onclick="setFilter('ok')">
+      <span class="n" id="cOk">0</span>🟢 충분
+    </div>
+    <div class="pill" data-filter="all" onclick="setFilter('all')">
+      <span class="n" id="cAll">0</span>📋 전체
+    </div>
+  </div>
+</header>
+
+<main id="list"></main>
+
+<!-- 새 품목 추가 (스크롤 끝에) -->
+<div id="addRow" style="padding:10px 14px">
+  <div class="add-form">
+    <input type="text" id="newName" placeholder="새 품목 (예: SCALLION GREEN)">
+    <input type="number" id="newCnt" placeholder="현재 수량" min="0" step="any" style="max-width:120px">
+    <button class="btn primary" onclick="addManualItem()" style="flex:0 0 auto;padding:8px 14px">추가</button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button class="btn primary" onclick="showOrderList()">📋 발주 리스트</button>
+  <button class="btn sec" onclick="window.print()">🖨️ 인쇄</button>
+</div>
+
+<!-- 발주 리스트 모달 -->
+<div class="modal hidden" id="orderModal">
+  <div class="box">
+    <div class="hdr">
+      📋 발주 필요 리스트
+      <span style="margin-left:auto;cursor:pointer;color:var(--mute)" onclick="closeModal('orderModal')">✕</span>
+    </div>
+    <div class="body">
+      <textarea id="orderText" readonly></textarea>
+    </div>
+    <div class="ftr">
+      <button class="btn primary" onclick="copyOrder()">📋 클립보드 복사</button>
+      <button class="btn sec" onclick="closeModal('orderModal')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 히스토리 모달 -->
+<div class="modal hidden" id="histModal">
+  <div class="box">
+    <div class="hdr">
+      📅 지난 카운트 (이 매장)
+      <span style="margin-left:auto;cursor:pointer;color:var(--mute)" onclick="closeModal('histModal')">✕</span>
+    </div>
+    <div class="body" id="histBody"></div>
+  </div>
+</div>
+
+<script>
+// ===== 상태 =====
+let ORDERS = [];          // 시드 + 사용자 추가 주문
+let ITEMS_BY_BRANCH = {}; // branch → [item objects]
+let COUNTS = {};          // { branch: { itemNo: { date: count } } }
+let MANUAL = {};          // { branch: [ { itemNo, product } ] } — 사용자가 수동 추가
+let CURRENT_BRANCH = localStorage.getItem('pStock_branch') || 'LASOLAS';
+let CURRENT_FILTER = 'urgent';   // 디폴트: 발주 필요만 — 매니저 1차 관심사
+
+const BRANCHES = [
+  { id:'LASOLAS',        name:'Las Olas' },
+  { id:'HOLLYWOOD',      name:'Hollywood' },
+  { id:'CORAL_SPRINGS',  name:'Coral Springs' },
+  { id:'PEMBROKE_PINES', name:'Pembroke Pines' },
+];
+
+const TODAY = new Date().toISOString().slice(0,10);
+
+// ===== 카테고리 그룹핑 (시각용만) =====
+const CAT_GROUPS = [
+  { name:'🍅 토마토',         match: /TOMATO/i },
+  { name:'🥑 아보카도/오이/호박', match: /AVOCADO|CUCUMBER|SQUASH|ZUCCHINI|CHAYOTE|CALABAZA/i },
+  { name:'🫐 베리',           match: /BERRY|BLUEBERRY|RASPBERRY|BLACKBERRY|STRAWBERRY/i },
+  { name:'🍋 시트러스/감귤',    match: /LEMON|LIME|ORANGE|CLEMENTINE|GRAPEFRUIT|KUMQUAT|TANGERINE/i },
+  { name:'🥭 열대과일',        match: /MANGO|PAPAYA|PINEAPPLE|DRAGONFRUIT|COCONUT|PLANTAIN|KIWI|POMEGRANATE|BANANA/i },
+  { name:'🍎 사과/배/포도/멜론', match: /APPLE|PEAR|GRAPE|MELON|WATERMELON|CANTALOUPE/i },
+  { name:'🥬 잎채소',         match: /LETTUCE|SPINACH|KALE|CABBAGE|ARUGULA|CHARD|BOK CHOY|NAPA|ROMAINE|CELERY|PARSLEY|CILANTRO|HERB|MINT|BASIL|DILL|KAFFIR|LEMONGRASS/i },
+  { name:'🌶️ 고추/피망',       match: /PEPPER|JALAPENO|CHILI/i },
+  { name:'🧅 양파/마늘',       match: /ONION|GARLIC|SHALLOT|SCALLION|LEEK|GINGER/i },
+  { name:'🥕 뿌리채소/감자',    match: /CARROT|BEET|RADISH|TURNIP|PARSNIP|DAIKON|POTATO|YAM/i },
+  { name:'🍆 가지/콩/옥수수',   match: /EGGPLANT|BEAN|CORN|LEGUME|LENTIL|OKRA|MUSHROOM/i },
+  { name:'🥚 계란/유제품',     match: /EGG|MILK|CHEESE|YOGURT|CREAM|BUTTER/i },
+  { name:'📦 기타',           match: /.*/ },
+];
+function groupOf(name){
+  for (const g of CAT_GROUPS) if (g.match.test(name)) return g.name;
+  return '📦 기타';
+}
+
+// ===== 데이터 로드 =====
+async function loadData(){
+  try {
+    const res = await fetch('./data/orders.json?t=' + Date.now());
+    if (res.ok) ORDERS = await res.json();
+  } catch(e){}
+
+  // localStorage 의 사용자 추가 주문도 합치기 (Apps Script 결과 import 시)
+  try {
+    const u = JSON.parse(localStorage.getItem('pStock_userOrders') || '[]');
+    for (const o of u){
+      if (!ORDERS.some(x => x.ref === o.ref)) ORDERS.push(o);
+    }
+  } catch(e){}
+
+  // 카운트 + 수동 추가 품목 로드
+  COUNTS = JSON.parse(localStorage.getItem('pStock_counts') || '{}');
+  MANUAL = JSON.parse(localStorage.getItem('pStock_manual') || '{}');
+
+  buildItemsByBranch();
+  initBranchSel();
+  renderList();
+  updateTodayLabel();
+}
+
+function updateTodayLabel(){
+  const d = new Date();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  document.getElementById('todayLbl').textContent = `${mm}/${dd}`;
+}
+
+// 매장별 품목 집계 — 최근 주문에서 마지막 입고량 + 마지막 입고일
+function buildItemsByBranch(){
+  ITEMS_BY_BRANCH = {};
+  for (const br of BRANCHES) ITEMS_BY_BRANCH[br.id] = {};
+
+  for (const o of ORDERS){
+    if (!o.branch || !o.items) continue;
+    const bid = o.branch.id;
+    if (!(bid in ITEMS_BY_BRANCH)) ITEMS_BY_BRANCH[bid] = {};
+    for (const it of o.items){
+      const cur = ITEMS_BY_BRANCH[bid][it.itemNo];
+      // 가장 최근 주문 1건의 qty + date 만 유지
+      if (!cur || (o.orderDate || '') > cur.lastDate){
+        ITEMS_BY_BRANCH[bid][it.itemNo] = {
+          itemNo: it.itemNo,
+          product: it.product,
+          size: it.size,
+          lastQty: it.qty,
+          lastDate: o.orderDate || '',
+          unitPrice: it.unitPrice,
+        };
+      }
+    }
+  }
+
+  // 수동 추가 품목도 합치기
+  for (const [bid, list] of Object.entries(MANUAL)){
+    if (!(bid in ITEMS_BY_BRANCH)) ITEMS_BY_BRANCH[bid] = {};
+    for (const m of list){
+      if (!ITEMS_BY_BRANCH[bid][m.itemNo]){
+        ITEMS_BY_BRANCH[bid][m.itemNo] = {
+          itemNo: m.itemNo, product: m.product, size:'(수동)',
+          lastQty: 0, lastDate:'', unitPrice: 0, manual:true,
+        };
+      }
+    }
+  }
+}
+
+function initBranchSel(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+  sel.value = CURRENT_BRANCH;
+}
+
+function changeBranch(){
+  CURRENT_BRANCH = document.getElementById('branchSel').value;
+  localStorage.setItem('pStock_branch', CURRENT_BRANCH);
+  renderList();
+}
+
+function setFilter(f){
+  CURRENT_FILTER = f;
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.filter === f));
+  renderList();
+}
+
+// ===== 상태 계산 =====
+//   urgent = 카운트 0 OR (카운트 < 25% of 마지막 입고량)
+//   low    = 카운트 < 50% of 마지막 입고량
+//   ok     = 그 외 (카운트 입력됨)
+//   untouched = 아직 카운트 안 함
+function statusOf(item, count){
+  if (count === null || count === undefined || count === '') return 'untouched';
+  const c = parseFloat(count);
+  if (isNaN(c)) return 'untouched';
+  const last = item.lastQty || 0;
+  if (c <= 0) return 'urgent';
+  if (last === 0) return 'ok';  // 수동 품목 등 기준 없음
+  if (c < last * 0.25) return 'urgent';
+  if (c < last * 0.50) return 'low';
+  return 'ok';
+}
+
+function getCount(branch, itemNo){
+  return (COUNTS[branch] && COUNTS[branch][itemNo] && COUNTS[branch][itemNo][TODAY]) ?? '';
+}
+
+function setCount(branch, itemNo, value){
+  if (!COUNTS[branch]) COUNTS[branch] = {};
+  if (!COUNTS[branch][itemNo]) COUNTS[branch][itemNo] = {};
+  if (value === '' || value === null){
+    delete COUNTS[branch][itemNo][TODAY];
+  } else {
+    COUNTS[branch][itemNo][TODAY] = parseFloat(value);
+  }
+  localStorage.setItem('pStock_counts', JSON.stringify(COUNTS));
+}
+
+// ===== 렌더 =====
+function renderList(){
+  const items = Object.values(ITEMS_BY_BRANCH[CURRENT_BRANCH] || {})
+    .sort((a,b) => a.product.localeCompare(b.product));
+
+  // 카운트
+  let nUrgent=0, nLow=0, nOk=0, nUntouched=0;
+  const annotated = items.map(it => {
+    const cnt = getCount(CURRENT_BRANCH, it.itemNo);
+    const st = statusOf(it, cnt);
+    if (st === 'urgent') nUrgent++;
+    else if (st === 'low') nLow++;
+    else if (st === 'ok') nOk++;
+    else nUntouched++;
+    return { item: it, count: cnt, status: st };
+  });
+
+  document.getElementById('cUrgent').textContent = nUrgent;
+  document.getElementById('cLow').textContent = nLow;
+  document.getElementById('cOk').textContent = nOk;
+  document.getElementById('cAll').textContent = annotated.length;
+
+  // 필터
+  let visible;
+  if (CURRENT_FILTER === 'urgent') visible = annotated.filter(a => a.status === 'urgent');
+  else if (CURRENT_FILTER === 'low') visible = annotated.filter(a => a.status === 'low');
+  else if (CURRENT_FILTER === 'ok') visible = annotated.filter(a => a.status === 'ok' || a.status === 'untouched');
+  else visible = annotated;
+
+  // 카테고리 그룹핑
+  const groups = {};
+  for (const a of visible){
+    const g = groupOf(a.item.product);
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(a);
+  }
+  const groupOrder = CAT_GROUPS.map(g => g.name);
+
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  if (!visible.length){
+    if (CURRENT_FILTER === 'urgent') list.innerHTML = '<div class="empty">🎉 발주 필요 품목 없음!<br><br>매장 돌면서 카운트하면 자동으로 분류됩니다.</div>';
+    else if (CURRENT_FILTER === 'low') list.innerHTML = '<div class="empty">🟢 부족한 품목 없음</div>';
+    else if (!items.length) list.innerHTML = '<div class="empty">📦 이 매장에 발주 이력이 없습니다.<br><br>아래 ➕ 새 품목 추가 또는 Apps Script 로 메일 import 하세요.</div>';
+    else list.innerHTML = '<div class="empty">표시할 품목 없음</div>';
+    return;
+  }
+
+  for (const gname of groupOrder){
+    if (!groups[gname]) continue;
+    list.insertAdjacentHTML('beforeend', `<div class="group-hdr">${gname} <span style="color:var(--mute);font-weight:400">${groups[gname].length}</span></div>`);
+    for (const a of groups[gname]){
+      const it = a.item;
+      const badge = {
+        urgent:    '<span class="badge urgent">🔴 발주</span>',
+        low:       '<span class="badge low">🟡 부족</span>',
+        ok:        '<span class="badge ok">🟢 OK</span>',
+        untouched: '<span class="badge untouched">⏳</span>',
+      }[a.status];
+      const subInfo = it.manual
+        ? '<span class="sub">📝 수동 추가</span>'
+        : `<span class="sub">마지막 입고: <span class="last">${it.lastQty} ${(it.size||'').replace('CASE','').trim()}</span> · ${it.lastDate}</span>`;
+      list.insertAdjacentHTML('beforeend', `
+        <div class="item ${a.status}" data-key="${it.itemNo}">
+          <div class="name">
+            <b>${it.product}</b>
+            ${subInfo}
+          </div>
+          <input type="number" class="cnt" min="0" step="0.5" inputmode="decimal"
+                 value="${a.count === '' ? '' : a.count}"
+                 placeholder="—"
+                 onchange="onCountChange('${it.itemNo}', this.value)">
+          ${badge}
+        </div>
+      `);
+    }
+  }
+}
+
+function onCountChange(itemNo, val){
+  setCount(CURRENT_BRANCH, itemNo, val);
+  renderList();
+}
+
+// ===== 수동 추가 =====
+function addManualItem(){
+  const name = document.getElementById('newName').value.trim();
+  const cnt = document.getElementById('newCnt').value.trim();
+  if (!name){ alert('품목명을 입력해 주세요'); return; }
+  const itemNo = 'M' + Date.now().toString().slice(-6);
+  if (!MANUAL[CURRENT_BRANCH]) MANUAL[CURRENT_BRANCH] = [];
+  MANUAL[CURRENT_BRANCH].push({ itemNo, product: name.toUpperCase() });
+  localStorage.setItem('pStock_manual', JSON.stringify(MANUAL));
+  if (cnt !== '') setCount(CURRENT_BRANCH, itemNo, cnt);
+  document.getElementById('newName').value = '';
+  document.getElementById('newCnt').value = '';
+  buildItemsByBranch();
+  renderList();
+}
+
+// ===== 발주 리스트 =====
+function showOrderList(){
+  const items = Object.values(ITEMS_BY_BRANCH[CURRENT_BRANCH] || {});
+  const need = items
+    .map(it => ({ item: it, count: getCount(CURRENT_BRANCH, it.itemNo) }))
+    .filter(a => statusOf(a.item, a.count) === 'urgent')
+    .sort((a,b) => a.item.product.localeCompare(b.item.product));
+
+  const branchName = BRANCHES.find(b => b.id === CURRENT_BRANCH).name;
+  let text = `[${branchName} · ${TODAY} 발주 필요]\n\n`;
+  if (!need.length){
+    text += '🎉 발주 필요 품목 없음';
+  } else {
+    for (const a of need){
+      const it = a.item;
+      const cntPart = a.count === '' ? '미카운트' : `현재 ${a.count}`;
+      const lastPart = it.lastDate ? `마지막 ${it.lastQty} (${it.lastDate})` : '신규';
+      text += `• ${it.product}  —  ${cntPart} · ${lastPart}\n`;
+    }
+    text += `\n총 ${need.length} 품목\n`;
+  }
+  document.getElementById('orderText').value = text;
+  document.getElementById('orderModal').classList.remove('hidden');
+}
+
+async function copyOrder(){
+  const t = document.getElementById('orderText').value;
+  try {
+    await navigator.clipboard.writeText(t);
+    alert('✅ 복사됨 — Tanya (FreshPoint) 한테 붙여넣기');
+  } catch(e){
+    document.getElementById('orderText').select();
+    document.execCommand('copy');
+    alert('✅ 복사됨');
+  }
+}
+
+function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
+
+// ===== 히스토리 =====
+function showHistory(){
+  const body = document.getElementById('histBody');
+  const data = COUNTS[CURRENT_BRANCH] || {};
+  const dates = new Set();
+  for (const itemNo in data) for (const d in data[itemNo]) dates.add(d);
+  const sortedDates = Array.from(dates).sort().reverse();
+  if (!sortedDates.length){
+    body.innerHTML = '<div class="empty">아직 카운트 기록이 없습니다.</div>';
+  } else {
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:.86em"><thead><tr><th style="text-align:left">날짜</th><th>카운트 된 품목 수</th><th>발주 필요</th></tr></thead><tbody>';
+    for (const d of sortedDates){
+      let counted=0, urgent=0;
+      for (const itemNo in data){
+        if (data[itemNo][d] !== undefined){
+          counted++;
+          const it = ITEMS_BY_BRANCH[CURRENT_BRANCH][itemNo];
+          if (it && statusOf(it, data[itemNo][d]) === 'urgent') urgent++;
+        }
+      }
+      html += `<tr><td style="padding:6px;border-bottom:1px solid var(--line)">${d}${d===TODAY?' (오늘)':''}</td><td style="text-align:center;border-bottom:1px solid var(--line)">${counted}</td><td style="text-align:center;color:var(--urgent);font-weight:700;border-bottom:1px solid var(--line)">${urgent}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }
+  document.getElementById('histModal').classList.remove('hidden');
+  document.querySelector('details.menu').open = false;
+}
+
+// ===== 백업/복원/리셋 =====
+function exportData(){
+  const data = {
+    counts: COUNTS,
+    manual: MANUAL,
+    userOrders: JSON.parse(localStorage.getItem('pStock_userOrders') || '[]'),
+    exportedAt: new Date().toISOString(),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `kimchi-stock-${TODAY}.json`;
+  a.click();
+  document.querySelector('details.menu').open = false;
+}
+
+function importData(ev){
+  const f = ev.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const d = JSON.parse(e.target.result);
+      // Apps Script 출력 형식 (orders + catalog) 도 지원
+      if (Array.isArray(d.orders)){
+        localStorage.setItem('pStock_userOrders', JSON.stringify(d.orders));
+        alert(`✅ ${d.orders.length} 주문 import — 페이지 새로고침 합니다`);
+        location.reload();
+        return;
+      }
+      // 자체 백업 형식
+      if (d.counts) { COUNTS = d.counts; localStorage.setItem('pStock_counts', JSON.stringify(COUNTS)); }
+      if (d.manual) { MANUAL = d.manual; localStorage.setItem('pStock_manual', JSON.stringify(MANUAL)); }
+      if (d.userOrders) localStorage.setItem('pStock_userOrders', JSON.stringify(d.userOrders));
+      alert('✅ 복원 완료');
+      location.reload();
+    } catch(err){ alert('❌ JSON 파싱 실패'); }
+  };
+  reader.readAsText(f);
+}
+
+function clearTodayConfirm(){
+  if (!confirm(`${BRANCHES.find(b=>b.id===CURRENT_BRANCH).name} 의 오늘(${TODAY}) 카운트를 모두 지울까요?`)) return;
+  const data = COUNTS[CURRENT_BRANCH] || {};
+  for (const itemNo in data) delete data[itemNo][TODAY];
+  localStorage.setItem('pStock_counts', JSON.stringify(COUNTS));
+  renderList();
+  document.querySelector('details.menu').open = false;
+}
+
+// ===== 시작 =====
+loadData();
+</script>
+
+</body>
+</html>
