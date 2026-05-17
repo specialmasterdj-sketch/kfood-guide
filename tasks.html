@@ -6,6 +6,38 @@
 <title>김치마트 — 업무 지시</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
+<script>
+  // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
+  // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
+  // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
+  (function(){
+    var BUST = 'tasks_2026_05_17_c';
+    var KEY = 'kmtools_bust_tasks';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+    // 폴링 — 이미 열린 페이지를 위한 자동 업데이트
+    function pollBust(){
+      fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.text(); })
+        .then(function(t){
+          var m = t.match(/var BUST = '([^']+)'/);
+          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+        }).catch(function(){});
+    }
+    setInterval(pollBust, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', function(){
+      if (document.visibilityState === 'visible') pollBust();
+    });
+    window.addEventListener('focus', pollBust);
+  })();
+</script>
 <script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=4"></script>
 <script src="./me-persist.js?v=1"></script>
@@ -2802,6 +2834,30 @@ function initials(name){ return name.split(/\s+/).map(w=>w[0]||'').join('').slic
 function fmtTime(ts){ if(!ts)return''; const d=new Date(ts); return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}); }
 
 // ================= INIT =================
+// me.role 이 비어있을 때 schedules 데이터에서 자동 회복 — 매니저(Kendell 등)가
+// chat.me 등록 시 role 비워뒀거나, ITP/캐시로 사라진 경우 schedules 의 본인
+// 엔트리에서 회복. 이미 어떤 role 이든 있으면 사용자 의도 존중하고 그대로 둠.
+let __roleRecoveredFor = '';
+async function _recoverMyRoleFromSchedules(){
+  if (!me || !me.name || !me.branch) return;
+  const key = me.name + '|' + me.branch;
+  if (__roleRecoveredFor === key) return;
+  __roleRecoveredFor = key;
+  try {
+    const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+    const data = await fetch(`${FB}/schedules/${me.branch}.json?cb=${Date.now()}`, { cache:'no-store' }).then(r => r.json());
+    if (!data || !Array.isArray(data.employees)) return;
+    const norm = s => String(s||'').toLowerCase().trim().replace(/\s+/g,' ');
+    const found = data.employees.find(e => norm(e && e.name) === norm(me.name));
+    if (found && found.role && found.role !== me.role) {
+      me.role = found.role;
+      try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(_){}
+      console.log('[role-recover] me.role 회복 →', found.role);
+      try { refreshMe(); } catch(_){}
+    }
+  } catch(e){ console.warn('[role-recover]', e); }
+}
+
 function refreshMe(){
   me = loadMe();
   const pill = document.getElementById('mePill');
@@ -2809,6 +2865,10 @@ function refreshMe(){
   const nm = document.getElementById('meName');
   if (!me) { pill.style.background='#fef3c7'; pill.style.color='#92400e'; av.textContent='?'; av.style.background='#92400e'; nm.textContent='이름 등록 →'; return; }
   pill.style.background='#f0fdf4'; pill.style.color='#1a5c3a'; av.textContent=initials(me.name); av.style.background=colorFor(me.name); nm.textContent=me.name;
+  // me.role 비어있으면 schedules 에서 자동 회복 (fire-and-forget)
+  if (me && me.name && me.branch && !String(me.role||'').trim()) {
+    _recoverMyRoleFromSchedules();
+  }
   const showMgr = isManager(me.role) || isOwner();
   document.getElementById('mgrTabBtn').style.display = showMgr ? '' : 'none';
   document.getElementById('repTabBtn').style.display = showMgr ? '' : 'none';
@@ -2929,14 +2989,9 @@ function renderDashboard(){
     return false;
   }
   function _isDelayed(t){
-    if (_isDone(t)) return false;
-    if (!t.deadline) return false;
-    // deadline 은 "HH:MM" 형식. 오늘 그 시간이 지났는지.
-    const m = String(t.deadline).match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return false;
-    const now = new Date();
-    const dl = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(m[1],10), parseInt(m[2],10));
-    return Date.now() > dl.getTime();
+    // 🚫 5매장 요구 — 시간 제한 (데드라인 기반 지연 표시) 비활성화. 직원 스트레스 감소.
+    //    데드라인은 '참고용 시간'으로만 카드에 표시되고, 지연 빨강 라벨/알림은 안 뜸.
+    return false;
   }
   const total = todayTasks.length;
   const completed = todayTasks.filter(_isDone).length;
@@ -3987,29 +4042,32 @@ function renderClockIn(){
     el.innerHTML = `<span class="ic">📡</span><div class="body"><b>${t('geoLoading')}</b><span class="sub">${MY_LOCATION&&MY_LOCATION.error?escHtml(MY_LOCATION.error):t('geoNeedPerm')}</span></div><button class="btn sec" onclick="tickLocation()">${t('retry')}</button>`;
     return;
   }
-  // 4) Compute distance
+  // 4) 🚫 5매장 요구 — 위치 반경 체크 무시. 거리만 참고용으로 표시, 출근 버튼 항상 활성.
   const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
-  const canClock = d <= radius;
-  el.className = 'clockin-card ' + (canClock?'ready':'far');
-  const headline = canClock ? t('arrived') : t('awayFrom', { d: Math.round(d) });
-  const sub = br + ' · ' + t('accuracy', { a: Math.round(MY_LOCATION.acc) }) + (canClock ? '' : t('withinRadius', { r: radius }));
-  el.innerHTML = `<span class="ic">${canClock?'📍':'🚶'}</span>`+
+  el.className = 'clockin-card ready';
+  const headline = d <= radius ? t('arrived') : t('awayFrom', { d: Math.round(d) });
+  const sub = br + ' · ' + t('accuracy', { a: Math.round(MY_LOCATION.acc) });
+  el.innerHTML = `<span class="ic">📍</span>`+
     `<div class="body"><b>${headline}</b><span class="sub">${sub}</span></div>`+
-    `<button class="btn ${canClock?'':'gray'}" ${canClock?'':'disabled'} onclick="clockIn()">${canClock?t('clockInBtn'):t('waitBtn')}</button>`;
+    `<button class="btn" onclick="clockIn()">${t('clockInBtn')}</button>`;
 }
 async function clockIn(){
-  if (!me || !MY_LOCATION || !MY_LOCATION.lat) return;
-  const branchGeo = BRANCH_GEO[me.branch];
-  if (!branchGeo) { alert('매장 좌표 미등록'); return; }
-  const radius = branchGeo.radius || DEFAULT_RADIUS_M;
-  const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
-  if (d > radius) { alert('매장에서 너무 멉니다 ('+Math.round(d)+'m)'); return; }
+  if (!me) return;
+  // 🚫 5매장 요구 — 위치 제한 (geofence 반경 80m 체크) 비활성화. 어디서든 출근 등록 가능.
+  const branchGeo = BRANCH_GEO[me.branch] || {};
+  let d = null;
+  if (MY_LOCATION && MY_LOCATION.lat && branchGeo.lat) {
+    d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
+  }
   const path = ATTEND_BASE+'/'+me.branch+'/'+todayStr()+'/'+slug(me.name);
   await window.__fb.set(window.__fb.ref(window.__fb.db, path), {
     name: me.name, role: me.role || null, clockIn: Date.now(),
-    lat: MY_LOCATION.lat, lng: MY_LOCATION.lng, accuracy: Math.round(MY_LOCATION.acc), distance: Math.round(d)
+    lat: MY_LOCATION && MY_LOCATION.lat ? MY_LOCATION.lat : null,
+    lng: MY_LOCATION && MY_LOCATION.lng ? MY_LOCATION.lng : null,
+    accuracy: MY_LOCATION && MY_LOCATION.acc ? Math.round(MY_LOCATION.acc) : null,
+    distance: d != null ? Math.round(d) : null
   });
-  showToast('✅ 출근 완료', fmtTime(Date.now()) + ' · ' + Math.round(d) + 'm 거리에서 인증');
+  showToast('✅ 출근 완료', fmtTime(Date.now()) + (d != null ? ' · ' + Math.round(d) + 'm 거리' : ''));
 }
 async function registerBranchGeo(){
   if (!me) return;
@@ -4201,34 +4259,17 @@ function detectNewTasks(){
 let LAST_DELAYED = new Set();
 let _DELAY_INIT_DONE = false;
 function detectDelays(){
-  if (!me) return;
-  const showMgr = isManager(me.role) || isOwner();
-  if (!showMgr) return;
-  const nowDelayed = new Set();
-  TASKS.forEach(t => { if (computeStatus(t) === 'delayed' && !t.completedAt) nowDelayed.add(t.branchId+'/'+t.id); });
-  // 첫 실행 — baseline 만 잡고 토스트 발사 안 함
-  if (!_DELAY_INIT_DONE){
-    LAST_DELAYED = nowDelayed;
-    _DELAY_INIT_DONE = true;
-    return;
-  }
-  nowDelayed.forEach(k => {
-    if (!LAST_DELAYED.has(k)) {
-      const t = TASKS.find(x => x.branchId+'/'+x.id === k);
-      if (t) fireNotify('⚠️ 업무 지연 발생', (t.assignedTo || '담당자') + ' — ' + t.name + ' (데드라인 '+(t.deadline||'-')+')', { tag: 'delay-'+t.id, delayed: true, onClick: () => switchTab('mgr') });
-    }
-  });
-  LAST_DELAYED = nowDelayed;
+  // 🚫 5매장 요구 — 지연 토스트/알림 비활성화. computeStatus 도 더 이상 'delayed' 반환 안 하지만
+  //    혹시 모를 케이스 대비 함수 자체 no-op 처리.
+  return;
 }
 
 // ================= COMPUTE STATUS =================
 function computeStatus(t){
   if (t.completedAt) return 'completed';
-  const now = Date.now();
-  const today = todayStr();
-  const dl = t.deadline ? new Date(today + 'T' + t.deadline + ':00').getTime() : null;
-  if (t.startedAt) return (dl && now > dl) ? 'delayed' : 'in_progress';
-  if (dl && now > dl) return 'delayed';
+  // 🚫 5매장 요구 — 시간 제한 (데드라인 기반 'delayed' 분류) 비활성화.
+  //    데드라인 지났어도 그냥 in_progress 또는 pending 으로 분류 → 빨강/지연 알림 안 뜸.
+  if (t.startedAt) return 'in_progress';
   return 'pending';
 }
 
@@ -6437,36 +6478,61 @@ async function adminReassign(t){
 // 3) 데드라인 변경
 async function adminChangeDeadline(t){
   const cur = t.deadline || '18:00';
-  // 빠른 연장 프리셋 — 직원 사진 마무리 / 점심 후 마감 등 자주 쓰는 패턴
+  // 빠른 연장 프리셋 + 커스텀 시간/분 단위 입력 지원
   const choice = prompt(
     '⏰ 데드라인 변경 / 연장\n\n' +
     '현재: ' + cur + '\n\n' +
-    '빠른 연장:\n' +
+    '⚡ 빠른 연장:\n' +
     '  1 = +30분\n' +
     '  2 = +1시간\n' +
     '  3 = +2시간\n' +
     '  4 = +3시간\n' +
     '  5 = 18:00 (오늘 종료)\n' +
-    '  H:MM 직접 입력 (예: 14:30)\n',
+    '  6 = 21:00 (마감 시간)\n\n' +
+    '✏️ 커스텀:\n' +
+    '  14:30   → 시간 직접 (HH:MM)\n' +
+    '  +45     → 현재에 45분 추가\n' +
+    '  +1:30   → 현재에 1시간 30분 추가\n' +
+    '  90분    → 90분 추가\n',
     '2'
   );
   if (choice == null) return;
   const v = String(choice).trim();
   let newDl = null;
-  // 프리셋 처리 — 현재 데드라인에 분 추가
+  // 현재 데드라인에 분 추가 helper
   const addMin = (mins) => {
     const [hh, mm] = cur.split(':').map(n => parseInt(n,10) || 0);
     const total = (hh*60 + mm + mins) % (24*60);
     const h = Math.floor(total/60), m = total%60;
     return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
   };
+  // HH:MM 직접 입력 → 그 시각으로 (검증 추가)
+  const setAbsoluteHHMM = (hhmm) => {
+    const [hh, mm] = hhmm.split(':').map(n => parseInt(n,10));
+    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
+  };
   if (v === '1') newDl = addMin(30);
   else if (v === '2') newDl = addMin(60);
   else if (v === '3') newDl = addMin(120);
   else if (v === '4') newDl = addMin(180);
   else if (v === '5') newDl = '18:00';
-  else if (/^\d{1,2}:\d{2}$/.test(v)) newDl = v;
-  else { alert('형식 오류 — 1~5 또는 H:MM 입력'); return; }
+  else if (v === '6') newDl = '21:00';
+  // +1:30 형식 — 시·분 추가
+  else if (/^\+(\d{1,2}):(\d{1,2})$/.test(v)) {
+    const m = v.match(/^\+(\d{1,2}):(\d{1,2})$/);
+    const mins = parseInt(m[1],10)*60 + parseInt(m[2],10);
+    if (mins > 0 && mins <= 24*60) newDl = addMin(mins);
+  }
+  // +45 또는 90분 형식 — 분 단위 추가
+  else if (/^\+(\d+)$/.test(v) || /^(\d+)\s*분$/.test(v)) {
+    const m = v.match(/^\+(\d+)$/) || v.match(/^(\d+)\s*분$/);
+    const mins = parseInt(m[1],10);
+    if (mins > 0 && mins <= 24*60) newDl = addMin(mins);
+  }
+  // HH:MM 직접 입력
+  else if (/^\d{1,2}:\d{2}$/.test(v)) newDl = setAbsoluteHHMM(v);
+  if (!newDl) { alert('형식 오류 — 1~6, HH:MM, +N, +H:MM, N분 중 하나 입력'); return; }
   const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
     deadline: newDl,
@@ -6722,6 +6788,22 @@ async function onAssignBranchChange(){
 }
 window.onAssignBranchChange = onAssignBranchChange;
 
+// 역할 표시 순서 — 사용자 명시 (2026-05-17):
+// 맨 위 = 일반 직원/부서, 아래로 갈수록 상위 직급.
+// 일반 부서 → VICE SUPERVISOR → SUPERVISOR → SENIOR SUPERVISOR → ASSISTANT MANAGER → MANAGER → OWNER.
+// includes 매칭 — 'HR MANAGER' 같은 변형도 MANAGER 그룹으로 분류.
+function _roleRank(role){
+  const u = String(role||'').toUpperCase().trim();
+  // 더 구체적인 패턴 먼저 체크 (ASSISTANT MANAGER 가 MANAGER 보다 우선)
+  if (/OWNER|BOSS|오너|사장|대표|DUEÑO|DUENO|PROPIETARIO/.test(u)) return 100;
+  if (/ASSISTANT MANAGER|ASST MANAGER|ASST\. MANAGER|부매니저|GERENTE ASISTENTE/.test(u)) return 80;
+  if (/MANAGER|GERENTE|매니저|점장/.test(u)) return 90; // ASSISTANT MANAGER 는 위에서 이미 잡힘
+  if (/SENIOR SUPERVISOR|SR SUPERVISOR|SR\. SUPERVISOR|시니어 슈퍼바이저|SUPERVISOR SENIOR/.test(u)) return 70;
+  if (/VICE SUPERVISOR|VICE-SUPERVISOR|SUB SUPERVISOR/.test(u)) return 50;
+  if (/SUPERVISOR/.test(u)) return 60; // VICE/SENIOR 은 위에서 이미 잡힘
+  return 0; // 일반 부서/직원 = 맨 위
+}
+
 async function loadAssignEmployees(branchId){
   const sel = document.getElementById('aTo');
   const selectLbl = LANG==='en' ? '— Select employee —' : LANG==='es' ? '— Selecciona empleado —' : '— 직원 선택 —';
@@ -6730,9 +6812,36 @@ async function loadAssignEmployees(branchId){
   try {
     const data = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' }).then(r => r.json());
     if (data && data.employees) {
+      // Miguel Perez / Mai Garcia 영구 SENIOR SUPERVISOR — UI + Firebase 영구 정정.
+      let _srSupChanged = false;
+      data.employees.forEach(e => {
+        const nm = String(e && e.name || '').toLowerCase().trim();
+        if (((/\bmiguel\b/.test(nm) && /\bperez\b/.test(nm)) ||
+             (/\bmai\b/.test(nm)    && /\bgarcia\b/.test(nm))) &&
+            e.role !== 'SENIOR SUPERVISOR') {
+          e.role = 'SENIOR SUPERVISOR';
+          _srSupChanged = true;
+        }
+      });
+      // Firebase 에도 영구 반영 — 다른 페이지/기기에도 자동 동기화 (best-effort, 실패 OK)
+      if (_srSupChanged) {
+        fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`, {
+          method: 'PUT',
+          body: JSON.stringify(data.employees),
+          headers: { 'Content-Type': 'application/json' }
+        }).then(() => console.log('[force-sr-sup] Firebase 정정 완료:', branchId))
+          .catch(e => console.warn('[force-sr-sup] Firebase PUT 실패 — UI 만 정정', e));
+      }
       const grouped = {};
       data.employees.forEach(e => { (grouped[e.role||'기타'] = grouped[e.role||'기타'] || []).push(e); });
-      Object.entries(grouped).forEach(([role, list]) => {
+      // 역할 우선순위로 정렬 — 같은 priority 그룹 내에서는 알파벳 순.
+      const sortedRoles = Object.keys(grouped).sort((a,b) => {
+        const pa = _roleRank(a), pb = _roleRank(b);
+        if (pa !== pb) return pa - pb;
+        return a.localeCompare(b);
+      });
+      sortedRoles.forEach(role => {
+        const list = grouped[role];
         sel.innerHTML += `<optgroup label="${escHtml(role)}">` + list.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}</option>`).join('') + '</optgroup>';
       });
     }
