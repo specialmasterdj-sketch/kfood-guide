@@ -5747,8 +5747,13 @@ async function finishTask(){
 // 정육 카테고리 → '정육 평가 (meat_evalution_room)', 그 외 → '그로서리 평가
 // (grocery_eval)'. 다른 부문 (sushi / kfood_eval / produce) 도 비슷한 패턴
 // 으로 확장 가능 — 지금은 정육만 분리.
-async function postCompletionToChat(task, photoUrls, memoText){
+async function postCompletionToChat(task, photoUrls, memoText, opts){
+  // opts.senderOverride : sender 표시 이름 강제 지정 (강제 완료 시 원래 진행자 이름 유지용)
+  // opts.senderBranch   : senderBranch 강제 지정 (해당 직원의 매장)
   if (!me || !me.name || !task) return;
+  opts = opts || {};
+  const senderName   = opts.senderOverride || me.name;
+  const senderBranch = opts.senderBranch   || me.branch || task.branchId || '';
   const ts = Date.now();
   const msgId = 'm' + ts + Math.floor(Math.random()*900);
   // 카테고리에 맞는 평가방 라우팅. typo 'evalution' 은 chat.html DEFAULT_ROOMS
@@ -5773,42 +5778,72 @@ async function postCompletionToChat(task, photoUrls, memoText){
   const taskName = task.name || '(이름 없음)';
   const lines = [
     `✅ 업무 완료 — ${taskName}`,
-    `🏢 ${branchLbl} · 담당: ${me.name}`,
+    `🏢 ${branchLbl} · 담당: ${senderName}`,
   ];
   if (task.place) lines.push(`📍 장소: ${task.place}`);
   if (task.deadline) lines.push(`⏰ 데드라인: ${task.deadline}`);
   if (task.locationNote) lines.push(`📝 지시: ${task.locationNote}`);
-  // 🐂🐖🐔 체크리스트 항목별 entries / memo (작업한 종류·수량) 포함.
+  // 🐂🐖🐔🥬 체크리스트 항목별 entries / memo / 사진 (작업한 종류·수량) 포함.
   // 메모만 보내면 작업한 품목·수량이 빠져 평가방에서 진짜 중요한 정보가 사라짐.
-  // 한 줄 형식: "항목명: 수량" — 짧고 가독성 좋음.
+  // 2026-05-16: "작업 내용 다 안 나옴" 사건 후 보강 —
+  //   · 체크된 항목은 무조건 표시 (memo 비어도 ✓ 만이라도)
+  //   · 항목별 사진 개수 같이 표시 (📷×N)
+  //   · 미완료 항목은 따로 ⏸ 섹션으로 분리 → 작업 여부 한눈에 파악
   const cl = Array.isArray(task.checklist) ? task.checklist : [];
-  const itemBlocks = [];
+  const doneBlocks = [];
+  const undoneBlocks = [];
   cl.forEach(item => {
     if (!item) return;
     const nm = item.name || '';
+    // 항목별 사진 개수 — entries 의 photos 또는 item.photos / item.photo
+    let photoCnt = 0;
+    if (Array.isArray(item.photos)) photoCnt += item.photos.length;
+    else if (item.photo) photoCnt += 1;
     const entries = Array.isArray(item.entries) ? item.entries
                   : (item.entries ? Object.values(item.entries) : []);
+    entries.forEach(e => {
+      if (Array.isArray(e.photos)) photoCnt += e.photos.length;
+      else if (e.photo) photoCnt += 1;
+    });
+    const photoSfx = photoCnt > 0 ? ' 📷×' + photoCnt : '';
+    // 텍스트 정보 수집 — entries[].text + item.memo
     const lines2 = entries.map(e => String(e.text||'').trim()).filter(Boolean);
     if (item.memo) lines2.push(String(item.memo).trim());
-    if (lines2.length) {
-      lines2.forEach(l => itemBlocks.push('· ' + nm + ': ' + l));
-    } else if (item.done) {
-      itemBlocks.push('· ' + nm + ' ✓');
+    if (item.done) {
+      if (lines2.length) {
+        // 첫 줄은 항목명 + 첫 메모, 추가 entries 는 들여쓰기
+        doneBlocks.push('· ' + nm + ': ' + lines2[0] + photoSfx);
+        for (let i = 1; i < lines2.length; i++) doneBlocks.push('   · ' + lines2[i]);
+      } else {
+        doneBlocks.push('· ' + nm + ' ✓' + photoSfx);
+      }
+    } else {
+      // 체크 안 됐어도 메모/사진 있으면 "진행 중" 으로 표시 (정보 보존)
+      if (lines2.length || photoCnt > 0) {
+        undoneBlocks.push('· ⏸ ' + nm + (lines2.length ? ': ' + lines2[0] : '') + photoSfx);
+      } else {
+        undoneBlocks.push('· ⏸ ' + nm);
+      }
     }
   });
-  if (itemBlocks.length) {
+  if (doneBlocks.length) {
     lines.push('');
-    lines.push('📋 작업 내역:');
-    itemBlocks.forEach(l => lines.push(l));
+    lines.push('📋 완료 작업 (' + doneBlocks.filter(l => !l.startsWith('   ')).length + '/' + cl.length + '):');
+    doneBlocks.forEach(l => lines.push(l));
+  }
+  if (undoneBlocks.length) {
+    lines.push('');
+    lines.push('⏸ 미완료 항목:');
+    undoneBlocks.forEach(l => lines.push(l));
   }
   if (memoText) { lines.push(''); lines.push(`📝 추가 보고: ${memoText}`); }
   const text = lines.join('\n');
   const msg = {
-    sender: me.name,
-    senderBranch: me.branch || task.branchId || '',
-    senderRole: me.role || '',
-    isManager: !!me.isManager,
-    color: me.color || '#1a5c3a',
+    sender: senderName,
+    senderBranch,
+    senderRole: opts.senderRole || me.role || '',
+    isManager: opts.senderOverride ? false : !!me.isManager,
+    color: opts.senderColor || me.color || '#1a5c3a',
     text, ts,
     photos: Array.isArray(photoUrls) ? photoUrls.slice(0, 20) : [],
     meta: {
@@ -5817,9 +5852,10 @@ async function postCompletionToChat(task, photoUrls, memoText){
       taskName,
       branch: task.branchId,
       branchLabel: branchLbl,
-      completedBy: me.name,
+      completedBy: senderName,
       completedAt: ts,
       deadline: task.deadline || '',
+      ...(opts.senderOverride ? { forceCompletedBy: me.name } : {}),
     }
   };
   // Auth token (chat write rules typically need auth!=null)
@@ -5841,7 +5877,7 @@ async function postCompletionToChat(task, photoUrls, memoText){
   fetch(`${FB_DB_URL}/chat/rooms/${targetRoom}.json${authQ}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: me.name })
+    body: JSON.stringify({ lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: senderName })
   }).catch(()=>{});
 }
 
