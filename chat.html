@@ -348,6 +348,23 @@ a{color:inherit;text-decoration:none}
 .exp-day-hd .stat{font-size:.8em;color:#6b7280}
 .exp-day-hd .stat b{color:#1a5c3a;font-weight:800}
 
+.need-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;padding:14px}
+.need-card{background:#fff;border:2px solid #e5e7eb;border-radius:14px;overflow:hidden;transition:.15s;box-shadow:0 2px 6px rgba(0,0,0,.06);display:flex;flex-direction:column}
+.need-card:hover{border-color:#0D47A1;transform:translateY(-2px);box-shadow:0 6px 18px rgba(13,71,161,.18)}
+.need-card.done{opacity:.45;filter:grayscale(.4);border-color:#9ca3af}
+.need-card .ph{aspect-ratio:4/3;background:#f4f6f9;overflow:hidden;display:flex;align-items:center;justify-content:center;cursor:zoom-in}
+.need-card .ph img{width:100%;height:100%;object-fit:cover}
+.need-card .ph .no-photo{font-size:2em;color:#cbd5e1}
+.need-card .who{padding:10px 12px 4px;font-weight:800;font-size:.86em;color:#0D47A1;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.need-card .branch-pill{background:#e0f2fe;color:#0c4a6e;border-radius:10px;padding:1px 7px;font-size:.72em;font-weight:700}
+.need-card .txt{padding:0 12px 8px;font-size:.88em;color:#1f2937;line-height:1.4;flex:1;word-break:break-word}
+.need-card .when{padding:0 12px 6px;font-size:.72em;color:#9ca3af;font-weight:600}
+.need-card .done-btn{margin:0 10px 10px;padding:10px;border-radius:10px;border:0;background:#16a34a;color:#fff;font-weight:800;font-size:.92em;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px}
+.need-card .done-btn:hover{background:#15803d}
+.need-card.done .done-btn{background:#94a3b8}
+.need-card.done .done-btn:hover{background:#16a34a}
+.need-toggle{background:#fbbf24 !important;color:#7c2d12 !important;border:1px solid #d97706 !important}
+.need-toggle.on{background:#16a34a !important;color:#fff !important;border-color:#15803d !important}
 .exp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
 .exp-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;cursor:pointer;transition:.12s;position:relative;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 .exp-card:hover{border-color:#1a5c3a;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.08)}
@@ -1812,6 +1829,9 @@ function openRoom(id){
   const _logisticsBtn = (id === 'need_overstock')
     ? `<button class="hd-act hd-logistics" onclick="openLogisticsModal()" title="${LANG==='en'?'Create LASOLAS TRUCKING pickup/drop list':LANG==='es'?'Crear lista de recogida/entrega LASOLAS TRUCKING':'LASOLAS TRUCKING 픽업/배달 리스트 작성'}" style="background:#1565C0;color:#fff;border:1px solid #0D47A1;padding:6px 10px;border-radius:14px;font-weight:700;font-size:.78em;display:inline-flex;align-items:center;gap:4px;cursor:pointer">🚚 ${LANG==='en'?'LOGISTICS':LANG==='es'?'LOGÍSTICA':'로지스틱스'}</button>`
     : '';
+  const _cardToggle = (id === 'need_overstock')
+    ? `<button class="hd-act need-toggle${NEED_CARD_VIEW?' on':''}" onclick="toggleNeedCardView()" title="${LANG==='en'?'Switch between chat / card view':LANG==='es'?'Cambiar entre chat / tarjetas':'채팅 / 카드 보기 전환'}" style="padding:6px 10px;border-radius:14px;font-weight:700;font-size:.78em;cursor:pointer">📋 ${LANG==='en'?(NEED_CARD_VIEW?'Chat view':'Card view'):LANG==='es'?(NEED_CARD_VIEW?'Vista chat':'Vista tarjetas'):(NEED_CARD_VIEW?'채팅 보기':'정리 보기')}</button>`
+    : '';
   document.getElementById('chatHead').innerHTML = `
     <div class="icon">${roomIconFor(id, hdNm)}</div>
     <div class="info">
@@ -1819,6 +1839,7 @@ function openRoom(id){
       <div class="meta">${escapeHtml(hdDs)}</div>
     </div>
     ${_logisticsBtn}
+    ${_cardToggle}
     <button class="hd-act" onclick="toggleSearch()" title="메시지 검색">🔎</button>
     <button class="hd-act" onclick="openGallery()" title="사진 갤러리">🖼️</button>`;
   document.getElementById('searchBar').classList.remove('show');
@@ -2047,12 +2068,61 @@ window.translateMessage = async function(msgId, btn){
   btn.textContent = '↩ ' + ({ko:'원본',en:'Original',es:'Original'}[LANG]||'Original');
 };
 
+// 📋 Card-view toggle state for Need/Overstock room
+let NEED_CARD_VIEW = false;
+try { NEED_CARD_VIEW = localStorage.getItem('need_card_view_v1') === '1'; } catch(e) {}
+const NEED_DONE_KEY = 'need_done_v1';
+function _needDoneSet(){ try { return new Set(JSON.parse(localStorage.getItem(NEED_DONE_KEY) || '[]')); } catch(e){ return new Set(); } }
+function _needDoneSave(set){ try { localStorage.setItem(NEED_DONE_KEY, JSON.stringify(Array.from(set))); } catch(e){} }
+window.toggleNeedCardView = function(){
+  NEED_CARD_VIEW = !NEED_CARD_VIEW;
+  try { localStorage.setItem('need_card_view_v1', NEED_CARD_VIEW ? '1' : '0'); } catch(e) {}
+  openRoom(ACTIVE_ROOM);   // re-render header + body
+};
+window.toggleNeedDone = function(msgId, btn){
+  const done = _needDoneSet();
+  const card = btn.closest('.need-card');
+  if (done.has(msgId)) { done.delete(msgId); card.classList.remove('done'); }
+  else { done.add(msgId); card.classList.add('done'); }
+  _needDoneSave(done);
+};
+function renderNeedCards(cont){
+  if (!MSGS.length) {
+    cont.innerHTML = `<div class="empty-chat">${LANG==='en'?'No requests yet.':LANG==='es'?'Sin solicitudes aún.':'아직 요청이 없습니다.'}</div>`;
+    return;
+  }
+  const done = _needDoneSet();
+  const cards = MSGS.slice().reverse().map(m => {
+    const d = new Date(m.ts || 0);
+    const branch = BRANCH_BY_ID[m.senderBranch];
+    const branchTxt = branch ? (branch[LANG] || branch.ko) : '';
+    const ph = (m.photos && m.photos[0]) || '';
+    const id = m.id || ('m'+m.ts);
+    const isDone = done.has(id);
+    const txt = (m.text || '').trim();
+    const date = d.toLocaleDateString(LANG==='en'?'en-US':LANG==='es'?'es-MX':'ko-KR', { month:'short', day:'numeric' });
+    const time = fmtMsgTime(d);
+    return `<div class="need-card${isDone?' done':''}">
+      <div class="ph" ${ph?`onclick="openLightbox('${ph}')"`:''}>${ph?`<img src="${ph}" alt="">`:'<span class="no-photo">📦</span>'}</div>
+      <div class="who">${escapeHtml(m.sender||'')}${branchTxt?`<span class="branch-pill">${escapeHtml(branchTxt)}</span>`:''}</div>
+      ${txt?`<div class="txt">${escapeHtml(txt)}</div>`:''}
+      <div class="when">${date} · ${time}</div>
+      <button class="done-btn" onclick="toggleNeedDone('${id}',this)">${isDone?'↩ '+(LANG==='en'?'Undo':LANG==='es'?'Deshacer':'되돌리기'):'✓ '+(LANG==='en'?'Done':LANG==='es'?'Hecho':'완료')}</button>
+    </div>`;
+  }).join('');
+  cont.innerHTML = `<div class="need-grid">${cards}</div>`;
+}
+
 function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
   var prevScrollTop = cont.scrollTop;
   if (ACTIVE_ROOM === 'expired') {
     renderExpiredCards();
+    return;
+  }
+  if (ACTIVE_ROOM === 'need_overstock' && NEED_CARD_VIEW) {
+    renderNeedCards(cont);
     return;
   }
   if (MSGS.length === 0) {
