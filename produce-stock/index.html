@@ -233,6 +233,8 @@ function updateTodayLabel(){
 }
 
 // 매장별 품목 집계 — 최근 주문에서 마지막 입고량 + 마지막 입고일
+// 데이터 없는 매장은 데이터 있는 매장(보통 Las Olas)의 품목 리스트를 시드로 복사 —
+// 4매장 모두 같은 야채류를 취급하므로 매니저가 처음부터 카운트 시작 가능.
 function buildItemsByBranch(){
   ITEMS_BY_BRANCH = {};
   for (const br of BRANCHES) ITEMS_BY_BRANCH[br.id] = {};
@@ -253,6 +255,24 @@ function buildItemsByBranch(){
           lastDate: o.orderDate || '',
           unitPrice: it.unitPrice,
         };
+      }
+    }
+  }
+
+  // 🌱 데이터 없는 매장은 데이터 있는 매장의 품목을 시드 복사 (4매장 같은 야채류)
+  const seeded = Object.keys(ITEMS_BY_BRANCH).filter(b => Object.keys(ITEMS_BY_BRANCH[b]).length > 0);
+  if (seeded.length){
+    // 가장 많은 품목을 가진 매장을 시드 소스로 선택
+    const seedBranch = seeded.sort((a, b) =>
+      Object.keys(ITEMS_BY_BRANCH[b]).length - Object.keys(ITEMS_BY_BRANCH[a]).length
+    )[0];
+    const seedItems = ITEMS_BY_BRANCH[seedBranch];
+    for (const br of BRANCHES){
+      if (Object.keys(ITEMS_BY_BRANCH[br.id]).length === 0){
+        for (const [itemNo, item] of Object.entries(seedItems)){
+          // seeded:true 마크 — 매장 자체 발주 이력 아닌 시드 데이터임을 표시
+          ITEMS_BY_BRANCH[br.id][itemNo] = { ...item, seeded: true };
+        }
       }
     }
   }
@@ -405,7 +425,9 @@ function renderList(){
       }[a.status];
       const subInfo = it.manual
         ? '<span class="sub">📝 수동 추가</span>'
-        : `<span class="sub">마지막 입고: <span class="last">${it.lastQty} ${(it.size||'').replace('CASE','').trim()}</span> · ${it.lastDate}</span>`;
+        : it.seeded
+          ? `<span class="sub">🌱 기본 품목 · 참고: ${it.lastQty} ${(it.size||'').replace('CASE','').trim()} (Las Olas 기준)</span>`
+          : `<span class="sub">마지막 입고: <span class="last">${it.lastQty} ${(it.size||'').replace('CASE','').trim()}</span> · ${it.lastDate}</span>`;
       list.insertAdjacentHTML('beforeend', `
         <div class="item ${a.status}" data-key="${it.itemNo}">
           <div class="name">
