@@ -238,7 +238,7 @@
       ? `<a class="km-backbtn" href="./apps.html" onclick="event.preventDefault();if(history.length>1)history.back();else location.href='./apps.html'">${backLbl}</a>`
       : '';
     const homeTitle = pickLbl({ ko:'첫 화면으로', en:'Go to home', es:'Ir al inicio' });
-    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}" aria-label="${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}"><img class="km-brand-logo" src="./pwa-assets/kimchi-mart-full-logo.png?v=2" alt="KIMCHI MART"></a>${backHtml}`;
+    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}" aria-label="${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}"><img class="km-brand-logo" src="./pwa-assets/kimchi-text-logo.png?v=2" alt="KIMCHI"></a>${backHtml}`;
     for (let i = 0; i < visible.length; i++) {
       const it = visible[i];
       if (it.sec) {
