@@ -15,13 +15,42 @@
 // 🔒 입장 권한: Firebase /config/payrollAccess 화이트리스트 인원만
 (function(){
   const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-  const PW_DEFAULT = ['BHK','DJ','SUNKIM'];
+  // 매니저 + 변형 이름 다 등록 — chat.html v621 과 동기화
+  const PW_DEFAULT = [
+    'BHK','DJ','SUNKIM',
+    'HKIM','HEEJAEKIM','HEEKIM',
+    'CHOI','CHOIHJ','JCHOI',
+    'HRMANAGER','HRMGR','HR',
+    'SHREYA','SHRESTHA','SHREYASHRESTHA',
+    'MIRNA','MIRNAMONTOYA',
+    'ANDERSON','ANDERSONGODOY',
+    'ODALYS','ODALYSLEDESMA',
+  ];
+  // 매니저급 role 자동 허용 — 화이트리스트 누락돼도 통과
+  const MGR_ROLE_TOKENS = ['OWNER','EXEC','MANAGER','ASSISTANT','전무','상무','이사'];
+  const STAFF_DENY_TOKENS = ['CASHIER','STOCKER','STAFF','직원','SUSHI','KITCHEN','MEAT','DELI','PRODUCE'];
   function norm(n){ return String(n||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
+  function hasMgrRole(role){
+    const r = (role||'').toUpperCase();
+    if (!r) return false;
+    if (STAFF_DENY_TOKENS.some(t => r === t || r.includes(t))) {
+      // SUPERVISOR 는 staff 명단에 없으므로 MGR 로 인정 안 함 (요구 시 별도 화이트리스트 추가)
+      return MGR_ROLE_TOKENS.some(t => r.includes(t));
+    }
+    return MGR_ROLE_TOKENS.some(t => r.includes(t));
+  }
   let me = null;
   try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
-  let wl = PW_DEFAULT;
-  try { const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null'); if(Array.isArray(c)&&c.length) wl=c; } catch(e){}
+  let wl = PW_DEFAULT.slice();
+  try {
+    const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null');
+    // localStorage 캐시가 새 기본값 덮어쓰지 않도록 union (병합)
+    if(Array.isArray(c)&&c.length) wl = [...new Set([...PW_DEFAULT, ...c])];
+  } catch(e){}
+  // 1) 이름 화이트리스트 매칭
   if (me && wl.includes(norm(me.name))) return;
+  // 2) 매니저급 role 통과 — chat.me 에 등록된 role 기준
+  if (me && hasMgrRole(me.role)) return;
 
   // 비동기로 Firebase 최신 화이트리스트 확인 — 캐시 미스 커버
   window.__payrollGateAsync = fetch(FB+'/config/payrollAccess.json?t='+Date.now(),{cache:'no-store'})
