@@ -7,6 +7,8 @@
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
 <script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<!-- 📤 km-chat-queue — 채팅 발송 큐 (뱃지 표시 + 자동 재시도). -->
+<script src="./km-chat-queue.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=4"></script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
@@ -1807,12 +1809,16 @@ function openRoom(id){
   const r = ROOMS[id] || { name: id, desc: '' };
   const hdNm = roomLocalName(id, r);
   const hdDs = roomLocalDesc(id, r);
+  const _logisticsBtn = (id === 'need_overstock')
+    ? `<button class="hd-act hd-logistics" onclick="openLogisticsModal()" title="${LANG==='en'?'Create LASOLAS TRUCKING pickup/drop list':LANG==='es'?'Crear lista de recogida/entrega LASOLAS TRUCKING':'LASOLAS TRUCKING 픽업/배달 리스트 작성'}" style="background:#1565C0;color:#fff;border:1px solid #0D47A1;padding:6px 10px;border-radius:14px;font-weight:700;font-size:.78em;display:inline-flex;align-items:center;gap:4px;cursor:pointer">🚚 ${LANG==='en'?'LOGISTICS':LANG==='es'?'LOGÍSTICA':'로지스틱스'}</button>`
+    : '';
   document.getElementById('chatHead').innerHTML = `
     <div class="icon">${roomIconFor(id, hdNm)}</div>
     <div class="info">
       <div class="nm">${escapeHtml(hdNm)}</div>
       <div class="meta">${escapeHtml(hdDs)}</div>
     </div>
+    ${_logisticsBtn}
     <button class="hd-act" onclick="toggleSearch()" title="메시지 검색">🔎</button>
     <button class="hd-act" onclick="openGallery()" title="사진 갤러리">🖼️</button>`;
   document.getElementById('searchBar').classList.remove('show');
@@ -2596,6 +2602,96 @@ function showStatus(msg){
   el.classList.add('show');
 }
 function hideStatus(){ document.getElementById('uploadStatus').classList.remove('show'); }
+
+// ============== 🚚 LASOLAS TRUCKING — Logistics modal ==============
+// Opens from the Need/Overstock room header. Lets staff write a quick
+// pickup/drop list — which branch needs / which branch has overstock —
+// then posts the formatted summary into the current chat room so the
+// driver (and other branches) see it as a normal message.
+window.openLogisticsModal = function(){
+  let ov = document.getElementById('logisticsOverlay');
+  if (ov) { ov.style.display = 'flex'; return; }
+  const lang = LANG;
+  const t = (ko, en, es) => lang==='en'?en:lang==='es'?es:ko;
+  const branchOpts = BRANCHES.map(b => `<option value="${b.id}">${b[lang]||b.ko}</option>`).join('');
+  ov = document.createElement('div');
+  ov.id = 'logisticsOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:14px';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:16px;max-width:480px;width:100%;max-height:92vh;overflow-y:auto;padding:20px;box-shadow:0 14px 40px rgba(0,0,0,.4);font-family:inherit">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h3 style="margin:0;font-size:1.1em;color:#0D47A1">🚚 ${t('LASOLAS TRUCKING — 픽업/배달', 'LASOLAS TRUCKING — Pickup / Drop', 'LASOLAS TRUCKING — Recogida / Entrega')}</h3>
+        <button onclick="closeLogisticsModal()" style="background:none;border:0;font-size:1.4em;cursor:pointer;color:#6b7280">✕</button>
+      </div>
+      <div style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 11px;font-size:.78em;margin-bottom:12px">
+        ${t('매주 화요일 11AM 이전 — 각 지점 오버스탁/필요 품목 사진과 함께 공유하세요.',
+            'Every Tuesday before 11 AM — share each branch\'s overstock / needed items with photos.',
+            'Cada martes antes de las 11 AM — comparte el exceso / faltantes de cada sucursal con fotos.')}
+      </div>
+
+      <label style="font-size:.82em;font-weight:700;color:#374151">${t('요청 종류', 'Request type', 'Tipo de solicitud')}</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 12px">
+        <label style="display:flex;align-items:center;gap:6px;border:1.5px solid #d1d5db;border-radius:10px;padding:9px;cursor:pointer;background:#f9fafb">
+          <input type="radio" name="logKind" value="need" checked> 🙏 ${t('필요해요', 'I need', 'Necesito')}
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;border:1.5px solid #d1d5db;border-radius:10px;padding:9px;cursor:pointer;background:#f9fafb">
+          <input type="radio" name="logKind" value="overstock"> 📦 ${t('재고 있어요', 'Overstock', 'Exceso')}
+        </label>
+      </div>
+
+      <label style="font-size:.82em;font-weight:700;color:#374151">${t('우리 지점', 'My branch', 'Mi sucursal')}</label>
+      <select id="logFromBranch" style="width:100%;padding:9px;border:1.5px solid #d1d5db;border-radius:10px;margin:5px 0 12px;font-family:inherit">${branchOpts}</select>
+
+      <label style="font-size:.82em;font-weight:700;color:#374151">${t('품목 (한 줄에 하나씩)', 'Items (one per line)', 'Artículos (uno por línea)')}</label>
+      <textarea id="logItems" rows="4" placeholder="${t('예: 김치 10 박스\\n다시마 5 봉지', 'e.g., Kimchi 10 boxes\\nKombu 5 packs', 'ej., Kimchi 10 cajas\\nKombu 5 paquetes')}" style="width:100%;padding:9px;border:1.5px solid #d1d5db;border-radius:10px;font-family:inherit;font-size:.92em;margin:5px 0 12px"></textarea>
+
+      <label style="font-size:.82em;font-weight:700;color:#374151">${t('메모 (선택)', 'Memo (optional)', 'Nota (opcional)')}</label>
+      <input id="logMemo" type="text" placeholder="${t('긴급도, 추가 정보…', 'Urgency, extra info…', 'Urgencia, info extra…')}" style="width:100%;padding:9px;border:1.5px solid #d1d5db;border-radius:10px;margin:5px 0 12px;font-family:inherit">
+
+      <div style="background:#dbeafe;color:#1e40af;border-radius:8px;padding:8px 11px;font-size:.74em;margin-bottom:12px;line-height:1.4">
+        💡 ${t('보낸 후 채팅방에서 📷 사진 첨부로 사진을 추가로 올릴 수 있습니다.',
+              'After sending, attach photos via the 📷 camera button right in this chat.',
+              'Después de enviar, adjunta fotos con el botón 📷 en este chat.')}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px">
+        <button onclick="closeLogisticsModal()" style="background:#f3f4f6;border:0;border-radius:10px;padding:11px;cursor:pointer;font-weight:600;font-family:inherit">${t('취소', 'Cancel', 'Cancelar')}</button>
+        <button onclick="submitLogistics()" style="background:#0D47A1;color:#fff;border:0;border-radius:10px;padding:11px;cursor:pointer;font-weight:700;font-family:inherit">🚚 ${t('채팅방에 보내기', 'Post to chat', 'Publicar en chat')}</button>
+      </div>
+    </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) closeLogisticsModal(); });
+  document.body.appendChild(ov);
+  // Pre-pick the logged-in user's branch if known
+  if (me && me.branch) {
+    const sel = document.getElementById('logFromBranch');
+    if (sel && BRANCH_BY_ID[me.branch]) sel.value = me.branch;
+  }
+};
+window.closeLogisticsModal = function(){
+  const ov = document.getElementById('logisticsOverlay');
+  if (ov) ov.remove();
+};
+window.submitLogistics = function(){
+  const kind = (document.querySelector('input[name="logKind"]:checked')||{}).value || 'need';
+  const fromId = document.getElementById('logFromBranch').value;
+  const fromB = BRANCH_BY_ID[fromId] || {};
+  const fromLbl = fromB[LANG] || fromB.ko || fromId;
+  const items = (document.getElementById('logItems').value || '').trim();
+  const memo = (document.getElementById('logMemo').value || '').trim();
+  if (!items) {
+    alert(LANG==='en'?'Please list at least one item.':LANG==='es'?'Lista al menos un artículo.':'품목을 한 개 이상 입력해주세요.');
+    return;
+  }
+  const head = kind === 'need'
+    ? (LANG==='en'?`🚚 LASOLAS TRUCKING — NEED from ${fromLbl}`:LANG==='es'?`🚚 LASOLAS TRUCKING — NECESITA ${fromLbl}`:`🚚 LASOLAS TRUCKING — ${fromLbl} 필요`)
+    : (LANG==='en'?`🚚 LASOLAS TRUCKING — OVERSTOCK at ${fromLbl}`:LANG==='es'?`🚚 LASOLAS TRUCKING — EXCESO en ${fromLbl}`:`🚚 LASOLAS TRUCKING — ${fromLbl} 재고 있음`);
+  const lines = items.split('\n').map(l => l.trim()).filter(Boolean).map(l => '• ' + l).join('\n');
+  const text = head + '\n' + lines + (memo ? '\n📝 ' + memo : '');
+  const input = document.getElementById('msgInput');
+  if (input) input.value = text;
+  closeLogisticsModal();
+  if (typeof sendMessage === 'function') sendMessage();
+};
 
 async function sendMessage(){
   console.log('[sendMessage] me=', me?.name, 'room=', ACTIVE_ROOM, 'attach=', ATTACH.length);
