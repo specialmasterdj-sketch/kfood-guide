@@ -5361,11 +5361,21 @@ function openDoneModal(id, branchId){
   // Claim-lock guard for assignedTo='*' tasks — even if a stale UI lets
   // someone tap the report button, refuse the modal so they don't burn
   // effort on a task already taken by another teammate.
+  // 2026-05-16: 오너/매니저는 우회 — claim-lock 된 업무를 강제 종료할 수 있어야 함
+  // (직원이 시작만 하고 마치지 못한 채 시프트 끝났을 때 매니저가 마무리).
   const t2 = CURRENT_TASK;
-  if (t2.assignedTo === '*' && t2.startedBy && me && t2.startedBy !== me.name && !t2.completedAt){
+  const canOverride = isOwner() || isManager(me?.role);
+  if (t2.assignedTo === '*' && t2.startedBy && me && t2.startedBy !== me.name && !t2.completedAt && !canOverride){
     alert(`이미 [${t2.startedBy}]님이 진행 중입니다.`);
     CURRENT_TASK = null;
     return;
+  }
+  // 오너/매니저가 다른 직원 claim 된 업무 종료하는 경우 — 한 번 더 확인
+  if (t2.assignedTo === '*' && t2.startedBy && me && t2.startedBy !== me.name && !t2.completedAt && canOverride){
+    if (!confirm(`[${t2.startedBy}]님이 진행 중인 업무입니다.\n\n오너/매니저 권한으로 강제 종료 + 평가방 보고 보냅니다.\n계속하시겠습니까?`)){
+      CURRENT_TASK = null;
+      return;
+    }
   }
   DONE_PHOTOS = [];
   document.getElementById('doneTaskInfo').textContent = '✓ ' + CURRENT_TASK.name + (CURRENT_TASK.deadline ? ' · ⏰ '+CURRENT_TASK.deadline : '');
