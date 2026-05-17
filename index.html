@@ -18,8 +18,19 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;
 .section-title{background:linear-gradient(135deg,#d32f2f,#e53935);color:#fff;padding:15px 20px;border-radius:12px 12px 0 0;font-size:1.4em;display:flex;align-items:center;gap:10px}
 .section-desc{background:#fff3e0;padding:8px 20px;font-size:.82em;color:#e65100;border-bottom:1px solid #ffe0b2}
 .product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:0;background:#fff;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,.08);overflow:hidden}
-.product-card{border:1px solid #eee;display:flex;flex-direction:column}
+.product-card{border:1px solid #eee;display:flex;flex-direction:column;position:relative}
 .product-card:hover{background:#fafafa;box-shadow:inset 0 0 0 2px #d32f2f}
+.product-card.is-core{box-shadow:inset 0 0 0 3px #fbbf24}
+.core-star{position:absolute;top:6px;right:6px;background:rgba(255,255,255,.95);border:1.5px solid #d1d5db;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:1.15em;cursor:pointer;z-index:10;transition:.15s;color:#cbd5e1;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.core-star:hover{background:#fef3c7;border-color:#f59e0b;color:#f59e0b;transform:scale(1.1)}
+.core-star.on{background:#fbbf24;border-color:#d97706;color:#fff}
+.core-btn{padding:6px 13px;background:rgba(255,255,255,.18);border:1.5px solid rgba(255,255,255,.5);border-radius:18px;font-weight:700;color:#fff;cursor:pointer;font-size:.82em;display:inline-flex;align-items:center;gap:5px;transition:.15s;font-family:inherit;margin-left:6px}
+.core-btn:hover{background:rgba(255,255,255,.32)}
+.core-btn.on{background:#fbbf24;border-color:#fcd34d;color:#7c2d12}
+.core-empty{text-align:center;padding:32px 16px;color:#9ca3af;font-size:.92em;grid-column:1/-1}
+body.core-only .product-card:not(.is-core){display:none}
+body.core-only .section .product-grid:not(:has(.is-core)){display:none}
+body.core-only .section:not(:has(.is-core)){display:none}
 .pic{width:100%;height:200px;overflow:hidden;background:#f0f0f0;position:relative;display:flex;align-items:center;justify-content:center}
 .pic img{width:100%;height:100%;object-fit:cover}
 .num{position:absolute;top:6px;left:6px;background:#d32f2f;color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.75em;font-weight:700}
@@ -72,6 +83,7 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;
 <button class="lang-btn active" onclick="setLang('en')">EN</button>
 <button class="lang-btn" onclick="setLang('ko')">KO</button>
 <button class="lang-btn" onclick="setLang('es')">ES</button>
+<button class="core-btn" id="coreBtn" onclick="toggleCoreOnly()" title="Show only starred core foods">⭐ <span id="coreLabel">Core</span> <span id="coreCnt">(0)</span></button>
 </div>
 </div>
 </div>
@@ -650,6 +662,90 @@ function setLang(lang) {
   try { saved = localStorage.getItem('kimchi_lang') || 'en'; } catch(e) {}
   if (!T[saved]) saved = 'en';
   setLang(saved);
+})();
+
+/* ============== ⭐ CORE FOOD LIST ==============
+   Each product card gets a star toggle. Stars persist in localStorage.
+   Header "Core (N)" filter button shows only starred cards. */
+var CORE_KEY = 'kfood_core_list_v1';
+function _coreLoad(){try{return JSON.parse(localStorage.getItem(CORE_KEY)||'[]');}catch(e){return[];}}
+function _coreSave(arr){try{localStorage.setItem(CORE_KEY,JSON.stringify(arr));}catch(e){}}
+function _cardId(card){
+  var img = card.querySelector('img');
+  if (img && img.getAttribute('src')){
+    var m = img.getAttribute('src').match(/\/?([^\/]+)\.(jpg|jpeg|png|webp)/i);
+    if (m) return m[1];
+  }
+  var en = card.querySelector('.en');
+  return en ? en.textContent.trim().toLowerCase().replace(/\s+/g,'_') : '';
+}
+function _coreCount(){return _coreLoad().length;}
+function _coreRefreshUI(){
+  var n = _coreCount();
+  var cntEl = document.getElementById('coreCnt');
+  if (cntEl) cntEl.textContent = '(' + n + ')';
+  var btn = document.getElementById('coreBtn');
+  if (btn) btn.classList.toggle('on', document.body.classList.contains('core-only'));
+  // Inject empty-state hint when filter is on but no cards starred
+  document.querySelectorAll('.core-empty').forEach(function(e){ e.remove(); });
+  if (document.body.classList.contains('core-only') && n === 0){
+    var firstGrid = document.querySelector('.product-grid');
+    if (firstGrid){
+      var msg = document.createElement('div');
+      msg.className = 'core-empty';
+      var lang = (typeof T !== 'undefined' && document.documentElement.lang) || 'en';
+      msg.textContent = lang === 'ko'
+        ? '⭐ 표시한 음식이 없습니다. 음식 카드 우상단의 별을 눌러 추가하세요.'
+        : lang === 'es'
+          ? '⭐ Ningún plato marcado. Toca la estrella en una tarjeta para añadir.'
+          : '⭐ No starred foods yet. Tap the star on any card to add it.';
+      firstGrid.parentNode.insertBefore(msg, firstGrid);
+    }
+  }
+}
+function toggleCore(id, btnEl, cardEl){
+  var arr = _coreLoad();
+  var i = arr.indexOf(id);
+  if (i >= 0) arr.splice(i, 1); else arr.push(id);
+  _coreSave(arr);
+  var on = i < 0;
+  if (btnEl){ btnEl.classList.toggle('on', on); btnEl.textContent = on ? '★' : '☆'; }
+  if (cardEl){ cardEl.classList.toggle('is-core', on); }
+  _coreRefreshUI();
+}
+function toggleCoreOnly(){
+  document.body.classList.toggle('core-only');
+  _coreRefreshUI();
+}
+window.toggleCoreOnly = toggleCoreOnly;
+
+/* Inject ⭐ button into every product card on load */
+(function(){
+  function init(){
+    var stars = _coreLoad();
+    document.querySelectorAll('.product-card').forEach(function(card){
+      if (card.querySelector('.core-star')) return;
+      var id = _cardId(card);
+      if (!id) return;
+      card.dataset.coreId = id;
+      var on = stars.indexOf(id) >= 0;
+      if (on) card.classList.add('is-core');
+      var btn = document.createElement('button');
+      btn.className = 'core-star' + (on ? ' on' : '');
+      btn.textContent = on ? '★' : '☆';
+      btn.title = 'Core food (foreign-staff focus)';
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCore(id, btn, card);
+      });
+      // Place above the .pic image (top:6px right:6px relative to card)
+      card.appendChild(btn);
+    });
+    _coreRefreshUI();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 </script>
 </body>
