@@ -1295,13 +1295,28 @@ function openEquipMgr(){
   if (EQUIPMENT.length === 0) {
     list.innerHTML = `<div class="empty-state"><div class="ic">📦</div><div class="msg">${t('emptyEqMgr')}</div></div>`;
   } else {
-    list.innerHTML = EQUIPMENT.map(eq => `
-      <div class="eq-card" style="border-left-color:#0369a1">
+    // 등록 통계 — 매니저가 한눈에 파악
+    const manualCount = EQUIPMENT.filter(e => (e.qr||'').startsWith('MANUAL-')).length;
+    const qrCount = EQUIPMENT.length - manualCount;
+    const summaryHtml = `
+      <div style="background:#f0f9ff;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:.84em;font-weight:700;color:#0369a1;display:flex;justify-content:space-between;align-items:center">
+        <span>📦 ${LANG==='ko'?'총':LANG==='en'?'Total':'Total'} ${EQUIPMENT.length} ${LANG==='ko'?'개 등록':LANG==='en'?'registered':'registrados'}</span>
+        <span style="font-size:.84em;font-weight:600">
+          🏷 QR ${qrCount} · ✏️ ${LANG==='ko'?'수동':LANG==='en'?'Manual':'Manual'} ${manualCount}
+        </span>
+      </div>`;
+    list.innerHTML = summaryHtml + EQUIPMENT.map(eq => {
+      const isManual = (eq.qr||'').startsWith('MANUAL-');
+      const regBadge = isManual
+        ? `<span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">✏️ ${LANG==='ko'?'수동 (QR 없음)':LANG==='en'?'Manual (no QR)':'Manual (sin QR)'}</span>`
+        : `<span style="background:#dcfce7;color:#15803d;padding:2px 7px;border-radius:9px;font-size:.7em;font-weight:700">🏷 QR</span>`;
+      const qrLabel = isManual ? '' : escHtml(eq.qr||'');
+      return `<div class="eq-card" style="border-left-color:${isManual?'#f59e0b':'#16a34a'};border-left-width:5px">
         ${eqIcon(eq)}
         <div class="info">
-          <div class="nm">${escHtml(eq.name||'?')}</div>
+          <div class="nm">${escHtml(eq.name||'?')} ${regBadge}</div>
           <div class="meta">
-            <span style="font-size:.72em;color:#9ca3af">${escHtml(eq.qr||'')}</span>
+            ${qrLabel ? `<span style="font-size:.72em;color:#9ca3af">${qrLabel}</span>` : ''}
             <span style="font-size:.72em;color:#9ca3af">${eqRangeText(eq)}</span>
             <span style="font-size:.72em;color:#9ca3af">${escHtml(eq.location||'')}</span>
           </div>
@@ -1310,7 +1325,8 @@ function openEquipMgr(){
           <button onclick="editEq('${eq.id}')">✏</button>
           <button class="del" onclick="deleteEq('${eq.id}', ${JSON.stringify(eq.name||'').replace(/"/g,'&quot;')})">🗑</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
   $('eqMgrOv').classList.add('show');
 }
@@ -1403,25 +1419,48 @@ function renderQrSheet(){
   const cnt = Math.min(300, Math.max(1, parseInt($('qrCnt').value, 10) || 60));
   const prefix = ($('qrPrefix').value || 'EQ').toUpperCase().slice(0,6);
   const startN = Math.max(1, parseInt($('qrStart').value, 10) || 1);
-  // 시작 번호부터 cnt개 생성, 이미 등록된 QR은 건너뛰고 다음 번호 사용
-  const taken = new Set(EQUIPMENT.map(e => (e.qr||'')));
-  let n = startN, codes = [], lastN = startN;
-  while (codes.length < cnt && n < 1000) {
+  // 시작 번호부터 cnt개 생성 — 등록된 QR도 같이 표시 (시각적으로 구분)
+  const eqByQr = new Map(EQUIPMENT.map(e => [e.qr||'', e]));
+  const codes = [];
+  let lastN = startN;
+  for (let n = startN; codes.length < cnt && n < 1000; n++) {
     const id = makeQrId(prefix, n);
-    if (!taken.has(id)) { codes.push(id); lastN = n; }
-    n++;
+    codes.push({ id, eq: eqByQr.get(id) });
+    lastN = n;
   }
   // 다음에 열 때 lastN+1부터 자동 제안되도록 저장
   try { localStorage.setItem('temp.qrLastN.' + BRANCH + '.' + prefix, String(lastN)); } catch(e){}
-  // Use Google Charts QR API as image generator (no library)
-  const cells = codes.map(id => {
-    const url = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(id);
-    return `<div class="qr-cell">
-      <div class="qr-img"><img src="${url}" alt="${id}"></div>
-      <div class="qr-id">${id}</div>
+  // 등록/미등록 개수 요약
+  const regCount = codes.filter(c => c.eq).length;
+  const unregCount = codes.length - regCount;
+  const summary = LANG==='ko'
+    ? `✅ 등록됨 ${regCount} · ⚪ 미등록 ${unregCount}`
+    : LANG==='en'
+      ? `✅ Registered ${regCount} · ⚪ Unregistered ${unregCount}`
+      : `✅ Registrado ${regCount} · ⚪ Sin registrar ${unregCount}`;
+  // 셀 렌더링
+  const cells = codes.map(c => {
+    const url = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(c.id);
+    if (c.eq) {
+      // 등록된 QR — 초록 테두리 + 장비 이름 표시
+      return `<div class="qr-cell" style="border:2px solid #16a34a;background:#f0fdf4;position:relative">
+        <div style="position:absolute;top:2px;right:4px;font-size:.7em;color:#16a34a;font-weight:800">✅</div>
+        <div class="qr-img"><img src="${url}" alt="${c.id}"></div>
+        <div class="qr-id">${c.id}</div>
+        <div style="font-size:.7em;color:#16a34a;font-weight:700;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.eq.name||'')}</div>
+      </div>`;
+    }
+    // 미등록 QR — 기본 스타일
+    return `<div class="qr-cell" style="position:relative">
+      <div style="position:absolute;top:2px;right:4px;font-size:.7em;color:#9ca3af">⚪</div>
+      <div class="qr-img"><img src="${url}" alt="${c.id}"></div>
+      <div class="qr-id">${c.id}</div>
     </div>`;
   }).join('');
-  $('qrPrintArea').innerHTML = `<div class="qr-grid">${cells}</div>`;
+  $('qrPrintArea').innerHTML = `
+    <div style="background:#f0f9ff;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:.88em;font-weight:600;color:#0369a1">${summary}</div>
+    <div class="qr-grid">${cells}</div>
+  `;
 }
 window.renderQrSheet = renderQrSheet;
 
