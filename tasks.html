@@ -5886,20 +5886,25 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     }
   };
   // Auth token (chat write rules typically need auth!=null)
+  // 2026-05-16: 401 사건 — 1시간 작업 후 토큰 만료. forceRefresh 로 새 토큰 강제 발급.
   let authQ = '';
   try {
     const u = window.__fb?.auth?.currentUser;
     if (u) {
-      const tok = await u.getIdToken();
+      const tok = await u.getIdToken(true);   // ← forceRefresh = true
       if (tok) authQ = '?auth=' + encodeURIComponent(tok);
     }
-  } catch(_){}
+  } catch(e){ console.warn('[postCompletionToChat] token refresh failed', e); }
   // Write the message into the routed room (정육 → meat_evalution_room, etc.)
-  await fetch(`${FB_DB_URL}/chat/messages/${targetRoom}/${msgId}.json${authQ}`, {
+  const r1 = await fetch(`${FB_DB_URL}/chat/messages/${targetRoom}/${msgId}.json${authQ}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(msg)
   });
+  if (!r1.ok) {
+    const errText = await r1.text().catch(()=>'');
+    throw new Error('채팅 메시지 저장 실패 HTTP ' + r1.status + ' : ' + errText.slice(0,120));
+  }
   // Bump the room preview so other branches see an unread badge
   fetch(`${FB_DB_URL}/chat/rooms/${targetRoom}.json${authQ}`, {
     method: 'PATCH',
