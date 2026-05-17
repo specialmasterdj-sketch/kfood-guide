@@ -357,7 +357,9 @@ a{color:inherit;text-decoration:none}
 .need-card .ph .no-photo{font-size:2em;color:#cbd5e1}
 .need-card .who{padding:10px 12px 4px;font-weight:800;font-size:.86em;color:#0D47A1;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .need-card .branch-pill{background:#e0f2fe;color:#0c4a6e;border-radius:10px;padding:1px 7px;font-size:.72em;font-weight:700}
-.need-card .txt{padding:0 12px 8px;font-size:.88em;color:#1f2937;line-height:1.4;flex:1;word-break:break-word}
+.need-card .txt{padding:0 12px 6px;font-size:.88em;color:#1f2937;line-height:1.4;word-break:break-word}
+.need-card .txt-tr{padding:0 12px 8px;font-size:.78em;color:#475569;line-height:1.4;font-style:italic;border-top:1px dashed #e5e7eb;padding-top:6px;margin-top:2px;flex:1;word-break:break-word}
+.need-card .txt-tr.loading{color:#cbd5e1;font-style:normal}
 .need-card .when{padding:0 12px 6px;font-size:.72em;color:#9ca3af;font-weight:600}
 .need-card .done-btn{margin:0 10px 10px;padding:10px;border-radius:10px;border:0;background:#16a34a;color:#fff;font-weight:800;font-size:.92em;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px}
 .need-card .done-btn:hover{background:#15803d}
@@ -2137,7 +2139,8 @@ function renderNeedCards(cont){
     const cat = _needClassify(txt);  // need / over / note
     const date = d.toLocaleDateString(LANG==='en'?'en-US':LANG==='es'?'es-MX':'ko-KR', { month:'short', day:'numeric' });
     const time = fmtMsgTime(d);
-    return `<div class="need-card cat-${cat}${isDone?' done':''}">
+    const safeTxt = txt.replace(/"/g, '&quot;');
+    return `<div class="need-card cat-${cat}${isDone?' done':''}" data-card-id="${id}" data-card-text="${safeTxt}">
       <span class="cat-badge cat-${cat}">${_needBadgeLabel(cat)}</span>
       <div class="ph" ${ph?`onclick="openLightbox('${ph}')"`:''}>${ph?`<img src="${ph}" alt="">`:'<span class="no-photo">📦</span>'}</div>
       <div class="who">${escapeHtml(m.sender||'')}${branchTxt?`<span class="branch-pill">${escapeHtml(branchTxt)}</span>`:''}</div>
@@ -2147,6 +2150,39 @@ function renderNeedCards(cont){
     </div>`;
   }).join('');
   cont.innerHTML = `<div class="need-grid">${cards}</div>`;
+  // Auto-translate each non-English card to English in the background.
+  // Each card stays usable immediately; the English line slides in below
+  // the original text once MyMemory returns. Cached, so re-render is free.
+  setTimeout(_translateNeedCards, 50);
+}
+async function _translateNeedCards(){
+  if (ACTIVE_ROOM !== 'need_overstock' || !NEED_CARD_VIEW) return;
+  const cards = document.querySelectorAll('.need-card[data-card-text]');
+  for (const card of cards) {
+    if (card.querySelector('.txt-tr')) continue;
+    const text = card.dataset.cardText || '';
+    if (!text.trim()) continue;
+    const from = detectMsgLang(text);
+    if (!from || from === 'en') continue;
+    // Insert a placeholder so users see something is happening
+    const txtEl = card.querySelector('.txt');
+    if (!txtEl) continue;
+    const trEl = document.createElement('div');
+    trEl.className = 'txt-tr loading';
+    trEl.textContent = '🇺🇸 …';
+    txtEl.insertAdjacentElement('afterend', trEl);
+    try {
+      const translated = await fetchTranslation(text, from, 'en');
+      if (translated && translated.trim()) {
+        trEl.classList.remove('loading');
+        trEl.textContent = '🇺🇸 ' + translated;
+      } else {
+        trEl.remove();
+      }
+    } catch(e) {
+      trEl.remove();
+    }
+  }
 }
 
 function renderMessages(){
