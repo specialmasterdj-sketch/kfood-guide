@@ -363,6 +363,17 @@ a{color:inherit;text-decoration:none}
 .need-card .done-btn:hover{background:#15803d}
 .need-card.done .done-btn{background:#94a3b8}
 .need-card.done .done-btn:hover{background:#16a34a}
+/* Auto-classification: red border = needs picking-up to this branch,
+   green border = overstock available here. Grey = unclassified note. */
+.need-card.cat-need{border-color:#fca5a5;background:linear-gradient(180deg,#fef2f2,#fff)}
+.need-card.cat-need:hover{border-color:#dc2626}
+.need-card.cat-over{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4,#fff)}
+.need-card.cat-over:hover{border-color:#16a34a}
+.need-card .cat-badge{position:absolute;top:8px;left:8px;background:#fff;border-radius:14px;padding:3px 9px;font-size:.7em;font-weight:800;letter-spacing:.02em;box-shadow:0 1px 3px rgba(0,0,0,.18);z-index:2}
+.need-card .cat-badge.cat-need{background:#dc2626;color:#fff;border-color:#dc2626}
+.need-card .cat-badge.cat-over{background:#16a34a;color:#fff;border-color:#16a34a}
+.need-card .cat-badge.cat-note{background:#9ca3af;color:#fff;border-color:#9ca3af}
+.need-card{position:relative}
 .need-toggle{background:#fbbf24 !important;color:#7c2d12 !important;border:1px solid #d97706 !important}
 .need-toggle.on{background:#16a34a !important;color:#fff !important;border-color:#15803d !important}
 .exp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
@@ -2086,6 +2097,29 @@ window.toggleNeedDone = function(msgId, btn){
   else { done.add(msgId); card.classList.add('done'); }
   _needDoneSave(done);
 };
+// Classify a message as NEED / OVERSTOCK / NOTE based on its text.
+// Safe defaults: if both groups of keywords appear (or none do), fall
+// back to NOTE so the manager decides.
+function _needClassify(text){
+  const s = (text || '').toLowerCase();
+  if (!s) return 'note';
+  // English / Spanish — use word boundaries so "haven't" doesn't trigger
+  const needEn = /\b(need|needs|needed|out\sof|low\son|short\son|please\ssend|necesito|necesita|falta)\b/;
+  const overEn = /\b(overstock|over\s?stock|too\s?many|extra|surplus|have\stoo|exceso)\b/;
+  // Korean — \b doesn't work across non-ASCII, so use plain substring matching
+  const needKo = /필요|보내주|보내 주|부족|없어|없습|모자라/;
+  const overKo = /많아|많이|남아|팔아주|선물|드릴|보내드|재고\s?있/;
+  const n = needEn.test(s) || needKo.test(s);
+  const o = overEn.test(s) || overKo.test(s);
+  if (n && !o) return 'need';
+  if (o && !n) return 'over';
+  return 'note';
+}
+function _needBadgeLabel(cat){
+  if (cat === 'need') return LANG==='en'?'🙏 NEED':LANG==='es'?'🙏 NECESITA':'🙏 필요';
+  if (cat === 'over') return LANG==='en'?'📦 OVERSTOCK':LANG==='es'?'📦 EXCESO':'📦 재고';
+  return LANG==='en'?'📝 NOTE':LANG==='es'?'📝 NOTA':'📝 메모';
+}
 function renderNeedCards(cont){
   if (!MSGS.length) {
     cont.innerHTML = `<div class="empty-chat">${LANG==='en'?'No requests yet.':LANG==='es'?'Sin solicitudes aún.':'아직 요청이 없습니다.'}</div>`;
@@ -2100,9 +2134,11 @@ function renderNeedCards(cont){
     const id = m.id || ('m'+m.ts);
     const isDone = done.has(id);
     const txt = (m.text || '').trim();
+    const cat = _needClassify(txt);  // need / over / note
     const date = d.toLocaleDateString(LANG==='en'?'en-US':LANG==='es'?'es-MX':'ko-KR', { month:'short', day:'numeric' });
     const time = fmtMsgTime(d);
-    return `<div class="need-card${isDone?' done':''}">
+    return `<div class="need-card cat-${cat}${isDone?' done':''}">
+      <span class="cat-badge cat-${cat}">${_needBadgeLabel(cat)}</span>
       <div class="ph" ${ph?`onclick="openLightbox('${ph}')"`:''}>${ph?`<img src="${ph}" alt="">`:'<span class="no-photo">📦</span>'}</div>
       <div class="who">${escapeHtml(m.sender||'')}${branchTxt?`<span class="branch-pill">${escapeHtml(branchTxt)}</span>`:''}</div>
       ${txt?`<div class="txt">${escapeHtml(txt)}</div>`:''}
