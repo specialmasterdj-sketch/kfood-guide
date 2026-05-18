@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_18_a';
+    var BUST = 'chat_2026_05_18_b';
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1256,6 +1256,17 @@ const STRICT_OWNER_NAMES = ['DJ', 'B.H.K', 'BHK', 'SUN KIM'];
 const DM_OWNER_WHITELIST = ['DJ','BHK','HKIM','STEVEHONG','KWANGHONOH','SUNKIM'];
 function _canDmOwner(senderName){ return DM_OWNER_WHITELIST.includes(_normName(senderName)); }
 function _normName(s){ return String(s||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
+// DJ 오너 전용 체크 — 모든 메시지 편집 같은 최상위 권한 (B.H.K 전무 제외).
+// isStrictOwner 보다 더 엄격: 이메일 정확 매칭 + 이름 'DJ' 정확 매칭만.
+function isDjOwner(){
+  try {
+    const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
+    if (u && u.email && u.email.toLowerCase() === 'specialmasterdj@gmail.com') return true;
+    if (me && me.name && _normName(me.name) === 'DJ') return true;
+  } catch(e){}
+  return false;
+}
+
 function isStrictOwner(){
   try {
     const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
@@ -2366,9 +2377,9 @@ function renderMessages(){
     const delBtn = canDel
       ? `<button class="del owner-always" title="${isOwnerDel ? '오너 삭제' : ({ko:'내 메시지 삭제',en:'Delete my message',es:'Eliminar mi mensaje'}[LANG]||'내 메시지 삭제')}" onclick="deleteMessage('${m.id}')">✕</button>`
       : '';
-    // 편집 — 본인 메시지만 (텍스트 있는 경우만 의미 있음)
-    const editBtn = (mine && (m.text != null))
-      ? `<button class="edit owner-always" title="${({ko:'메시지 편집',en:'Edit message',es:'Editar mensaje'}[LANG]||'메시지 편집')}" onclick="editMessage('${m.id}')" style="position:absolute;top:6px;right:28px;background:transparent;border:0;color:#9ca3af;cursor:pointer;font-size:.95em;line-height:1;padding:2px 4px">✏️</button>`
+    // 편집 — DJ 오너만 모든 메시지 편집 가능 (사용자 명시 2026-05-18)
+    const editBtn = (typeof isDjOwner === 'function' && isDjOwner())
+      ? `<button class="edit owner-always" title="${({ko:'메시지 편집 (오너)',en:'Edit message (owner)',es:'Editar (dueño)'}[LANG]||'메시지 편집')}" onclick="editMessage('${m.id}')" style="position:absolute;top:6px;right:28px;background:transparent;border:0;color:#9ca3af;cursor:pointer;font-size:.95em;line-height:1;padding:2px 4px">✏️</button>`
       : '';
     const editedBadge = m.editedAt
       ? `<span class="edited-badge" style="font-size:.72em;color:#9ca3af;margin-left:4px">(${({ko:'편집됨',en:'edited',es:'editado'}[LANG]||'편집됨')})</span>`
@@ -3478,16 +3489,16 @@ async function deleteMessage(msgId){
 }
 
 // ============ EDIT MESSAGE (2026-05-18) ============
-// 본인이 쓴 메시지의 텍스트를 인플레이스 모달로 편집. RTDB PATCH.
+// 모든 채팅 메시지를 DJ 오너만 편집 가능 (사용자 명시).
+// 일반 직원/매니저/전무는 편집 불가 — 본인 메시지여도 차단.
 async function editMessage(msgId){
   const m = MSGS.find(x => x.id === msgId);
   if (!m) return;
-  const mineMsg = !!(me && m.sender === me.name && m.senderBranch === me.branch);
-  if (!mineMsg) {
-    alert({ko:'본인이 쓴 메시지만 편집할 수 있습니다.',
-           en:'You can only edit your own messages.',
-           es:'Solo puedes editar tus propios mensajes.'}[LANG]
-          || '본인이 쓴 메시지만 편집할 수 있습니다.');
+  if (!isDjOwner()) {
+    alert({ko:'오너(DJ)만 메시지 편집할 수 있습니다.',
+           en:'Only the owner (DJ) can edit messages.',
+           es:'Solo el dueño (DJ) puede editar mensajes.'}[LANG]
+          || '오너(DJ)만 메시지 편집할 수 있습니다.');
     return;
   }
   const L = {
