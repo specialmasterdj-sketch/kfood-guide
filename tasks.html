@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_18_d';   // 언어 자동 감지 — 한국어 사용자 1명뿐, 기본 폴백 영어
+    var BUST = 'tasks_2026_05_18_e';   // 매니저 보정 메뉴 #9: 완료된 업무에 사진 보충 추가
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -6999,6 +6999,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     '6: 📨 채팅방 다시 보내기 (사진 누락 보정)',
     '7: ⭐ 포인트 변경 (1·2·3점)',
     '8: 📝 업무명·메모 편집',
+    '9: 📷 사진 추가 (이미 완료된 업무에 사진 보충)',
     '0: 닫기'
   ];
   const choice = prompt(
@@ -7016,7 +7017,117 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     if (choice.trim() === '6') return adminRepostToChat(t);
     if (choice.trim() === '7') return adminChangePoints(t);
     if (choice.trim() === '8') return adminEditNameMemo(t);
+    if (choice.trim() === '9') return adminAddPhotos(t);
   } catch(e) { alert('보정 실패: ' + (e.message || e)); }
+}
+
+// 9) 사진 추가 — 이미 완료된 업무에 사진 보충. 직원이 사진 없이 완료했거나
+// 폰 카메라 문제로 못 올린 경우 매니저가 갤러리에서 골라 추가. photos 배열에
+// append (덮어쓰지 않음) — 기존 사진 + 새 사진 모두 보존. photosAddedBy/At
+// 으로 누가 보정했는지 흔적 남김. completedAt/completedBy 는 건드리지 않아
+// 활동 순위 점수에 영향 없음.
+async function adminAddPhotos(t){
+  // 임시 file input — 모달 만들지 않고 가볍게.
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  const files = await new Promise((resolve) => {
+    let resolved = false;
+    input.addEventListener('change', () => {
+      if (resolved) return;
+      resolved = true;
+      resolve(Array.from(input.files || []));
+    });
+    // 사용자가 취소하면 change 안 옴 → focus 복귀로 감지
+    const onFocus = () => {
+      setTimeout(() => {
+        if (resolved) return;
+        if (!input.files || !input.files.length) {
+          resolved = true;
+          resolve([]);
+        }
+      }, 400);
+      window.removeEventListener('focus', onFocus);
+    };
+    window.addEventListener('focus', onFocus);
+    input.click();
+  });
+  input.remove();
+  if (!files.length) return;
+  // 압축 + 업로드 — uploadLocPhotos 와 동일한 패턴
+  const compressed = await Promise.all(files.map(f => compressImage(f, 1024, 0.78)));
+  const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+  const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
+  let authHeader = {};
+  try {
+    const auth = window.__fb && window.__fb.auth;
+    const u = auth && auth.currentUser;
+    if (u) {
+      const tok = await u.getIdToken();
+      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
+    }
+  } catch(_){}
+  const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+  const baseIdx = (Array.isArray(t.photos) ? t.photos.length : 0);
+  const uploadOne = async (file, i) => {
+    const slot = baseIdx + i;
+    const path = 'tasks-done/' + t.branchId + '/' + t.id + '/admin-' + Date.now() + '-' + slot + '.jpg';
+    const url = FB_STORAGE_URL + '?name=' + encodeURIComponent(path) + '&uploadType=media';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'image/jpeg' }, authHeader),
+          body: file
+        });
+        if (r.ok) {
+          const meta = await r.json();
+          return FB_STORAGE_URL + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || '');
+        }
+        if (r.status === 404) break;
+        await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
+      } catch(_) {
+        await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
+      }
+    }
+    // base64 fallback — Storage 실패 시 RTDB 에 직접 박음 (작지만 보존)
+    try {
+      const small = await compressImage(file, 720, 0.55);
+      return await blobToDataUrl(small);
+    } catch(_) { return null; }
+  };
+  const btn = document.activeElement;
+  const oldText = btn && btn.textContent;
+  try {
+    if (btn && oldText !== undefined) btn.textContent = '📷 사진 업로드 중…';
+    const urls = (await Promise.all(compressed.map((f, i) => uploadOne(f, i)))).filter(u => u);
+    if (!urls.length) {
+      alert('❌ 사진 업로드 실패 — 다시 시도해 주세요.');
+      return;
+    }
+    const existing = Array.isArray(t.photos) ? t.photos : [];
+    const merged = existing.concat(urls);
+    const path = 'tasks/' + t.branchId + '/' + todayStr() + '/' + t.id;
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
+      photos: merged,
+      photosAddedBy: me.name + ' (보정)',
+      photosAddedAt: Date.now()
+    });
+    Object.assign(t, { photos: merged });
+    alert('📷 사진 ' + urls.length + '장 추가됨.\n총 ' + merged.length + '장.\n\n채팅방 재발송하려면 메뉴 6번 사용.');
+    // 카드 다시 그리기 — 사진 카운트 즉시 반영
+    try { if (typeof renderAll === 'function') renderAll(); } catch(_){}
+  } finally {
+    if (btn && oldText !== undefined) btn.textContent = oldText;
+  }
 }
 // 업무명 + 메모 인라인 편집 — prompt 로 빠르게. RTDB PATCH 후 채팅 알림은
 // 사용자가 별도로 #6(채팅방 다시 보내기) 선택 가능.
