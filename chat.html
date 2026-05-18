@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_18_b';
+    var BUST = 'chat_2026_05_18_c';
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3108,6 +3108,13 @@ function renderReplies(m){
       const rdBadge = replyDateBadge ? ` <span class="date-badge">${escapeHtml(replyDateBadge)}</span>` : '';
       const mine = me && r.sender === me.name && r.senderBranch === me.branch;
       const delBtn = mine ? `<button class="del-reply" title="삭제" onclick="deleteReply('${m.id}','${id}')">✕</button>` : '';
+      // ✏️ 답글 편집 — DJ 오너만 모든 답글 편집 가능 (2026-05-18)
+      const replyEditBtn = (typeof isDjOwner === 'function' && isDjOwner())
+        ? `<button class="del-reply edit-reply" title="${({ko:'답글 편집 (오너)',en:'Edit reply (owner)',es:'Editar respuesta (dueño)'}[LANG]||'답글 편집')}" onclick="editReply('${m.id}','${id}')" style="right:24px;color:#9ca3af">✏️</button>`
+        : '';
+      const replyEditedBadge = r.editedAt
+        ? ` <span style="font-size:.7em;color:#9ca3af">(${({ko:'편집됨',en:'edited',es:'editado'}[LANG]||'편집됨')})</span>`
+        : '';
       const replyPhotosHtml = (r.photos && r.photos.length) ? (() => {
         const n = r.photos.length;
         const cls = n>=7 ? 'scroll' : 'n'+Math.min(n,6);
@@ -3118,8 +3125,9 @@ function renderReplies(m){
         <div class="av-sm" style="background:${r.color || colorFor(r.sender||'?')}">${initialsOf(r.sender)}</div>
         <div class="reply-body">
           ${delBtn}
+          ${replyEditBtn}
           <div class="who-sm">${escapeHtml(r.sender||'?')}${escapeHtml(branchTxt)}${rdBadge}</div>
-          ${r.text ? `<div class="text">${linkifyText(r.text)}</div>` : ''}
+          ${r.text ? `<div class="text">${linkifyText(r.text)}${replyEditedBadge}</div>` : ''}
           ${replyPhotosHtml}
           <div class="ts-sm">${t}</div>
         </div>
@@ -3556,6 +3564,63 @@ async function editMessage(msgId){
   };
 }
 window.editMessage = editMessage;
+
+// ============ EDIT REPLY (2026-05-18) ============
+// DJ 오너만 모든 답글 편집 가능. RTDB PATCH /chat/messages/{room}/{msgId}/replies/{replyId}.
+async function editReply(parentMsgId, replyId){
+  if (!isDjOwner()) {
+    alert({ko:'오너(DJ)만 답글 편집할 수 있습니다.',
+           en:'Only the owner (DJ) can edit replies.',
+           es:'Solo el dueño (DJ) puede editar respuestas.'}[LANG]
+          || '오너(DJ)만 답글 편집할 수 있습니다.');
+    return;
+  }
+  const parent = MSGS.find(x => x.id === parentMsgId);
+  if (!parent || !parent.replies || !parent.replies[replyId]) { alert('답글을 찾을 수 없습니다.'); return; }
+  const r = parent.replies[replyId];
+  const L = {
+    title:  {ko:'✏️ 답글 편집', en:'✏️ Edit Reply', es:'✏️ Editar Respuesta'}[LANG] || '✏️ 답글 편집',
+    save:   {ko:'저장',         en:'Save',           es:'Guardar'}[LANG]            || '저장',
+    cancel: {ko:'취소',         en:'Cancel',         es:'Cancelar'}[LANG]           || '취소'
+  };
+  const ov = document.createElement('div');
+  ov.setAttribute('data-edit-modal','');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center;padding:14px';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:18px;width:min(560px,100%);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.35)">
+      <h3 style="margin:0 0 12px;color:#1a5c3a;font-size:1.05em">${L.title}</h3>
+      <textarea id="__editReplyTa" style="width:100%;min-height:180px;flex:1;border:1px solid #d1d5db;border-radius:10px;padding:12px;font-family:inherit;font-size:.95em;line-height:1.5;resize:vertical;box-sizing:border-box">${escapeHtml(r.text || '')}</textarea>
+      <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+        <button id="__editReplyCancel" style="padding:9px 18px;border:1px solid #d1d5db;border-radius:9px;background:#fff;font-size:.92em;cursor:pointer">${L.cancel}</button>
+        <button id="__editReplySave" style="padding:9px 18px;border:0;border-radius:9px;background:#1a5c3a;color:#fff;font-size:.92em;font-weight:700;cursor:pointer">${L.save}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+  const ta = ov.querySelector('#__editReplyTa');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ov.querySelector('#__editReplyCancel').onclick = () => ov.remove();
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  ov.querySelector('#__editReplySave').onclick = async () => {
+    const newText = ta.value;
+    if (newText.trim() === (r.text || '').trim()) { ov.remove(); return; }
+    try {
+      await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${parentMsgId}/replies/${replyId}.json`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text: newText, editedAt: Date.now() })
+      });
+      r.text = newText;
+      r.editedAt = Date.now();
+      try { renderMessages(); } catch(_){}
+    } catch(e) {
+      alert('답글 편집 실패: ' + (e.message || e));
+    } finally {
+      ov.remove();
+    }
+  };
+}
+window.editReply = editReply;
 
 // ============ LIGHTBOX ============
 // PWA에서 사진 열고 뒤로가기/창닫기 누르면 앱이 통째로 꺼지는 문제 방지:
