@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_18_b';   // 전광판 상단 이동 — force all clients to reload
+    var BUST = 'tasks_2026_05_18_c';   // 실제 수행자 (completedBy) 표시 추가
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -6880,8 +6880,22 @@ function renderMgr(){
     if (t.name && !t.nameTr) backfillTranslate(t);
     const dispName = pickLang(t.nameTr, t.name);
     const dispMemo = t.memo ? pickLang(t.memoTr, t.memo) : '';
-    const who = t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : '전체');
+    // 🔍 실제 수행자 표시 — 완료된 업무는 completedBy, 진행 중이면 startedBy, 그 외 assignee
+    const assignedTo = t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : '전체');
+    const actualDoer = t.completedBy || t.startedBy || null;
+    const showDoer = !!(actualDoer && actualDoer !== assignedTo);
+    const who = actualDoer || assignedTo;
     const av = `<span class="av" style="background:${colorFor(who)}">${initials(who)}</span>`;
+    // 상태별 라벨 — 누가 했는지 명확히
+    const doerLabel = t.completedAt
+      ? `<span style="font-size:.85em;font-weight:700">${escHtml(who)}</span><span style="font-size:.7em;color:#15803d;font-weight:700;margin-left:4px">✅ ${LANG==='en'?'done':LANG==='es'?'hecho':'완료'}</span>`
+      : t.startedBy
+        ? `<span style="font-size:.85em;font-weight:600">${escHtml(who)}</span><span style="font-size:.7em;color:#f59e0b;font-weight:700;margin-left:4px">⏳ ${LANG==='en'?'doing':LANG==='es'?'haciendo':'진행'}</span>`
+        : `<span style="font-size:.85em">${escHtml(who)}</span>`;
+    // assigned vs actual 다르면 "→" 표시로 누구한테 지시 → 실제로 누가 했는지 둘 다 보임
+    const assigneeSub = showDoer
+      ? `<div style="font-size:.66em;color:#9ca3af;margin-top:2px">← ${escHtml(assignedTo)} ${LANG==='en'?'assigned':LANG==='es'?'asignado':'지시'}</div>`
+      : '';
     const branch = isOwner() && t.branchId ? ` <span style="font-size:.72em;color:#9ca3af">(${escHtml(localizeBranch(t.branchId))})</span>` : '';
     const stLabel = stLabels[t._status][LANG];
     const memo = dispMemo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(dispMemo)}</div>` : '';
@@ -6943,7 +6957,7 @@ function renderMgr(){
     const tpBd = tpts >= 3 ? '#86efac' : tpts === 2 ? '#93c5fd' : '#cbd5e1';
     const pointsPill = `<span style="display:inline-block;background:${tpBg};color:${tpFg};border:1px solid ${tpBd};border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:800;margin-left:4px;vertical-align:middle" title="완료 시 +${tpts}점">${'⭐'.repeat(tpts)} ${tpts}점</span>`;
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
-      <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
+      <td>${av}${doerLabel}${branch}${assigneeSub}</td>
       <td><div style="font-weight:600;display:flex;align-items:center;gap:4px;flex-wrap:wrap">${adminBtn}<span>${escHtml(dispName)}</span>${placePill}${pointsPill}</div>${memo}${clBadge}</td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
       <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
