@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>🐟 KIMCHI 해산물 재고</title>
+<style>
+  :root{
+    --bg:#f0f9ff; --card:#fff; --line:#e0f2fe; --text:#0f172a; --mute:#64748b;
+    --primary:#0891b2; --primary-dark:#155e75;
+    --ok:#16a34a; --low:#f59e0b; --urgent:#dc2626; --untouched:#94a3b8;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:"Segoe UI","Malgun Gothic",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px;padding-bottom:80px}
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(135deg,#155e75,#0891b2);color:#fff;padding:10px 14px;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+  header .top{display:flex;align-items:center;gap:10px}
+  header h1{margin:0;font-size:1.02em;font-weight:700;flex:1}
+  header select{padding:5px 8px;border:none;border-radius:5px;font-weight:700;background:#fff;color:var(--text);font-size:.92em}
+  header .date{font-size:.82em;opacity:.85;margin-left:6px}
+  .summary{display:flex;gap:6px;margin-top:8px}
+  .pill{flex:1;background:rgba(255,255,255,.15);padding:6px 8px;border-radius:6px;text-align:center;cursor:pointer;border:1px solid transparent;font-size:.84em;font-weight:600}
+  .pill.active{background:#fff;color:var(--text)}
+  .pill .n{font-size:1.1em;font-weight:800;display:block}
+  .pill.urgent{background:rgba(220,38,38,.3)}
+  .pill.urgent.active{background:#fff;color:var(--urgent)}
+  .pill.low{background:rgba(245,158,11,.2)}
+  .pill.low.active{background:#fff;color:var(--low)}
+  .pill.ok{background:rgba(34,197,94,.2)}
+  .pill.ok.active{background:#fff;color:var(--ok)}
+
+  main{padding:8px;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+  .item{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--untouched);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+  .item.urgent{border-left-color:var(--urgent);background:#fef2f2}
+  .item.low{border-left-color:var(--low);background:#fffbeb}
+  .item.ok{border-left-color:var(--ok)}
+  .item .name{min-width:0}
+  .item .name b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:.86em;line-height:1.2}
+  .item .name .sub{display:block;font-size:.7em;color:var(--mute);margin-top:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .item .name .sub .last{font-weight:600;color:#0891b2}
+  .item .ctrl{display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .item input.cnt{flex:1;max-width:90px;padding:7px;border:2px solid var(--line);border-radius:7px;text-align:center;font-size:1.1em;font-weight:800;background:#fff}
+  .item input.cnt:focus{border-color:var(--primary);outline:none}
+  .item .badge{padding:3px 7px;border-radius:9px;font-size:.66em;font-weight:700;text-transform:uppercase;white-space:nowrap}
+  .badge.urgent{background:var(--urgent);color:#fff}
+  .badge.low{background:var(--low);color:#fff}
+  .badge.ok{background:var(--ok);color:#fff}
+  .badge.untouched{background:var(--untouched);color:#fff}
+
+  .vendor-pill{display:inline-block;font-size:.62em;font-weight:800;padding:1px 5px;border-radius:5px;vertical-align:middle;margin-right:2px;letter-spacing:.3px}
+  .vendor-pill.sy{background:#fee2e2;color:#991b1b}
+  .vendor-pill.ad{background:#ede9fe;color:#5b21b6}
+  .vendor-pill.km{background:#cffafe;color:#155e75}
+  .vendor-pill.nd{background:#dcfce7;color:#15803d}
+  .origin-pill{display:inline-block;font-size:.6em;padding:1px 5px;border-radius:3px;background:#f1f5f9;color:#475569;margin-left:2px}
+
+  .group-hdr{grid-column:1/-1;font-size:.78em;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.5px;margin:10px 4px 2px;display:flex;align-items:center;gap:6px}
+  .group-hdr::after{content:'';flex:1;height:1px;background:var(--line);margin-left:8px}
+  .empty{grid-column:1/-1;text-align:center;padding:30px 20px;color:var(--mute)}
+
+  .toolbar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:10px;display:flex;gap:8px;z-index:10;box-shadow:0 -2px 8px rgba(0,0,0,.06)}
+  .btn{flex:1;padding:11px;border:none;border-radius:8px;font-size:.94em;font-weight:700;cursor:pointer}
+  .btn.primary{background:var(--primary);color:#fff}
+  .btn.sec{background:#fee2e2;color:#991b1b}
+
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:20;padding:14px}
+  .modal.hidden{display:none}
+  .modal .box{background:#fff;border-radius:12px;max-width:480px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal .hdr{padding:14px;border-bottom:1px solid var(--line);font-weight:700;display:flex;align-items:center;gap:10px}
+  .modal .body{padding:14px;overflow:auto;flex:1}
+  .modal textarea{width:100%;min-height:280px;padding:10px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:.86em;resize:vertical}
+  .modal .ftr{padding:10px;border-top:1px solid var(--line);display:flex;gap:8px}
+
+  details.menu{position:relative}
+  details.menu summary{list-style:none;cursor:pointer;padding:6px;color:#fff;font-size:1.2em}
+  details.menu summary::-webkit-details-marker{display:none}
+  details.menu[open] .menu-pop{display:block}
+  .menu-pop{display:none;position:absolute;right:0;top:100%;background:#fff;color:var(--text);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:200px;padding:6px;z-index:30}
+  .menu-pop button{display:block;width:100%;text-align:left;padding:9px 12px;border:none;background:none;cursor:pointer;font-size:.92em;border-radius:5px;color:var(--text)}
+  .menu-pop button:hover{background:#fef2f2}
+
+  .add-form{background:var(--card);border:1px dashed var(--line);border-radius:8px;padding:10px;margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .add-form input,.add-form select{flex:1;padding:8px;border:1px solid var(--line);border-radius:6px;font-size:.9em}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top">
+    <h1>🐟 해산물 재고</h1>
+    <select id="branchSel" onchange="changeBranch()"></select>
+    <span class="date" id="todayLbl"></span>
+    <details class="menu">
+      <summary>⋮</summary>
+      <div class="menu-pop">
+        <button onclick="document.getElementById('addRow').scrollIntoView({behavior:'smooth'})">➕ 새 품목 추가</button>
+        <button onclick="exportData()">📤 백업 (JSON)</button>
+        <button onclick="document.getElementById('fileImport').click()">📥 복원</button>
+        <button onclick="clearTodayConfirm()">🔄 오늘 카운트 초기화</button>
+        <button onclick="showHistory()">📅 지난 카운트 보기</button>
+        <input type="file" id="fileImport" accept=".json" style="display:none" onchange="importData(event)">
+      </div>
+    </details>
+  </div>
+  <div class="summary">
+    <div class="pill urgent" data-filter="urgent" onclick="setFilter('urgent')">
+      <span class="n" id="cUrgent">0</span>🔴 발주
+    </div>
+    <div class="pill low" data-filter="low" onclick="setFilter('low')">
+      <span class="n" id="cLow">0</span>🟡 부족
+    </div>
+    <div class="pill ok" data-filter="ok" onclick="setFilter('ok')">
+      <span class="n" id="cOk">0</span>🟢 충분
+    </div>
+    <div class="pill active" data-filter="all" onclick="setFilter('all')">
+      <span class="n" id="cAll">0</span>📋 전체
+    </div>
+  </div>
+</header>
+
+<main id="list"></main>
+
+<div id="addRow" style="padding:10px 14px">
+  <div class="add-form">
+    <input type="text" id="newName" placeholder="새 품목 (예: 갈치 (BELT FISH))">
+    <select id="newCat">
+      <option value="fish">🐟 생선</option>
+      <option value="shellfish">🦐 새우/조개</option>
+      <option value="cephalopod">🦑 오징어/문어</option>
+      <option value="roe">🟠 알류</option>
+      <option value="salted">🧂 젓갈/건어물</option>
+    </select>
+    <input type="number" id="newCnt" placeholder="현재 수량" min="0" step="any" style="max-width:120px">
+    <button class="btn primary" onclick="addManualItem()" style="flex:0 0 auto;padding:8px 14px">추가</button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button class="btn primary" onclick="showOrderList()">📋 발주 리스트</button>
+  <button class="btn sec" onclick="window.print()">🖨️ 인쇄</button>
+</div>
+
+<div class="modal hidden" id="orderModal">
+  <div class="box">
+    <div class="hdr">
+      📋 발주 필요 리스트 (벤더별)
+      <span style="margin-left:auto;cursor:pointer;color:var(--mute)" onclick="closeModal('orderModal')">✕</span>
+    </div>
+    <div class="body">
+      <textarea id="orderText" readonly></textarea>
+    </div>
+    <div class="ftr">
+      <button class="btn primary" onclick="copyOrder()">📋 클립보드 복사</button>
+      <button class="btn sec" onclick="closeModal('orderModal')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="histModal">
+  <div class="box">
+    <div class="hdr">
+      📅 지난 카운트 (이 매장)
+      <span style="margin-left:auto;cursor:pointer;color:var(--mute)" onclick="closeModal('histModal')">✕</span>
+    </div>
+    <div class="body" id="histBody"></div>
+  </div>
+</div>
+
+<script>
+let CATALOG = null;   // 전체 카탈로그 (vendors / categories / items)
+let ITEMS_BY_BRANCH = {};
+let COUNTS = {};
+let MANUAL = {};
+let CURRENT_BRANCH = localStorage.getItem('sStock_branch') || 'LASOLAS';
+let CURRENT_FILTER = 'all';
+try { localStorage.removeItem('sStock_filter'); } catch(_){}
+
+const BRANCHES = [
+  { id:'LASOLAS',        name:'Las Olas' },
+  { id:'HOLLYWOOD',      name:'Hollywood' },
+  { id:'CORAL_SPRINGS',  name:'Coral Springs' },
+  { id:'PEMBROKE_PINES', name:'Pembroke Pines' },
+  { id:'MIAMI',          name:'Miami (FL342)' },
+];
+const NO_SEED_BRANCHES = new Set(['MIAMI']);   // 마이애미는 별도 (작은 매장)
+
+const TODAY = new Date().toISOString().slice(0,10);
+
+// ===== 데이터 로드 =====
+async function loadData(){
+  try {
+    const res = await fetch('./data/catalog.json?t=' + Date.now());
+    if (res.ok) CATALOG = await res.json();
+  } catch(e){ console.warn('catalog load fail', e); }
+
+  COUNTS = JSON.parse(localStorage.getItem('sStock_counts') || '{}');
+  MANUAL = JSON.parse(localStorage.getItem('sStock_manual') || '{}');
+
+  buildItemsByBranch();
+  initBranchSel();
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.filter === CURRENT_FILTER));
+  renderList();
+  updateTodayLabel();
+}
+
+function updateTodayLabel(){
+  const d = new Date();
+  document.getElementById('todayLbl').textContent =
+    String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0');
+}
+
+// 카탈로그 → 매장별 품목 배포. 모든 매장에 같은 정육 카탈로그 (Miami 제외).
+function buildItemsByBranch(){
+  ITEMS_BY_BRANCH = {};
+  for (const br of BRANCHES) ITEMS_BY_BRANCH[br.id] = {};
+
+  if (CATALOG && Array.isArray(CATALOG.items)){
+    for (const br of BRANCHES){
+      if (NO_SEED_BRANCHES.has(br.id)) continue;
+      for (const it of CATALOG.items){
+        ITEMS_BY_BRANCH[br.id][it.itemNo] = {
+          itemNo: it.itemNo,
+          product: it.product,
+          category: it.category,
+          subCategory: it.subCategory,
+          vendor: it.vendor,
+          size: it.size,
+          lastQty: 0,                       // 정육은 초기 lastQty 0 (시드 데이터 아님)
+          lastDate: '',
+          unitPrice: it.unitPrice,
+          unit: it.unit,
+          origin: it.origin,
+          primary: it.primary,
+        };
+      }
+    }
+  }
+
+  // 수동 추가 품목
+  for (const [bid, list] of Object.entries(MANUAL)){
+    if (!(bid in ITEMS_BY_BRANCH)) ITEMS_BY_BRANCH[bid] = {};
+    for (const m of list){
+      if (!ITEMS_BY_BRANCH[bid][m.itemNo]){
+        ITEMS_BY_BRANCH[bid][m.itemNo] = {
+          itemNo: m.itemNo, product: m.product,
+          category: m.category || 'fish', vendor: 'MANUAL',
+          size:'(수동)', lastQty:0, lastDate:'', unitPrice:0,
+          manual:true,
+        };
+      }
+    }
+  }
+}
+
+function initBranchSel(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+  sel.value = CURRENT_BRANCH;
+}
+
+function changeBranch(){
+  CURRENT_BRANCH = document.getElementById('branchSel').value;
+  localStorage.setItem('sStock_branch', CURRENT_BRANCH);
+  renderList();
+}
+
+function setFilter(f){
+  CURRENT_FILTER = f;
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.filter === f));
+  renderList();
+}
+
+// 정육은 lastQty 가 0 이므로 다른 기준 사용:
+//   - 카운트 0 (또는 0.5 미만) → 🔴 발주 필요
+//   - 카운트 1 ~ 2 → 🟡 부족
+//   - 카운트 3+ → 🟢 충분
+//   - 미카운트 → ⏳ untouched
+function statusOf(item, count){
+  if (count === null || count === undefined || count === '') return 'untouched';
+  const c = parseFloat(count);
+  if (isNaN(c)) return 'untouched';
+  if (c <= 0) return 'urgent';
+  if (c < 2) return 'low';
+  return 'ok';
+}
+
+function getCount(branch, itemNo){
+  return (COUNTS[branch] && COUNTS[branch][itemNo] && COUNTS[branch][itemNo][TODAY]) ?? '';
+}
+
+function setCount(branch, itemNo, value){
+  if (!COUNTS[branch]) COUNTS[branch] = {};
+  if (!COUNTS[branch][itemNo]) COUNTS[branch][itemNo] = {};
+  if (value === '' || value === null) delete COUNTS[branch][itemNo][TODAY];
+  else COUNTS[branch][itemNo][TODAY] = parseFloat(value);
+  localStorage.setItem('sStock_counts', JSON.stringify(COUNTS));
+}
+
+function categoryOf(item){
+  return (item.category || 'other');
+}
+
+function categoryLabel(catId){
+  if (CATALOG && CATALOG.categories){
+    const c = CATALOG.categories.find(c => c.id === catId);
+    if (c) return c.name;
+  }
+  return '📦 기타';
+}
+
+function vendorLabel(vId){
+  if (CATALOG && CATALOG.vendors){
+    const v = CATALOG.vendors.find(v => v.id === vId);
+    if (v) return v.label;
+  }
+  return vId || '?';
+}
+
+// ===== 렌더 =====
+function renderList(){
+  const items = Object.values(ITEMS_BY_BRANCH[CURRENT_BRANCH] || {})
+    .sort((a,b) => a.product.localeCompare(b.product));
+
+  let nUrgent=0, nLow=0, nOk=0;
+  const annotated = items.map(it => {
+    const cnt = getCount(CURRENT_BRANCH, it.itemNo);
+    const st = statusOf(it, cnt);
+    if (st === 'urgent') nUrgent++;
+    else if (st === 'low') nLow++;
+    else if (st === 'ok') nOk++;
+    return { item: it, count: cnt, status: st };
+  });
+
+  document.getElementById('cUrgent').textContent = nUrgent;
+  document.getElementById('cLow').textContent = nLow;
+  document.getElementById('cOk').textContent = nOk;
+  document.getElementById('cAll').textContent = annotated.length;
+
+  let visible;
+  if (CURRENT_FILTER === 'urgent') visible = annotated.filter(a => a.status === 'urgent');
+  else if (CURRENT_FILTER === 'low') visible = annotated.filter(a => a.status === 'low');
+  else if (CURRENT_FILTER === 'ok') visible = annotated.filter(a => a.status === 'ok' || a.status === 'untouched');
+  else visible = annotated;
+
+  // 카테고리 그룹핑
+  const groups = {};
+  for (const a of visible){
+    const g = categoryOf(a.item);
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(a);
+  }
+  const groupOrder = (CATALOG && CATALOG.categories) ? CATALOG.categories.map(c => c.id) : Object.keys(groups);
+
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  if (!visible.length){
+    if (!items.length){
+      list.innerHTML = '<div class="empty">📦 <b>이 매장에 정육 카탈로그가 없습니다.</b><br><br>아래 ➕ 새 품목 추가 로 시작하거나, ⋮메뉴 → 📥 복원 으로 JSON 가져오기.</div>';
+    }
+    else if (CURRENT_FILTER === 'urgent') list.innerHTML = '<div class="empty">🎉 발주 필요 품목 없음!<br><br>매장 돌면서 카운트하면 자동으로 분류됩니다.<br>위 탭에서 <b>📋 전체</b> 누르면 모든 품목 보입니다.</div>';
+    else if (CURRENT_FILTER === 'low') list.innerHTML = '<div class="empty">🟢 부족한 품목 없음</div>';
+    else list.innerHTML = '<div class="empty">표시할 품목 없음</div>';
+    return;
+  }
+
+  for (const gname of groupOrder){
+    if (!groups[gname]) continue;
+    list.insertAdjacentHTML('beforeend', `<div class="group-hdr">${categoryLabel(gname)} <span style="color:var(--mute);font-weight:400">${groups[gname].length}</span></div>`);
+    for (const a of groups[gname]){
+      const it = a.item;
+      const badge = {
+        urgent:    '<span class="badge urgent">🔴 발주</span>',
+        low:       '<span class="badge low">🟡 부족</span>',
+        ok:        '<span class="badge ok">🟢 OK</span>',
+        untouched: '<span class="badge untouched">⏳</span>',
+      }[a.status];
+
+      const vendor = it.vendor || 'SYSCO';
+      const vendorCls = vendor === 'AND' ? 'ad' : vendor === 'KM2' ? 'km' : vendor === 'NDM' ? 'nd' : 'sy';
+      const vShort = vendor === 'AND' ? 'AD' : vendor === 'KM2' ? 'KM' : vendor === 'NDM' ? 'ND' : 'SY';
+      const vendorBadge = `<span class="vendor-pill ${vendorCls}" title="${vendorLabel(vendor)}">${vShort}</span>`;
+      const originBadge = it.origin ? `<span class="origin-pill" title="원산지">${it.origin}</span>` : '';
+
+      const priceText = it.unitPrice ? `$${it.unitPrice.toFixed(2)}/${it.unit||'lb'}` : '';
+      const subInfo = it.manual
+        ? '<span class="sub">📝 수동 추가</span>'
+        : `<span class="sub">${(it.size||'').slice(0,16)}${priceText ? ' · '+priceText : ''}</span>`;
+
+      list.insertAdjacentHTML('beforeend', `
+        <div class="item ${a.status}" data-key="${it.itemNo}">
+          <div class="name">
+            <b>${vendorBadge} ${escapeHtml(it.product)} ${originBadge}</b>
+            ${subInfo}
+          </div>
+          <div class="ctrl">
+            <input type="number" class="cnt" min="0" step="0.5" inputmode="decimal"
+                   value="${a.count === '' ? '' : a.count}"
+                   placeholder="—"
+                   onchange="onCountChange('${it.itemNo}', this.value)">
+            ${badge}
+          </div>
+        </div>
+      `);
+    }
+  }
+}
+
+function onCountChange(itemNo, val){
+  setCount(CURRENT_BRANCH, itemNo, val);
+  renderList();
+}
+
+function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ===== 수동 추가 =====
+function addManualItem(){
+  const name = document.getElementById('newName').value.trim();
+  const cat = document.getElementById('newCat').value;
+  const cnt = document.getElementById('newCnt').value.trim();
+  if (!name){ alert('품목명을 입력해 주세요'); return; }
+  const itemNo = 'M' + Date.now().toString().slice(-6);
+  if (!MANUAL[CURRENT_BRANCH]) MANUAL[CURRENT_BRANCH] = [];
+  MANUAL[CURRENT_BRANCH].push({ itemNo, product: name.toUpperCase(), category: cat });
+  localStorage.setItem('sStock_manual', JSON.stringify(MANUAL));
+  if (cnt !== '') setCount(CURRENT_BRANCH, itemNo, cnt);
+  document.getElementById('newName').value = '';
+  document.getElementById('newCnt').value = '';
+  buildItemsByBranch();
+  renderList();
+}
+
+// ===== 발주 리스트 (벤더별 그룹화) =====
+function showOrderList(){
+  const items = Object.values(ITEMS_BY_BRANCH[CURRENT_BRANCH] || {});
+  const need = items
+    .map(it => ({ item: it, count: getCount(CURRENT_BRANCH, it.itemNo) }))
+    .filter(a => statusOf(a.item, a.count) === 'urgent')
+    .sort((a,b) => a.item.product.localeCompare(b.item.product));
+
+  const branchName = BRANCHES.find(b => b.id === CURRENT_BRANCH).name;
+  let text = `[🐟 ${branchName} · ${TODAY} 해산물 발주 필요]\n\n`;
+
+  if (!need.length){
+    text += '🎉 발주 필요 품목 없음';
+  } else {
+    const byVendor = {};
+    for (const a of need){
+      const v = a.item.vendor || 'SYSCO';
+      (byVendor[v] = byVendor[v] || []).push(a);
+    }
+    const vendorOrder = ['SYSCO','AND','KM2','NDM','MANUAL'];
+    for (const v of vendorOrder){
+      if (!byVendor[v]) continue;
+      const label = v === 'SYSCO' ? '🟥 Sysco'
+                  : v === 'AND'   ? '🟪 A&D Foods'
+                  : v === 'KM2'   ? '🟦 KIMCHIMART #2'
+                  : v === 'NDM'   ? '🟩 Namdaemun'
+                  :                  '✏️ 수동 추가';
+      text += `\n[${label}]\n`;
+      for (const a of byVendor[v]){
+        const it = a.item;
+        const cntPart = a.count === '' ? '미카운트' : `현재 ${a.count}`;
+        const sizePart = it.size ? ` · ${it.size}` : '';
+        const originPart = it.origin ? ` (${it.origin})` : '';
+        text += `• ${it.product}${originPart}  —  ${cntPart}${sizePart}\n`;
+      }
+    }
+    text += `\n총 ${need.length} 품목\n`;
+  }
+
+  document.getElementById('orderText').value = text;
+  document.getElementById('orderModal').classList.remove('hidden');
+}
+
+async function copyOrder(){
+  const t = document.getElementById('orderText').value;
+  try {
+    await navigator.clipboard.writeText(t);
+    alert('✅ 복사됨 — 벤더별로 카톡/문자 보내시면 됩니다');
+  } catch(e){
+    document.getElementById('orderText').select();
+    document.execCommand('copy');
+    alert('✅ 복사됨');
+  }
+}
+
+function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
+
+// ===== 히스토리 =====
+function showHistory(){
+  const body = document.getElementById('histBody');
+  const data = COUNTS[CURRENT_BRANCH] || {};
+  const dates = new Set();
+  for (const itemNo in data) for (const d in data[itemNo]) dates.add(d);
+  const sortedDates = Array.from(dates).sort().reverse();
+  if (!sortedDates.length){
+    body.innerHTML = '<div class="empty">아직 카운트 기록이 없습니다.</div>';
+  } else {
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:.86em"><thead><tr><th style="text-align:left">날짜</th><th>카운트 품목 수</th><th>발주 필요</th></tr></thead><tbody>';
+    for (const d of sortedDates){
+      let counted=0, urgent=0;
+      for (const itemNo in data){
+        if (data[itemNo][d] !== undefined){
+          counted++;
+          const it = ITEMS_BY_BRANCH[CURRENT_BRANCH][itemNo];
+          if (it && statusOf(it, data[itemNo][d]) === 'urgent') urgent++;
+        }
+      }
+      html += `<tr><td style="padding:6px;border-bottom:1px solid var(--line)">${d}${d===TODAY?' (오늘)':''}</td><td style="text-align:center;border-bottom:1px solid var(--line)">${counted}</td><td style="text-align:center;color:var(--urgent);font-weight:700;border-bottom:1px solid var(--line)">${urgent}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }
+  document.getElementById('histModal').classList.remove('hidden');
+  document.querySelector('details.menu').open = false;
+}
+
+// ===== 백업/복원/리셋 =====
+function exportData(){
+  const data = {
+    counts: COUNTS,
+    manual: MANUAL,
+    exportedAt: new Date().toISOString(),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `kimchi-seafood-stock-${TODAY}.json`;
+  a.click();
+  document.querySelector('details.menu').open = false;
+}
+
+function importData(ev){
+  const f = ev.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const d = JSON.parse(e.target.result);
+      if (d.counts){ COUNTS = d.counts; localStorage.setItem('sStock_counts', JSON.stringify(COUNTS)); }
+      if (d.manual){ MANUAL = d.manual; localStorage.setItem('sStock_manual', JSON.stringify(MANUAL)); }
+      alert('✅ 복원 완료');
+      location.reload();
+    } catch(err){ alert('❌ JSON 파싱 실패'); }
+  };
+  reader.readAsText(f);
+}
+
+function clearTodayConfirm(){
+  if (!confirm(`${BRANCHES.find(b=>b.id===CURRENT_BRANCH).name} 의 오늘(${TODAY}) 카운트를 모두 지울까요?`)) return;
+  const data = COUNTS[CURRENT_BRANCH] || {};
+  for (const itemNo in data) delete data[itemNo][TODAY];
+  localStorage.setItem('sStock_counts', JSON.stringify(COUNTS));
+  renderList();
+  document.querySelector('details.menu').open = false;
+}
+
+loadData();
+</script>
+
+</body>
+</html>
