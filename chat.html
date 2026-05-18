@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_17_c';
+    var BUST = 'chat_2026_05_18_a';
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2366,6 +2366,13 @@ function renderMessages(){
     const delBtn = canDel
       ? `<button class="del owner-always" title="${isOwnerDel ? '오너 삭제' : ({ko:'내 메시지 삭제',en:'Delete my message',es:'Eliminar mi mensaje'}[LANG]||'내 메시지 삭제')}" onclick="deleteMessage('${m.id}')">✕</button>`
       : '';
+    // 편집 — 본인 메시지만 (텍스트 있는 경우만 의미 있음)
+    const editBtn = (mine && (m.text != null))
+      ? `<button class="edit owner-always" title="${({ko:'메시지 편집',en:'Edit message',es:'Editar mensaje'}[LANG]||'메시지 편집')}" onclick="editMessage('${m.id}')" style="position:absolute;top:6px;right:28px;background:transparent;border:0;color:#9ca3af;cursor:pointer;font-size:.95em;line-height:1;padding:2px 4px">✏️</button>`
+      : '';
+    const editedBadge = m.editedAt
+      ? `<span class="edited-badge" style="font-size:.72em;color:#9ca3af;margin-left:4px">(${({ko:'편집됨',en:'edited',es:'editado'}[LANG]||'편집됨')})</span>`
+      : '';
     const rxnHtml = renderReactions(m);
     const refCard = m.reference ? renderRef(m.reference) : '';
     const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'공유',en:'Share',es:'Compartir'}[LANG]||'공유')}</button>` : '';
@@ -2380,9 +2387,10 @@ function renderMessages(){
       <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
       <div class="body">
         ${delBtn}
+        ${editBtn}
         <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}${dateBadgeHtml}</div>
         ${refCard}
-        ${localizedText ? `<div class="text" data-original="${escapeHtml(localizedText)}">${linkifyText(localizedText)}</div>` : ''}
+        ${localizedText ? `<div class="text" data-original="${escapeHtml(localizedText)}">${linkifyText(localizedText)}${editedBadge}</div>` : ''}
         ${photoHtml}
         ${fileHtml}
         <div class="ts">${time}</div>
@@ -3468,6 +3476,75 @@ async function deleteMessage(msgId){
     });
   }
 }
+
+// ============ EDIT MESSAGE (2026-05-18) ============
+// 본인이 쓴 메시지의 텍스트를 인플레이스 모달로 편집. RTDB PATCH.
+async function editMessage(msgId){
+  const m = MSGS.find(x => x.id === msgId);
+  if (!m) return;
+  const mineMsg = !!(me && m.sender === me.name && m.senderBranch === me.branch);
+  if (!mineMsg) {
+    alert({ko:'본인이 쓴 메시지만 편집할 수 있습니다.',
+           en:'You can only edit your own messages.',
+           es:'Solo puedes editar tus propios mensajes.'}[LANG]
+          || '본인이 쓴 메시지만 편집할 수 있습니다.');
+    return;
+  }
+  const L = {
+    title:  {ko:'✏️ 메시지 편집', en:'✏️ Edit Message',  es:'✏️ Editar Mensaje'}[LANG] || '✏️ 메시지 편집',
+    save:   {ko:'저장',           en:'Save',              es:'Guardar'}[LANG] || '저장',
+    cancel: {ko:'취소',           en:'Cancel',            es:'Cancelar'}[LANG] || '취소',
+    hint:   {ko:'줄바꿈은 Enter, 저장은 버튼.', en:'Enter for newline, click Save when done.', es:'Enter para nueva línea, clic Guardar.'}[LANG] || ''
+  };
+  // 모달 오버레이 — 본인 메시지 원문이 textarea 에 채워짐
+  const ov = document.createElement('div');
+  ov.setAttribute('data-edit-modal','');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center;padding:14px';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:18px;width:min(560px,100%);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.35)">
+      <h3 style="margin:0 0 12px;color:#1a5c3a;font-size:1.05em">${L.title}</h3>
+      <textarea id="__editMsgTa" style="width:100%;min-height:220px;flex:1;border:1px solid #d1d5db;border-radius:10px;padding:12px;font-family:inherit;font-size:.95em;line-height:1.5;resize:vertical;box-sizing:border-box">${escapeHtml(m.text || '')}</textarea>
+      <div style="font-size:.74em;color:#9ca3af;margin-top:6px">${escapeHtml(L.hint)}</div>
+      <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+        <button id="__editMsgCancel" style="padding:9px 18px;border:1px solid #d1d5db;border-radius:9px;background:#fff;font-size:.92em;cursor:pointer">${L.cancel}</button>
+        <button id="__editMsgSave" style="padding:9px 18px;border:0;border-radius:9px;background:#1a5c3a;color:#fff;font-size:.92em;font-weight:700;cursor:pointer">${L.save}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+  const ta = ov.querySelector('#__editMsgTa');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ov.querySelector('#__editMsgCancel').onclick = () => ov.remove();
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  ov.querySelector('#__editMsgSave').onclick = async () => {
+    const newText = ta.value;
+    if (newText.trim() === (m.text || '').trim()) { ov.remove(); return; }
+    try {
+      await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${msgId}.json`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text: newText, editedAt: Date.now() })
+      });
+      // 마지막 메시지였으면 룸 미리보기도 갱신
+      const r = ROOMS[ACTIVE_ROOM];
+      if (r && r.lastTs === m.ts) {
+        fetch(`${FB_DB_URL}/chat/rooms/${ACTIVE_ROOM}.json`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ lastMsg: newText.slice(0, 50), lastTs: r.lastTs })
+        }).catch(()=>{});
+      }
+      // 로컬 모델도 즉시 반영 (Firebase listener 가 곧 동일 값으로 덮어쓸 것)
+      m.text = newText;
+      m.editedAt = Date.now();
+      try { renderMessages(); } catch(_){}
+    } catch(e) {
+      alert('편집 저장 실패: ' + (e.message || e));
+    } finally {
+      ov.remove();
+    }
+  };
+}
+window.editMessage = editMessage;
 
 // ============ LIGHTBOX ============
 // PWA에서 사진 열고 뒤로가기/창닫기 누르면 앱이 통째로 꺼지는 문제 방지:
