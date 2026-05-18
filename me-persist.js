@@ -172,3 +172,56 @@
     restoredFromCookie: restoredSync,
   };
 })();
+
+// =============================================================
+// PWA SW auto-reload (2026-05-17)
+// sw.js가 새 버전 activate → 페이지 자동 리로드. 매니저가 코드/설정
+// 업데이트하면 직원 핸드폰에서 핸드폰 재부팅 없이도 즉시 반영.
+// =============================================================
+(function(){
+  if (!('serviceWorker' in navigator)) return;
+  // 페이지 로드 시점에 이미 SW가 페이지를 제어하고 있었는지 기록.
+  // false 라면 (= 첫 SW 등록) 그 직후 한 번의 controllerchange는 정상이므로 무시.
+  var hadControllerOnLoad = !!navigator.serviceWorker.controller;
+  var reloaded = false;
+  function safeReload(reason){
+    if (reloaded) return;
+    // form 입력 중인 사용자 보호: 활성 textarea/text input 에 값이 있으면 리로드 1분 지연
+    try {
+      var el = document.activeElement;
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.value && el.value.length > 0) {
+        // 사용자 작업 끝날 때까지 잠시 대기 → 다음 update 사이클에서 다시 시도
+        return;
+      }
+    } catch(_){}
+    reloaded = true;
+    try { console.log('[sw-autoreload]', reason); } catch(e){}
+    setTimeout(function(){ try { location.reload(); } catch(e){} }, 300);
+  }
+  // 1) sw.js가 보내는 'sw-updated' 메시지 수신
+  navigator.serviceWorker.addEventListener('message', function(e){
+    if (e && e.data && e.data.type === 'sw-updated') safeReload('sw-updated');
+  });
+  // 2) SW controller 변경 (새 SW가 페이지 제어권 가져옴)
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if (!hadControllerOnLoad) {
+      // 첫 SW 등록의 정상적인 controllerchange — 한 번만 허용
+      hadControllerOnLoad = true;
+      return;
+    }
+    safeReload('controllerchange');
+  });
+  // 3) 주기적 update() — 장시간 켜둔 PWA도 새 버전을 체크
+  function pollUpdate(){
+    try {
+      navigator.serviceWorker.getRegistrations().then(function(rs){
+        rs.forEach(function(r){ try { r.update(); } catch(e){} });
+      });
+    } catch(e){}
+  }
+  setInterval(pollUpdate, 5 * 60 * 1000); // 5분
+  // 4) 페이지 visible 복귀 시에도 즉시 체크 (백그라운드에서 깨어났을 때)
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') pollUpdate();
+  });
+})();

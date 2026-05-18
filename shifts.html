@@ -6,6 +6,33 @@
 <title>김치마트 — 스케줄</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
+<script>
+  // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
+  (function(){
+    var BUST = 'shifts_2026_05_17_b';
+    var KEY = 'kmtools_bust_shifts';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+    function pollBust(){
+      fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.text(); })
+        .then(function(t){
+          var m = t.match(/var BUST = '([^']+)'/);
+          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+        }).catch(function(){});
+    }
+    setInterval(pollBust, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') pollBust(); });
+    window.addEventListener('focus', pollBust);
+  })();
+</script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
 <script src="./nav-sidebar.js?v=20" defer></script>
@@ -580,7 +607,7 @@ const BRANCHES = [
   { id:'LASOLAS',       ko:'라스올라스',     en:'LASOLAS',         es:'LASOLAS' },
   { id:'WEST_PALM',     ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
 ];
-const DEFAULT_ROLES = ['OWNER','매니저','ASSISTANT MANAGER','SUPERVISOR','VICE SUPERVISOR','CASHIER/STOCKER','SUSHI/KITCHEN','MEAT & SEAFOOD','DELI'];
+const DEFAULT_ROLES = ['OWNER','매니저','ASSISTANT MANAGER','SENIOR SUPERVISOR','SUPERVISOR','VICE SUPERVISOR','CASHIER/STOCKER','SUSHI/KITCHEN','MEAT & SEAFOOD','DELI'];
 // 표시 우선순위: OWNER → 매니저 → ASSISTANT MANAGER → SUPERVISOR → VICE SUPERVISOR → 나머지
 // 다국어 변형까지 같은 그룹으로 취급
 const PRIORITY_GROUPS = [
@@ -759,6 +786,70 @@ function migrateRoles(d){
   // OWNER 신규 역할 추가
   if (d.roles && !d.roles.includes('OWNER')) {
     d.roles.push('OWNER');
+  }
+  // SENIOR SUPERVISOR 신규 역할 추가
+  if (d.roles && !d.roles.includes('SENIOR SUPERVISOR')) {
+    d.roles.push('SENIOR SUPERVISOR');
+  }
+  // 이름 패턴 매처
+  const _isMiguel = (e) => {
+    const nm = String(e && e.name || '').toLowerCase().trim();
+    return /\bmiguel\b/.test(nm) && /\bperez\b/.test(nm);
+  };
+  const _isMai = (e) => {
+    const nm = String(e && e.name || '').toLowerCase().trim();
+    return /\bmai\b/.test(nm) && /\bgarcia\b/.test(nm);
+  };
+  const _isKendell = (e) => {
+    const nm = String(e && e.name || '').toLowerCase().trim();
+    return /\bkendell\b/.test(nm) && /\braymundo\b/.test(nm);
+  };
+
+  // LASOLAS 지점에서 Miguel Perez / Kendell Raymundo 가 schedules 에 누락된 경우 자동 추가.
+  // 사용자 명시: 이 두 사람은 항상 라스올라스 스케줄에 포함되어야 함 (매니저 권한 + 업무 발송 가능)
+  if (d.employees && typeof BRANCH !== 'undefined' && BRANCH === 'LASOLAS') {
+    if (!d.employees.some(_isMiguel)) {
+      d.employees.unshift({
+        id: 'e_miguel_perez_lasolas',
+        name: 'Miguel Perez',
+        role: 'SENIOR SUPERVISOR',
+        target: 40,
+        color: '#3b82f6',
+        initials: 'MP'
+      });
+    }
+    if (!d.employees.some(_isKendell)) {
+      d.employees.unshift({
+        id: 'e_kendell_raymundo_lasolas',
+        name: 'Kendell Raymundo',
+        role: 'ASSISTANT MANAGER',
+        target: 40,
+        color: '#a855f7',
+        initials: 'KR'
+      });
+    }
+  }
+
+  // Miguel Perez & Mai Garcia 영구 SENIOR SUPERVISOR — 어떤 데이터 상태든 매번 정정.
+  // 사용자 영구 결정 (2026-05-17). 플래그 없이 idempotent.
+  if (d.employees) {
+    d.employees.forEach(e => {
+      if (_isMiguel(e) || _isMai(e)) {
+        if (e.role !== 'SENIOR SUPERVISOR') e.role = 'SENIOR SUPERVISOR';
+      }
+    });
+  }
+
+  // Mai → Miguel 직후 위치 정렬 (1회성, 사용자가 수동 재정렬할 수 있도록)
+  if (d.employees && !d._migMaiAfterMiguelOrder) {
+    const maiIdx = d.employees.findIndex(_isMai);
+    const miguelIdx = d.employees.findIndex(_isMiguel);
+    if (maiIdx !== -1 && miguelIdx !== -1 && maiIdx !== miguelIdx + 1) {
+      const [mai] = d.employees.splice(maiIdx, 1);
+      const newMiguelIdx = d.employees.findIndex(_isMiguel);
+      d.employees.splice(newMiguelIdx + 1, 0, mai);
+    }
+    d._migMaiAfterMiguelOrder = true;
   }
   return d;
 }

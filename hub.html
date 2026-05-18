@@ -4,6 +4,33 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KIMCHI MART HUB</title>
+<script>
+  // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
+  (function(){
+    var BUST = 'hub_2026_05_17_b';
+    var KEY = 'kmtools_bust_hub';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+    function pollBust(){
+      fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.text(); })
+        .then(function(t){
+          var m = t.match(/var BUST = '([^']+)'/);
+          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+        }).catch(function(){});
+    }
+    setInterval(pollBust, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') pollBust(); });
+    window.addEventListener('focus', pollBust);
+  })();
+</script>
 <script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=4"></script>
 <script type="module">
@@ -790,6 +817,30 @@ function _dirGlobalLbl(){ return LANG==='en' ? 'HQ / Executive' : LANG==='es' ? 
 const DIR_BRANCH_LABELS = {get _GLOBAL(){return _dirGlobalLbl();},LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
 const DIR_ROLE_SEQ = [['OWNER',0],['ASSISTANT MANAGER',2],['ASSISTANT_MANAGER',2],['SENIOR SUPERVISOR',3],['VICE SUPERVISOR',5],['VICE_SUPERVISOR',5],['MANAGER',1],['SUPERVISOR',4]];
 function _dirRoleSort(r){ const u = String(r||'').toUpperCase(); for (const [k,v] of DIR_ROLE_SEQ) if (u.includes(k)) return v; return 9; }
+// Miguel Perez / Mai Garcia 영구 SENIOR SUPERVISOR 강제 정정 — UI + Firebase.
+// 사용자 영구 결정 (2026-05-17). 어떤 페이지든 들어오면 정정.
+async function _forceSrSupRoles(fb, br, d){
+  const isMiguel = (n) => { const x = String(n||'').toLowerCase().trim(); return /\bmiguel\b/.test(x) && /\bperez\b/.test(x); };
+  const isMai    = (n) => { const x = String(n||'').toLowerCase().trim(); return /\bmai\b/.test(x) && /\bgarcia\b/.test(x); };
+  let changed = false;
+  if (Array.isArray(d)) {
+    d.forEach(e => { if (e && (isMiguel(e.name) || isMai(e.name)) && e.role !== 'SENIOR SUPERVISOR') { e.role = 'SENIOR SUPERVISOR'; changed = true; } });
+  } else if (d && typeof d === 'object') {
+    Object.values(d).forEach(e => { if (e && (isMiguel(e.name) || isMai(e.name)) && e.role !== 'SENIOR SUPERVISOR') { e.role = 'SENIOR SUPERVISOR'; changed = true; } });
+  }
+  if (changed) {
+    try {
+      await fetch(fb+'/schedules/'+br+'/employees.json', {
+        method: 'PUT',
+        body: JSON.stringify(d),
+        headers: { 'Content-Type': 'application/json' }
+      });
+      console.log('[force-sr-sup] Firebase 정정 완료:', br);
+    } catch(e){ console.warn('[force-sr-sup] Firebase PUT 실패 — UI 만 정정됨', e); }
+  }
+  return d;
+}
+
 async function loadDirectory(){
   const fb = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
   _dirData = [];
@@ -801,6 +852,7 @@ async function loadDirectory(){
       const res = await fetch(fb+'/schedules/'+br+'/employees.json');
       const d = await res.json();
       if (!d) continue;
+      await _forceSrSupRoles(fb, br, d);
       const arr = Array.isArray(d) ? d : Object.values(d);
       arr.forEach(e => { if(e && e.name) _dirData.push({name:e.name, role:e.role||'', dept:e.dept||'', branch:br}); });
     } catch(e){}
