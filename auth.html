@@ -742,10 +742,24 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
   show('loadingView');
+  // 🛡️ Safety net — 10초 이상 loadingView 머무르면 자동으로 signinView 복귀 +
+  // 진단 메시지 표시. 이전엔 onValue 가 null 던지면 무한 spinner 였음.
+  const __loadingGuard = setTimeout(() => {
+    if (document.getElementById('loadingView').style.display === '') {
+      show('signinView');
+      showError('로그인이 완료되지 않았습니다. 다시 시도하거나 로그아웃 후 재로그인 해주세요. (timeout)');
+    }
+  }, 10000);
   const userRef = ref(db, 'users/' + user.uid);
   // First-time login: create record and bootstrap admins
-  let snap;
-  try { snap = await get(userRef); } catch(e){ console.warn(e); }
+  let snap, getErr = null;
+  try { snap = await get(userRef); } catch(e){ getErr = e; console.warn('[auth] get(userRef) failed:', e); }
+  if (getErr) {
+    clearTimeout(__loadingGuard);
+    show('signinView');
+    showError('계정 정보 조회 실패: ' + (getErr.message || getErr) + ' — 다시 로그인 해주세요.');
+    return;
+  }
   if (!snap || !snap.exists()) {
     const boot = bootstrapFor(user.email);
     const profile = {
@@ -759,7 +773,12 @@ onAuthStateChanged(auth, async (user) => {
       approvedAt: boot ? Date.now() : null,
       approvedBy: boot ? 'bootstrap' : null,
     };
-    try { await set(userRef, profile); } catch(e){ showError('계정 생성 실패: ' + e.message); }
+    try { await set(userRef, profile); } catch(e){
+      clearTimeout(__loadingGuard);
+      show('signinView');
+      showError('계정 생성 실패: ' + (e.message || e) + ' — Firebase 규칙 또는 네트워크 문제일 수 있습니다.');
+      return;
+    }
   } else {
     // Existing record — if the user is a bootstrap admin (added to the
     // hardcoded list later, or whose role is missing), upgrade them to
@@ -783,7 +802,15 @@ onAuthStateChanged(auth, async (user) => {
   if (__unsub) { try{__unsub();}catch(e){} }
   __unsub = onValue(userRef, (snap2) => {
     __currentProfile = snap2.val();
-    if (!__currentProfile) return;
+    if (!__currentProfile) {
+      // 🚨 레코드 없음 — set() 실패했거나 RTDB 규칙으로 막힘. 무한 spinner
+      // 대신 sign-in 화면으로 복귀 + 진단 메시지.
+      clearTimeout(__loadingGuard);
+      show('signinView');
+      showError('계정 정보를 불러올 수 없습니다 (uid=' + (user.uid||'?').slice(0,8) + '). 매니저에게 문의하거나 다시 로그인 해주세요.');
+      return;
+    }
+    clearTimeout(__loadingGuard);
     // Sync chat.me so other pages' sidebar gates pick up the role
     // (manager-only links, payroll access, etc) without a separate
     // "Select Your Name" step. Branch defaults to MIAMI when '*'.
