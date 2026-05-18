@@ -165,7 +165,11 @@ hr.sep{border:0;border-top:1px solid rgba(15,23,42,.08);margin:20px 0}
 .tbl .name input.disabled,
 .tbl .name input:disabled,
 .tbl .name input[disabled]{color:#7c3aed;-webkit-text-fill-color:#7c3aed;font-weight:800}
-.tbl .name{font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:-.005em}
+.tbl .name{font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:-.005em}
+/* 🔧 보기 전용 모드 (input 없이 plain td 일 때) — 진하고 또렷하게 */
+.tbl tbody td{color:#0f172a;font-weight:600}
+.tbl tbody td.name{color:#7c3aed;font-weight:800}
+.tbl tbody td.num{font-variant-numeric:tabular-nums;font-weight:700}
 .tbl tfoot td{padding-top:16px;font-weight:900;font-size:1.08em;border-top:2px solid #0f172a;color:#0f172a;letter-spacing:-.01em}
 
 .sig-row{margin-top:36px;display:grid;grid-template-columns:1fr 1fr;gap:28px}
@@ -910,17 +914,33 @@ function renderRows(){
   const showSSN = (DATA.rows||[]).some(r => r.ssn != null && r.ssn !== '');
   document.querySelectorAll('.ssn-col').forEach(el => el.style.display = showSSN ? '' : 'none');
   refreshEmpNameList();
-  tbody.innerHTML = (DATA.rows||[]).map((r, i) => `
-    <tr>
-      <td class="name"><input list="empNameList" value="${escapeAttr(r.name||'')}" oninput="updateRow(${i},'name',this.value)" ${ed?'':'disabled'} placeholder="${ed?'스케줄 직원에서 선택 또는 입력':''}"></td>
-      ${showSSN ? `<td class="ssn-col"><input value="${escapeAttr(r.ssn||'')}" oninput="updateRow(${i},'ssn',this.value)" ${ed?'':'disabled'}></td>` : ''}
-      <td class="num"><input type="number" step="0.5" value="${r.hours==null?'':r.hours}" oninput="updateRow(${i},'hours',this.value);recalc(${i})" ${ed?'':'disabled'}></td>
-      <td class="num"><input type="number" step="0.01" value="${r.rate==null?'':r.rate}" placeholder="" oninput="updateRow(${i},'rate',this.value);recalc(${i})" ${ed?'':'disabled'}></td>
-      <td class="num"><input type="text" value="${r.current==null?'':('$'+formatNum(r.current))}" oninput="onCurrentInput(${i},this.value)" ${ed?'':'disabled'}></td>
-      <td><input value="${escapeAttr(r.memo||'')}" oninput="updateRow(${i},'memo',this.value)" ${ed?'':'disabled'}></td>
-      <td class="print-hide row-act-cell">${ed ? `<button class="ins-row" onclick="insertRowAt(${i})" title="이 행 위에 빈 행 삽입">＋</button><button class="del-row" onclick="delRow(${i})" title="삭제">✕</button>` : ''}</td>
-    </tr>
-  `).join('');
+  // 🔧 보기 전용 (편집 권한 없을 때) 은 input 대신 plain text 로 렌더 — 회색 처리 자체를 피해 또렷하게 표시.
+  //    (Steve Hong 가독성 클레임 — disabled input 이 폰 화면/스크린샷에서 흐릿하게 보임)
+  tbody.innerHTML = (DATA.rows||[]).map((r, i) => {
+    if (!ed) {
+      const curTxt = r.current == null ? '' : ('$' + formatNum(r.current));
+      return `
+        <tr>
+          <td class="name">${escapeHtml(r.name||'')}</td>
+          ${showSSN ? `<td class="ssn-col">${escapeHtml(r.ssn||'')}</td>` : ''}
+          <td class="num">${r.hours == null ? '' : escapeHtml(String(r.hours))}</td>
+          <td class="num">${r.rate == null ? '' : escapeHtml(String(r.rate))}</td>
+          <td class="num">${escapeHtml(curTxt)}</td>
+          <td>${escapeHtml(r.memo||'')}</td>
+          <td class="print-hide row-act-cell"></td>
+        </tr>`;
+    }
+    return `
+      <tr>
+        <td class="name"><input list="empNameList" value="${escapeAttr(r.name||'')}" oninput="updateRow(${i},'name',this.value)" placeholder="스케줄 직원에서 선택 또는 입력"></td>
+        ${showSSN ? `<td class="ssn-col"><input value="${escapeAttr(r.ssn||'')}" oninput="updateRow(${i},'ssn',this.value)"></td>` : ''}
+        <td class="num"><input type="number" step="0.5" value="${r.hours==null?'':r.hours}" oninput="updateRow(${i},'hours',this.value);recalc(${i})"></td>
+        <td class="num"><input type="number" step="0.01" value="${r.rate==null?'':r.rate}" placeholder="" oninput="updateRow(${i},'rate',this.value);recalc(${i})"></td>
+        <td class="num"><input type="text" value="${r.current==null?'':('$'+formatNum(r.current))}" oninput="onCurrentInput(${i},this.value)"></td>
+        <td><input value="${escapeAttr(r.memo||'')}" oninput="updateRow(${i},'memo',this.value)"></td>
+        <td class="print-hide row-act-cell"><button class="ins-row" onclick="insertRowAt(${i})" title="이 행 위에 빈 행 삽입">＋</button><button class="del-row" onclick="delRow(${i})" title="삭제">✕</button></td>
+      </tr>`;
+  }).join('');
   recalcTotal();
   // signature (editable)
   const sigEl = document.getElementById('sigName');
@@ -955,6 +975,7 @@ function refreshEmpNameList(){
   dl.innerHTML = sorted.map(n => `<option value="${escapeAttr(n)}">`).join('');
 }
 function escapeAttr(s){ return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function formatNum(n){
   const v = parseFloat(n);
   if (isNaN(v)) return '0';
