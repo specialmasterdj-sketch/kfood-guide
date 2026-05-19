@@ -157,6 +157,9 @@ const T = {
   legChatPhoto: { ko:'사진 첨부',                               en:'Photo attached',                            es:'Foto adjunta' },
   legReply:     { ko:'댓글',                                    en:'Reply',                                     es:'Respuesta' },
   legReaction:  { ko:'좋아요(이모지 반응)',                     en:'Reaction (emoji)',                          es:'Reacción (emoji)' },
+  legChatCap:   { ko:'⚠️ 채팅 점수는 1인당 1일 최대 10pt 까지만 인정 (스팸 방지).',
+                  en:'⚠️ Chat-related points capped at 10pt per person per day (anti-spam).',
+                  es:'⚠️ Puntos de chat limitados a 10pt por persona por día (anti-spam).' },
 };
 let LANG = 'en';
 try {
@@ -223,19 +226,25 @@ const EXCLUDE_EMAILS = new Set(['specialmasterdj@gmail.com','byhoki64@gmail.com'
 let OWNER_UIDS = new Set();   // populated from /users by role==='OWNER' or 'EXECUTIVE'
 
 // Score weights — manager can tune later if behavior needs balancing.
+// 🆕 2026-05-19 전무님 지시: 채팅 농사 방지. 라스올라스 ANTONIO ZHAO 가 업무 0건
+// + 채팅 30건만으로 1등 (31pt) 사례 발견 → 채팅 가중치 1.0 → 0.3 (옵션 A) +
+// 일일 채팅 점수 상한 10pt (옵션 B) 추가.
 const SCORE = {
   expiryAdd:    0.3,   // 유통기한 등록 — 사진 첨부 시에만 (사진 1장당 0.3)
   expiryCheck:  0.2,   // 체크 완료
   expiryDiscard:0.2,   // 폐기 처리 — 체크와 동일 가중치
   taskComplete: 1.0,   // 업무 지시 완료 (사진 보고 포함)
-  chatMessage:  1.0,   // 채팅 메시지 1건 (어느 방이든)
-  chatPhoto:    0.2,   // 메시지 안 사진 1장당 (단, 메시지당 최대 MAX_PHOTOS_PER_MSG)
+  chatMessage:  0.3,   // 채팅 메시지 — 1.0 → 0.3 (옵션 A)
+  chatPhoto:    0.1,   // 메시지 안 사진 — 0.2 → 0.1 (옵션 A)
   reaction:     0.2,   // 👍 좋아요(이모지) 1개당
   reply:        0.2,   // 💬 댓글 1개당
 };
 // 사진 남발 방지 — 한 번에 100장 올려도 점수는 최대 20장까지만 인정.
-// 한 메시지에 그 이상 올리는건 정상 업무가 아니라 점수 부풀리기로 간주.
 const MAX_PHOTOS_PER_MSG = 20;
+// 🆕 옵션 B — 채팅 농사 방지. 1인당 1일 채팅 관련 점수 최대 10pt.
+// 윈도우 길이 비례 (today=10, week=70, month=300, all=거의 무제한).
+// 채팅 메시지 + 사진 + 반응 + 댓글 점수 합쳐 이 cap 이상 안 넘게.
+const CHAT_DAILY_CAP = 10;
 
 let CUR_RANGE = 'week';
 let CUR_BRANCH = 'ALL';
@@ -505,20 +514,29 @@ async function fetchChat(agg, since){
 }
 
 function computeScores(agg){
+  // 🆕 옵션 B — 윈도우 길이 비례 채팅 cap.
+  const days = CUR_RANGE === 'today' ? 1
+             : CUR_RANGE === 'week'  ? 7
+             : CUR_RANGE === 'month' ? 30
+             :                         9999;   // 'all' = 사실상 무제한
+  const chatCap = CHAT_DAILY_CAP * days;
   Object.values(agg).forEach(r => {
-    // 💎 task 점수는 taskPoints (매니저가 부여한 1·2·3 합) 그대로 사용 — SCORE.taskComplete
-    // 가중치 곱하지 않음. (가중치 1.0 시절의 단순 카운트는 r.taskComplete 로 별도 보존,
-    // 배지/뱃지 노출용.)
+    // 채팅 관련 점수 별도 계산 → cap 적용
+    const chatRaw = r.chatMsg     * SCORE.chatMessage
+                  + r.chatPhoto   * SCORE.chatPhoto
+                  + r.reaction    * SCORE.reaction
+                  + r.reply       * SCORE.reply;
+    const chatCapped = Math.min(chatRaw, chatCap);
+    // 💎 task 점수는 taskPoints (매니저가 부여한 1·2·3 합) 그대로 사용
     r.score =
       r.expiryAdd     * SCORE.expiryAdd
     + r.expiryCheck   * SCORE.expiryCheck
     + r.expiryDiscard * SCORE.expiryDiscard
     + r.taskPoints    // 그대로 합산 (1·2·3 점)
-    + r.chatMsg       * SCORE.chatMessage
-    + r.chatPhoto     * SCORE.chatPhoto
-    + r.reaction      * SCORE.reaction
-    + r.reply         * SCORE.reply;
+    + chatCapped;     // 채팅 cap 적용된 점수
     r.score = Math.round(r.score * 10) / 10;
+    // 디버깅용 — 채팅이 cap 으로 깎였는지 표시 (UI 배지에 활용 가능)
+    r.chatCapped = (chatRaw > chatCap);
     if (!r.color) r.color = colorFor(r.name);
   });
 }
@@ -611,9 +629,10 @@ function renderLegend(){
   return `<div class="legend">
     <b>${escHtml(t('legendHd'))}</b><br>
     📦 ${escHtml(t('legExpAdd'))} <code>+0.3</code> ${escHtml(t('legExpAddNote'))} · ✅ ${escHtml(t('legExpCheck'))} <code>+0.2</code> · ❌ ${escHtml(t('legExpDisc'))} <code>+0.2</code><br>
-    📋 ${escHtml(t('legTask'))} <code>+1.0</code> ${escHtml(t('legTaskNote'))}<br>
-    💬 ${escHtml(t('legChatMsg'))} <code>+1.0</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.2</code><br>
-    ↩️ ${escHtml(t('legReply'))} <code>+0.2</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.2</code>
+    📋 ${escHtml(t('legTask'))} <code>+1~+3</code> ${escHtml(t('legTaskNote'))}<br>
+    💬 ${escHtml(t('legChatMsg'))} <code>+0.3</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.1</code><br>
+    ↩️ ${escHtml(t('legReply'))} <code>+0.2</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.2</code><br>
+    <span style="color:#92400e;font-weight:600;font-size:.95em">${escHtml(t('legChatCap'))}</span>
   </div>`;
 }
 
