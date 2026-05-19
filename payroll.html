@@ -15,17 +15,18 @@
 // 🔒 입장 권한: Firebase /config/payrollAccess 화이트리스트 인원만
 (function(){
   const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-  // 매니저 + 변형 이름 다 등록 — chat.html v621 과 동기화
+  // 🚫 슈퍼바이저(SUPERVISOR) 는 급여 접근 금지 — 2026-05-18 전무님 지시.
+  // Mirna / Anderson / Odalys 제외. 매니저급(MANAGER+ASSISTANT_MANAGER) 만 통과.
   const PW_DEFAULT = [
     'BHK','DJ','SUNKIM',
     'HKIM','HEEJAEKIM','HEEKIM',
     'CHOI','CHOIHJ','JCHOI',
     'HRMANAGER','HRMGR','HR',
     'SHREYA','SHRESTHA','SHREYASHRESTHA',
-    'MIRNA','MIRNAMONTOYA',
-    'ANDERSON','ANDERSONGODOY',
-    'ODALYS','ODALYSLEDESMA',
   ];
+  // localStorage 캐시에 슈퍼바이저들이 누적돼 있을 수 있어 강제 청소.
+  // 캐시 union 이 PW_DEFAULT 변경을 무력화하는 케이스 방지.
+  const PURGE_FROM_WHITELIST = ['MIRNA','MIRNAMONTOYA','ANDERSON','ANDERSONGODOY','ODALYS','ODALYSLEDESMA'];
   // 매니저급 role 자동 허용 — 화이트리스트 누락돼도 통과
   const MGR_ROLE_TOKENS = ['OWNER','EXEC','MANAGER','ASSISTANT','전무','상무','이사'];
   const STAFF_DENY_TOKENS = ['CASHIER','STOCKER','STAFF','직원','SUSHI','KITCHEN','MEAT','DELI','PRODUCE'];
@@ -43,9 +44,15 @@
   try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
   let wl = PW_DEFAULT.slice();
   try {
-    const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null');
-    // localStorage 캐시가 새 기본값 덮어쓰지 않도록 union (병합)
-    if(Array.isArray(c)&&c.length) wl = [...new Set([...PW_DEFAULT, ...c])];
+    let c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null');
+    if (Array.isArray(c) && c.length) {
+      // 🚫 슈퍼바이저 이름들 캐시에서 강제 제거 — 누적 시 PW_DEFAULT 변경 무력화 방지.
+      const cleaned = c.filter(n => !PURGE_FROM_WHITELIST.includes(norm(n)));
+      if (cleaned.length !== c.length) {
+        localStorage.setItem('km.payrollWhitelist', JSON.stringify(cleaned));
+      }
+      wl = [...new Set([...PW_DEFAULT, ...cleaned])];
+    }
   } catch(e){}
   // 1) 이름 화이트리스트 매칭
   if (me && wl.includes(norm(me.name))) return;
@@ -55,7 +62,13 @@
   // 비동기로 Firebase 최신 화이트리스트 확인 — 캐시 미스 커버
   window.__payrollGateAsync = fetch(FB+'/config/payrollAccess.json?t='+Date.now(),{cache:'no-store'})
     .then(r=>r.json()).then(d=>{
-      if(Array.isArray(d)&&d.length) wl=[...new Set([...PW_DEFAULT,...d.map(n=>norm(n))])]; else wl=PW_DEFAULT;
+      if(Array.isArray(d)&&d.length) {
+        // 🚫 Firebase config 에 슈퍼바이저 잔재 있어도 강제 제거.
+        const fbList = d.map(n=>norm(n)).filter(n => !PURGE_FROM_WHITELIST.includes(n));
+        wl=[...new Set([...PW_DEFAULT,...fbList])];
+      } else {
+        wl=PW_DEFAULT;
+      }
       localStorage.setItem('km.payrollWhitelist',JSON.stringify(wl));
       if(me && wl.includes(norm(me.name))){ location.reload(); return; }
     }).catch(()=>{});

@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_18_e';   // 급여방 일반직원 차단 — 어제 긴급 우회 원복
+    var BUST = 'chat_2026_05_18_f';   // 급여방 슈퍼바이저 차단 — 전무님 지시
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1383,6 +1383,8 @@ function _hasMgrAccess(){
 // 🔒 급여 방 — 화이트리스트 인원만 (Firebase /config/payrollAccess)
 // _PW_DEFAULT 갱신 시 즉시 반영되도록 localStorage 캐시와 항상 union (병합)
 // 매니저들 이름 변형 다 등록 (정규화: 대문자 + 점/괄호/공백 제거)
+// 🚫 슈퍼바이저(SUPERVISOR) 는 급여방 접근 금지 — 2026-05-18 전무님 지시.
+// Mirna / Anderson / Odalys 제외. 매니저급(MANAGER+ASSISTANT_MANAGER) 만 통과.
 const _PW_DEFAULT = [
   'BHK',                           // B.H.K (전무)
   'DJ',                            // DJ (사장님)
@@ -1391,14 +1393,19 @@ const _PW_DEFAULT = [
   'CHOI','CHOIHJ','JCHOI',         // Choi / J. Choi 변형
   'HRMANAGER','HRMGR','HR',        // HR Manager
   'SHREYA','SHRESTHA','SHREYASHRESTHA',  // Shreya Shrestha (Assistant Manager)
-  'MIRNA','MIRNAMONTOYA',          // Mirna Montoya (방금 SUPERVISOR 승진)
-  'ANDERSON','ANDERSONGODOY',      // Anderson Godoy (Supervisor)
-  'ODALYS','ODALYSLEDESMA',        // Odalys Ledesma (Supervisor)
 ];
+// localStorage 캐시에 슈퍼바이저들이 누적돼 있을 수 있어 강제 청소.
+const _PURGE_PW = ['MIRNA','MIRNAMONTOYA','ANDERSON','ANDERSONGODOY','ODALYS','ODALYSLEDESMA'];
 let _payrollWhitelist = _PW_DEFAULT.slice();
 try {
-  const c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null');
-  if(Array.isArray(c)&&c.length) _payrollWhitelist = [...new Set([..._PW_DEFAULT, ...c])];
+  let c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null');
+  if (Array.isArray(c) && c.length) {
+    const cleaned = c.filter(n => !_PURGE_PW.includes(_normPW(n)));
+    if (cleaned.length !== c.length) {
+      localStorage.setItem('km.payrollWhitelist', JSON.stringify(cleaned));
+    }
+    _payrollWhitelist = [...new Set([..._PW_DEFAULT, ...cleaned])];
+  }
 } catch(e){}
 function _normPW(n){ return String(n||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
 function canAccessPayrollRoom(){
@@ -1417,12 +1424,15 @@ function canAccessPayrollRoom(){
     const res = await fetch(FB_DB_URL+'/config/payrollAccess.json?t='+Date.now(),{cache:'no-store'});
     if (!res.ok) return;
     const d = await res.json();
-    const fbList = Array.isArray(d)&&d.length ? d.map(n=>_normPW(n)) : [];
+    const rawFbList = Array.isArray(d)&&d.length ? d.map(n=>_normPW(n)) : [];
+    // 🚫 슈퍼바이저 강제 제거 — Firebase config 에 남아있어도 화이트리스트에 안 넣음.
+    const fbList = rawFbList.filter(n => !_PURGE_PW.includes(n));
     const merged = [...new Set([..._PW_DEFAULT, ...fbList])];
     _payrollWhitelist = merged;
     localStorage.setItem('km.payrollWhitelist',JSON.stringify(_payrollWhitelist));
     if (typeof renderRooms==='function') renderRooms();
-    if (merged.length > fbList.length) {
+    // Firebase 에 슈퍼바이저 잔재 있으면 청소된 리스트로 덮어쓰기.
+    if (rawFbList.length !== fbList.length || merged.length > fbList.length) {
       try {
         if (window.__fb) { const {db,ref,set}=window.__fb; set(ref(db,'config/payrollAccess'),merged); }
         else fetch(FB_DB_URL+'/config/payrollAccess.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(merged)}).catch(()=>{});
