@@ -294,12 +294,13 @@ async function _maybeRedirect(user){
 
   if (hadPreviousLogin) {
     __waitingForRestore = true;
-    // iOS Safari 의 IndexedDB cold-start 가 4초 넘어가는 경우가 있어 8초로 늘림.
-    // Poll + 자연 onAuthStateChanged 재발화 둘 다 활용 (먼저 잡히는 쪽).
+    // iOS Safari 의 IndexedDB cold-start 가 8초도 넘어가는 케이스 발생.
+    // (chat.html 에서 escape UI 반복 트리거 — 2026-05-18 BHK 매니저 사례)
+    // 20초로 늘려서 거의 모든 IndexedDB 복원 케이스 커버.
     const restored = await new Promise(resolve => {
       let done = false;
       const finish = (u) => { if (!done){ done = true; resolve(u); } };
-      const TIMEOUT = setTimeout(() => finish(null), 8000);
+      const TIMEOUT = setTimeout(() => finish(null), 20000);
       const poll = setInterval(() => {
         if (auth.currentUser){ clearInterval(poll); clearTimeout(TIMEOUT); finish(auth.currentUser); }
       }, 150);
@@ -312,6 +313,9 @@ async function _maybeRedirect(user){
     }
     console.warn('[auth-gate] persistence empty — redirecting to login');
   }
+  // 🛡️ Race fix: 폴링 끝났어도 다른 onAuthStateChanged 발화가 watchProfile 호출했을
+  // 가능성 — __unsubProfile 채워졌으면 redirect 막음 (불필요한 cycle 방지).
+  if (__unsubProfile) return;
   if (__redirected) return;
   __redirected = true;
   const ret = encodeURIComponent(location.pathname + location.search);
@@ -320,8 +324,9 @@ async function _maybeRedirect(user){
 
 onAuthStateChanged(auth, (user) => { _maybeRedirect(user); });
 
-// 🚨 2026-05-15: 로딩 무한 spinner 방지 — 페이지 로드 15초 후에도 auth 결정 안
-// 났으면 사용자에게 escape 옵션 (강제 재로그인) 제공.
+// 🚨 2026-05-15: 로딩 무한 spinner 방지 — 페이지 로드 28초 후에도 auth 결정 안
+// 났으면 사용자에게 escape 옵션 (강제 재로그인) 제공. 폴링(20초)이 끝난 뒤
+// 추가 여유 8초.
 setTimeout(() => {
   if (isExemptPath()) return;
   // 이미 watchProfile 이 도는 중 (profile 받음) 이면 통과
@@ -338,13 +343,13 @@ setTimeout(() => {
     +   '<div style="font-size:3em;margin-bottom:8px">⏳</div>'
     +   '<h1 style="font-size:1.2em;color:#dc2626;margin-bottom:14px;font-weight:800">로딩이 너무 오래 걸려요</h1>'
     +   '<div style="color:#6b7280;font-size:.92em;line-height:1.6;margin-bottom:18px">'
-    +     '15초 동안 로그인 확인이 안 됐습니다.<br>다시 로그인 화면으로 이동해서 새로 시도해 주세요.'
+    +     '28초 동안 로그인 확인이 안 됐습니다.<br>다시 로그인 화면으로 이동해서 새로 시도해 주세요.'
     +   '</div>'
     +   '<button onclick="location.replace(\'./auth.html?fresh=1\')" style="background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:13px 28px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;width:100%;margin-bottom:8px">🔁 로그인 화면으로</button>'
     +   '<button onclick="location.reload()" style="background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:11px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;width:100%">🔄 페이지 새로고침</button>'
     + '</div>';
   document.body.appendChild(esc);
-}, 15000);
+}, 28000);
 
 // PWA / 모바일 브라우저 — 백그라운드에서 돌아왔을 때 IndexedDB 가
 // 늦게 깨면 잘못된 logout 으로 보임. visibilitychange 에서 currentUser
