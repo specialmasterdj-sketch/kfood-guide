@@ -91,6 +91,7 @@
     { ic: '🚚', lbl: { ko:'물류 (채팅으로 이전)', en:'Logistics → Chat', es:'Logística → Chat' }, href: './chat.html#need_overstock' },
     { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/' },
     { ic: '📋', lbl: { ko:'플래노그램',    en:'Planogram', es:'Planograma' }, href: './planogram.html' },
+    { ic: '🏪', lbl: { ko:'Floor Plan',    en:'Floor Plan', es:'Plano de Tienda' }, href: './floorplan/' },
     { ic: '⊞',  lbl: { ko:'모든 앱',       en:'All Apps',  es:'Todas Apps' }, href: './apps.html' },
   ];
 

@@ -1,0 +1,1685 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Kimchi Mart — Floor Plan Editor</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#e8ecf1;font-family:'Segoe UI',Arial,sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+
+.toolbar{background:#1B4F72;color:#fff;padding:6px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0;z-index:100;flex-wrap:wrap}
+.toolbar h1{font-size:15px;margin-right:8px}
+.toolbar button{background:#2E86C1;color:#fff;border:none;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap}
+.toolbar button:hover{background:#3498DB}
+.toolbar button.danger{background:#C0392B}
+.toolbar button.danger:hover{background:#E74C3C}
+.toolbar .sep{width:1px;height:22px;background:rgba(255,255,255,.3);flex-shrink:0}
+.toolbar label{font-size:11px;display:flex;align-items:center;gap:3px}
+
+/* STORE SELECTOR - top right prominent */
+.store-bar{background:#154360;padding:0;display:flex;align-items:stretch;flex-shrink:0;z-index:99}
+.store-bar .store-label{background:#0E2F44;color:#aaa;font-size:11px;padding:10px 14px;font-weight:700;display:flex;align-items:center;letter-spacing:1px}
+.store-tab{padding:10px 20px;background:transparent;border:none;color:rgba(255,255,255,.6);cursor:pointer;font-size:13px;font-weight:700;border-bottom:3px solid transparent;transition:all .15s;position:relative}
+.store-tab:hover{background:rgba(255,255,255,.08);color:#fff}
+.store-tab.active{color:#fff;border-bottom:3px solid #F39C12;background:rgba(255,255,255,.1)}
+.store-tab .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.store-tab .store-addr{display:block;font-size:9px;font-weight:400;color:rgba(255,255,255,.4);margin-top:1px}
+
+/* Fixture buttons with icons */
+.add-group{display:flex;gap:3px;flex-wrap:wrap}
+.add-btn{display:flex;align-items:center;gap:3px;font-size:10px;padding:4px 8px;border-radius:4px;cursor:pointer;border:none;color:#fff;font-weight:600}
+.add-btn.door{background:#1B4F72}
+.add-btn.cooler{background:#2980B9}
+.add-btn.freezer{background:#1ABC9C}
+.add-btn.island{background:#16A085}
+.add-btn.zone{background:#E67E22}
+.add-btn.aisle{background:#D4A017}
+.add-btn:hover{opacity:.85;transform:scale(1.03)}
+
+.main{display:flex;flex:1;overflow:hidden}
+
+.panel{width:210px;background:#fff;border-right:2px solid #ccc;padding:10px;overflow-y:auto;flex-shrink:0;font-size:11px}
+.panel h3{color:#1B4F72;margin-bottom:6px;font-size:12px;border-bottom:2px solid #1B4F72;padding-bottom:3px}
+.panel label{display:block;margin-bottom:1px;font-weight:600;color:#555;font-size:11px}
+.panel input,.panel textarea,.panel select{width:100%;padding:3px 5px;border:1px solid #ccc;border-radius:3px;font-size:11px;margin-bottom:6px}
+.panel textarea{height:50px;resize:vertical}
+.panel .color-row{display:flex;gap:3px;margin-bottom:6px;flex-wrap:wrap}
+.panel .color-swatch{width:20px;height:20px;border-radius:3px;cursor:pointer;border:2px solid transparent}
+.panel .color-swatch.active{border-color:#1B4F72;box-shadow:0 0 3px rgba(0,0,0,.4)}
+.panel .btn{display:block;width:100%;padding:5px;background:#2E86C1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;margin-bottom:5px}
+.panel .btn:hover{background:#1B6CA8}
+.panel .btn.red{background:#C0392B}
+.panel .btn.red:hover{background:#E74C3C}
+#no-selection{color:#888;font-style:italic;text-align:center;padding:16px 0;font-size:11px}
+
+.canvas-wrap{flex:1;overflow:auto;position:relative;background:#d5dce4}
+.canvas{position:relative;background:#fff;border:3px solid #1B4F72;border-radius:8px;margin:4px;box-shadow:0 4px 20px rgba(0,0,0,.15)}
+
+/* ZONES */
+.zone{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#fff;text-align:center;border-radius:4px;cursor:move;user-select:none;line-height:1.2;padding:3px;overflow:hidden}
+.zone:hover{box-shadow:0 0 0 2px #FFD700}
+.zone.selected{box-shadow:0 0 0 3px #FFD700,0 0 12px rgba(255,215,0,.5)}
+.zone.multi-selected{box-shadow:0 0 0 3px #3498DB,0 0 8px rgba(52,152,219,.5)}
+.zone .zone-num{font-size:13px;font-weight:800}
+.zone .zone-label{font-size:9px}
+.zone .zone-sub{font-size:7px;opacity:.85;margin-top:1px}
+.zone.editing{cursor:text;z-index:100}
+.zone.editing .zone-num,.zone.editing .zone-label,.zone.editing .zone-sub{outline:1px dashed rgba(255,255,255,.6);border-radius:2px;padding:1px 3px;min-width:20px;min-height:10px;cursor:text}
+
+/* Vertical text rotation for narrow tall boxes */
+.zone.text-vertical{flex-direction:column;justify-content:center}
+.zone.text-vertical .zone-num,
+.zone.text-vertical .zone-label,
+.zone.text-vertical .zone-sub{writing-mode:vertical-rl;text-orientation:mixed;white-space:nowrap}
+
+/* Rubber-band selection box */
+.rubber-band{position:absolute;border:2px dashed #3498DB;background:rgba(52,152,219,.12);pointer-events:none;z-index:9999;display:none;border-radius:2px}
+
+/* Group bounding box for multi-selection (resize entire selection) */
+.group-box{position:absolute;border:2px dashed #3498DB;pointer-events:none;z-index:9998;display:none;box-sizing:border-box;background:rgba(52,152,219,.04)}
+.group-handle{position:absolute;width:16px;height:16px;background:#3498DB;border:2px solid #fff;border-radius:50%;pointer-events:auto;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.group-handle-tl{top:-9px;left:-9px;cursor:nwse-resize}
+.group-handle-tr{top:-9px;right:-9px;cursor:nesw-resize}
+.group-handle-bl{bottom:-9px;left:-9px;cursor:nesw-resize}
+.group-handle-br{bottom:-9px;right:-9px;cursor:nwse-resize}
+.group-handle-t{top:-9px;left:50%;margin-left:-8px;cursor:ns-resize}
+.group-handle-b{bottom:-9px;left:50%;margin-left:-8px;cursor:ns-resize}
+.group-handle-l{left:-9px;top:50%;margin-top:-8px;cursor:ew-resize}
+.group-handle-r{right:-9px;top:50%;margin-top:-8px;cursor:ew-resize}
+
+/* Equipment specific styles */
+.zone[data-ftype="open-cooler"]{border:3px dashed #2980B9;background:rgba(41,128,185,.15)!important;color:#2980B9}
+.zone[data-ftype="door-cooler"]{border:3px solid #2471A3;background:repeating-linear-gradient(90deg,rgba(36,113,163,.1) 0px,rgba(36,113,163,.1) 8px,rgba(36,113,163,.25) 8px,rgba(36,113,163,.25) 10px)!important;color:#2471A3}
+.zone[data-ftype="open-freezer"]{border:3px dashed #1ABC9C;background:rgba(26,188,156,.15)!important;color:#1ABC9C}
+.zone[data-ftype="door-freezer"]{border:3px solid #16A085;background:repeating-linear-gradient(90deg,rgba(22,160,133,.1) 0px,rgba(22,160,133,.1) 8px,rgba(22,160,133,.25) 8px,rgba(22,160,133,.25) 10px)!important;color:#16A085}
+.zone[data-ftype="island-freezer"]{border:3px double #0E6655;background:rgba(14,102,85,.12)!important;color:#0E6655;border-radius:8px}
+.zone[data-ftype="walk-in-cooler"]{border:4px solid #1F618D;background:repeating-linear-gradient(45deg,rgba(31,97,141,.18) 0px,rgba(31,97,141,.18) 8px,rgba(31,97,141,.30) 8px,rgba(31,97,141,.30) 16px)!important;color:#1F618D;border-radius:4px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.6)}
+.zone[data-ftype="walk-in-freezer"]{border:4px solid #117864;background:repeating-linear-gradient(45deg,rgba(17,120,100,.18) 0px,rgba(17,120,100,.18) 8px,rgba(17,120,100,.30) 8px,rgba(17,120,100,.30) 16px)!important;color:#0B5345;border-radius:4px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.6)}
+.zone[data-ftype="restroom"]{border:3px solid #5D6D7E;background:repeating-linear-gradient(0deg,rgba(93,109,126,.15),rgba(93,109,126,.15) 6px,rgba(93,109,126,.30) 6px,rgba(93,109,126,.30) 8px)!important;color:#34495E;border-radius:6px}
+.zone[data-ftype="restroom"] .zone-num{font-size:18px}
+
+/* Operations checklist items */
+.zone[data-ftype="3comp-sink"]{border:3px solid #2874A6;background:rgba(40,116,166,.18)!important;color:#1B4F72;border-radius:3px;background-image:linear-gradient(90deg,transparent 32%,rgba(40,116,166,.4) 32%,rgba(40,116,166,.4) 34%,transparent 34%,transparent 66%,rgba(40,116,166,.4) 66%,rgba(40,116,166,.4) 68%,transparent 68%)!important}
+.zone[data-ftype="hands-sink"]{border:3px solid #5DADE2;background:rgba(93,173,226,.20)!important;color:#1B4F72;border-radius:50% 50% 6px 6px}
+.zone[data-ftype="work-table"]{border:3px solid #7F8C8D;background:rgba(127,140,141,.20)!important;color:#34495E;border-radius:2px;box-shadow:inset 0 -4px 0 rgba(127,140,141,.4)}
+.zone[data-ftype="bailer"]{border:4px solid #4A235A;background:repeating-linear-gradient(45deg,rgba(74,35,90,.15),rgba(74,35,90,.15) 6px,rgba(74,35,90,.30) 6px,rgba(74,35,90,.30) 12px)!important;color:#4A235A;border-radius:3px}
+.zone[data-ftype="garbage-can"]{border:3px solid #6E2C00;background:rgba(110,44,0,.18)!important;color:#6E2C00;border-radius:50% 50% 4px 4px}
+.zone[data-ftype="garbage-outdoor"]{border:4px solid #145A32;background:repeating-linear-gradient(90deg,rgba(20,90,50,.15),rgba(20,90,50,.15) 8px,rgba(20,90,50,.35) 8px,rgba(20,90,50,.35) 10px)!important;color:#0B3D1F;border-radius:4px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.5)}
+.zone[data-ftype="tv"]{border:4px solid #17202A;background:linear-gradient(135deg,#2C3E50 0%,#17202A 100%)!important;color:#ECF0F1;border-radius:3px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.15)}
+.zone[data-ftype="music"]{border:3px solid #6C3483;background:rgba(108,52,131,.18)!important;color:#5B2C6F;border-radius:50%}
+.zone[data-ftype="sign"]{border:3px solid #B7950B;background:rgba(241,196,15,.25)!important;color:#7D6608;border-radius:3px;box-shadow:0 2px 0 #B7950B}
+.zone[data-ftype="lighting"]{border:3px solid #F1C40F;background:radial-gradient(circle,rgba(241,196,15,.45) 0%,rgba(241,196,15,.10) 100%)!important;color:#7D6608;border-radius:50%}
+.zone[data-ftype="half-aisle-top"]{border:2px solid #B8860B;border-bottom:3px dashed #B8860B;background:#FFF5E0!important;color:#8B6914}
+.zone[data-ftype="half-aisle-bot"]{border:2px solid #CD853F;border-top:3px dashed #CD853F;background:#FFF0D0!important;color:#8B6914}
+.zone[data-ftype="front-door"]{border:4px solid #1B4F72;background:#1B4F72!important;color:#fff;border-radius:2px}
+.zone[data-ftype="back-door"]{border:4px solid #7B241C;background:#7B241C!important;color:#fff;border-radius:2px}
+
+.zone .handle{position:absolute;width:14px;height:14px;background:#FFD700;border:2px solid #B8860B;border-radius:3px;display:none;z-index:10}
+.zone.selected .handle{display:block}
+.handle-tl{top:-7px;left:-7px;cursor:nw-resize}
+.handle-tr{top:-7px;right:-7px;cursor:ne-resize}
+.handle-bl{bottom:-7px;left:-7px;cursor:sw-resize}
+.handle-br{bottom:-7px;right:-7px;cursor:se-resize}
+.handle-t{top:-7px;left:50%;transform:translateX(-50%);cursor:n-resize}
+.handle-b{bottom:-7px;left:50%;transform:translateX(-50%);cursor:s-resize}
+.handle-l{left:-7px;top:50%;transform:translateY(-50%);cursor:w-resize}
+.handle-r{right:-7px;top:50%;transform:translateY(-50%);cursor:e-resize}
+
+.grid-overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;opacity:.06}
+
+@media print{
+  @page{size:landscape;margin:10mm}
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+  html,body{padding:0;margin:0;background:#fff!important;overflow:visible;height:auto;width:auto}
+  .toolbar,.panel,.store-bar,.ctx-menu,.custom-form-overlay,.save-indicator{display:none!important}
+  .main{display:block;overflow:visible;margin:0;padding:0}
+  .canvas-wrap{overflow:visible;position:static;padding:0;margin:0;background:#fff!important}
+  .canvas{margin:0 auto;box-shadow:none;border:2px solid #333;position:relative;page-break-inside:avoid}
+  .zone .handle,.group-handle,.group-box,.rubber-band{display:none!important}
+  .zone{box-shadow:none!important;border-radius:3px}
+  .zone.selected,.zone.multi-selected{box-shadow:none!important}
+  #print-header{display:block!important;text-align:center;font:bold 18px Arial,sans-serif;color:#1B4F72;margin:0 0 8px 0;padding:0}
+  #print-footer{display:block!important;text-align:center;font:11px Arial,sans-serif;color:#666;margin-top:8px}
+}
+#print-header,#print-footer{display:none}
+
+.ctx-menu{position:fixed;background:#2C3E50;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 6px 20px rgba(0,0,0,.4);z-index:9999;font-size:12px;display:none}
+.ctx-menu div{padding:8px 16px;color:#ECF0F1;cursor:pointer;display:flex;align-items:center;gap:8px}
+.ctx-menu div:hover{background:#3498DB}
+.ctx-menu .sep{height:1px;background:#4A6278;margin:4px 8px;padding:0;cursor:default}
+.ctx-menu .sep:hover{background:#4A6278}
+.custom-form-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:9998;display:none}
+.custom-form{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:10px;padding:20px;z-index:9999;display:none;box-shadow:0 8px 30px rgba(0,0,0,.3);min-width:280px}
+.custom-form h3{margin-bottom:12px;color:#1B4F72;font-size:14px}
+.custom-form label{display:block;font-size:11px;font-weight:600;color:#555;margin-bottom:2px}
+.custom-form input{width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:12px;margin-bottom:8px}
+.custom-form .color-presets{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.custom-form .color-presets span{width:24px;height:24px;border-radius:4px;cursor:pointer;border:2px solid transparent;display:inline-block}
+.custom-form .color-presets span.active{border-color:#1B4F72;box-shadow:0 0 4px rgba(27,79,114,.5)}
+.custom-form .form-btns{display:flex;gap:8px;margin-top:12px}
+.custom-form .form-btns button{flex:1;padding:8px;border:none;border-radius:4px;font-weight:600;cursor:pointer;font-size:12px}
+</style>
+<!-- Firebase common module — singleton, anonymous auth, safeSave w/ localStorage backup -->
+<script type="module" src="../km-firebase.js?v=1"></script>
+</head>
+<body>
+
+<!-- STORE SELECTOR BAR -->
+<div class="store-bar">
+  <div class="store-label">📍 STORE</div>
+  <button class="store-tab active" onclick="switchStore('miami')"><span class="dot" style="background:#E67E22"></span>Miami<span class="store-addr">Miami, FL</span></button>
+  <button class="store-tab" onclick="switchStore('pembroke')"><span class="dot" style="background:#E74C3C"></span>Pembroke Pines<span class="store-addr">Pembroke Pines, FL</span></button>
+  <button class="store-tab" onclick="switchStore('hollywood')"><span class="dot" style="background:#F39C12"></span>Hollywood<span class="store-addr">Hollywood, FL</span></button>
+  <button class="store-tab" onclick="switchStore('coral')"><span class="dot" style="background:#27AE60"></span>Coral Springs<span class="store-addr">Coral Springs, FL</span></button>
+  <button class="store-tab" onclick="switchStore('lasolas')"><span class="dot" style="background:#3498DB"></span>Las Olas<span class="store-addr">Ft. Lauderdale, FL</span></button>
+  <button class="store-tab" onclick="switchStore('westpalm')"><span class="dot" style="background:#9B59B6"></span>West Palm Beach<span class="store-addr">West Palm Beach, FL</span></button>
+</div>
+
+<div class="toolbar">
+  <h1>🏪 Floor Plan Editor</h1>
+
+  <div class="add-group">
+    <button class="add-btn door" onclick="addEquip('front-door')">+ Front Door</button>
+    <button class="add-btn door" style="background:#7B241C" onclick="addEquip('back-door')">+ Back Door</button>
+    <div class="sep"></div>
+    <button class="add-btn cooler" onclick="addEquip('open-cooler')">+ Open Cooler</button>
+    <button class="add-btn cooler" style="background:#2471A3" onclick="addEquip('door-cooler')">+ Door Cooler</button>
+    <button class="add-btn freezer" onclick="addEquip('open-freezer')">+ Open Freezer</button>
+    <button class="add-btn freezer" style="background:#117A65" onclick="addEquip('door-freezer')">+ Door Standing Freezer</button>
+    <button class="add-btn island" onclick="addEquip('island-freezer')">+ Island Door Freezer</button>
+    <button class="add-btn cooler" style="background:#1F618D" onclick="addEquip('walk-in-cooler')">+ Walk-in Cooler</button>
+    <button class="add-btn freezer" style="background:#117864" onclick="addEquip('walk-in-freezer')">+ Walk-in Freezer</button>
+    <button class="add-btn zone" style="background:#5D6D7E" onclick="addEquip('restroom')">+ Restroom 🚻</button>
+    <div class="sep"></div>
+    <button class="add-btn zone" style="background:#2874A6" onclick="addEquip('3comp-sink')">+ 3-Comp Sink 🚰</button>
+    <button class="add-btn zone" style="background:#5DADE2" onclick="addEquip('hands-sink')">+ Hands Sink 🧼</button>
+    <button class="add-btn zone" style="background:#7F8C8D" onclick="addEquip('work-table')">+ Work Table 🔪</button>
+    <button class="add-btn zone" style="background:#4A235A" onclick="addEquip('bailer')">+ Bailer 📦</button>
+    <button class="add-btn zone" style="background:#6E2C00" onclick="addEquip('garbage-can')">+ Garbage Can 🗑</button>
+    <button class="add-btn zone" style="background:#145A32" onclick="addEquip('garbage-outdoor')">+ 5yd Outdoor Bin 🗑</button>
+    <button class="add-btn zone" style="background:#17202A" onclick="addEquip('tv')">+ TV 📺</button>
+    <button class="add-btn zone" style="background:#6C3483" onclick="addEquip('music')">+ Music 🎵</button>
+    <button class="add-btn zone" style="background:#B7950B" onclick="addEquip('sign')">+ Sign 🪧</button>
+    <button class="add-btn zone" style="background:#F1C40F;color:#7D6608" onclick="addEquip('lighting')">+ Lighting 💡</button>
+    <div class="sep"></div>
+    <button class="add-btn zone" onclick="addZone('perimeter')">+ Zone</button>
+    <button class="add-btn zone" style="background:#D35400" onclick="addCap('front')">+ Front Cap</button>
+    <button class="add-btn zone" style="background:#E67E22" onclick="addCap('middle')">+ Middle Cap</button>
+    <button class="add-btn zone" style="background:#F39C12" onclick="addCap('end')">+ End Cap</button>
+    <button class="add-btn zone" style="background:#2ECC71" onclick="addFoodZone()">+ Food Zone</button>
+    <button class="add-btn zone" style="background:#9B59B6" onclick="showCustomZoneForm()">+ Custom</button>
+    <button class="add-btn aisle" onclick="addZone('aisle')">+ Full Aisle</button>
+    <button class="add-btn aisle" style="background:#B8860B" onclick="addHalfAisle()">+ Half Aisle (½)</button>
+  </div>
+
+  <div class="sep"></div>
+  <label>Grid <input type="checkbox" id="gridToggle" onchange="drawGrid()" checked></label>
+  <label>Snap <select id="snapSize" style="width:50px;padding:2px"><option value="1">Off</option><option value="5">5px</option><option value="10" selected>10px</option><option value="20">20px</option></select></label>
+  <div class="sep"></div>
+  <button onclick="exportPrint()">🖨 Print</button>
+  <button onclick="saveStore()">Save</button>
+  <button onclick="loadStore()">Load</button>
+  <button onclick="exportFile()" style="background:#27AE60">📥 Export</button>
+  <button onclick="importFile()" style="background:#E67E22">📤 Import</button>
+  <button onclick="connectFile()" style="background:#8E44AD" title="Connect floorplan-data.json for auto-save to file">📂 Connect File</button>
+  <span id="save-indicator" style="width:10px;height:10px;border-radius:50%;background:#555;display:inline-block" title="Auto-save indicator"></span>
+  <span style="font-size:10px;opacity:.6">Auto-save ON</span>
+</div>
+
+<div class="main">
+
+<div class="panel" id="panel">
+  <h3>Properties</h3>
+  <div id="no-selection">Click a zone to edit<br><br>
+    <b>Tips:</b><br>
+    • Drag = move<br>
+    • Corners = resize<br>
+    • Double-click = quick rename<br>
+    • Arrow keys = nudge<br>
+    • Delete = remove<br>
+    • Ctrl+D = duplicate
+  </div>
+  <div id="props" style="display:none">
+    <label>Number</label>
+    <input id="p-num" oninput="updateProp('num',this.value)">
+    <label>Label</label>
+    <input id="p-label" oninput="updateProp('label',this.value)">
+    <label>Details</label>
+    <textarea id="p-sub" oninput="updateProp('sub',this.value)"></textarea>
+    <label>Color</label>
+    <div class="color-row" id="color-row"></div>
+    <input id="p-color" oninput="updateProp('color',this.value)" placeholder="#hex">
+    <label>X / Y</label>
+    <div style="display:flex;gap:4px">
+      <input id="p-x" type="number" style="width:48%" oninput="updatePos()">
+      <input id="p-y" type="number" style="width:48%" oninput="updatePos()">
+    </div>
+    <label>W / H</label>
+    <div style="display:flex;gap:4px">
+      <input id="p-w" type="number" style="width:48%" oninput="updateSize()">
+      <input id="p-h" type="number" style="width:48%" oninput="updateSize()">
+    </div>
+    <label>Type</label>
+    <select id="p-type" onchange="updateProp('type',this.value)">
+      <option value="perimeter">Perimeter Zone</option>
+      <option value="aisle">Aisle</option>
+      <option value="fixture">Fixture</option>
+      <option value="front-door">Front Door</option>
+      <option value="back-door">Back Door</option>
+      <option value="open-cooler">Open Cooler</option>
+      <option value="open-freezer">Open Freezer</option>
+      <option value="door-cooler">Door Cooler</option>
+      <option value="door-freezer">Door Standing Freezer</option>
+      <option value="island-freezer">Island Door Freezer</option>
+      <option value="walk-in-cooler">Walk-in Cooler</option>
+      <option value="walk-in-freezer">Walk-in Freezer</option>
+      <option value="restroom">Restroom 🚻</option>
+      <option value="3comp-sink">3-Comp Sink 🚰</option>
+      <option value="hands-sink">Hands Sink 🧼</option>
+      <option value="work-table">Work Table 🔪</option>
+      <option value="bailer">Bailer 📦</option>
+      <option value="garbage-can">Garbage Can 🗑</option>
+      <option value="garbage-outdoor">5yd Outdoor Bin 🗑</option>
+      <option value="tv">TV 📺</option>
+      <option value="music">Music 🎵</option>
+      <option value="sign">Sign 🪧</option>
+      <option value="lighting">Lighting 💡</option>
+      <option value="half-aisle-top">Half Aisle (Top)</option>
+      <option value="half-aisle-bot">Half Aisle (Bottom)</option>
+      <option value="checkout">Checkout</option>
+    </select>
+    <label>Rotation</label>
+    <select id="p-rot" onchange="updateProp('rot',this.value)">
+      <option value="0">0°</option>
+      <option value="90">90°</option>
+      <option value="180">180°</option>
+      <option value="270">270°</option>
+    </select>
+    <label>Text Direction</label>
+    <select id="p-textdir" onchange="updateProp('textDir',this.value)">
+      <option value="auto">Auto (by shape)</option>
+      <option value="horizontal">Horizontal</option>
+      <option value="vertical">Vertical</option>
+    </select>
+    <button class="btn" onclick="duplicateSelected()">Duplicate (Ctrl+D)</button>
+    <button class="btn red" onclick="deleteSelected()">Delete</button>
+  </div>
+
+  <h3 style="margin-top:12px">Canvas Size</h3>
+  <div style="display:flex;gap:4px">
+    <input id="canvas-w" type="number" value="1100" oninput="resizeCanvas()" style="width:48%">
+    <input id="canvas-h" type="number" value="780" oninput="resizeCanvas()" style="width:48%">
+  </div>
+
+  <h3 style="margin-top:12px">Multi-Select</h3>
+  <button class="btn" onclick="selectAll()" style="margin-bottom:3px;background:#E67E22">⭐ Select All (Move All)</button>
+  <button class="btn" onclick="selectAllShelves()" style="margin-bottom:3px">Select All Shelves</button>
+  <button class="btn" onclick="clearMultiSelect()">Clear Selection</button>
+  <div style="font-size:9px;color:#888;margin:3px 0">Shift+Click = add to selection<br>Ctrl+A = select all</div>
+
+  <h3 style="margin-top:12px">Align (selected zones)</h3>
+  <div style="display:flex;gap:2px;margin-bottom:3px">
+    <button class="btn" onclick="alignSelected('left')" style="flex:1;padding:4px;font-size:10px" title="Align Left">⬅ L</button>
+    <button class="btn" onclick="alignSelected('hcenter')" style="flex:1;padding:4px;font-size:10px" title="Center Horizontally">↔ C</button>
+    <button class="btn" onclick="alignSelected('right')" style="flex:1;padding:4px;font-size:10px" title="Align Right">R ➡</button>
+  </div>
+  <div style="display:flex;gap:2px;margin-bottom:3px">
+    <button class="btn" onclick="alignSelected('top')" style="flex:1;padding:4px;font-size:10px" title="Align Top">⬆ T</button>
+    <button class="btn" onclick="alignSelected('vcenter')" style="flex:1;padding:4px;font-size:10px" title="Center Vertically">↕ M</button>
+    <button class="btn" onclick="alignSelected('bottom')" style="flex:1;padding:4px;font-size:10px" title="Align Bottom">B ⬇</button>
+  </div>
+
+  <h3 style="margin-top:12px">Distribute (even spacing)</h3>
+  <div style="display:flex;gap:2px;margin-bottom:3px">
+    <button class="btn" onclick="distributeSelected('h')" style="flex:1;padding:4px;font-size:10px;background:#16A085" title="Even horizontal gaps">⇄ H Gap</button>
+    <button class="btn" onclick="distributeSelected('v')" style="flex:1;padding:4px;font-size:10px;background:#16A085" title="Even vertical gaps">⇅ V Gap</button>
+  </div>
+  <div style="font-size:9px;color:#888;margin-bottom:2px">Match to first selected:</div>
+  <div style="display:flex;gap:2px;margin-bottom:3px">
+    <button class="btn" onclick="equalizeSelected('w')" style="flex:1;padding:4px;font-size:10px;background:#8E44AD" title="Same width">═ W</button>
+    <button class="btn" onclick="equalizeSelected('h')" style="flex:1;padding:4px;font-size:10px;background:#8E44AD" title="Same height">║ H</button>
+    <button class="btn" onclick="equalizeSelected('both')" style="flex:1;padding:4px;font-size:10px;background:#8E44AD" title="Same size">⛶</button>
+  </div>
+  <div style="font-size:9px;color:#888;margin-bottom:2px">Auto-match (smart):</div>
+  <div style="display:flex;gap:2px;margin-bottom:3px">
+    <button class="btn" onclick="matchSelected('mode')" style="flex:1;padding:4px;font-size:10px;background:#D35400" title="Match most common size (recommended)">⚡ Mode</button>
+    <button class="btn" onclick="matchSelected('max')" style="flex:1;padding:4px;font-size:10px;background:#D35400" title="Match largest">⚡ Max</button>
+    <button class="btn" onclick="matchSelected('min')" style="flex:1;padding:4px;font-size:10px;background:#D35400" title="Match smallest">⚡ Min</button>
+    <button class="btn" onclick="matchSelected('avg')" style="flex:1;padding:4px;font-size:10px;background:#D35400" title="Match average">⚡ Avg</button>
+  </div>
+  <button class="btn" onclick="matchAllShelves()" style="background:#E67E22;color:white;font-weight:bold;padding:6px;margin-bottom:3px">⚡ Match All Shelves (1-Click)</button>
+  <div>
+    <label style="font-size:10px;color:#555">Custom gap (px):</label>
+    <div style="display:flex;gap:2px">
+      <input id="custom-gap" type="number" value="10" min="0" max="200" style="width:40%;padding:3px;font-size:10px">
+      <button class="btn" onclick="distributeSelected('h', +document.getElementById('custom-gap').value)" style="flex:1;padding:3px;font-size:10px">Apply H</button>
+      <button class="btn" onclick="distributeSelected('v', +document.getElementById('custom-gap').value)" style="flex:1;padding:3px;font-size:10px">Apply V</button>
+    </div>
+  </div>
+
+  <h3 style="margin-top:12px">Scale All</h3>
+  <div style="display:flex;gap:4px">
+    <button class="btn" onclick="scaleAll(0.8)" style="flex:1">−20%</button>
+    <button class="btn" onclick="scaleAll(1.2)" style="flex:1">+20%</button>
+  </div>
+
+  <h3 style="margin-top:12px">Legend</h3>
+  <div style="font-size:10px;line-height:1.8">
+    <div><span style="display:inline-block;width:14px;height:14px;background:#1B4F72;border-radius:2px;vertical-align:middle"></span> Front Door</div>
+    <div><span style="display:inline-block;width:14px;height:14px;background:#7B241C;border-radius:2px;vertical-align:middle"></span> Back Door</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px dashed #2980B9;border-radius:2px;vertical-align:middle"></span> Open Cooler</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px dashed #1ABC9C;border-radius:2px;vertical-align:middle"></span> Open Freezer</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #2471A3;background:repeating-linear-gradient(90deg,rgba(36,113,163,.1),rgba(36,113,163,.1) 3px,rgba(36,113,163,.3) 3px,rgba(36,113,163,.3) 4px);border-radius:2px;vertical-align:middle"></span> Door Cooler</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #16A085;background:rgba(22,160,133,.2);border-radius:2px;vertical-align:middle"></span> Door Standing Freezer</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:3px double #0E6655;background:rgba(14,102,85,.15);border-radius:4px;vertical-align:middle"></span> Island Door Freezer</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:3px solid #1F618D;background:repeating-linear-gradient(45deg,rgba(31,97,141,.2),rgba(31,97,141,.2) 2px,rgba(31,97,141,.4) 2px,rgba(31,97,141,.4) 4px);border-radius:2px;vertical-align:middle"></span> Walk-in Cooler 🚪</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:3px solid #117864;background:repeating-linear-gradient(45deg,rgba(17,120,100,.2),rgba(17,120,100,.2) 2px,rgba(17,120,100,.4) 2px,rgba(17,120,100,.4) 4px);border-radius:2px;vertical-align:middle"></span> Walk-in Freezer 🚪</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #5D6D7E;background:repeating-linear-gradient(0deg,rgba(93,109,126,.2),rgba(93,109,126,.2) 2px,rgba(93,109,126,.4) 2px,rgba(93,109,126,.4) 4px);border-radius:3px;vertical-align:middle"></span> Restroom 🚻</div>
+    <div style="margin-top:6px;font-weight:bold;color:#555">Operations Checklist:</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #2874A6;background:rgba(40,116,166,.25);border-radius:2px;vertical-align:middle"></span> 3-Comp Sink 🚰</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #5DADE2;background:rgba(93,173,226,.25);border-radius:50% 50% 2px 2px;vertical-align:middle"></span> Hands Sink 🧼</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #7F8C8D;background:rgba(127,140,141,.25);border-radius:2px;vertical-align:middle"></span> Work Table 🔪</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #4A235A;background:repeating-linear-gradient(45deg,rgba(74,35,90,.2),rgba(74,35,90,.2) 2px,rgba(74,35,90,.4) 2px,rgba(74,35,90,.4) 4px);border-radius:2px;vertical-align:middle"></span> Bailer 📦</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #6E2C00;background:rgba(110,44,0,.25);border-radius:50% 50% 2px 2px;vertical-align:middle"></span> Garbage Can 🗑</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #145A32;background:repeating-linear-gradient(90deg,rgba(20,90,50,.2),rgba(20,90,50,.2) 2px,rgba(20,90,50,.45) 2px,rgba(20,90,50,.45) 4px);border-radius:2px;vertical-align:middle"></span> 5yd Outdoor Bin 🗑</div>
+    <div><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#2C3E50,#17202A);border:2px solid #17202A;border-radius:2px;vertical-align:middle"></span> TV 📺</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #6C3483;background:rgba(108,52,131,.25);border-radius:50%;vertical-align:middle"></span> Music 🎵</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #B7950B;background:rgba(241,196,15,.35);border-radius:2px;vertical-align:middle"></span> Sign 🪧</div>
+    <div><span style="display:inline-block;width:14px;height:14px;border:2px solid #F1C40F;background:radial-gradient(circle,rgba(241,196,15,.5),rgba(241,196,15,.1));border-radius:50%;vertical-align:middle"></span> Lighting 💡</div>
+  </div>
+
+  <h3 style="margin-top:12px">Quick Load</h3>
+  <button class="btn" onclick="loadBaseTemplate()">Base Template</button>
+</div>
+
+<div class="canvas-wrap" id="canvas-wrap">
+  <div class="canvas" id="canvas" style="width:1100px;height:780px">
+    <canvas class="grid-overlay" id="grid"></canvas>
+  </div>
+</div>
+
+<div class="ctx-menu" id="ctx-menu">
+  <div onclick="ctxDuplicate()">📋 Duplicate</div>
+  <div onclick="ctxBringFront()">⬆ Bring to Front</div>
+  <div onclick="ctxSendBack()">⬇ Send to Back</div>
+  <div class="sep"></div>
+  <div onclick="ctxEditNum()">🔢 Edit Number</div>
+  <div onclick="ctxEditLabel()">✏ Edit Label</div>
+  <div onclick="ctxEditSub()">📝 Edit Details</div>
+  <div onclick="ctxChangeColor()">🎨 Change Color</div>
+  <div class="sep"></div>
+  <div onclick="ctxDelete()" style="color:#E74C3C">🗑 Delete</div>
+</div>
+
+<div class="custom-form-overlay" id="custom-overlay" onclick="hideCustomZoneForm()"></div>
+<div class="custom-form" id="custom-form">
+  <h3>🎨 Create Custom Zone</h3>
+  <label>Label</label>
+  <input id="cf-label" placeholder="e.g. SNACK ZONE">
+  <label>Details</label>
+  <input id="cf-sub" placeholder="e.g. Snack Zone">
+  <label>Color</label>
+  <div class="color-presets" id="cf-colors"></div>
+  <input id="cf-color" value="#3498DB" placeholder="#hex or name">
+  <label>Size</label>
+  <div style="display:flex;gap:4px">
+    <input id="cf-w" type="number" value="120" style="width:48%">
+    <input id="cf-h" type="number" value="80" style="width:48%">
+  </div>
+  <div class="form-btns">
+    <button onclick="hideCustomZoneForm()" style="background:#95A5A6;color:#fff">Cancel</button>
+    <button onclick="createCustomZone()" style="background:#2E86C1;color:#fff">Create</button>
+  </div>
+</div>
+
+</div>
+
+<script>
+const COLORS = ['#E74C3C','#E67E22','#27AE60','#3498DB','#8E44AD','#F39C12','#1ABC9C','#95A5A6','#2C3E50','#D35400','#C0392B','#7D3C98','#1B4F72','#7B241C','#16A085','#0E6655'];
+let zones = [];
+let selected = null;
+let multiSelected = [];
+let dragState = null;
+let nextId = 1;
+let currentStore = 'miami';
+const stores = {};
+const undoStack = [];
+const MAX_UNDO = 30;
+
+function saveUndo() {
+  undoStack.push(JSON.stringify(serialize()));
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+}
+
+function undo() {
+  if (undoStack.length === 0) { showToast('Nothing to undo'); return; }
+  const snapshot = JSON.parse(undoStack.pop());
+  loadZones(snapshot);
+  stores[currentStore] = snapshot;
+  autoSave();
+  showToast('Undo');
+}
+
+function createZoneEl(z) {
+  const el = document.createElement('div');
+  el.className = 'zone';
+  el.dataset.id = z.id;
+  if (z.ftype) el.dataset.ftype = z.ftype;
+  applyStyle(el, z);
+  el.innerHTML = `
+    <span class="zone-num">${z.num}</span>
+    <span class="zone-label">${z.label}</span>
+    <span class="zone-sub">${z.sub}</span>
+    <div class="handle handle-tl" data-dir="tl"></div>
+    <div class="handle handle-tr" data-dir="tr"></div>
+    <div class="handle handle-bl" data-dir="bl"></div>
+    <div class="handle handle-br" data-dir="br"></div>
+    <div class="handle handle-t" data-dir="t"></div>
+    <div class="handle handle-b" data-dir="b"></div>
+    <div class="handle handle-l" data-dir="l"></div>
+    <div class="handle handle-r" data-dir="r"></div>
+  `;
+  el.addEventListener('mousedown', e => onZoneMouseDown(e, z));
+  el.addEventListener('dblclick', e => { e.stopPropagation(); quickEdit(z); });
+  document.getElementById('canvas').appendChild(el);
+  z.el = el;
+}
+
+function applyStyle(el, z) {
+  el.style.left = z.x + 'px';
+  el.style.top = z.y + 'px';
+  el.style.width = z.w + 'px';
+  el.style.height = z.h + 'px';
+  if (!z.ftype || z.ftype === 'fixture' || z.type === 'perimeter' || z.type === 'aisle' || z.type === 'checkout') {
+    el.style.background = z.color;
+  }
+  el.style.transform = z.rot ? `rotate(${z.rot}deg)` : '';
+  // Auto text orientation: vertical if box is clearly taller than wide
+  // SZ is always horizontal regardless of shape (user request)
+  const isSZ = (z.label === 'SZ' || z.num === 'SZ');
+  if (!isSZ && (z.textDir === 'vertical' || (z.textDir !== 'horizontal' && z.h > z.w * 1.5))) {
+    el.classList.add('text-vertical');
+  } else {
+    el.classList.remove('text-vertical');
+  }
+}
+
+function refreshZoneEl(z) {
+  if (!z.el) return;
+  applyStyle(z.el, z);
+  if (z.ftype) z.el.dataset.ftype = z.ftype;
+  else delete z.el.dataset.ftype;
+  z.el.querySelector('.zone-num').textContent = z.num;
+  z.el.querySelector('.zone-label').innerHTML = z.label;
+  z.el.querySelector('.zone-sub').innerHTML = z.sub;
+}
+
+function addEquip(ftype) {
+  const configs = {
+    'front-door':    {w:120,h:30,num:'▶',label:'FRONT DOOR',sub:'',color:'#1B4F72'},
+    'back-door':     {w:100,h:30,num:'◀',label:'BACK DOOR',sub:'',color:'#7B241C'},
+    'open-cooler':   {w:120,h:40,num:'❄',label:'Open Cooler',sub:'',color:'rgba(41,128,185,.15)'},
+    'door-cooler':   {w:40,h:160,num:'❄',label:'Door<br>Cooler',sub:'',color:'rgba(36,113,163,.15)'},
+    'open-freezer':  {w:120,h:40,num:'❄',label:'Open Freezer',sub:'',color:'rgba(26,188,156,.15)'},
+    'door-freezer':  {w:40,h:160,num:'❄',label:'Door<br>Freezer',sub:'',color:'rgba(22,160,133,.2)'},
+    'island-freezer':{w:140,h:80,num:'❄',label:'Island Freezer',sub:'',color:'rgba(14,102,85,.12)'},
+    'walk-in-cooler':{w:200,h:140,num:'🚪',label:'WALK-IN<br>COOLER',sub:'',color:'rgba(31,97,141,.18)'},
+    'walk-in-freezer':{w:200,h:140,num:'🚪',label:'WALK-IN<br>FREEZER',sub:'',color:'rgba(17,120,100,.18)'},
+    'restroom':{w:70,h:90,num:'🚻',label:'RESTROOM',sub:'',color:'rgba(93,109,126,.18)'},
+    '3comp-sink':{w:90,h:40,num:'🚰',label:'3-COMP SINK',sub:'',color:'rgba(40,116,166,.18)'},
+    'hands-sink':{w:40,h:40,num:'🧼',label:'HANDS<br>SINK',sub:'',color:'rgba(93,173,226,.20)'},
+    'work-table':{w:80,h:50,num:'🔪',label:'WORK TABLE',sub:'',color:'rgba(127,140,141,.20)'},
+    'bailer':{w:60,h:90,num:'📦',label:'BAILER',sub:'',color:'rgba(74,35,90,.18)'},
+    'garbage-can':{w:35,h:35,num:'🗑',label:'TRASH',sub:'',color:'rgba(110,44,0,.18)'},
+    'garbage-outdoor':{w:120,h:70,num:'🗑',label:'5YD<br>OUTDOOR',sub:'',color:'rgba(20,90,50,.18)'},
+    'tv':{w:55,h:35,num:'📺',label:'TV',sub:'',color:'#2C3E50'},
+    'music':{w:30,h:30,num:'🎵',label:'',sub:'',color:'rgba(108,52,131,.18)'},
+    'sign':{w:80,h:30,num:'🪧',label:'SIGN',sub:'',color:'rgba(241,196,15,.25)'},
+    'lighting':{w:28,h:28,num:'💡',label:'',sub:'',color:'rgba(241,196,15,.30)'},
+  };
+  const cfg = configs[ftype];
+  const z = {
+    id: nextId++, type: ftype, ftype,
+    x: 200, y: 200, w: cfg.w, h: cfg.h, rot: 0,
+    num: cfg.num, label: cfg.label, sub: cfg.sub, color: cfg.color
+  };
+  zones.push(z);
+  createZoneEl(z);
+  selectZone(z);
+}
+
+function addZone(type) {
+  const z = {
+    id: nextId++, type, ftype: null,
+    x: 150, y: 150,
+    w: type === 'aisle' ? 84 : 120,
+    h: type === 'aisle' ? 400 : 80,
+    rot: 0, num: '', label: type.toUpperCase(), sub: '',
+    color: type === 'aisle' ? '#D4A017' : '#3498DB'
+  };
+  zones.push(z);
+  createZoneEl(z);
+  selectZone(z);
+}
+
+function addHalfAisle() {
+  const top = {
+    id: nextId++, type:'aisle', ftype:'half-aisle-top',
+    x: 150, y: 150, w: 84, h: 200, rot: 0,
+    num: '', label: 'Half Aisle<br>(Top)', sub: '',
+    color: '#B8860B'
+  };
+  const bot = {
+    id: nextId++, type:'aisle', ftype:'half-aisle-bot',
+    x: 150, y: 355, w: 84, h: 200, rot: 0,
+    num: '', label: 'Half Aisle<br>(Bottom)', sub: '',
+    color: '#CD853F'
+  };
+  zones.push(top, bot);
+  createZoneEl(top);
+  createZoneEl(bot);
+  selectZone(top);
+}
+
+function addCap(pos) {
+  const configs = {
+    'front': {label:'FRONT CAP',sub:'',color:'#D35400'},
+    'middle': {label:'MIDDLE CAP',sub:'',color:'#E67E22'},
+    'end': {label:'END CAP',sub:'',color:'#F39C12'},
+  };
+  const cfg = configs[pos];
+  const z = {
+    id: nextId++, type:'perimeter', ftype:null,
+    x: 200, y: 200, w: 80, h: 120, rot: 0,
+    num: '', label: cfg.label, sub: cfg.sub, color: cfg.color
+  };
+  zones.push(z);
+  createZoneEl(z);
+  selectZone(z);
+}
+
+function addFoodZone() {
+  const z = {
+    id: nextId++, type:'perimeter', ftype:null,
+    x: 200, y: 200, w: 120, h: 100, rot: 0,
+    num: '', label: 'FOOD ZONE', sub: '', color: '#2ECC71'
+  };
+  zones.push(z); createZoneEl(z); selectZone(z);
+}
+
+function showCustomZoneForm() {
+  document.getElementById('custom-overlay').style.display = 'block';
+  document.getElementById('custom-form').style.display = 'block';
+  document.getElementById('cf-label').value = '';
+  document.getElementById('cf-sub').value = '';
+  document.getElementById('cf-color').value = '#3498DB';
+  document.getElementById('cf-w').value = 120;
+  document.getElementById('cf-h').value = 80;
+  const row = document.getElementById('cf-colors');
+  row.innerHTML = '';
+  COLORS.forEach(c => {
+    const s = document.createElement('span');
+    s.style.background = c;
+    s.onclick = () => {
+      document.getElementById('cf-color').value = c;
+      row.querySelectorAll('span').forEach(x => x.classList.remove('active'));
+      s.classList.add('active');
+    };
+    row.appendChild(s);
+  });
+  document.getElementById('cf-label').focus();
+}
+
+function hideCustomZoneForm() {
+  document.getElementById('custom-overlay').style.display = 'none';
+  document.getElementById('custom-form').style.display = 'none';
+}
+
+function createCustomZone() {
+  const label = document.getElementById('cf-label').value || 'CUSTOM';
+  const sub = document.getElementById('cf-sub').value || '';
+  const color = document.getElementById('cf-color').value || '#3498DB';
+  const w = parseInt(document.getElementById('cf-w').value) || 120;
+  const h = parseInt(document.getElementById('cf-h').value) || 80;
+  const z = {
+    id: nextId++, type:'perimeter', ftype:null,
+    x: 200, y: 200, w, h, rot: 0,
+    num: '', label: label.replace(/\n/g, '<br>'), sub: sub.replace(/\n/g, '<br>'), color
+  };
+  zones.push(z); createZoneEl(z); selectZone(z);
+  hideCustomZoneForm();
+}
+
+function selectZone(z) {
+  if (selected && selected.el) selected.el.classList.remove('selected');
+  selected = z;
+  if (z) {
+    z.el.classList.add('selected');
+    document.getElementById('props').style.display = '';
+    document.getElementById('no-selection').style.display = 'none';
+    document.getElementById('p-num').value = z.num;
+    document.getElementById('p-label').value = z.label.replace(/<br>/g, '\n');
+    document.getElementById('p-sub').value = z.sub.replace(/<br>/g, '\n');
+    document.getElementById('p-color').value = z.color;
+    document.getElementById('p-x').value = Math.round(z.x);
+    document.getElementById('p-y').value = Math.round(z.y);
+    document.getElementById('p-w').value = Math.round(z.w);
+    document.getElementById('p-h').value = Math.round(z.h);
+    document.getElementById('p-type').value = z.ftype || z.type;
+    document.getElementById('p-rot').value = z.rot || 0;
+    document.getElementById('p-textdir').value = z.textDir || 'auto';
+    renderColorSwatches(z.color);
+  } else {
+    document.getElementById('props').style.display = 'none';
+    document.getElementById('no-selection').style.display = '';
+  }
+}
+
+function updateProp(prop, val) {
+  if (!selected) return;
+  if (prop === 'type') {
+    const equipTypes = ['front-door','back-door','open-cooler','door-cooler','open-freezer','door-freezer','island-freezer','walk-in-cooler','walk-in-freezer','restroom','3comp-sink','hands-sink','work-table','bailer','garbage-can','garbage-outdoor','tv','music','sign','lighting'];
+    if (equipTypes.includes(val)) { selected.ftype = val; selected.type = val; }
+    else { selected.ftype = null; selected.type = val; }
+  } else if (prop === 'rot') {
+    selected.rot = parseInt(val) || 0;
+  } else if (prop === 'label' || prop === 'sub') {
+    selected[prop] = val.replace(/\n/g, '<br>');
+  } else {
+    selected[prop] = val;
+  }
+  if (prop === 'color') renderColorSwatches(val);
+  refreshZoneEl(selected);
+  autoSave();
+}
+
+function updatePos() {
+  if (!selected) return;
+  selected.x = +document.getElementById('p-x').value;
+  selected.y = +document.getElementById('p-y').value;
+  refreshZoneEl(selected);
+  autoSave();
+}
+
+function updateSize() {
+  if (!selected) return;
+  selected.w = +document.getElementById('p-w').value;
+  selected.h = +document.getElementById('p-h').value;
+  refreshZoneEl(selected);
+  autoSave();
+}
+
+function deleteSelected() {
+  if (!selected) return;
+  saveUndo();
+  selected.el.remove();
+  zones = zones.filter(z => z.id !== selected.id);
+  selected = null;
+  selectZone(null);
+  autoSave();
+}
+
+function duplicateSelected() {
+  if (!selected) return;
+  saveUndo();
+  const z = {...selected, id: nextId++, x: selected.x + 20, y: selected.y + 20, el: null, num: ''};
+  zones.push(z);
+  createZoneEl(z);
+  selectZone(z);
+  autoSave();
+}
+
+// ========== RIGHT-CLICK CONTEXT MENU ==========
+
+const ctxMenu = document.getElementById('ctx-menu');
+let ctxTarget = null;
+let clipboard = null;
+
+function pasteClipboard() {
+  if (!clipboard) return;
+  saveUndo();
+  const z = {...clipboard, id: nextId++, x: clipboard.x + 30, y: clipboard.y + 30, el: null, num: ''};
+  zones.push(z);
+  createZoneEl(z);
+  selectZone(z);
+  autoSave();
+  showToast('Pasted');
+}
+
+document.addEventListener('contextmenu', e => {
+  const zoneEl = e.target.closest('.zone');
+  if (zoneEl) {
+    e.preventDefault();
+    ctxTarget = zones.find(z => z.el === zoneEl);
+    if (ctxTarget) selectZone(ctxTarget);
+    ctxMenu.style.display = 'block';
+    ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+    ctxMenu.style.top = Math.min(e.clientY, window.innerHeight - 250) + 'px';
+  } else {
+    ctxMenu.style.display = 'none';
+  }
+});
+
+document.addEventListener('click', () => { ctxMenu.style.display = 'none'; });
+
+function ctxDuplicate() {
+  if (!ctxTarget) return;
+  selectZone(ctxTarget);
+  duplicateSelected();
+}
+function ctxBringFront() {
+  if (!ctxTarget) return;
+  ctxTarget.el.style.zIndex = 50;
+}
+function ctxSendBack() {
+  if (!ctxTarget) return;
+  ctxTarget.el.style.zIndex = 1;
+}
+function ctxEditNum() {
+  if (!ctxTarget) return;
+  quickEdit(ctxTarget);
+}
+function ctxEditLabel() {
+  if (!ctxTarget) return;
+  quickEdit(ctxTarget);
+}
+function ctxEditSub() {
+  if (!ctxTarget) return;
+  quickEdit(ctxTarget);
+}
+function ctxChangeColor() {
+  if (!ctxTarget) return;
+  const c = prompt('Color (hex or name):', ctxTarget.color);
+  if (c) { ctxTarget.color = c; refreshZoneEl(ctxTarget); autoSave(); }
+}
+function ctxDelete() {
+  if (!ctxTarget) return;
+  saveUndo();
+  ctxTarget.el.remove();
+  zones = zones.filter(z => z.id !== ctxTarget.id);
+  if (selected === ctxTarget) selectZone(null);
+  ctxTarget = null;
+  autoSave();
+}
+
+let editingZone = null;
+
+function quickEdit(z) {
+  if (editingZone && editingZone !== z) finishEditing();
+  if (editingZone === z) return;
+  editingZone = z;
+  z.el.classList.add('editing');
+  const numEl = z.el.querySelector('.zone-num');
+  const labelEl = z.el.querySelector('.zone-label');
+  const subEl = z.el.querySelector('.zone-sub');
+  numEl.contentEditable = 'true';
+  labelEl.contentEditable = 'true';
+  subEl.contentEditable = 'true';
+  labelEl.textContent = z.label.replace(/<br>/g, ' ');
+  subEl.textContent = z.sub.replace(/<br>/g, ' ');
+  numEl.focus();
+  const stop = e => e.stopPropagation();
+  numEl.addEventListener('mousedown', stop);
+  labelEl.addEventListener('mousedown', stop);
+  subEl.addEventListener('mousedown', stop);
+  z._editStop = stop;
+  z._editKey = e => { if (e.key === 'Escape') finishEditing(); };
+  z.el.addEventListener('keydown', z._editKey);
+}
+
+function finishEditing() {
+  if (!editingZone) return;
+  const z = editingZone;
+  const numEl = z.el.querySelector('.zone-num');
+  const labelEl = z.el.querySelector('.zone-label');
+  const subEl = z.el.querySelector('.zone-sub');
+  z.num = numEl.textContent;
+  z.label = labelEl.textContent.replace(/\n/g, '<br>');
+  z.sub = subEl.textContent.replace(/\n/g, '<br>');
+  numEl.contentEditable = 'false';
+  labelEl.contentEditable = 'false';
+  subEl.contentEditable = 'false';
+  labelEl.innerHTML = z.label;
+  subEl.innerHTML = z.sub;
+  z.el.classList.remove('editing');
+  if (z._editStop) {
+    numEl.removeEventListener('mousedown', z._editStop);
+    labelEl.removeEventListener('mousedown', z._editStop);
+    subEl.removeEventListener('mousedown', z._editStop);
+    delete z._editStop;
+  }
+  if (z._editKey) { z.el.removeEventListener('keydown', z._editKey); delete z._editKey; }
+  if (selected === z) {
+    document.getElementById('p-num').value = z.num;
+    document.getElementById('p-label').value = z.label.replace(/<br>/g, '\n');
+    document.getElementById('p-sub').value = z.sub.replace(/<br>/g, '\n');
+  }
+  editingZone = null;
+  autoSave();
+}
+
+// ========== DRAG & RESIZE ==========
+
+function clearMultiSelect() {
+  multiSelected.forEach(mz => mz.el && mz.el.classList.remove('multi-selected'));
+  multiSelected = [];
+  updateGroupBox();
+}
+
+function toggleMultiSelect(z) {
+  const idx = multiSelected.indexOf(z);
+  if (idx > -1) {
+    multiSelected.splice(idx, 1);
+    z.el.classList.remove('multi-selected');
+  } else {
+    multiSelected.push(z);
+    z.el.classList.add('multi-selected');
+  }
+  updateGroupBox();
+}
+
+function selectAll() {
+  clearMultiSelect();
+  zones.forEach(z => {
+    multiSelected.push(z);
+    z.el.classList.add('multi-selected');
+  });
+  if (zones.length > 0) selectZone(zones[0]);
+  showToast('✓ All ' + multiSelected.length + ' zones selected — drag to move all');
+  updateGroupBox();
+}
+
+// ========== GROUP RESIZE BOX (Multi-Select Bounding Box with handles) ==========
+let groupBoxEl = null;
+let groupDragState = null;
+
+function ensureGroupBox() {
+  if (groupBoxEl) return groupBoxEl;
+  const canvas = document.getElementById('canvas');
+  const box = document.createElement('div');
+  box.id = 'group-box';
+  box.className = 'group-box';
+  ['tl','tr','bl','br','t','b','l','r'].forEach(dir => {
+    const h = document.createElement('div');
+    h.className = 'group-handle group-handle-' + dir;
+    h.dataset.gdir = dir;
+    h.addEventListener('mousedown', e => onGroupHandleDown(e, dir));
+    box.appendChild(h);
+  });
+  canvas.appendChild(box);
+  groupBoxEl = box;
+  return box;
+}
+
+function updateGroupBox() {
+  const box = ensureGroupBox();
+  if (multiSelected.length < 2) { box.style.display = 'none'; return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  multiSelected.forEach(z => {
+    if (z.x < minX) minX = z.x;
+    if (z.y < minY) minY = z.y;
+    if (z.x + z.w > maxX) maxX = z.x + z.w;
+    if (z.y + z.h > maxY) maxY = z.y + z.h;
+  });
+  box.style.display = 'block';
+  box.style.left = minX + 'px';
+  box.style.top = minY + 'px';
+  box.style.width = (maxX - minX) + 'px';
+  box.style.height = (maxY - minY) + 'px';
+}
+
+function onGroupHandleDown(e, dir) {
+  e.stopPropagation();
+  e.preventDefault();
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  multiSelected.forEach(z => {
+    if (z.x < minX) minX = z.x;
+    if (z.y < minY) minY = z.y;
+    if (z.x + z.w > maxX) maxX = z.x + z.w;
+    if (z.y + z.h > maxY) maxY = z.y + z.h;
+  });
+  const orig = multiSelected.map(z => ({z:z, x:z.x, y:z.y, w:z.w, h:z.h}));
+  groupDragState = {
+    dir,
+    mx0: e.clientX - rect.left,
+    my0: e.clientY - rect.top,
+    bbox: {x:minX, y:minY, w:maxX-minX, h:maxY-minY},
+    orig
+  };
+}
+
+document.addEventListener('mousemove', e => {
+  if (!groupDragState) return;
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const dx = mx - groupDragState.mx0;
+  const dy = my - groupDragState.my0;
+  const {dir, bbox, orig} = groupDragState;
+  let nx = bbox.x, ny = bbox.y, nw = bbox.w, nh = bbox.h;
+  if (dir.includes('r')) nw = Math.max(20, bbox.w + dx);
+  if (dir.includes('l')) { nx = bbox.x + dx; nw = Math.max(20, bbox.w - dx); }
+  if (dir.includes('b')) nh = Math.max(20, bbox.h + dy);
+  if (dir.includes('t')) { ny = bbox.y + dy; nh = Math.max(20, bbox.h - dy); }
+  const sx = nw / bbox.w;
+  const sy = nh / bbox.h;
+  orig.forEach(o => {
+    const z = o.z;
+    z.x = nx + (o.x - bbox.x) * sx;
+    z.y = ny + (o.y - bbox.y) * sy;
+    z.w = Math.max(10, o.w * sx);
+    z.h = Math.max(10, o.h * sy);
+    refreshZoneEl(z);
+  });
+  updateGroupBox();
+  if (selected && multiSelected.includes(selected)) {
+    document.getElementById('p-x').value = Math.round(selected.x);
+    document.getElementById('p-y').value = Math.round(selected.y);
+    document.getElementById('p-w').value = Math.round(selected.w);
+    document.getElementById('p-h').value = Math.round(selected.h);
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  if (groupDragState) { groupDragState = null; autoSave(); }
+});
+
+function selectAllShelves() {
+  clearMultiSelect();
+  zones.forEach(z => {
+    if (z.type === 'aisle') {
+      multiSelected.push(z);
+      z.el.classList.add('multi-selected');
+    }
+  });
+  showToast('Selected ' + multiSelected.length + ' shelves');
+  updateGroupBox();
+}
+
+// ========== ALIGN / DISTRIBUTE / EQUALIZE ==========
+
+function alignSelected(mode) {
+  if (multiSelected.length < 2) { showToast('Select at least 2 zones first'); return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  multiSelected.forEach(z => {
+    if (z.x < minX) minX = z.x;
+    if (z.y < minY) minY = z.y;
+    if (z.x + z.w > maxX) maxX = z.x + z.w;
+    if (z.y + z.h > maxY) maxY = z.y + z.h;
+  });
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  multiSelected.forEach(z => {
+    if (mode === 'left') z.x = minX;
+    else if (mode === 'right') z.x = maxX - z.w;
+    else if (mode === 'hcenter') z.x = cx - z.w / 2;
+    else if (mode === 'top') z.y = minY;
+    else if (mode === 'bottom') z.y = maxY - z.h;
+    else if (mode === 'vcenter') z.y = cy - z.h / 2;
+    refreshZoneEl(z);
+  });
+  updateGroupBox();
+  autoSave();
+  showToast('✓ Aligned ' + multiSelected.length + ' zones (' + mode + ')');
+}
+
+function distributeSelected(axis, customGap) {
+  if (multiSelected.length < 2) { showToast('Select at least 2 zones first'); return; }
+  // Sort by position along the axis
+  const sorted = [...multiSelected].sort((a, b) => axis === 'h' ? a.x - b.x : a.y - b.y);
+  if (customGap !== undefined && !isNaN(customGap)) {
+    // Use custom uniform gap, anchor first zone
+    let cursor = axis === 'h' ? sorted[0].x + sorted[0].w : sorted[0].y + sorted[0].h;
+    for (let i = 1; i < sorted.length; i++) {
+      const z = sorted[i];
+      if (axis === 'h') { z.x = cursor + customGap; cursor = z.x + z.w; }
+      else { z.y = cursor + customGap; cursor = z.y + z.h; }
+      refreshZoneEl(z);
+    }
+    showToast('✓ Custom ' + customGap + 'px gap applied to ' + sorted.length + ' zones');
+  } else {
+    // Even gap between first and last (keeps endpoints fixed)
+    if (sorted.length < 3) { showToast('Need 3+ zones for auto-distribute (first/last stay fixed)'); return; }
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const start = axis === 'h' ? first.x + first.w : first.y + first.h;
+    const end = axis === 'h' ? last.x : last.y;
+    // Total inner size = sum of widths/heights of middle zones
+    let innerSize = 0;
+    for (let i = 1; i < sorted.length - 1; i++) innerSize += axis === 'h' ? sorted[i].w : sorted[i].h;
+    const totalSpan = end - start;
+    const numGaps = sorted.length - 1;
+    const gap = (totalSpan - innerSize) / numGaps;
+    let cursor = start;
+    for (let i = 1; i < sorted.length - 1; i++) {
+      const z = sorted[i];
+      if (axis === 'h') { z.x = cursor + gap; cursor = z.x + z.w; }
+      else { z.y = cursor + gap; cursor = z.y + z.h; }
+      refreshZoneEl(z);
+    }
+    showToast('✓ Distributed ' + sorted.length + ' zones with ' + gap.toFixed(1) + 'px gap');
+  }
+  updateGroupBox();
+  autoSave();
+}
+
+function equalizeSelected(mode) {
+  if (multiSelected.length < 2) { showToast('Select at least 2 zones first'); return; }
+  // Use the FIRST selected zone as the reference size
+  const ref = multiSelected[0];
+  multiSelected.forEach(z => {
+    if (mode === 'w' || mode === 'both') z.w = ref.w;
+    if (mode === 'h' || mode === 'both') z.h = ref.h;
+    refreshZoneEl(z);
+  });
+  updateGroupBox();
+  autoSave();
+  showToast('✓ Equalized ' + (mode === 'w' ? 'widths' : mode === 'h' ? 'heights' : 'sizes') + ' to match first zone');
+}
+
+// ========== SMART MATCH (mode/max/min/avg) ==========
+function matchSelected(strategy) {
+  if (multiSelected.length < 2) { showToast('Select at least 2 zones first'); return; }
+  let targetW, targetH;
+  if (strategy === 'max') {
+    targetW = Math.max(...multiSelected.map(z => z.w));
+    targetH = Math.max(...multiSelected.map(z => z.h));
+  } else if (strategy === 'min') {
+    targetW = Math.min(...multiSelected.map(z => z.w));
+    targetH = Math.min(...multiSelected.map(z => z.h));
+  } else if (strategy === 'avg') {
+    targetW = Math.round(multiSelected.reduce((s,z) => s + z.w, 0) / multiSelected.length);
+    targetH = Math.round(multiSelected.reduce((s,z) => s + z.h, 0) / multiSelected.length);
+  } else if (strategy === 'mode') {
+    // Most frequent size — round to nearest int first
+    const wCount = {}, hCount = {};
+    multiSelected.forEach(z => {
+      const w = Math.round(z.w), h = Math.round(z.h);
+      wCount[w] = (wCount[w] || 0) + 1;
+      hCount[h] = (hCount[h] || 0) + 1;
+    });
+    let bestW = 0, bestWC = 0, bestH = 0, bestHC = 0;
+    for (const w in wCount) if (wCount[w] > bestWC) { bestWC = wCount[w]; bestW = +w; }
+    for (const h in hCount) if (hCount[h] > bestHC) { bestHC = hCount[h]; bestH = +h; }
+    targetW = bestW; targetH = bestH;
+  }
+  multiSelected.forEach(z => { z.w = targetW; z.h = targetH; refreshZoneEl(z); });
+  updateGroupBox();
+  autoSave();
+  showToast('✓ ' + multiSelected.length + ' zones → ' + Math.round(targetW) + '×' + Math.round(targetH) + ' (' + strategy + ')');
+}
+
+// One-click: select all shelves and match to the most common size
+function matchAllShelves() {
+  clearMultiSelect();
+  zones.forEach(z => {
+    if (z.type === 'aisle' || z.ftype === 'half-aisle-top' || z.ftype === 'half-aisle-bot') {
+      multiSelected.push(z);
+      z.el.classList.add('multi-selected');
+    }
+  });
+  if (multiSelected.length === 0) { showToast('No shelves found'); return; }
+  if (multiSelected.length === 1) { showToast('Only 1 shelf — nothing to match'); return; }
+  matchSelected('mode');
+  updateGroupBox();
+}
+
+function onZoneMouseDown(e, z) {
+  e.stopPropagation();
+  if (editingZone && editingZone !== z) finishEditing();
+  if (editingZone === z) return;
+  if (e.shiftKey) {
+    toggleMultiSelect(z);
+    selectZone(z);
+    return;
+  }
+  const handle = e.target.closest('.handle');
+  if (handle) {
+    selectZone(z);
+    if (multiSelected.length > 0) {
+      dragState = {
+        mode:'multi-resize', dir:handle.dataset.dir, startX:e.clientX, startY:e.clientY,
+        origins: multiSelected.map(mz => ({zone:mz, origX:mz.x, origY:mz.y, origW:mz.w, origH:mz.h}))
+      };
+    } else {
+      dragState = { mode:'resize', zone:z, dir:handle.dataset.dir, startX:e.clientX, startY:e.clientY, origX:z.x, origY:z.y, origW:z.w, origH:z.h };
+    }
+    return;
+  }
+  if (multiSelected.length > 0 && multiSelected.includes(z)) {
+    selectZone(z);
+    dragState = {
+      mode:'multi-move', startX:e.clientX, startY:e.clientY,
+      origins: multiSelected.map(mz => ({zone:mz, origX:mz.x, origY:mz.y}))
+    };
+    return;
+  }
+  if (!e.shiftKey && multiSelected.length > 0) clearMultiSelect();
+  selectZone(z);
+  dragState = { mode:'move', zone:z, startX:e.clientX, startY:e.clientY, origX:z.x, origY:z.y };
+}
+
+document.addEventListener('mousemove', e => {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  const z = dragState.zone;
+  const snap = parseInt(document.getElementById('snapSize').value) || 1;
+  const sn = v => Math.round(v / snap) * snap;
+
+  if (dragState.mode === 'multi-move') {
+    dragState.origins.forEach(o => {
+      o.zone.x = sn(o.origX + dx);
+      o.zone.y = sn(o.origY + dy);
+      refreshZoneEl(o.zone);
+    });
+    updateGroupBox();
+    return;
+  }
+  if (dragState.mode === 'multi-resize') {
+    const d = dragState.dir;
+    dragState.origins.forEach(o => {
+      if (d.includes('r')) o.zone.w = sn(Math.max(20, o.origW + dx));
+      if (d.includes('l')) { o.zone.x = sn(o.origX + dx); o.zone.w = sn(Math.max(20, o.origW - dx)); }
+      if (d.includes('b')) o.zone.h = sn(Math.max(20, o.origH + dy));
+      if (d.includes('t')) { o.zone.y = sn(o.origY + dy); o.zone.h = sn(Math.max(20, o.origH - dy)); }
+      refreshZoneEl(o.zone);
+    });
+    updateGroupBox();
+    return;
+  }
+  if (dragState.mode === 'move') {
+    z.x = sn(dragState.origX + dx);
+    z.y = sn(dragState.origY + dy);
+  } else {
+    const d = dragState.dir;
+    if (d.includes('r')) z.w = sn(Math.max(20, dragState.origW + dx));
+    if (d.includes('l')) { z.x = sn(dragState.origX + dx); z.w = sn(Math.max(20, dragState.origW - dx)); }
+    if (d.includes('b')) z.h = sn(Math.max(20, dragState.origH + dy));
+    if (d.includes('t')) { z.y = sn(dragState.origY + dy); z.h = sn(Math.max(20, dragState.origH - dy)); }
+  }
+  refreshZoneEl(z);
+  document.getElementById('p-x').value = Math.round(z.x);
+  document.getElementById('p-y').value = Math.round(z.y);
+  document.getElementById('p-w').value = Math.round(z.w);
+  document.getElementById('p-h').value = Math.round(z.h);
+});
+
+document.addEventListener('mouseup', () => { if (dragState) { dragState = null; autoSave(); } });
+
+document.getElementById('canvas').addEventListener('mousedown', e => {
+  const canvas = document.getElementById('canvas');
+  // Don't start rubber-band when clicking a group resize handle
+  if (e.target.classList && e.target.classList.contains('group-handle')) return;
+  if (e.target === canvas || e.target === document.getElementById('grid')) {
+    finishEditing();
+    if (!e.shiftKey) { clearMultiSelect(); selectZone(null); }
+    // Start rubber-band selection
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    let band = document.getElementById('rubber-band');
+    if (!band) {
+      band = document.createElement('div');
+      band.id = 'rubber-band';
+      band.className = 'rubber-band';
+      canvas.appendChild(band);
+    }
+    band.style.display = 'block';
+    band.style.left = sx + 'px'; band.style.top = sy + 'px';
+    band.style.width = '0px'; band.style.height = '0px';
+    rubberBand = { sx, sy, additive: e.shiftKey, band };
+    e.preventDefault();
+  }
+});
+
+let rubberBand = null;
+
+document.addEventListener('mousemove', e => {
+  if (!rubberBand) return;
+  const canvas = document.getElementById('canvas');
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const x = Math.min(rubberBand.sx, cx);
+  const y = Math.min(rubberBand.sy, cy);
+  const w = Math.abs(cx - rubberBand.sx);
+  const h = Math.abs(cy - rubberBand.sy);
+  rubberBand.band.style.left = x + 'px';
+  rubberBand.band.style.top = y + 'px';
+  rubberBand.band.style.width = w + 'px';
+  rubberBand.band.style.height = h + 'px';
+});
+
+document.addEventListener('mouseup', e => {
+  if (!rubberBand) return;
+  const canvas = document.getElementById('canvas');
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const x1 = Math.min(rubberBand.sx, cx);
+  const y1 = Math.min(rubberBand.sy, cy);
+  const x2 = Math.max(rubberBand.sx, cx);
+  const y2 = Math.max(rubberBand.sy, cy);
+  // Only select if drag was big enough (avoid accidental clicks)
+  if ((x2 - x1) > 5 && (y2 - y1) > 5) {
+    if (!rubberBand.additive) clearMultiSelect();
+    let added = 0;
+    zones.forEach(z => {
+      // Intersect test: any overlap counts as selected
+      if (z.x < x2 && z.x + z.w > x1 && z.y < y2 && z.y + z.h > y1) {
+        if (!multiSelected.includes(z)) {
+          multiSelected.push(z);
+          z.el.classList.add('multi-selected');
+          added++;
+        }
+      }
+    });
+    if (added > 0) showToast('✓ ' + multiSelected.length + ' zones selected — drag to move');
+    updateGroupBox();
+  }
+  rubberBand.band.style.display = 'none';
+  rubberBand = null;
+});
+
+// ========== COLORS ==========
+
+function renderColorSwatches(current) {
+  const row = document.getElementById('color-row');
+  row.innerHTML = '';
+  COLORS.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'color-swatch' + (c === current ? ' active' : '');
+    d.style.background = c;
+    d.onclick = () => { updateProp('color', c); document.getElementById('p-color').value = c; };
+    row.appendChild(d);
+  });
+}
+
+// ========== GRID ==========
+
+function drawGrid() {
+  const c = document.getElementById('grid');
+  const canvas = document.getElementById('canvas');
+  c.width = parseInt(canvas.style.width);
+  c.height = parseInt(canvas.style.height);
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!document.getElementById('gridToggle').checked) return;
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 0.5;
+  const step = parseInt(document.getElementById('snapSize').value) || 10;
+  for (let x = 0; x < c.width; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); ctx.stroke(); }
+  for (let y = 0; y < c.height; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c.width, y); ctx.stroke(); }
+}
+
+function resizeCanvas() {
+  const canvas = document.getElementById('canvas');
+  canvas.style.width = document.getElementById('canvas-w').value + 'px';
+  canvas.style.height = document.getElementById('canvas-h').value + 'px';
+  drawGrid();
+}
+
+// ========== KEYBOARD ==========
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  // Skip when editing zone text inline (contentEditable span) — let Backspace/Delete edit text, not delete box
+  if (e.target.isContentEditable || editingZone) return;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { undo(); e.preventDefault(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'a') { selectAll(); e.preventDefault(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'v' && clipboard) { pasteClipboard(); e.preventDefault(); return; }
+  if (!selected) return;
+  const step = e.shiftKey ? 10 : 1;
+  if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
+  if (e.key === 'ArrowLeft') { selected.x -= step; refreshZoneEl(selected); e.preventDefault(); }
+  if (e.key === 'ArrowRight') { selected.x += step; refreshZoneEl(selected); e.preventDefault(); }
+  if (e.key === 'ArrowUp') { selected.y -= step; refreshZoneEl(selected); e.preventDefault(); }
+  if (e.key === 'ArrowDown') { selected.y += step; refreshZoneEl(selected); e.preventDefault(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'd') { duplicateSelected(); e.preventDefault(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c') { clipboard = selected; showToast('Copied: ' + (selected.label||'').replace(/<br>/g,' ')); e.preventDefault(); }
+  document.getElementById('p-x').value = Math.round(selected.x);
+  document.getElementById('p-y').value = Math.round(selected.y);
+  autoSave();
+});
+
+// ========== SAVE / LOAD ==========
+
+function serialize() {
+  return zones.map(z => ({
+    id:z.id, type:z.type, ftype:z.ftype||null, x:z.x, y:z.y, w:z.w, h:z.h, rot:z.rot||0,
+    num:z.num, label:z.label, sub:z.sub, color:z.color
+  }));
+}
+
+function loadZones(data) {
+  zones.forEach(z => z.el && z.el.remove());
+  zones = []; selected = null; selectZone(null);
+  data.forEach(d => { d.id = nextId++; zones.push(d); createZoneEl(d); });
+}
+
+let autoSaveTimer = null;
+function autoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    stores[currentStore] = serialize();
+    localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+    const dot = document.getElementById('save-indicator');
+    if (dot) { dot.style.background = '#27AE60'; dot.title = 'Auto-saved ' + new Date().toLocaleTimeString(); setTimeout(() => { dot.style.background = '#555'; }, 1500); }
+    autoSaveToFile();
+    autoSaveToServer();
+  }, 300);
+}
+
+function autoSaveToServer() {
+  // Use Firebase via km-firebase.js (window.KM). Falls back gracefully if not loaded yet.
+  if (!window.KM || !window.KM.safeSave) return;
+  window.KM.safeSave('floorplan/shared', { stores, currentStore, savedAt: Date.now() }, { silent: true })
+    .then(r => {
+      if (r && r.ok) {
+        const d = document.getElementById('save-indicator');
+        if (d) { d.style.background = '#2ECC71'; d.title = 'Synced to Firebase ' + new Date().toLocaleTimeString(); }
+      }
+    })
+    .catch(() => {});
+}
+
+function saveStore() {
+  stores[currentStore] = serialize();
+  localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+  // Save to Firebase RTDB (shared across all managers/devices)
+  if (window.KM && window.KM.safeSave) {
+    window.KM.safeSave('floorplan/shared', { stores, currentStore, savedAt: Date.now() })
+      .then(r => {
+        if (r && r.ok) showToast('✓ Saved: ' + currentStore + ' — synced to all devices');
+        else showToast('⚠ Saved locally — Firebase sync failed, will retry');
+      })
+      .catch(() => showToast('✓ Saved locally — offline, will sync when online'));
+  } else {
+    showToast('✓ Saved: ' + currentStore + ' (local only — Firebase not loaded)');
+  }
+  // Also try File System Access API if user previously connected the file
+  autoSaveToFile();
+}
+
+function loadStore() {
+  const raw = localStorage.getItem('kimchi-floorplans');
+  if (raw) {
+    Object.assign(stores, JSON.parse(raw));
+    if (stores[currentStore]) loadZones(stores[currentStore]);
+  }
+}
+
+function exportFile() {
+  stores[currentStore] = serialize();
+  const json = JSON.stringify({stores, currentStore}, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'floorplan-data.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('✓ Backup saved — do NOT open this file directly. Use the Import button to load it.');
+}
+
+let fileHandle = null;
+
+async function connectFile() {
+  try {
+    [fileHandle] = await window.showOpenFilePicker({
+      types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
+    });
+    showToast('✓ File connected: ' + fileHandle.name + ' — auto-save ON');
+    autoSaveToFile();
+  } catch(e) {
+    if (e.name !== 'AbortError') showToast('Error: ' + e.message);
+  }
+}
+
+async function autoSaveToFile() {
+  if (!fileHandle) return;
+  try {
+    const writable = await fileHandle.createWritable();
+    stores[currentStore] = serialize();
+    await writable.write(JSON.stringify({stores, currentStore}, null, 2));
+    await writable.close();
+  } catch(e) { console.warn('File save failed:', e); }
+}
+
+function importFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        Object.assign(stores, data);
+        localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+        if (stores[currentStore]) loadZones(stores[currentStore]);
+        showToast('✓ Imported: ' + Object.keys(data).join(', '));
+      } catch(err) { showToast('Error: ' + err.message); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function switchStore(name) {
+  stores[currentStore] = serialize();
+  currentStore = name;
+  localStorage.setItem('kimchi-currentStore', name);
+  document.querySelectorAll('.store-tab').forEach(t => {
+    const txt = (t.querySelector('.store-addr') || t).textContent.toLowerCase();
+    const tname = t.onclick.toString().match(/'(\w+)'/);
+    t.classList.toggle('active', tname && tname[1] === name);
+  });
+  if (stores[name]) {
+    loadZones(stores[name]);
+  } else if (name !== 'miami' && stores['miami']) {
+    // First time opening a store — copy Miami template as starting point
+    const copy = JSON.parse(JSON.stringify(stores['miami']));
+    loadZones(copy);
+    stores[name] = copy;
+    showToast('Base template copied → ' + name);
+  } else {
+    zones.forEach(z => z.el && z.el.remove()); zones = []; selectZone(null);
+  }
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#2E86C1;color:#fff;padding:10px 24px;border-radius:6px;font-weight:600;z-index:999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3)';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 1500);
+}
+
+function scaleAll(factor) {
+  saveUndo();
+  zones.forEach(z => {
+    z.x = Math.round(z.x * factor);
+    z.y = Math.round(z.y * factor);
+    z.w = Math.round(z.w * factor);
+    z.h = Math.round(z.h * factor);
+    z.el.style.left = z.x + 'px';
+    z.el.style.top = z.y + 'px';
+    z.el.style.width = z.w + 'px';
+    z.el.style.height = z.h + 'px';
+  });
+  autoSave();
+  showToast('All ×' + factor);
+}
+
+function exportPrint() {
+  // Build store name map for header
+  const storeNames = {
+    miami: 'Miami, FL', pembroke: 'Pembroke Pines, FL', hollywood: 'Hollywood, FL',
+    coral: 'Coral Springs, FL', lasolas: 'Las Olas — Ft. Lauderdale, FL',
+    westpalm: 'West Palm Beach, FL', base: 'Base Template'
+  };
+  const storeName = storeNames[currentStore] || currentStore;
+  const now = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
+
+  // Insert print-only header & footer into the canvas-wrap (above/below canvas)
+  const wrap = document.getElementById('canvas-wrap');
+  let header = document.getElementById('print-header');
+  let footer = document.getElementById('print-footer');
+  if (!header) {
+    header = document.createElement('div');
+    header.id = 'print-header';
+    wrap.insertBefore(header, wrap.firstChild);
+  }
+  if (!footer) {
+    footer = document.createElement('div');
+    footer.id = 'print-footer';
+    wrap.appendChild(footer);
+  }
+  header.textContent = '🏪 Kimchi Mart — Floor Plan: ' + storeName;
+  footer.textContent = 'Printed: ' + now + '  •  ' + zones.length + ' zones  •  Canvas: ' + document.getElementById('canvas').style.width + ' × ' + document.getElementById('canvas').style.height;
+
+  // Print
+  window.print();
+}
+
+// ========== BASE TEMPLATE ==========
+
+function loadBaseTemplate() {
+  const data = [
+    {type:'front-door',ftype:'front-door',x:40,y:700,w:120,h:28,rot:0,num:'▶',label:'FRONT DOOR',sub:'',color:'#1B4F72'},
+    {type:'checkout',ftype:null,x:170,y:700,w:240,h:28,rot:0,num:'🛒',label:'CHECKOUT',sub:'',color:'#95A5A6'},
+
+    {type:'perimeter',ftype:null,x:8,y:540,w:80,h:150,rot:0,num:'①',label:'SALE<br>ZONE',sub:'Promo',color:'#F39C12'},
+    {type:'perimeter',ftype:null,x:810,y:540,w:100,h:150,rot:0,num:'②',label:'PRODUCE',sub:'Vegetables<br>& Fruits',color:'#27AE60'},
+
+    {type:'open-cooler',ftype:'open-cooler',x:810,y:460,w:100,h:72,rot:0,num:'③',label:'FROZEN<br>SEAFOOD',sub:'',color:'rgba(41,128,185,.15)'},
+    {type:'perimeter',ftype:null,x:810,y:384,w:100,h:68,rot:0,num:'④',label:'FRESH<br>SEAFOOD',sub:'',color:'#E67E22'},
+    {type:'perimeter',ftype:null,x:810,y:316,w:100,h:60,rot:0,num:'⑤',label:'FISH TANK',sub:'Clean & Pack',color:'#E67E22'},
+    {type:'perimeter',ftype:null,x:810,y:252,w:100,h:56,rot:0,num:'⑥',label:'SUSHI PREP',sub:'',color:'#D35400'},
+    {type:'perimeter',ftype:null,x:810,y:190,w:100,h:54,rot:0,num:'⑦',label:'DRY<br>SEAFOOD',sub:'',color:'#E67E22'},
+
+    {type:'open-cooler',ftype:'open-cooler',x:150,y:8,w:180,h:45,rot:0,num:'⑧',label:'FRESH MEAT & POULTRY',sub:'',color:'#E74C3C'},
+    {type:'open-freezer',ftype:'open-freezer',x:338,y:8,w:140,h:45,rot:0,num:'⑨',label:'FROZEN SHABU',sub:'Sliced Meats',color:'rgba(26,188,156,.15)'},
+    {type:'perimeter',ftype:null,x:486,y:8,w:120,h:45,rot:0,num:'⑩',label:'BANCHAN',sub:'Side Dishes',color:'#8E44AD'},
+    {type:'door-freezer',ftype:'door-freezer',x:614,y:8,w:140,h:45,rot:0,num:'⑪',label:'FROZEN GROCERY',sub:'Dumpling·HMR',color:'rgba(22,160,133,.2)'},
+    {type:'perimeter',ftype:null,x:8,y:8,w:80,h:45,rot:0,num:'⑫',label:'END',sub:'',color:'#95A5A6'},
+
+    {type:'door-freezer',ftype:'door-freezer',x:8,y:60,w:80,h:160,rot:0,num:'',label:'WALL<br>FREEZERS',sub:'',color:'rgba(22,160,133,.2)'},
+
+    // 5 aisles × 2 halves, numbered 1-20 from bottom-left
+    // w=75, h=230, gap=10
+    {type:'aisle',ftype:'half-aisle-top',x:150,y:65,w:75,h:230,rot:0,num:'11,12',label:'Dried Seafood',sub:'Anchovy·Kelp\nShiitake·Squid',color:'#B8860B'},
+    {type:'aisle',ftype:'half-aisle-top',x:235,y:65,w:75,h:230,rot:0,num:'13,14',label:'Korean\nRamen',sub:'Shin·Jin\nSamyang·Cup',color:'#B8860B'},
+    {type:'aisle',ftype:'half-aisle-top',x:320,y:65,w:75,h:230,rot:0,num:'15,16',label:'Oils &\nJang',sub:'Sesame·Perilla\nGochujang·Doenjang',color:'#922B21'},
+    {type:'aisle',ftype:'half-aisle-top',x:405,y:65,w:75,h:230,rot:0,num:'17,18',label:'Gochugaru\nSalt·Sugar',sub:'Mild·Hot\nHONDASHI',color:'#B8860B'},
+    {type:'aisle',ftype:'half-aisle-top',x:490,y:65,w:75,h:230,rot:0,num:'19,20',label:'Instant\nMeals',sub:'Juk·bibigo\nReady Rice',color:'#B8860B'},
+
+    {type:'aisle',ftype:'half-aisle-bot',x:150,y:305,w:75,h:230,rot:0,num:'1,2',label:'Seaweed\nNuts',sub:'Gim·Nuts\nDried Fruit·Jujube',color:'#CD853F'},
+    {type:'aisle',ftype:'half-aisle-bot',x:235,y:305,w:75,h:230,rot:0,num:'3,4',label:'JP/CN/SEA\nNoodles',sub:'Nissin·MAMA\nNaengmyeon·Dangmyun',color:'#CD853F'},
+    {type:'aisle',ftype:'half-aisle-bot',x:320,y:305,w:75,h:230,rot:0,num:'5,6',label:'Soy·Hot\nSauce',sub:'Soy Sauce\nSriracha 30%',color:'#C0392B'},
+    {type:'aisle',ftype:'half-aisle-bot',x:405,y:305,w:75,h:230,rot:0,num:'7,8',label:'Soup\nSpices',sub:'Curry·Soup\nFurikake·Wasabi',color:'#CD853F'},
+    {type:'aisle',ftype:'half-aisle-bot',x:490,y:305,w:75,h:230,rot:0,num:'9,10',label:'Canned\nTropical',sub:'Tuna·Spam\nCoconut·Cond. Milk',color:'#CD853F'},
+  ];
+  loadZones(data);
+  stores[currentStore] = data;
+}
+
+// ========== WINDOW CLOSE AUTO-SAVE ==========
+
+window.addEventListener('beforeunload', () => {
+  stores[currentStore] = serialize();
+  localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+});
+
+// Auto-save every 10 seconds as backup
+setInterval(() => {
+  stores[currentStore] = serialize();
+  localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+}, 10000);
+
+// ========== INIT ==========
+
+drawGrid();
+
+function initFromData(data) {
+  if (data.currentStore) currentStore = data.currentStore;
+  if (data.stores) Object.assign(stores, data.stores);
+  else Object.assign(stores, data);
+  if (stores[currentStore]) {
+    loadZones(stores[currentStore]);
+  } else if (currentStore !== 'miami' && stores.miami) {
+    loadZones(JSON.parse(JSON.stringify(stores.miami)));
+  } else {
+    loadBaseTemplate();
+  }
+  localStorage.setItem('kimchi-currentStore', currentStore);
+  localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+  document.querySelectorAll('.store-tab').forEach(t => {
+    const tname = t.onclick.toString().match(/'(\w+)'/);
+    t.classList.toggle('active', tname && tname[1] === currentStore);
+  });
+}
+
+// Priority: 1) Firebase RTDB (shared) → 2) localStorage → 3) floorplan-data.json → 4) Base Template
+async function initLoad() {
+  const savedStore = localStorage.getItem('kimchi-currentStore');
+  if (savedStore) currentStore = savedStore;
+
+  function setActiveTab() {
+    document.querySelectorAll('.store-tab').forEach(t => {
+      const tname = t.onclick.toString().match(/'(\w+)'/);
+      t.classList.toggle('active', tname && tname[1] === currentStore);
+    });
+  }
+
+  // 1) Try Firebase first (shared across all managers)
+  if (window.KM && window.KM.safeFetch) {
+    try {
+      const r = await window.KM.safeFetch('floorplan/shared');
+      if (r && r.ok && r.data && r.data.stores) {
+        Object.assign(stores, r.data.stores);
+        if (r.data.currentStore) currentStore = r.data.currentStore;
+        if (stores[currentStore]) loadZones(JSON.parse(JSON.stringify(stores[currentStore])));
+        else loadBaseTemplate();
+        setActiveTab();
+        showToast('✓ Loaded from Firebase (shared)');
+        return;
+      }
+    } catch (e) { console.warn('[floorplan] Firebase load failed:', e); }
+  }
+
+  // 2) Fallback: localStorage
+  const saved = localStorage.getItem('kimchi-floorplans');
+  if (saved) {
+    Object.assign(stores, JSON.parse(saved));
+    if (stores[currentStore]) loadZones(stores[currentStore]);
+    else if (currentStore !== 'miami' && stores.miami) loadZones(JSON.parse(JSON.stringify(stores.miami)));
+    else loadBaseTemplate();
+    setActiveTab();
+    return;
+  }
+
+  // 3) Fallback: floorplan-data.json bundled file
+  try {
+    const resp = await fetch('floorplan-data.json?t=' + Date.now());
+    if (resp.ok) {
+      const data = await resp.json();
+      initFromData(data);
+      showToast('✓ Loaded from floorplan-data.json');
+      return;
+    }
+  } catch (_) {}
+
+  // 4) Final fallback: base template
+  loadBaseTemplate();
+  setActiveTab();
+}
+
+// Wait briefly for km-firebase.js (module script) to set up window.KM, then init
+setTimeout(() => initLoad(), 100);
+</script>
+</body>
+</html>
