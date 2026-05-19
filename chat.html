@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_18_f';   // 급여방 슈퍼바이저 차단 — 전무님 지시
+    var BUST = 'chat_2026_05_19_a';   // 1:1 DM 에서 업무 지시 분리 — 새 '업무 알림' 섹션
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1711,7 +1711,18 @@ function renderRooms(){
   }
   const hubItems = sortByFixed(items.filter(([id, r]) => isWorkHub(id, r)), WORKHUB_ORDER);
   const evalItems = sortByFixed(items.filter(([id, r]) => isEvalRoom(id, r) && !isWorkHub(id, r)), EVAL_ORDER);
-  const dmItems = items.filter(([id, r]) => id.startsWith('dm__'));
+  // 🆕 2026-05-19 전무님 명시: 1:1 DM 에 업무 지시 알림이 도배되어 진짜 개인
+  // 대화가 묻힘. 업무 알림(📨 새 업무 지시 / 📨 New task / 📨 Nueva tarea)
+  // 으로 끝난 방은 별도 '업무 알림' 섹션으로 분리. 직원이 답장하면 lastMsg 가
+  // 그 답장으로 갱신되어 자동으로 '1:1 비공개' 섹션으로 복귀.
+  function isTaskNotifyRoom(r){
+    const last = String(r && r.lastMsg || '');
+    if (!last.startsWith('📨 ')) return false;
+    return /새 업무 지시|New task|Nueva tarea/i.test(last);
+  }
+  const allDmItems = items.filter(([id, r]) => id.startsWith('dm__'));
+  const dmItems = allDmItems.filter(([id, r]) => !isTaskNotifyRoom(r));
+  const dmTaskItems = allDmItems.filter(([id, r]) => isTaskNotifyRoom(r));
   const otherItems = sortByFixed(items.filter(([id, r]) => !isEvalRoom(id, r) && !id.startsWith('dm__') && !isWorkHub(id, r)), OTHER_ORDER);
   function renderRoomItem([id, r]){
     const active = id === ACTIVE_ROOM ? ' active' : '';
@@ -1740,6 +1751,12 @@ function renderRooms(){
   if (dmItems.length > 0) {
     const dmLabel = ({ko:'💬 1:1 비공개', en:'💬 1:1 Direct', es:'💬 1:1 Privado'}[LANG] || '💬 1:1');
     html += `<div class="rooms-section-hd" style="background:#eff6ff;color:#1d4ed8;border-top-color:#1d4ed8;border-bottom-color:#bfdbfe">${dmLabel}</div>` + dmItems.map(renderRoomItem).join('');
+  }
+  // 📨 업무 알림 — 매니저가 보낸 업무 지시 메시지만 모인 섹션. 직원이 답장하면
+  // 해당 방은 자동으로 위쪽 1:1 비공개 섹션으로 이동.
+  if (dmTaskItems.length > 0) {
+    const taskLabel = ({ko:'📨 업무 알림', en:'📨 Task Notifications', es:'📨 Notificaciones de Tareas'}[LANG] || '📨 업무 알림');
+    html += `<div class="rooms-section-hd" style="background:#fff7ed;color:#c2410c;border-top-color:#c2410c;border-bottom-color:#fed7aa">${taskLabel}</div>` + dmTaskItems.map(renderRoomItem).join('');
   }
   list.innerHTML = html;
 }
