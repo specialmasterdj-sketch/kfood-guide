@@ -70,14 +70,21 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;
 <body>
 
 <div class="wrap">
-  <h1>🏆 활동 순위</h1>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px">
+    <h1 id="pageTitle">🏆 활동 순위</h1>
+    <div id="langTabs" style="display:flex;gap:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:3px;flex-shrink:0">
+      <button onclick="setLang('ko')" data-lang="ko" style="background:transparent;border:0;padding:5px 10px;border-radius:6px;font-family:inherit;font-size:.78em;font-weight:600;color:#6b7280;cursor:pointer">한국어</button>
+      <button onclick="setLang('en')" data-lang="en" style="background:transparent;border:0;padding:5px 10px;border-radius:6px;font-family:inherit;font-size:.78em;font-weight:600;color:#6b7280;cursor:pointer">EN</button>
+      <button onclick="setLang('es')" data-lang="es" style="background:transparent;border:0;padding:5px 10px;border-radius:6px;font-family:inherit;font-size:.78em;font-weight:600;color:#6b7280;cursor:pointer">ES</button>
+    </div>
+  </div>
   <div class="sub" id="subText">전 직원 활동 종합 — 등록·체크·폐기·채팅 합산</div>
 
   <div class="toolbar">
     <label style="display:flex;align-items:center;gap:6px;font-size:.84em;color:#6b7280;font-weight:600">
       📍
       <select id="branchSel">
-        <option value="ALL">전 지점</option>
+        <option value="ALL" id="branchOptAll">전 지점</option>
       </select>
     </label>
     <span style="flex:1"></span>
@@ -107,13 +114,108 @@ window.__lbAuth = getAuth(app);
 <script>
 const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 const BRANCHES = [
-  {id:'HOLLYWOOD',  ko:'헐리우드'},
-  {id:'MIAMI',      ko:'마이애미'},
-  {id:'PEMBROKE_PINES', ko:'펨브로크 파인스'},
-  {id:'CORAL_SPRINGS',  ko:'코럴 스프링스'},
-  {id:'LASOLAS',    ko:'라스올라스'},
-  {id:'WEST_PALM',  ko:'웨스트 팜'}
+  {id:'HOLLYWOOD',     ko:'헐리우드',       en:'Hollywood',       es:'Hollywood'},
+  {id:'MIAMI',         ko:'마이애미',       en:'Miami',           es:'Miami'},
+  {id:'PEMBROKE_PINES',ko:'펨브로크 파인스',en:'Pembroke Pines',  es:'Pembroke Pines'},
+  {id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs'},
+  {id:'LASOLAS',       ko:'라스올라스',     en:'Las Olas',        es:'Las Olas'},
+  {id:'WEST_PALM',     ko:'웨스트 팜',      en:'West Palm',       es:'West Palm'}
 ];
+
+// ============== i18n ==============
+// 2026-05-19 전무님 명시: 활동 순위 페이지 KO/EN/ES 전환 추가.
+const T = {
+  pageTitle:    { ko:'🏆 활동 순위',                            en:'🏆 Activity Ranking',                       es:'🏆 Ranking de Actividad' },
+  docTitle:     { ko:'활동 순위 — KIMCHI MART',                 en:'Activity Ranking — KIMCHI MART',           es:'Ranking de Actividad — KIMCHI MART' },
+  subInitial:   { ko:'전 직원 활동 종합 — 등록·체크·폐기·채팅 합산', en:'All staff combined — register · check · discard · chat', es:'Personal combinado — registro · chequeo · descarte · chat' },
+  branchAll:    { ko:'전 지점',                                  en:'All Branches',                              es:'Todas las Sucursales' },
+  refresh:      { ko:'↻ 새로고침',                              en:'↻ Refresh',                                 es:'↻ Actualizar' },
+  tabToday:     { ko:'오늘',                                    en:'Today',                                     es:'Hoy' },
+  tabWeek:      { ko:'이번 주',                                 en:'This Week',                                 es:'Esta Semana' },
+  tabMonth:     { ko:'이번 달',                                 en:'This Month',                                es:'Este Mes' },
+  tabAll:       { ko:'전체',                                    en:'All Time',                                  es:'Histórico' },
+  rangeTodayLbl:{ ko:'오늘',                                    en:'Today',                                     es:'Hoy' },
+  rangeWeekLbl: { ko:'이번 주',                                 en:'This Week',                                 es:'Esta Semana' },
+  rangeMonthLbl:{ ko:'이번 달',                                 en:'This Month',                                es:'Este Mes' },
+  rangeAllLbl:  { ko:'전체 누적',                               en:'All-Time',                                  es:'Histórico' },
+  loading:      { ko:'데이터 모으는 중…',                       en:'Collecting data…',                          es:'Recopilando datos…' },
+  noData:       { ko:'데이터 없음 — 위 기간/지점을 바꿔보세요', en:'No data — try a different period or branch', es:'Sin datos — pruebe otro período o sucursal' },
+  noMore:       { ko:'— 추가 인원 없음 —',                     en:'— No more staff —',                          es:'— Sin más personal —' },
+  noActivity:   { ko:'— 활동 없음 —',                           en:'— No activity —',                           es:'— Sin actividad —' },
+  branchMvpsHd: { ko:'🏆 지점별 MVP',                           en:'🏆 Branch MVPs',                            es:'🏆 MVPs por Sucursal' },
+  pt:           { ko:'점',                                      en:'pt',                                        es:'pt' },
+  statsActive:  { ko:(n)=>n+'명 활동',                          en:(n)=>n+' active',                            es:(n)=>n+' activos' },
+  statsTotal:   { ko:(n)=>n+'점 합계',                          en:(n)=>n+' pts total',                         es:(n)=>n+' pts total' },
+  legendHd:     { ko:'점수 기준',                               en:'Scoring',                                   es:'Puntuación' },
+  legExpAdd:    { ko:'유통기한 등록',                           en:'Expiry registration',                      es:'Registro de vencimiento' },
+  legExpAddNote:{ ko:'(사진 첨부 시)',                          en:'(with photo)',                              es:'(con foto)' },
+  legExpCheck:  { ko:'체크 완료',                               en:'Check complete',                            es:'Chequeo completo' },
+  legExpDisc:   { ko:'폐기 처리',                               en:'Discard',                                   es:'Descarte' },
+  legTask:      { ko:'업무 지시 완료',                          en:'Task completed',                            es:'Tarea completada' },
+  legTaskNote:  { ko:'(사진 보고 포함)',                        en:'(with photo report)',                       es:'(con reporte fotográfico)' },
+  legChatMsg:   { ko:'채팅 메시지',                             en:'Chat message',                              es:'Mensaje de chat' },
+  legChatPhoto: { ko:'사진 첨부',                               en:'Photo attached',                            es:'Foto adjunta' },
+  legReply:     { ko:'댓글',                                    en:'Reply',                                     es:'Respuesta' },
+  legReaction:  { ko:'좋아요(이모지 반응)',                     en:'Reaction (emoji)',                          es:'Reacción (emoji)' },
+};
+let LANG = 'en';
+try {
+  var saved = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || localStorage.getItem('tasks.lang');
+  if (saved === 'ko' || saved === 'en' || saved === 'es') LANG = saved;
+  else {
+    // 자동 감지 — 폰 기본 언어
+    var nav = (navigator.language || 'en').toLowerCase();
+    if (nav.startsWith('ko')) LANG = 'ko';
+    else if (nav.startsWith('es')) LANG = 'es';
+    else LANG = 'en';
+  }
+} catch(e){}
+function t(key, ...args){
+  const entry = T[key];
+  if (!entry) return key;
+  const v = entry[LANG] || entry.en || entry.ko;
+  return typeof v === 'function' ? v(...args) : v;
+}
+function applyStaticI18n(){
+  document.title = t('docTitle');
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setText('pageTitle', t('pageTitle'));
+  setText('branchOptAll', t('branchAll'));
+  setText('btnRefresh', t('refresh'));
+  // 탭 버튼 라벨
+  const tabBar = document.getElementById('tabBar');
+  if (tabBar) {
+    const map = { today: t('tabToday'), week: t('tabWeek'), month: t('tabMonth'), all: t('tabAll') };
+    tabBar.querySelectorAll('button[data-r]').forEach(btn => {
+      const r = btn.getAttribute('data-r');
+      if (map[r]) btn.textContent = map[r];
+    });
+  }
+  // 언어 버튼 active 표시
+  document.querySelectorAll('#langTabs button[data-lang]').forEach(btn => {
+    const isActive = btn.getAttribute('data-lang') === LANG;
+    btn.style.background = isActive ? '#1a5c3a' : 'transparent';
+    btn.style.color = isActive ? '#fff' : '#6b7280';
+  });
+  // 지점 select 옵션도 다국어 (loadAll 호출 전 BRANCHES 채워졌으면)
+  const sel = document.getElementById('branchSel');
+  if (sel) {
+    Array.from(sel.options).forEach(opt => {
+      if (opt.value === 'ALL') return;   // ALL 은 별도 처리
+      const b = BRANCHES.find(x => x.id === opt.value);
+      if (b) opt.textContent = '🏢 ' + (b[LANG] || b.ko);
+    });
+  }
+}
+window.setLang = function(v){
+  if (v !== 'ko' && v !== 'en' && v !== 'es') return;
+  LANG = v;
+  try { localStorage.setItem('kimchi_lang', v); } catch(e){}
+  // lang-sync.js 가 hub.lang / tasks.lang 도 자동 미러링
+  try { if (window.__langSync) window.__langSync.set(v); } catch(e){}
+  applyStaticI18n();
+  if (typeof loadAll === 'function') loadAll();
+};
 
 // Owner/Executive exclusion — 경영진 활동은 직원 평가에서 제외
 const EXCLUDE_NAMES = new Set(['DJ','dj','specialmasterdj','사장님','Owner','OWNER','B.H.K','b.h.k','BHK','bhk','byhoki64']);
@@ -169,7 +271,8 @@ function initBranchSel(){
   const sel = document.getElementById('branchSel');
   BRANCHES.forEach(b => {
     const opt = document.createElement('option');
-    opt.value = b.id; opt.textContent = '🏢 ' + b.ko;
+    opt.value = b.id;
+    opt.textContent = '🏢 ' + (b[LANG] || b.ko);
     sel.appendChild(opt);
   });
   sel.addEventListener('change', () => { CUR_BRANCH = sel.value; loadAll(); });
@@ -429,13 +532,14 @@ function initials(name){
 }
 function branchLabel(id){
   const b = BRANCHES.find(b => b.id === id);
-  return b ? b.ko : (id || '');
+  if (!b) return id || '';
+  return b[LANG] || b.ko;
 }
 function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function renderPodium(top3){
   if (top3.length === 0) {
-    return `<div class="empty">데이터 없음 — 위 기간/지점을 바꿔보세요</div>`;
+    return `<div class="empty">${escHtml(t('noData'))}</div>`;
   }
   const slots = [top3[1], top3[0], top3[2]];   // silver, gold, bronze
   const classes = ['silver','gold','bronze'];
@@ -448,7 +552,7 @@ function renderPodium(top3){
         <div class="av" style="background:${r.color}">${escHtml(initials(r.name).toUpperCase())}</div>
         <div class="nm">${escHtml(r.name)}</div>
         <div class="br">🏢 ${escHtml(branchLabel(r.branch))}</div>
-        <div class="pt">${r.score}점</div>
+        <div class="pt">${r.score}${t('pt')}</div>
       </div>`;
     }).join('')
   }</div>`;
@@ -456,7 +560,7 @@ function renderPodium(top3){
 
 function renderRows(rest){
   if (rest.length === 0) {
-    return `<div class="list"><div class="empty" style="padding:18px 14px">— 추가 인원 없음 —</div></div>`;
+    return `<div class="list"><div class="empty" style="padding:18px 14px">${escHtml(t('noMore'))}</div></div>`;
   }
   return `<div class="list">${
     rest.map((r, i) => {
@@ -477,7 +581,7 @@ function renderRows(rest){
           <div class="br">🏢 ${escHtml(branchLabel(r.branch) || '—')}</div>
           <div class="breakdown">${bd.join(' · ') || '—'}</div>
         </div>
-        <div class="pt">${r.score}<span class="pts-lbl">점</span></div>
+        <div class="pt">${r.score}<span class="pts-lbl">${t('pt')}</span></div>
       </div>`;
     }).join('')
   }</div>`;
@@ -492,30 +596,30 @@ function renderBranchMVPs(allRows){
     if (!byBranch[r.branch] || byBranch[r.branch].score < r.score) byBranch[r.branch] = r;
   }
   const cards = BRANCHES.map(b => {
+    const lbl = b[LANG] || b.ko;
     const mvp = byBranch[b.id];
-    if (!mvp) return `<div class="mvp"><div class="b">🏢 ${b.ko}</div><div class="n" style="color:#9ca3af">— 활동 없음 —</div></div>`;
-    return `<div class="mvp"><div class="b">🏢 ${b.ko}</div><div class="n">${escHtml(mvp.name)}</div><div class="p">${mvp.score}점</div></div>`;
+    if (!mvp) return `<div class="mvp"><div class="b">🏢 ${escHtml(lbl)}</div><div class="n" style="color:#9ca3af">${escHtml(t('noActivity'))}</div></div>`;
+    return `<div class="mvp"><div class="b">🏢 ${escHtml(lbl)}</div><div class="n">${escHtml(mvp.name)}</div><div class="p">${mvp.score}${t('pt')}</div></div>`;
   }).join('');
   return `<div class="branch-mvps">
-    <h3>🏆 지점별 MVP</h3>
+    <h3>${escHtml(t('branchMvpsHd'))}</h3>
     <div class="mvp-grid">${cards}</div>
   </div>`;
 }
 
 function renderLegend(){
-  // 🆕 2026-05-17 사용자 명시: 경영진 자동 제외 / 사진 20장 초과 안내 문구 제거 (직원 부담 줄임)
   return `<div class="legend">
-    <b>점수 기준</b><br>
-    📦 유통기한 등록 <code>+0.3</code> (사진 첨부 시) · ✅ 체크 완료 <code>+0.2</code> · ❌ 폐기 처리 <code>+0.2</code><br>
-    📋 업무 지시 완료 <code>+1.0</code> (사진 보고 포함)<br>
-    💬 채팅 메시지 <code>+1.0</code> · 📷 사진 첨부 <code>+0.2</code><br>
-    ↩️ 댓글 <code>+0.2</code> · 👍 좋아요(이모지 반응) <code>+0.2</code>
+    <b>${escHtml(t('legendHd'))}</b><br>
+    📦 ${escHtml(t('legExpAdd'))} <code>+0.3</code> ${escHtml(t('legExpAddNote'))} · ✅ ${escHtml(t('legExpCheck'))} <code>+0.2</code> · ❌ ${escHtml(t('legExpDisc'))} <code>+0.2</code><br>
+    📋 ${escHtml(t('legTask'))} <code>+1.0</code> ${escHtml(t('legTaskNote'))}<br>
+    💬 ${escHtml(t('legChatMsg'))} <code>+1.0</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.2</code><br>
+    ↩️ ${escHtml(t('legReply'))} <code>+0.2</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.2</code>
   </div>`;
 }
 
 // ============== Main ==============
 async function loadAll(){
-  document.getElementById('content').innerHTML = `<div class="loading"><div class="ic">⏳</div>데이터 모으는 중…</div>`;
+  document.getElementById('content').innerHTML = `<div class="loading"><div class="ic">⏳</div>${escHtml(t('loading'))}</div>`;
   const since = rangeStart();
   const agg = {};
   // Wait for auth before pulling /users (rules likely require auth!=null)
@@ -536,9 +640,13 @@ async function loadAll(){
   const top3 = rows.slice(0, 3);
   const rest = rows.slice(3, 50);
 
-  const rangeLbl = CUR_RANGE === 'today' ? '오늘' : CUR_RANGE === 'week' ? '이번 주' : CUR_RANGE === 'month' ? '이번 달' : '전체 누적';
+  const rangeLbl = CUR_RANGE === 'today' ? t('rangeTodayLbl')
+                 : CUR_RANGE === 'week'  ? t('rangeWeekLbl')
+                 : CUR_RANGE === 'month' ? t('rangeMonthLbl')
+                 :                          t('rangeAllLbl');
+  const totalPts = rows.reduce((s,r) => s + r.score, 0).toFixed(1);
   document.getElementById('subText').textContent =
-    `${rangeLbl} · ${rows.length}명 활동 · ${rows.reduce((s,r) => s + r.score, 0).toFixed(1)}점 합계`;
+    `${rangeLbl} · ${t('statsActive', rows.length)} · ${t('statsTotal', totalPts)}`;
 
   const html = `${renderPodium(top3)}${renderBranchMVPs(rows)}${renderRows(rest)}${renderLegend()}`;
   document.getElementById('content').innerHTML = html;
@@ -546,6 +654,7 @@ async function loadAll(){
 
 initBranchSel();
 initTabs();
+applyStaticI18n();   // 언어 버튼·탭 라벨·refresh 버튼 즉시 다국어 적용
 loadAll();
 window.loadAll = loadAll;
 </script>
