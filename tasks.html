@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_19_a';   // 업무 알림에 사용법 한 줄 추가 — 직원이 체크리스트 위치 모르는 케이스 해결
+    var BUST = 'tasks_2026_05_19_b';   // 강제 완료 30분 쿨다운 — 채팅방 도배 방지
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -6404,14 +6404,32 @@ window.forceCompleteTask = async function(taskId, branchId){
   if (!t){ alert('❌ 업무 없음 — id=' + taskId + ' / branch=' + branchId); return; }
   if (!isOwner() && !isManager(me?.role)){ alert('❌ 오너/매니저 권한 필요 — 현재 role: ' + (me?.role||'?')); return; }
   const alreadyDone = !!t.completedAt;
+  // 🆕 2026-05-19 — 30분 쿨다운. Luis Perez 가 같은 해산물 보고를 5번 연속 강제
+  // 완료해 평가방 도배된 사례 (1개 task 3pt 였지만 채팅에 5번 보임). 같은 업무
+  // 보고 재발사는 30분에 1번만 허용. 오너는 예외 (긴급 보고 재발사 가능).
+  const COOLDOWN_MIN = 30;
+  if (alreadyDone && t.lastReportAt && !isOwner()) {
+    const elapsedMin = Math.floor((Date.now() - t.lastReportAt) / 60000);
+    if (elapsedMin < COOLDOWN_MIN) {
+      const remainMin = COOLDOWN_MIN - elapsedMin;
+      const lastTimeStr = new Date(t.lastReportAt).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+      alert('⏳ 보고 재발송 쿨다운 중\n\n' +
+            '같은 업무 보고는 ' + COOLDOWN_MIN + '분에 1회만 발사 가능합니다.\n' +
+            '(채팅방 도배 방지 — 5/19 Luis Perez 사례 후 도입)\n\n' +
+            '이전 보고: ' + lastTimeStr + '\n' +
+            '남은 시간: ' + remainMin + '분');
+      return;
+    }
+  }
   const defaultCredit = t.completedBy || t.startedBy || me.name;
   // 담당자 이름 직접 입력 가능 — 작업한 직원이 task.completedBy 와 다를 수 있음
   // (예: 정육 일일 보고 각 항목을 여러 직원이 분담)
   const credit = prompt('📝 채팅 발송 담당자 이름 (수정 가능):', defaultCredit);
   if (credit === null) return;   // 사용자 취소
   if (!credit.trim()){ alert('담당자 이름 비울 수 없음'); return; }
+  const reportCountNow = (t.reportCount || 0);
   const confirmMsg = alreadyDone
-    ? `📤 보고 재발송\n\n업무: ${t.name}\n매장: ${t.branchId}\n담당: ${credit}\n\n이미 완료된 업무 — 평가방에만 보고 다시 보냅니다.\n\n진행하시겠습니까?`
+    ? `📤 보고 재발송\n\n업무: ${t.name}\n매장: ${t.branchId}\n담당: ${credit}\n\n이미 완료된 업무 — 평가방에만 보고 다시 보냅니다.\n이전 발사 횟수: ${reportCountNow}회\n\n진행하시겠습니까?`
     : `⚡ 강제 완료\n\n업무: ${t.name}\n매장: ${t.branchId}\n크레딧: ${credit}${credit !== me.name ? ' (원래 진행자)' : ''}\n\n사진은 이미 첨부된 것 그대로 사용.\n평가방에 보고도 자동 발송.\n\n진행하시겠습니까?`;
   if (!confirm(confirmMsg)) return;
   try {
@@ -6441,6 +6459,18 @@ window.forceCompleteTask = async function(taskId, branchId){
     }
     catch(e){
       console.error('[force→chat] failed', e);
+    }
+    // 🆕 쿨다운 + 카운트 기록 — 채팅 발송 성공한 경우만. 다음 호출 시 30분 cooldown 적용.
+    if (chatOk) {
+      try {
+        const updReport = {
+          lastReportAt: Date.now(),
+          lastReportBy: me.name,
+          reportCount: (t.reportCount || 0) + 1
+        };
+        await window.__fb.update(window.__fb.ref(window.__fb.db, 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id), updReport);
+        Object.assign(t, updReport);
+      } catch(e) { console.warn('[force→cooldown record] failed', e); }
     }
     alert(chatOk ? '✅ 완료 처리 + 평가방 보고 발송 완료 (' + credit + ' 이름으로)' : '⚠️ 완료 처리됨 / 채팅 발송 실패 — F12 콘솔 확인');
     if (typeof render === 'function') render();
