@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_19_c';   // 시간 데드라인 표시 완전 제거 — '오늘 안으로' 만
+    var BUST = 'tasks_2026_05_20_a';   // 중복 업무 발사 경고 — 같은 이름 task 재발사 시 확인 모달
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -7879,6 +7879,37 @@ async function sendAssign(){
       saveCustomPlace(place);
     }
   } catch(_){}
+  // 🆕 2026-05-20 — 중복 업무 발사 경고. Las Olas 사례 (5/20): 같은 '오프닝 캐셔
+  // 체크리스트' 가 4분 간격으로 2번 발사되어 두 직원이 모두 완료 → 점수 6pt
+  // (정상은 3pt) 부풀림. STAGE 모드는 단계별 task 자체가 다른 이름이라 스킵.
+  if (!STAGE_MODE_CATS.includes(cat)) {
+    const targetBranchDup = getAssignTargetBranch();
+    const normName = (s) => String(s||'').trim().toLowerCase().replace(/\s+/g, ' ');
+    const dupKey = normName(name);
+    const todayDups = (typeof TASKS !== 'undefined' ? TASKS : []).filter(tt =>
+      tt && tt.branchId === targetBranchDup && normName(tt.name) === dupKey
+    );
+    if (todayDups.length > 0) {
+      const recent = todayDups.slice(0, 3).map(tt => {
+        const who = tt.assignedTo === '*' ? '전체' : (tt.assignedTo || '?');
+        const state = tt.completedAt ? '✅ 완료 (' + (tt.completedBy||'?') + ')' : '⏳ 진행';
+        return '  • 담당: ' + who + ' — ' + state;
+      }).join('\n');
+      const confirmMsg = '⚠️ 같은 업무가 오늘 이미 발사됨\n\n' +
+        '업무: ' + name + '\n' +
+        '매장: ' + targetBranchDup + '\n' +
+        '기존 발사: ' + todayDups.length + '건\n' +
+        recent + '\n\n' +
+        '같은 업무를 반복 발사하면 점수가 중복 적립됩니다.\n' +
+        '담당자 변경이 목적이면 → 이미 발사된 업무에서 ⚙ "담당자 변경" 사용하세요.\n\n' +
+        '그래도 발사하시겠어요?';
+      if (!confirm(confirmMsg)) {
+        const sendBtnDup = document.querySelector('#assignOv .btn:not(.sec)');
+        if (sendBtnDup) { sendBtnDup.disabled = false; sendBtnDup.textContent = '📨 보내기'; }
+        return;
+      }
+    }
+  }
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
   // Translate name + note into ko/en/es so any employee sees it in their language
