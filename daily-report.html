@@ -11,7 +11,7 @@
 <script>
   // 🔄 BUST 마커 — 매장 직원 폰 자동 업데이트
   (function(){
-    var BUST = 'dailyreport_2026_05_20_a';
+    var BUST = 'dailyreport_2026_05_20_b';   // 명시적 auth 토큰 첨부 + 상세 에러 메시지
     var KEY = 'kmtools_bust_dailyreport';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -622,13 +622,28 @@ async function submitReport(){
       submittedAt: ts,
       lang: LANG,
     };
+    // 🆕 인증 토큰 명시적 첨부 — fb-auth-fetch.js monkey-patch race 방지
+    let authQuery = '';
+    try {
+      const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+      if (tok) authQuery = '?auth=' + encodeURIComponent(tok);
+    } catch(e){ console.warn('[daily-report] token fetch failed', e); }
+    if (!authQuery) {
+      // 토큰 못 받음 → 인증 실패 가능성 — 사용자에게 명시
+      throw new Error('인증 토큰 없음 — 페이지 새로고침 후 다시 시도하세요.');
+    }
+
     // Firebase 저장
-    const reportPath = FB_DB_URL + '/dailyReports/' + branchId + '/' + today + '/' + reportId + '.json';
+    const reportPath = FB_DB_URL + '/dailyReports/' + branchId + '/' + today + '/' + reportId + '.json' + authQuery;
     const w = await fetch(reportPath, {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(data)
     });
-    if (!w.ok) throw new Error('Firebase save failed: ' + w.status);
+    if (!w.ok) {
+      const body = await w.text().catch(() => '');
+      console.error('[daily-report] Firebase save failed', w.status, body);
+      throw new Error('Firebase 저장 실패 HTTP ' + w.status + ' — ' + body.slice(0, 120));
+    }
 
     // managers chat room 으로 발송
     const lines = [];
@@ -685,14 +700,21 @@ async function submitReport(){
       _dailyReport: true,
       reportId
     };
-    await fetch(FB_DB_URL + '/chat/messages/managers/' + msgId + '.json', {
+    const cm = await fetch(FB_DB_URL + '/chat/messages/managers/' + msgId + '.json' + authQuery, {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(msg)
     });
-    await fetch(FB_DB_URL + '/chat/rooms/managers.json', {
+    if (!cm.ok) {
+      const body = await cm.text().catch(() => '');
+      console.error('[daily-report] chat message failed', cm.status, body);
+      throw new Error('매니저 룸 메시지 발송 실패 HTTP ' + cm.status + ' — ' + body.slice(0, 120) +
+        (cm.status === 401 || cm.status === 403 ? '\n매니저 권한 필요 — 본인 role 확인 (현재: ' + ((me&&me.role)||'?') + ')' : ''));
+    }
+    // rooms PATCH 실패는 비치명적 (lastMsg 만 갱신)
+    fetch(FB_DB_URL + '/chat/rooms/managers.json' + authQuery, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ lastMsg: '📋 일일 보고 — ' + branchLbl, lastTs: ts, lastSender: data.managerName })
-    });
+    }).catch(e => console.warn('[daily-report] rooms patch failed', e));
 
     showToast(t('toastOk'));
     btn.innerHTML = '✅ ' + t('toastOk');
