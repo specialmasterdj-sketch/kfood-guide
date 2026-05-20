@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a5c3a">
+<title>일일 매니저 보고 — KIMCHI MART</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<link rel="icon" type="image/png" href="pwa-assets/icon-192.png">
+<link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
+<script>
+  // 🔄 BUST 마커 — 매장 직원 폰 자동 업데이트
+  (function(){
+    var BUST = 'dailyreport_2026_05_20_a';
+    var KEY = 'kmtools_bust_dailyreport';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+  })();
+</script>
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=4"></script>
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script src="./nav-sidebar.js?v=20" defer></script>
+<script src="./back-nav.js?v=1"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:'Pretendard Variable','Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;font-size:14px;padding-bottom:env(safe-area-inset-bottom,0)}
+.wrap{max-width:760px;margin:0 auto;padding:14px 14px 80px;padding-left:54px}
+@media(min-width:761px){.wrap{padding-left:14px;margin-left:240px}}
+h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.sub{color:#6b7280;font-size:.85em;margin-bottom:14px}
+.lang-tabs{display:flex;gap:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:3px}
+.lang-tabs button{background:transparent;border:0;padding:5px 10px;border-radius:6px;font-family:inherit;font-size:.78em;font-weight:600;color:#6b7280;cursor:pointer}
+.lang-tabs button.active{background:#1a5c3a;color:#fff}
+.top-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px}
+.card h2{font-size:.96em;font-weight:800;color:#1a5c3a;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.card .hint{font-size:.78em;color:#9ca3af;margin-top:-4px;margin-bottom:8px;font-weight:500}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
+.row > div{flex:1;min-width:120px}
+label{display:block;font-size:.78em;font-weight:700;color:#374151;margin-bottom:4px;letter-spacing:.01em}
+input[type=text], input[type=time], textarea, select{
+  width:100%;padding:9px 11px;border:1.5px solid #e5e7eb;border-radius:8px;
+  font-family:inherit;font-size:.92em;color:#1f2937;background:#fff;outline:none;
+  transition:border .15s
+}
+input[type=text]:focus, input[type=time]:focus, textarea:focus, select:focus{
+  border-color:#1a5c3a
+}
+textarea{min-height:60px;resize:vertical;line-height:1.5}
+textarea.tasks-summary{min-height:140px;font-family:'SF Mono',Consolas,monospace;font-size:.86em;background:#f9fafb}
+.radio-group{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.radio-group label{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:8px;cursor:pointer;font-size:.86em;font-weight:600;margin-bottom:0;color:#6b7280;flex:1;min-width:140px;justify-content:center;transition:all .15s}
+.radio-group label:hover{border-color:#bbf7d0}
+.radio-group label.active{background:#dcfce7;border-color:#1a5c3a;color:#1a5c3a;font-weight:700}
+.radio-group input{display:none}
+.vendor-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px}
+.vendor-grid label{padding:7px 9px;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:7px;font-size:.82em;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;color:#6b7280;margin-bottom:0;transition:all .15s}
+.vendor-grid label:hover{border-color:#bfdbfe}
+.vendor-grid label.checked{background:#dbeafe;border-color:#3b82f6;color:#1e40af}
+.vendor-grid input{display:none}
+.photos-wrap{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.photo-thumb{position:relative;width:74px;height:74px;border-radius:8px;overflow:hidden;background:#e5e7eb;border:1.5px solid rgba(15,23,42,.10)}
+.photo-thumb img{width:100%;height:100%;object-fit:cover}
+.photo-thumb .x{position:absolute;top:3px;right:3px;background:rgba(15,23,42,.78);color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:.74em;cursor:pointer;line-height:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 22px;border:0;border-radius:10px;font-family:inherit;font-size:.96em;font-weight:700;cursor:pointer;transition:all .15s}
+.btn.primary{background:#1a5c3a;color:#fff;width:100%}
+.btn.primary:hover{background:#155a32}
+.btn.primary:disabled{background:#9ca3af;cursor:not-allowed}
+.btn.sec{background:#f3f4f6;color:#374151;font-size:.86em;padding:8px 14px}
+.btn.sec:hover{background:#e5e7eb}
+.btn-row{display:flex;gap:8px;margin-top:8px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:12px 22px;border-radius:24px;font-weight:700;font-size:.92em;box-shadow:0 4px 18px rgba(0,0,0,.18);z-index:9999;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-8px)}
+.toast.err{background:#dc2626}
+.tasks-empty{padding:20px;text-align:center;color:#9ca3af;font-size:.88em;background:#f9fafb;border-radius:8px}
+.summary-pill{display:inline-flex;align-items:center;gap:4px;background:#dcfce7;color:#15803d;border-radius:12px;padding:3px 10px;font-size:.78em;font-weight:700;margin-right:4px;margin-bottom:4px}
+.summary-pill.warn{background:#fef3c7;color:#92400e}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="top-row">
+    <div>
+      <h1 id="pageTitle">📋 일일 매니저 보고</h1>
+      <div class="sub" id="subTitle">매장 일일 운영 체크리스트 → 매니저 룸 발송</div>
+    </div>
+    <div class="lang-tabs">
+      <button onclick="setLang('ko')" data-lang="ko" class="active">한국어</button>
+      <button onclick="setLang('en')" data-lang="en">EN</button>
+      <button onclick="setLang('es')" data-lang="es">ES</button>
+    </div>
+  </div>
+
+  <!-- 1. 헤더 정보 (자동) -->
+  <div class="card">
+    <h2>📅 <span id="lblHeader">기본 정보</span></h2>
+    <div class="row">
+      <div>
+        <label id="lblBranch">매장</label>
+        <select id="branchSel"></select>
+      </div>
+      <div>
+        <label id="lblManager">작성 매니저</label>
+        <input type="text" id="managerName" readonly style="background:#f9fafb">
+      </div>
+      <div>
+        <label id="lblDate">날짜</label>
+        <input type="text" id="dateDisplay" readonly style="background:#f9fafb">
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 근무 매니저 + 시간 -->
+  <div class="card">
+    <h2>👥 <span id="lblOnDuty">근무 매니저 / Managers on Duty</span></h2>
+    <div class="row">
+      <div style="flex:2">
+        <label id="lblDutyNames">근무 매니저 이름 (콤마로 구분)</label>
+        <input type="text" id="dutyNames" placeholder="예: Steve, Darleny, Luis">
+      </div>
+      <div>
+        <label id="lblShiftHours">영업 시간</label>
+        <input type="text" id="shiftHours" placeholder="예: 6:50 AM - 10:10 PM">
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 오늘 직원 활동 요약 (자동 + 편집 가능) -->
+  <div class="card">
+    <h2>📋 <span id="lblTaskSummary">오늘 직원 활동 요약</span>
+      <button type="button" class="btn sec" style="margin-left:auto;font-size:.78em;padding:5px 10px" onclick="loadTodayTasks()" id="btnReload">🔄 <span id="lblReload">새로고침</span></button>
+    </h2>
+    <div class="hint" id="taskHint">Firebase 에서 자동 집계됨. 필요 시 수동 편집·추가 가능.</div>
+    <div id="taskSummaryStats" style="margin-bottom:8px"></div>
+    <textarea id="taskSummary" class="tasks-summary" placeholder="(로딩 중…)"></textarea>
+  </div>
+
+  <!-- 4. 냉동·냉장 상태 -->
+  <div class="card">
+    <h2>🧊 <span id="lblFreezer">냉동·냉장 상태 / Freezer & Cooler</span></h2>
+    <div class="radio-group">
+      <label class="active" data-val="ok"><input type="radio" name="freezer" value="ok" checked><span id="lblFreezerOk">✅ 이상무</span></label>
+      <label data-val="issue"><input type="radio" name="freezer" value="issue"><span id="lblFreezerIssue">⚠️ 이상있음</span></label>
+    </div>
+    <div id="freezerIssueWrap" style="display:none;margin-top:10px">
+      <label id="lblFreezerNote">상세 (어느 냉동·냉장이 문제인가)</label>
+      <textarea id="freezerIssueNote" placeholder="예: 1번 냉동 케이스 온도 -5°C — 영업 종료 후 수리 요청"></textarea>
+    </div>
+  </div>
+
+  <!-- 5. 오늘 배달 받은 벤더 -->
+  <div class="card">
+    <h2>📦 <span id="lblVendorIn">오늘 배달 받은 벤더 / Vendor Deliveries Received</span></h2>
+    <div class="vendor-grid" id="vendorInGrid"></div>
+    <div style="margin-top:10px">
+      <label id="lblVendorInNote">메모 (시간·이상사항 등)</label>
+      <input type="text" id="vendorInNote" placeholder="예: Sysco 9:30 AM · 정육 박스 1개 누락">
+    </div>
+  </div>
+
+  <!-- 6. 오늘 발주한 벤더 -->
+  <div class="card">
+    <h2>📝 <span id="lblVendorOut">오늘 발주한 벤더 / Orders Placed Today</span></h2>
+    <div class="vendor-grid" id="vendorOutGrid"></div>
+    <div style="margin-top:10px">
+      <label id="lblVendorOutNote">메모 (주요 품목·수량 등)</label>
+      <input type="text" id="vendorOutNote" placeholder="예: Seoul Trading 김치 5박스 + 라면 케이스 10">
+    </div>
+  </div>
+
+  <!-- 7. 근태 -->
+  <div class="card">
+    <h2>👤 <span id="lblStaffing">직원 근태 / Staffing</span></h2>
+    <div class="row">
+      <div style="flex:2">
+        <label id="lblAbsent">결근 직원</label>
+        <input type="text" id="absent" placeholder="없으면 비워두세요">
+      </div>
+      <div>
+        <label id="lblBackup">백업 직원 배치</label>
+        <input type="text" id="backup" placeholder="예: X / 또는 이름">
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. 사고·이슈 -->
+  <div class="card">
+    <h2>🚨 <span id="lblIssues">사고·이슈 / Critical Incidents</span></h2>
+    <textarea id="issues" placeholder="없으면 비워두세요"></textarea>
+  </div>
+
+  <!-- 9. 추가 메모 -->
+  <div class="card">
+    <h2>📝 <span id="lblMemo">추가 메모 / Notes</span></h2>
+    <textarea id="memo" placeholder="기타 보고 사항"></textarea>
+  </div>
+
+  <!-- 10. 사진 -->
+  <div class="card">
+    <h2>📷 <span id="lblPhotos">사진 (선택, 최대 5장)</span></h2>
+    <button type="button" class="btn sec" onclick="document.getElementById('photoInput').click()" id="btnAddPhoto">📷 <span id="lblAddPhoto">사진 추가</span></button>
+    <input type="file" id="photoInput" accept="image/*" multiple style="display:none">
+    <div class="photos-wrap" id="photosWrap"></div>
+  </div>
+
+  <!-- 제출 -->
+  <button class="btn primary" id="btnSubmit" onclick="submitReport()">📨 <span id="lblSubmit">매니저 룸에 보고 발송</span></button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BRANCHES = [
+  {id:'HOLLYWOOD',     ko:'헐리우드',       en:'Hollywood',       es:'Hollywood'},
+  {id:'MIAMI',         ko:'마이애미',       en:'Miami',           es:'Miami'},
+  {id:'PEMBROKE_PINES',ko:'펨브로크 파인스',en:'Pembroke Pines',  es:'Pembroke Pines'},
+  {id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs'},
+  {id:'LASOLAS',       ko:'라스올라스',     en:'Las Olas',        es:'Las Olas'},
+];
+// 자주 쓰는 벤더 목록 — 매장에서 흔히 다루는 곳들. 매장별 차이는 '기타' 자유 입력으로 보완.
+const VENDORS = [
+  'Sysco', 'A&D Foods', 'Seoul Trading', 'Namdaemun (NDM)',
+  'ASIA VEGETABLE', 'FreshPoint', 'HMart', 'KIMCHIMART #2',
+  'KC Houseware', 'Coca-Cola', 'Pepsi', '기타'
+];
+
+// ============== i18n ==============
+const T = {
+  pageTitle:    { ko:'📋 일일 매니저 보고',                       en:'📋 Daily Manager Report',                       es:'📋 Reporte Diario de Gerente' },
+  subTitle:     { ko:'매장 일일 운영 체크리스트 → 매니저 룸 발송', en:'Store daily operations checklist → Manager Room', es:'Lista diaria de operaciones → Sala de Gerentes' },
+  docTitle:     { ko:'일일 매니저 보고 — KIMCHI MART',           en:'Daily Manager Report — KIMCHI MART',            es:'Reporte Diario de Gerente — KIMCHI MART' },
+  lblHeader:    { ko:'기본 정보',           en:'Basic Info',              es:'Información Básica' },
+  lblBranch:    { ko:'매장',                en:'Branch',                  es:'Sucursal' },
+  lblManager:   { ko:'작성 매니저',         en:'Reporting Manager',       es:'Gerente que Reporta' },
+  lblDate:      { ko:'날짜',                en:'Date',                    es:'Fecha' },
+  lblOnDuty:    { ko:'👥 근무 매니저',      en:'👥 Managers on Duty',     es:'👥 Gerentes en Turno' },
+  lblDutyNames: { ko:'근무 매니저 이름 (콤마로 구분)', en:'Names of managers on duty (comma-separated)', es:'Nombres de gerentes en turno (separados por coma)' },
+  lblShiftHours:{ ko:'영업 시간',           en:'Shift Hours',             es:'Horario de Turno' },
+  lblTaskSummary:{ ko:'오늘 직원 활동 요약',en:"Today's Staff Activity Summary", es:'Resumen de Actividad del Personal de Hoy' },
+  taskHint:     { ko:'Firebase 에서 자동 집계됨. 필요 시 수동 편집·추가 가능.',
+                  en:'Auto-aggregated from Firebase. Edit / add manually as needed.',
+                  es:'Auto-agregado de Firebase. Edite / agregue manualmente según sea necesario.' },
+  lblReload:    { ko:'새로고침',            en:'Reload',                  es:'Recargar' },
+  taskLoading:  { ko:'(로딩 중…)',          en:'(Loading…)',              es:'(Cargando…)' },
+  taskEmpty:    { ko:'오늘 완료된 업무가 없습니다. 매니저가 직접 입력하세요.',
+                  en:'No completed tasks today. Manager enters manually.',
+                  es:'No hay tareas completadas hoy. El gerente ingresa manualmente.' },
+  lblFreezer:   { ko:'🧊 냉동·냉장 상태',  en:'🧊 Freezer & Cooler Status', es:'🧊 Estado de Congelador y Refrigerador' },
+  lblFreezerOk: { ko:'✅ 이상무',            en:'✅ All OK',                 es:'✅ Todo OK' },
+  lblFreezerIssue:{ ko:'⚠️ 이상있음',        en:'⚠️ Issue Found',           es:'⚠️ Problema Encontrado' },
+  lblFreezerNote:{ ko:'상세 (어느 냉동·냉장이 문제인가)', en:'Details (which unit has the issue)', es:'Detalles (qué unidad tiene el problema)' },
+  lblVendorIn:  { ko:'📦 오늘 배달 받은 벤더',en:'📦 Vendor Deliveries Received Today',es:'📦 Entregas de Proveedores Recibidas Hoy' },
+  lblVendorInNote:{ ko:'메모 (시간·이상사항 등)', en:'Note (time, issues, etc.)', es:'Nota (hora, problemas, etc.)' },
+  lblVendorOut: { ko:'📝 오늘 발주한 벤더', en:'📝 Orders Placed Today',  es:'📝 Pedidos Hechos Hoy' },
+  lblVendorOutNote:{ ko:'메모 (주요 품목·수량 등)', en:'Note (key items, quantities, etc.)', es:'Nota (artículos clave, cantidades, etc.)' },
+  lblStaffing:  { ko:'👤 직원 근태',        en:'👤 Staffing',              es:'👤 Personal' },
+  lblAbsent:    { ko:'결근 직원',           en:'Absent Employees',         es:'Empleados Ausentes' },
+  lblBackup:    { ko:'백업 직원 배치',      en:'Backup Staff Deployed',    es:'Personal de Respaldo Desplegado' },
+  lblIssues:    { ko:'🚨 사고·이슈',        en:'🚨 Critical Incidents',    es:'🚨 Incidentes Críticos' },
+  lblMemo:      { ko:'📝 추가 메모',        en:'📝 Notes',                 es:'📝 Notas' },
+  lblPhotos:    { ko:'📷 사진 (선택, 최대 5장)', en:'📷 Photos (optional, max 5)', es:'📷 Fotos (opcional, máx 5)' },
+  lblAddPhoto:  { ko:'사진 추가',           en:'Add Photo',               es:'Agregar Foto' },
+  lblSubmit:    { ko:'매니저 룸에 보고 발송', en:'Send Report to Manager Room', es:'Enviar Reporte a Sala de Gerentes' },
+  toastSending: { ko:'보고 발송 중…',       en:'Sending report…',         es:'Enviando reporte…' },
+  toastOk:      { ko:'✅ 매니저 룸에 발송 완료', en:'✅ Sent to Manager Room', es:'✅ Enviado a Sala de Gerentes' },
+  toastErr:     { ko:'❌ 발송 실패 — 다시 시도하세요',en:'❌ Send failed — try again',es:'❌ Envío fallido — intente de nuevo' },
+  toastNeedBranch:{ ko:'매장을 선택하세요', en:'Select a branch',          es:'Seleccione una sucursal' },
+  toastNeedDuty:{ ko:'근무 매니저 이름을 입력하세요', en:'Enter manager names on duty', es:'Ingrese los nombres de gerentes en turno' },
+};
+let LANG = 'en';
+try {
+  var saved = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || localStorage.getItem('tasks.lang');
+  if (saved === 'ko' || saved === 'en' || saved === 'es') LANG = saved;
+  else {
+    var nav = (navigator.language || 'en').toLowerCase();
+    if (nav.startsWith('ko')) LANG = 'ko';
+    else if (nav.startsWith('es')) LANG = 'es';
+    else LANG = 'en';
+  }
+} catch(e){}
+function t(key){ return (T[key] && (T[key][LANG] || T[key].en || T[key].ko)) || key; }
+function setText(id, key){ const el = document.getElementById(id); if (el) el.textContent = t(key); }
+function applyI18n(){
+  document.title = t('docTitle');
+  setText('pageTitle', 'pageTitle');
+  setText('subTitle', 'subTitle');
+  setText('lblHeader', 'lblHeader');
+  setText('lblBranch', 'lblBranch');
+  setText('lblManager', 'lblManager');
+  setText('lblDate', 'lblDate');
+  setText('lblOnDuty', 'lblOnDuty');
+  setText('lblDutyNames', 'lblDutyNames');
+  setText('lblShiftHours', 'lblShiftHours');
+  setText('lblTaskSummary', 'lblTaskSummary');
+  const taskHintEl = document.getElementById('taskHint');
+  if (taskHintEl) taskHintEl.textContent = t('taskHint');
+  setText('lblReload', 'lblReload');
+  setText('lblFreezer', 'lblFreezer');
+  setText('lblFreezerOk', 'lblFreezerOk');
+  setText('lblFreezerIssue', 'lblFreezerIssue');
+  setText('lblFreezerNote', 'lblFreezerNote');
+  setText('lblVendorIn', 'lblVendorIn');
+  setText('lblVendorInNote', 'lblVendorInNote');
+  setText('lblVendorOut', 'lblVendorOut');
+  setText('lblVendorOutNote', 'lblVendorOutNote');
+  setText('lblStaffing', 'lblStaffing');
+  setText('lblAbsent', 'lblAbsent');
+  setText('lblBackup', 'lblBackup');
+  setText('lblIssues', 'lblIssues');
+  setText('lblMemo', 'lblMemo');
+  setText('lblPhotos', 'lblPhotos');
+  setText('lblAddPhoto', 'lblAddPhoto');
+  setText('lblSubmit', 'lblSubmit');
+  // 언어 버튼 active
+  document.querySelectorAll('.lang-tabs button').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-lang') === LANG);
+  });
+  // 매장 select 옵션 다국어
+  const sel = document.getElementById('branchSel');
+  if (sel) {
+    Array.from(sel.options).forEach(opt => {
+      const b = BRANCHES.find(x => x.id === opt.value);
+      if (b) opt.textContent = '🏪 ' + (b[LANG] || b.ko);
+    });
+  }
+}
+window.setLang = function(v){
+  if (v !== 'ko' && v !== 'en' && v !== 'es') return;
+  LANG = v;
+  try { localStorage.setItem('kimchi_lang', v); } catch(e){}
+  try { if (window.__langSync) window.__langSync.set(v); } catch(e){}
+  applyI18n();
+};
+
+// ============== 초기화 ==============
+let me = null;
+try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+
+function todayStr(){ return new Date().toLocaleDateString('en-CA', { timeZone:'America/New_York' }); }
+function todayKr(){
+  const days = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
+  const daysEn = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const daysEs = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  const dt = new Date();
+  const d = dt.getDay();
+  const dayName = LANG === 'en' ? daysEn[d] : LANG === 'es' ? daysEs[d] : days[d];
+  return todayStr() + ' · ' + dayName;
+}
+
+function fillBranchSelect(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = '';
+  BRANCHES.forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    opt.textContent = '🏪 ' + (b[LANG] || b.ko);
+    sel.appendChild(opt);
+  });
+  // default: manager's branch
+  if (me && me.branch && me.branch !== '*') sel.value = me.branch;
+  sel.addEventListener('change', () => loadTodayTasks());
+}
+
+function initHeader(){
+  document.getElementById('managerName').value = (me && me.name) || '?';
+  document.getElementById('dateDisplay').value = todayKr();
+}
+
+// ============== 벤더 체크박스 ==============
+function fillVendorGrid(gridId){
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  VENDORS.forEach((v, i) => {
+    const lbl = document.createElement('label');
+    lbl.innerHTML = '<input type="checkbox" data-vendor="'+v+'"><span>'+v+'</span>';
+    lbl.addEventListener('click', (e) => {
+      // checkbox 가 클릭 후 토글되므로 setTimeout 으로 상태 읽기
+      setTimeout(() => {
+        const cb = lbl.querySelector('input');
+        lbl.classList.toggle('checked', cb.checked);
+      }, 0);
+    });
+    grid.appendChild(lbl);
+  });
+}
+
+// ============== 냉동·냉장 라디오 ==============
+function initFreezerRadio(){
+  document.querySelectorAll('.radio-group label[data-val]').forEach(lbl => {
+    lbl.addEventListener('click', () => {
+      document.querySelectorAll('.radio-group label[data-val]').forEach(l => l.classList.remove('active'));
+      lbl.classList.add('active');
+      const val = lbl.dataset.val;
+      document.getElementById('freezerIssueWrap').style.display = (val === 'issue') ? '' : 'none';
+    });
+  });
+}
+
+// ============== 오늘 직원 활동 자동 집계 ==============
+async function loadTodayTasks(){
+  const branch = document.getElementById('branchSel').value;
+  const today = todayStr();
+  const ta = document.getElementById('taskSummary');
+  const stats = document.getElementById('taskSummaryStats');
+  ta.value = t('taskLoading');
+  ta.disabled = true;
+  stats.innerHTML = '';
+  try {
+    const url = FB_DB_URL + '/tasks/' + encodeURIComponent(branch) + '/' + today + '.json?t=' + Date.now();
+    const r = await fetch(url, { cache:'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data || typeof data !== 'object') {
+      ta.value = '';
+      ta.placeholder = t('taskEmpty');
+      stats.innerHTML = '<span class="summary-pill warn">'+t('taskEmpty')+'</span>';
+      return;
+    }
+    // group by completedBy
+    const byEmp = {};
+    let total = 0, done = 0, undone = 0, photoCount = 0;
+    Object.values(data).forEach(taskObj => {
+      if (!taskObj || typeof taskObj !== 'object') return;
+      total++;
+      if (taskObj.completedAt) {
+        done++;
+        const who = taskObj.completedBy || 'Unknown';
+        if (!byEmp[who]) byEmp[who] = [];
+        byEmp[who].push(taskObj.name || '(no name)');
+        if (Array.isArray(taskObj.photos)) photoCount += taskObj.photos.length;
+        if (Array.isArray(taskObj.checklist)) {
+          taskObj.checklist.forEach(c => {
+            if (Array.isArray(c.photos)) photoCount += c.photos.length;
+          });
+        }
+      } else {
+        undone++;
+      }
+    });
+    // stats pills
+    stats.innerHTML =
+      '<span class="summary-pill">✅ '+done+' / '+total+'</span>' +
+      (undone > 0 ? '<span class="summary-pill warn">⏳ '+undone+'</span>' : '') +
+      '<span class="summary-pill">📷 '+photoCount+'</span>' +
+      '<span class="summary-pill">👤 '+Object.keys(byEmp).length+'</span>';
+    // textarea content
+    let txt = '';
+    const sorted = Object.entries(byEmp).sort((a,b) => b[1].length - a[1].length);
+    sorted.forEach(([who, tasks]) => {
+      txt += '• ' + who + ' — ' + tasks.length + (LANG==='en' ? ' tasks' : LANG==='es' ? ' tareas' : '건') + '\n';
+      tasks.forEach(name => { txt += '    · ' + name + '\n'; });
+    });
+    if (undone > 0) {
+      txt += '\n⏳ ' + (LANG==='en' ? 'Incomplete: ' : LANG==='es' ? 'Incompletas: ' : '미완료: ') + undone + '\n';
+      Object.values(data).forEach(taskObj => {
+        if (taskObj && !taskObj.completedAt) {
+          txt += '    · ' + (taskObj.name || '(no name)') + '\n';
+        }
+      });
+    }
+    ta.value = txt.trim();
+  } catch(e) {
+    console.warn('[daily-report] task fetch failed', e);
+    ta.value = '';
+    ta.placeholder = '(' + (e.message || e) + ')';
+  } finally {
+    ta.disabled = false;
+  }
+}
+
+// ============== 사진 ==============
+const PHOTOS = [];
+async function compressImage(file, maxSide = 1024, quality = 0.78){
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
+  if (isMobile && maxSide > 900) maxSide = 900;
+  let url=null, img=null, canvas=null;
+  try {
+    url = URL.createObjectURL(file);
+    img = await new Promise((res, rej) => { const im = new Image(); im.onload = ()=>res(im); im.onerror = rej; im.src = url; });
+    let { width, height } = img;
+    if (width <= maxSide && height <= maxSide && file.size < 350 * 1024) return file;
+    const r = Math.min(maxSide / width, maxSide / height, 1);
+    const w = Math.round(width * r), h = Math.round(height * r);
+    canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(res => canvas.toBlob(b => res(b), 'image/jpeg', quality));
+    if (!blob || blob.size > file.size) return file;
+    return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type:'image/jpeg', lastModified:Date.now() });
+  } catch(e) { return file; }
+  finally {
+    try { if (url) URL.revokeObjectURL(url); } catch(_){}
+    try { if (img) { img.src = ''; } } catch(_){}
+    try { if (canvas) { canvas.width = 0; canvas.height = 0; } } catch(_){}
+  }
+}
+function readDataUrl(f){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = () => rej(fr.error || new Error('FileReader'));
+    fr.readAsDataURL(f);
+  });
+}
+document.getElementById('photoInput').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files || []);
+  for (const f of files) {
+    if (PHOTOS.length >= 5) break;
+    try {
+      const compressed = await compressImage(f);
+      const url = await readDataUrl(compressed);
+      PHOTOS.push({ file: compressed, dataUrl: url });
+    } catch(_){}
+  }
+  e.target.value = '';
+  renderPhotos();
+});
+function renderPhotos(){
+  const wrap = document.getElementById('photosWrap');
+  wrap.innerHTML = PHOTOS.map((p, i) =>
+    '<div class="photo-thumb"><img src="'+p.dataUrl+'"><button class="x" onclick="removePhoto('+i+')">×</button></div>'
+  ).join('');
+}
+window.removePhoto = function(i){ PHOTOS.splice(i,1); renderPhotos(); };
+
+async function uploadPhotos(reportId){
+  if (!PHOTOS.length) return [];
+  const FB_STORAGE = 'https://firebasestorage.googleapis.com/v0/b/kimchi-mart-order.firebasestorage.app/o';
+  let auth = {};
+  try {
+    const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+    if (tok) auth = { Authorization: 'Firebase ' + tok };
+  } catch(_){}
+  const urls = [];
+  for (let i = 0; i < PHOTOS.length; i++) {
+    const att = PHOTOS[i];
+    const path = 'daily-report/' + reportId + '/' + i + '.jpg';
+    const url = FB_STORAGE + '?name=' + encodeURIComponent(path) + '&uploadType=media';
+    try {
+      const r = await fetch(url, {
+        method:'POST', headers: Object.assign({ 'Content-Type':'image/jpeg' }, auth),
+        body: att.file
+      });
+      if (r.ok) {
+        const meta = await r.json();
+        urls.push(FB_STORAGE + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || ''));
+      } else {
+        urls.push(att.dataUrl);  // fallback base64
+      }
+    } catch(_) { urls.push(att.dataUrl); }
+  }
+  return urls;
+}
+
+// ============== 제출 ==============
+function showToast(msg, isErr){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.toggle('err', !!isErr);
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+function getCheckedVendors(gridId){
+  const checked = [];
+  document.querySelectorAll('#'+gridId+' input:checked').forEach(cb => {
+    checked.push(cb.dataset.vendor);
+  });
+  return checked;
+}
+
+async function submitReport(){
+  const branchId = document.getElementById('branchSel').value;
+  if (!branchId) { showToast(t('toastNeedBranch'), true); return; }
+  const duty = document.getElementById('dutyNames').value.trim();
+  if (!duty) { showToast(t('toastNeedDuty'), true); return; }
+  const btn = document.getElementById('btnSubmit');
+  btn.disabled = true;
+  const origTxt = btn.innerHTML;
+  btn.innerHTML = '⏳ ' + t('toastSending');
+  showToast(t('toastSending'));
+  try {
+    const today = todayStr();
+    const ts = Date.now();
+    const reportId = 'r_' + ts + '_' + Math.floor(Math.random()*999);
+    const branchLbl = (BRANCHES.find(b => b.id === branchId)||{}).ko || branchId;
+    // 사진 업로드 (있으면)
+    const photoUrls = await uploadPhotos(reportId);
+    // 폼 데이터
+    const data = {
+      branchId, branchLbl,
+      date: today,
+      managerName: (me && me.name) || '?',
+      managerEmail: (me && me.email) || '',
+      dutyNames: duty,
+      shiftHours: document.getElementById('shiftHours').value.trim(),
+      taskSummary: document.getElementById('taskSummary').value.trim(),
+      freezerStatus: document.querySelector('input[name="freezer"]:checked').value,
+      freezerIssueNote: document.getElementById('freezerIssueNote').value.trim(),
+      vendorIn: getCheckedVendors('vendorInGrid'),
+      vendorInNote: document.getElementById('vendorInNote').value.trim(),
+      vendorOut: getCheckedVendors('vendorOutGrid'),
+      vendorOutNote: document.getElementById('vendorOutNote').value.trim(),
+      absent: document.getElementById('absent').value.trim(),
+      backup: document.getElementById('backup').value.trim(),
+      issues: document.getElementById('issues').value.trim(),
+      memo: document.getElementById('memo').value.trim(),
+      photos: photoUrls,
+      submittedAt: ts,
+      lang: LANG,
+    };
+    // Firebase 저장
+    const reportPath = FB_DB_URL + '/dailyReports/' + branchId + '/' + today + '/' + reportId + '.json';
+    const w = await fetch(reportPath, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    if (!w.ok) throw new Error('Firebase save failed: ' + w.status);
+
+    // managers chat room 으로 발송
+    const lines = [];
+    lines.push('📋 일일 매니저 보고 — ' + branchLbl);
+    lines.push('📅 ' + today + ' · ' + data.managerName + ' · ' + new Date(ts).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}));
+    lines.push('');
+    lines.push('👥 근무: ' + duty + (data.shiftHours ? ' (' + data.shiftHours + ')' : ''));
+    if (data.taskSummary) {
+      lines.push('');
+      lines.push('📋 오늘 직원 활동:');
+      lines.push(data.taskSummary);
+    }
+    lines.push('');
+    if (data.freezerStatus === 'ok') {
+      lines.push('🧊 냉동·냉장: ✅ 이상무');
+    } else {
+      lines.push('🧊 냉동·냉장: ⚠️ 이상있음' + (data.freezerIssueNote ? ' — ' + data.freezerIssueNote : ''));
+    }
+    if (data.vendorIn.length || data.vendorInNote) {
+      lines.push('');
+      lines.push('📦 배달 받음: ' + (data.vendorIn.join(', ') || '(없음)'));
+      if (data.vendorInNote) lines.push('   메모: ' + data.vendorInNote);
+    }
+    if (data.vendorOut.length || data.vendorOutNote) {
+      lines.push('');
+      lines.push('📝 오늘 발주: ' + (data.vendorOut.join(', ') || '(없음)'));
+      if (data.vendorOutNote) lines.push('   메모: ' + data.vendorOutNote);
+    }
+    if (data.absent || data.backup) {
+      lines.push('');
+      lines.push('👤 근태:');
+      if (data.absent) lines.push('   결근: ' + data.absent);
+      if (data.backup) lines.push('   백업: ' + data.backup);
+    }
+    if (data.issues) {
+      lines.push('');
+      lines.push('🚨 이슈: ' + data.issues);
+    }
+    if (data.memo) {
+      lines.push('');
+      lines.push('📝 메모: ' + data.memo);
+    }
+    const text = lines.join('\n');
+    const msgId = 'm' + ts + Math.floor(Math.random()*900);
+    const msg = {
+      sender: data.managerName,
+      senderBranch: branchId,
+      senderRole: (me && me.role) || 'MANAGER',
+      isManager: true,
+      color: '#1a5c3a',
+      text, ts,
+      photos: photoUrls,
+      files: [],
+      _dailyReport: true,
+      reportId
+    };
+    await fetch(FB_DB_URL + '/chat/messages/managers/' + msgId + '.json', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(msg)
+    });
+    await fetch(FB_DB_URL + '/chat/rooms/managers.json', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg: '📋 일일 보고 — ' + branchLbl, lastTs: ts, lastSender: data.managerName })
+    });
+
+    showToast(t('toastOk'));
+    btn.innerHTML = '✅ ' + t('toastOk');
+    // 폼 초기화 (오늘 같은 매장 또 보고 가능)
+    setTimeout(() => {
+      if (confirm(LANG==='en' ? 'Report sent! Reset form?' : LANG==='es' ? '¡Reporte enviado! ¿Reiniciar formulario?' : '보고 발송 완료! 폼을 초기화할까요?')) {
+        location.reload();
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = origTxt;
+      }
+    }, 1500);
+  } catch(e) {
+    console.error('[daily-report] submit failed', e);
+    showToast(t('toastErr') + ' — ' + (e.message || e), true);
+    btn.disabled = false;
+    btn.innerHTML = origTxt;
+  }
+}
+
+// ============== Init ==============
+function init(){
+  applyI18n();
+  fillBranchSelect();
+  initHeader();
+  fillVendorGrid('vendorInGrid');
+  fillVendorGrid('vendorOutGrid');
+  initFreezerRadio();
+  loadTodayTasks();
+}
+
+// auth-gate 이 me 채울 때까지 잠시 대기
+function tryInit(){
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+  if (!me || !me.name) {
+    setTimeout(tryInit, 250);
+    return;
+  }
+  init();
+}
+window.addEventListener('km-identity-changed', () => {
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+  initHeader();
+});
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tryInit);
+else tryInit();
+</script>
+</body>
+</html>
