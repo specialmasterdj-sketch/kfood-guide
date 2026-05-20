@@ -11,7 +11,7 @@
 <script>
   // 🔄 BUST 마커 — 매장 직원 폰 자동 업데이트
   (function(){
-    var BUST = 'dailyreport_2026_05_20_c';   // 공식 벤더 마스터 46개 + 검색 필터 + 선택 카운트
+    var BUST = 'dailyreport_2026_05_20_d';   // Firebase 저장 실패해도 매니저 룸 발송은 계속 — 401 우회
     var KEY = 'kmtools_bust_dailyreport';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -679,16 +679,23 @@ async function submitReport(){
       throw new Error('인증 토큰 없음 — 페이지 새로고침 후 다시 시도하세요.');
     }
 
-    // Firebase 저장
-    const reportPath = FB_DB_URL + '/dailyReports/' + branchId + '/' + today + '/' + reportId + '.json' + authQuery;
-    const w = await fetch(reportPath, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(data)
-    });
-    if (!w.ok) {
-      const body = await w.text().catch(() => '');
-      console.error('[daily-report] Firebase save failed', w.status, body);
-      throw new Error('Firebase 저장 실패 HTTP ' + w.status + ' — ' + body.slice(0, 120));
+    // Firebase 저장 시도 — 실패해도 채팅 발송은 계속 (RTDB 규칙으로 막힐 수 있음).
+    // dailyReports/ 경로가 401 이면 매니저 룸 발송만 진행 (데이터는 채팅 메시지 안에 보존).
+    let firebaseSaved = false;
+    try {
+      const reportPath = FB_DB_URL + '/dailyReports/' + branchId + '/' + today + '/' + reportId + '.json' + authQuery;
+      const w = await fetch(reportPath, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(data)
+      });
+      if (w.ok) {
+        firebaseSaved = true;
+      } else {
+        const body = await w.text().catch(() => '');
+        console.warn('[daily-report] Firebase save failed (non-fatal)', w.status, body);
+      }
+    } catch(e) {
+      console.warn('[daily-report] Firebase save error (non-fatal)', e);
     }
 
     // managers chat room 으로 발송
