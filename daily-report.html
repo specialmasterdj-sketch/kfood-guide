@@ -11,7 +11,7 @@
 <script>
   // 🔄 BUST 마커 — 매장 직원 폰 자동 업데이트
   (function(){
-    var BUST = 'dailyreport_2026_05_20_b';   // 명시적 auth 토큰 첨부 + 상세 에러 메시지
+    var BUST = 'dailyreport_2026_05_20_c';   // 공식 벤더 마스터 46개 + 검색 필터 + 선택 카운트
     var KEY = 'kmtools_bust_dailyreport';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -63,11 +63,16 @@ textarea.tasks-summary{min-height:140px;font-family:'SF Mono',Consolas,monospace
 .radio-group label:hover{border-color:#bbf7d0}
 .radio-group label.active{background:#dcfce7;border-color:#1a5c3a;color:#1a5c3a;font-weight:700}
 .radio-group input{display:none}
-.vendor-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px}
-.vendor-grid label{padding:7px 9px;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:7px;font-size:.82em;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;color:#6b7280;margin-bottom:0;transition:all .15s}
+.vendor-search{width:100%;padding:8px 11px;border:1.5px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:.88em;color:#1f2937;background:#fff;outline:none;margin-bottom:8px}
+.vendor-search:focus{border-color:#1a5c3a}
+.vendor-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:5px;max-height:260px;overflow-y:auto;padding:2px;border:1px solid #f3f4f6;border-radius:8px}
+.vendor-grid label{padding:6px 8px;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:6px;font-size:.76em;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;color:#6b7280;margin-bottom:0;transition:all .15s;line-height:1.2}
 .vendor-grid label:hover{border-color:#bfdbfe}
 .vendor-grid label.checked{background:#dbeafe;border-color:#3b82f6;color:#1e40af}
+.vendor-grid label.checked-row{order:-1}
 .vendor-grid input{display:none}
+.vendor-grid label.hidden{display:none}
+.vendor-summary{font-size:.78em;color:#6b7280;margin-top:6px;font-weight:600}
 .photos-wrap{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .photo-thumb{position:relative;width:74px;height:74px;border-radius:8px;overflow:hidden;background:#e5e7eb;border:1.5px solid rgba(15,23,42,.10)}
 .photo-thumb img{width:100%;height:100%;object-fit:cover}
@@ -162,20 +167,24 @@ textarea.tasks-summary{min-height:140px;font-family:'SF Mono',Consolas,monospace
   <!-- 5. 오늘 배달 받은 벤더 -->
   <div class="card">
     <h2>📦 <span id="lblVendorIn">오늘 배달 받은 벤더 / Vendor Deliveries Received</span></h2>
+    <input type="text" class="vendor-search" id="vendorInSearch" placeholder="🔎 벤더 검색 (예: seoul, fresh...)">
     <div class="vendor-grid" id="vendorInGrid"></div>
+    <div class="vendor-summary" id="vendorInSummary"></div>
     <div style="margin-top:10px">
       <label id="lblVendorInNote">메모 (시간·이상사항 등)</label>
-      <input type="text" id="vendorInNote" placeholder="예: Sysco 9:30 AM · 정육 박스 1개 누락">
+      <input type="text" id="vendorInNote" placeholder="예: SEOULTRADING 9:30 AM · 정육 박스 1개 누락">
     </div>
   </div>
 
   <!-- 6. 오늘 발주한 벤더 -->
   <div class="card">
     <h2>📝 <span id="lblVendorOut">오늘 발주한 벤더 / Orders Placed Today</span></h2>
+    <input type="text" class="vendor-search" id="vendorOutSearch" placeholder="🔎 벤더 검색 (예: seoul, fresh...)">
     <div class="vendor-grid" id="vendorOutGrid"></div>
+    <div class="vendor-summary" id="vendorOutSummary"></div>
     <div style="margin-top:10px">
       <label id="lblVendorOutNote">메모 (주요 품목·수량 등)</label>
-      <input type="text" id="vendorOutNote" placeholder="예: Seoul Trading 김치 5박스 + 라면 케이스 10">
+      <input type="text" id="vendorOutNote" placeholder="예: SEOULTRADING 김치 5박스 + 라면 케이스 10">
     </div>
   </div>
 
@@ -229,11 +238,21 @@ const BRANCHES = [
   {id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs'},
   {id:'LASOLAS',       ko:'라스올라스',     en:'Las Olas',        es:'Las Olas'},
 ];
-// 자주 쓰는 벤더 목록 — 매장에서 흔히 다루는 곳들. 매장별 차이는 '기타' 자유 입력으로 보완.
+// 2026-05-20 전무님 — 회사 공식 벤더 마스터 46개 (알파벳 순).
+// 검색 편의를 위해 알파벳순 유지. '기타' 는 마스터에 없는 임시 벤더용 fallback.
 const VENDORS = [
-  'Sysco', 'A&D Foods', 'Seoul Trading', 'Namdaemun (NDM)',
-  'ASIA VEGETABLE', 'FreshPoint', 'HMart', 'KIMCHIMART #2',
-  'KC Houseware', 'Coca-Cola', 'Pepsi', '기타'
+  'A & D FOOD', 'AAF IMPORT', 'ASAMI FOODS', 'ASIA VEGE',
+  'ASSI', 'BANDI FOOD', 'BARREL WINE LLC', 'BRAZIL USA',
+  'BREAKTHRU BEVERAGE', 'BZLB', 'CAVALIER', 'CJ',
+  'COCA-COLA', 'EASTERN WINE', 'EASTLAND', 'EDEN',
+  'FAF', 'FRESHPOINT', 'GOLD COAST', 'HAITAI',
+  'HEAVENS BAKERY LLC', 'JB', 'JFC', 'K.C TRADING',
+  'KIMCHI MART', 'KOCO', 'LA FAMILIA LLC', 'LINK TRADING',
+  'NDM', 'OCM', 'POCAS', 'QUIRCH',
+  'RNDC', 'SEOULTRADING', 'SKY HARVEST', 'SOUTHEASTERN FOOD',
+  'STEPHENS', 'TREE STORY', 'TWO BROS', 'URSU',
+  'WALONG', 'WANG HANMI', 'WEI CHUAN', 'WELL LUCK',
+  'WISMETTAC', 'YUKING FOODS', '기타'
 ];
 
 // ============== i18n ==============
@@ -378,22 +397,49 @@ function initHeader(){
   document.getElementById('dateDisplay').value = todayKr();
 }
 
-// ============== 벤더 체크박스 ==============
-function fillVendorGrid(gridId){
+// ============== 벤더 체크박스 + 검색 필터 ==============
+function fillVendorGrid(gridId, searchId, summaryId){
   const grid = document.getElementById(gridId);
   grid.innerHTML = '';
-  VENDORS.forEach((v, i) => {
+  VENDORS.forEach((v) => {
     const lbl = document.createElement('label');
+    lbl.dataset.vendorName = v.toLowerCase();
     lbl.innerHTML = '<input type="checkbox" data-vendor="'+v+'"><span>'+v+'</span>';
-    lbl.addEventListener('click', (e) => {
-      // checkbox 가 클릭 후 토글되므로 setTimeout 으로 상태 읽기
+    lbl.addEventListener('click', () => {
       setTimeout(() => {
         const cb = lbl.querySelector('input');
         lbl.classList.toggle('checked', cb.checked);
+        updateVendorSummary(gridId, summaryId);
       }, 0);
     });
     grid.appendChild(lbl);
   });
+  // 검색 필터
+  const search = document.getElementById(searchId);
+  if (search) {
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      grid.querySelectorAll('label').forEach(lbl => {
+        const name = lbl.dataset.vendorName || '';
+        lbl.classList.toggle('hidden', q && !name.includes(q));
+      });
+    });
+  }
+  updateVendorSummary(gridId, summaryId);
+}
+function updateVendorSummary(gridId, summaryId){
+  const summary = document.getElementById(summaryId);
+  if (!summary) return;
+  const checked = document.querySelectorAll('#'+gridId+' input:checked');
+  const names = Array.from(checked).map(cb => cb.dataset.vendor);
+  if (names.length === 0) {
+    summary.textContent = LANG==='en' ? '(No vendors selected)' : LANG==='es' ? '(Sin proveedores seleccionados)' : '(선택된 벤더 없음)';
+    summary.style.color = '#9ca3af';
+  } else {
+    const lbl = LANG==='en' ? 'Selected: ' : LANG==='es' ? 'Seleccionados: ' : '선택됨: ';
+    summary.textContent = '✅ ' + lbl + names.length + '개 — ' + names.join(', ');
+    summary.style.color = '#15803d';
+  }
 }
 
 // ============== 냉동·냉장 라디오 ==============
@@ -740,8 +786,8 @@ function init(){
   applyI18n();
   fillBranchSelect();
   initHeader();
-  fillVendorGrid('vendorInGrid');
-  fillVendorGrid('vendorOutGrid');
+  fillVendorGrid('vendorInGrid', 'vendorInSearch', 'vendorInSummary');
+  fillVendorGrid('vendorOutGrid', 'vendorOutSearch', 'vendorOutSummary');
   initFreezerRadio();
   loadTodayTasks();
 }
