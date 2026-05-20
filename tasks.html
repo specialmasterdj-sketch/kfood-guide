@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_20_a';   // 중복 업무 발사 경고 — 같은 이름 task 재발사 시 확인 모달
+    var BUST = 'tasks_2026_05_20_b';   // 3점 남발 방지 3종 — 표준 점수 사전 + 사유 입력 + 1시간 자동 다운그레이드
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -6542,6 +6542,21 @@ async function finishTask(){
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
     const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: memoText, memoTr: memoTr };
     if (!CURRENT_TASK.startedAt) upd.startedAt = Date.now();
+    // 🆕 2026-05-20 — 1시간 이내 완료는 무조건 1점 다운그레이드.
+    // 매니저가 3점 남발해도 실제 작업 시간이 짧으면 점수 자동 조정.
+    // (이전 시작 시각 기준 — startedAt 없으면 즉시 startedAt 만들어 위에 저장됨)
+    const _startedAt = CURRENT_TASK.startedAt || upd.startedAt || Date.now();
+    const _durationMin = Math.floor((Date.now() - _startedAt) / 60000);
+    const _origPoints = (typeof CURRENT_TASK.points === 'number' && CURRENT_TASK.points >= 1 && CURRENT_TASK.points <= 5) ? CURRENT_TASK.points : 1;
+    if (_durationMin < 60 && _origPoints > 1) {
+      upd.points = 1;
+      upd.originalPoints = _origPoints;
+      upd.pointsAutoAdjusted = '1시간 이내 완료 → 1점 자동 조정';
+      upd.workDurationMin = _durationMin;
+      console.info('[points-auto-adjust] task=' + CURRENT_TASK.id + ' duration=' + _durationMin + 'min · ' + _origPoints + 'pt → 1pt');
+    } else {
+      upd.workDurationMin = _durationMin;   // 통계용 (1시간 이상이면 그대로 점수 유지)
+    }
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
     // Cross-post the completion into the matching chat room. Failures
     // here are non-fatal — the task itself was already saved above.
@@ -7593,6 +7608,37 @@ function renderReport(){
 // ================= ASSIGN =================
 // 💎 업무 강도 (1/2/3 포인트) — 라디오 시각 갱신 + 값 저장.
 // 점수: 약한 업무=1점 (기본), 보통=2점, 강한 업무=3점.
+//
+// 🆕 2026-05-20 옵션 A — 표준 점수 사전. 매장별 3점 남발 방지.
+// 자주 쓰는 업무 이름이 매치되면 점수 고정 + radio 잠금. 매니저가 못 바꿈.
+// 순서 중요 — 위에서 아래로 match 검사, 첫 일치 적용. 정규화 후 비교 (소문자 + 공백/특수문자 제거).
+const STANDARD_POINTS_RULES = [
+  // 3점 — 매장 전체 일일 보고 (시간 많이 소요)
+  { match: /정육.*일일.*보고|meat.*daily|carnicer/i,                pts: 3, label: '정육 일일 보고' },
+  { match: /k.?food.*일일|kfood.*daily|k.food.*production/i,        pts: 3, label: 'K-Food 일일 보고' },
+  { match: /해산물.*일일|seafood.*daily|mariscos.*daily/i,          pts: 3, label: '해산물 일일 보고' },
+  { match: /농산물.*일일|produce.*daily|verduras.*daily|frutas/i,   pts: 3, label: '농산물 일일 보고' },
+  // 2점 — 보통 강도
+  { match: /냉동고.*전체|freezer.*full|congelador.*completo/i,      pts: 2, label: '냉동고 전체 진열' },
+  { match: /오프닝.*캐셔|opening.*cashier|cajero.*apertura/i,       pts: 2, label: '오프닝 캐셔' },
+  { match: /evaluation.*report|평가.*보고|reporte.*evaluacion/i,    pts: 2, label: '평가 보고' },
+  { match: /sale.?zone|세일.?존/i,                                  pts: 2, label: 'Sale Zone' },
+  // 1점 — 단순/일상 업무 (가장 흔히 남발되는 영역)
+  { match: /진열.*체크|진열.*리스트|display.*check|exhibici.*revis/i, pts: 1, label: '진열 체크리스트' },
+  { match: /진열.*보충|보충.*진열|restock|reabastec/i,              pts: 1, label: '진열 보충' },
+  { match: /청소|매대.*정리|cleaning|limpieza|clean.*organize/i,    pts: 1, label: '청소·정리' },
+  { match: /open.?cooler|쿨러|cooler.*display/i,                    pts: 1, label: 'Cooler 진열' },
+];
+function matchStandardPoints(name){
+  const norm = String(name||'').trim();
+  if (norm.length < 3) return null;
+  for (const r of STANDARD_POINTS_RULES) {
+    if (r.match.test(norm)) return r;
+  }
+  return null;
+}
+window.matchStandardPoints = matchStandardPoints;
+let __pointsLocked = false;   // 표준 점수 적용 중 = 라디오 클릭 무시
 function setAssignPoints(pts){
   const radios = document.querySelectorAll('#aPointsRadios .pt-radio');
   radios.forEach(r => {
@@ -7604,19 +7650,72 @@ function setAssignPoints(pts){
       r.style.background = '#dcfce7';
       r.style.color = '#1a5c3a';
       r.style.fontWeight = '700';
+      r.style.opacity = '1';
     } else {
       r.style.border = '2px solid #e5e7eb';
       r.style.background = '#fff';
       r.style.color = '#6b7280';
       r.style.fontWeight = '600';
+      r.style.opacity = __pointsLocked ? '0.35' : '1';
     }
+    r.style.cursor = __pointsLocked ? 'not-allowed' : 'pointer';
   });
 }
 window.setAssignPoints = setAssignPoints;
+// 표준 점수 적용 + 잠금 표시. name 변경 시 호출.
+function applyStandardPointsIfMatch(name){
+  const rule = matchStandardPoints(name);
+  let banner = document.getElementById('aPointsLockBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'aPointsLockBanner';
+    banner.style.cssText = 'margin-top:6px;padding:6px 10px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:.78em;color:#92400e;font-weight:600;display:none';
+    const radios = document.getElementById('aPointsRadios');
+    if (radios && radios.parentNode) radios.parentNode.insertBefore(banner, radios.nextSibling);
+  }
+  if (rule) {
+    __pointsLocked = true;
+    setAssignPoints(rule.pts);
+    banner.textContent = '🔒 표준 점수 적용 — "' + rule.label + '" 은 ' + rule.pts + '점 고정 (매장 간 공정성 보장).';
+    banner.style.display = '';
+  } else {
+    __pointsLocked = false;
+    banner.style.display = 'none';
+    // 잠금 해제 — 시각만 다시 칠해 opacity 정상화
+    setAssignPoints(getAssignPoints());
+  }
+}
+window.applyStandardPointsIfMatch = applyStandardPointsIfMatch;
+// aName input 변화 시 자동 검사 (직접 입력 케이스)
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.id === 'aName') {
+    applyStandardPointsIfMatch(e.target.value);
+  }
+});
+// task-pick 체크박스 변화 시도 (템플릿 선택 케이스)
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('task-pick')) {
+    // 체크된 항목들 이름 합쳐서 검사
+    const picked = Array.from(document.querySelectorAll('.task-pick:checked')).map(cb => cb.dataset.name||'');
+    const composite = picked.length === 1 ? picked[0] : picked.join(' ');
+    applyStandardPointsIfMatch(composite);
+  }
+});
 // 라디오 클릭 시 값 갱신 — innerHTML 가 한 번만 들어가니 onclick 핸들러 위임
 document.addEventListener('click', (e) => {
   const lbl = e.target.closest && e.target.closest('#aPointsRadios .pt-radio');
-  if (lbl && lbl.dataset.pts) setAssignPoints(parseInt(lbl.dataset.pts, 10) || 1);
+  if (!lbl || !lbl.dataset.pts) return;
+  // 표준 점수 적용 중이면 클릭 무시 + 짧은 흔들기 효과
+  if (__pointsLocked) {
+    const banner = document.getElementById('aPointsLockBanner');
+    if (banner) {
+      banner.style.transform = 'translateX(-4px)';
+      setTimeout(() => banner.style.transform = 'translateX(4px)', 80);
+      setTimeout(() => banner.style.transform = '', 160);
+    }
+    return;
+  }
+  setAssignPoints(parseInt(lbl.dataset.pts, 10) || 1);
 });
 function getAssignPoints(){
   const r = document.querySelector('input[name="aPointsR"]:checked');
@@ -7879,6 +7978,34 @@ async function sendAssign(){
       saveCustomPlace(place);
     }
   } catch(_){}
+  // 🆕 2026-05-20 옵션 A — 표준 점수 강제 적용 (서버사이드 백업). 프론트에서 잠금이
+  // 우회되거나 옛 코드라도 발사 시 표준 점수로 다시 덮어씀. 매장 간 공정성 100% 보장.
+  const _stdRule = (typeof matchStandardPoints === 'function') ? matchStandardPoints(name) : null;
+  if (_stdRule) {
+    setAssignPoints(_stdRule.pts);
+  }
+  // 🆕 2026-05-20 — 3점 부여 시 사유 입력 강제 (옵션 B). 매장별 3점 남발 방지.
+  // 사유 메모를 강제하면 매니저가 "왜 3점인지" 적어야 하므로 자정 효과 + 본사 audit 가능.
+  // 표준 점수가 3점인 경우는 사유 입력 면제 (시스템이 보장한 점수).
+  const _assignPts = getAssignPoints();
+  // 표준 점수 사전이 3점으로 지정한 업무 (일일 보고 등) 는 메모 면제 — 시스템이 보장한 점수.
+  const _stdIs3pt = _stdRule && _stdRule.pts === 3;
+  if (_assignPts === 3 && !_stdIs3pt && !STAGE_MODE_CATS.includes(cat) && !QUICK_MODE) {
+    const reasonNote = note && note.length >= 5;
+    if (!reasonNote) {
+      alert('⚠️ 3점(⭐⭐⭐ 강한 업무) 부여 시 사유 입력 필수\n\n' +
+            '"📝 추가 지시 / 메모" 칸에 왜 3점인지 5글자 이상 적어주세요.\n' +
+            '예) "신규 매대 전체 진열 — 4시간 소요"\n' +
+            '예) "정육 신상품 손질 + 진열"\n\n' +
+            '본사에서 점수 부여 사유를 audit 하기 위함입니다.\n' +
+            '단순 업무라면 1점/2점 선택하세요.');
+      const sendBtnPts = document.querySelector('#assignOv .btn:not(.sec)');
+      if (sendBtnPts) { sendBtnPts.disabled = false; sendBtnPts.textContent = '📨 보내기'; }
+      const noteEl = document.getElementById('aNote');
+      if (noteEl) noteEl.focus();
+      return;
+    }
+  }
   // 🆕 2026-05-20 — 중복 업무 발사 경고. Las Olas 사례 (5/20): 같은 '오프닝 캐셔
   // 체크리스트' 가 4분 간격으로 2번 발사되어 두 직원이 모두 완료 → 점수 6pt
   // (정상은 3pt) 부풀림. STAGE 모드는 단계별 task 자체가 다른 이름이라 스킵.
