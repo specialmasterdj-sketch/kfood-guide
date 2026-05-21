@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_20_g';   // zoneState 401 우회 #2 — tasks/{br}/_zone_state_/ (확실히 writable)
+    var BUST = 'tasks_2026_05_21_a';   // 캐셔/보바 시프트 타임라인 + 인쇄 버튼
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1071,6 +1071,16 @@ button{font-family:inherit;cursor:pointer}
     <input type="text" id="mgrSearch" placeholder="🔎 업무명 검색" oninput="MGR_QUERY=this.value;renderMgr()" style="flex:1;min-width:140px;border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em">
     <button class="btn sec" onclick="resetMgrFilters()" style="padding:6px 10px;font-size:.84em">초기화</button>
   </div>
+  <!-- 🆕 2026-05-21 캐셔/보바 시프트 타임라인 (접기 가능, 인쇄 가능). -->
+  <details id="mgrShiftWrap" open style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:10px">
+    <summary style="cursor:pointer;font-weight:700;font-size:.92em;color:#1a5c3a;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:1.1em">🛒</span>
+      <span id="mgrShiftTitle">오늘 캐셔 / 보바 시프트</span>
+      <button type="button" onclick="printShiftSchedule();event.preventDefault();event.stopPropagation();" style="margin-left:auto;background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:.78em;font-weight:700;cursor:pointer">🖨 <span id="mgrShiftPrint">인쇄</span></button>
+    </summary>
+    <div id="mgrShiftBody" style="margin-top:10px"></div>
+    <div id="mgrShiftStatus" style="margin-top:6px;font-size:.78em;color:#9ca3af"></div>
+  </details>
   <!-- 🆕 2026-05-20 매장 도면 히트맵 (접기 가능). -->
   <details id="mgrFloorPlanWrap" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:10px">
     <summary style="cursor:pointer;font-weight:700;font-size:.92em;color:#1a5c3a;list-style:none;display:flex;align-items:center;gap:8px">
@@ -7008,6 +7018,8 @@ function renderMgr(){
   // 🆕 2026-05-20 — 도면 히트맵 갱신 (필터링 전 매장 내 전체 task 기준).
   //    필터를 따라가지 않고 그 매장의 전체 진행 상황을 한눈에 보여줌.
   try { updateMgrFloorPlan(activeBranch, rows); } catch(e) { console.warn('[fp] update fail', e); }
+  // 🆕 2026-05-21 — 캐셔/보바 시프트 타임라인 갱신
+  try { renderShiftSchedule(activeBranch, rows); } catch(e) { console.warn('[shift] render fail', e); }
   if (MGR_FILTER !== 'all') rows = rows.filter(t => t._status === MGR_FILTER);
   if (MGR_PERSON) rows = rows.filter(t => t.assignedTo === MGR_PERSON);
   if (MGR_CAT)    rows = rows.filter(t => t.category === MGR_CAT);
@@ -7337,6 +7349,172 @@ function pickZone(zone, branch){
   }
 }
 window.pickZone = pickZone;
+
+// 🆕 2026-05-21 — 캐셔/보바 시프트 타임라인 카드. Manager View 상단에 표시.
+// TASKS 에서 category 가 '캐셔' 또는 'BOBA' 인 stage task 들을 시간순으로 묶어
+// 매장 게시판 인쇄용으로도 깔끔하게 보여줌.
+function renderShiftSchedule(activeBranch, tasks){
+  const body = document.getElementById('mgrShiftBody');
+  const statusEl = document.getElementById('mgrShiftStatus');
+  const titleEl = document.getElementById('mgrShiftTitle');
+  if (!body || !activeBranch) return;
+  // 매장 라벨
+  const branchLbl = (BRANCHES.find(b => b.id === activeBranch) || {});
+  const branchName = branchLbl[LANG] || branchLbl.ko || activeBranch;
+  if (titleEl) {
+    titleEl.textContent = (LANG==='en' ? '🛒 Today Cashier / BOBA — '
+                        : LANG==='es' ? '🛒 Hoy Cajero / BOBA — '
+                        : '🛒 오늘 캐셔 / 보바 시프트 — ') + branchName;
+  }
+  // 캐셔 / BOBA 카테고리 task 필터링 + 단계 정보 있는 것만
+  const shiftTasks = (tasks || []).filter(tt =>
+    (tt.category === '캐셔' || tt.category === 'BOBA') &&
+    (tt.stageFrom || tt.stageLabel)
+  );
+  if (shiftTasks.length === 0) {
+    body.innerHTML = '<div style="padding:18px;text-align:center;color:#9ca3af;font-size:.86em">' +
+      (LANG==='en' ? 'No cashier or BOBA shifts assigned today.'
+       : LANG==='es' ? 'Sin turnos de cajero o BOBA asignados hoy.'
+       : '오늘 캐셔/보바 시프트 미배정.') +
+      '<br><span style="font-size:.78em">' +
+      (LANG==='en' ? 'Create with "+ New Task" → category "캐셔" or "BOBA"'
+       : LANG==='es' ? 'Crear con "+ Nueva Tarea" → categoría "캐셔" o "BOBA"'
+       : '"+ 새 지시" → 카테고리 "캐셔" 또는 "BOBA" 선택') +
+      '</span></div>';
+    if (statusEl) statusEl.textContent = '';
+    return;
+  }
+  // 카테고리별 + 시간순 정렬
+  const byCat = { '캐셔': [], 'BOBA': [] };
+  shiftTasks.forEach(tt => {
+    const cat = tt.category;
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(tt);
+  });
+  Object.values(byCat).forEach(arr => arr.sort((a,b) => (a.stageFrom||'99').localeCompare(b.stageFrom||'99')));
+  // 카테고리별 카드 HTML
+  const catEmoji = { '캐셔':'🛒', 'BOBA':'🧋' };
+  let html = '';
+  ['캐셔','BOBA'].forEach(cat => {
+    const arr = byCat[cat];
+    if (!arr || arr.length === 0) return;
+    const catName = LANG==='en' ? (cat === '캐셔' ? 'Cashier' : 'BOBA')
+                  : LANG==='es' ? (cat === '캐셔' ? 'Cajero' : 'BOBA')
+                  : cat;
+    html += '<div class="shift-cat" style="margin-bottom:12px">';
+    html += '<div style="font-weight:800;font-size:.96em;color:#1a5c3a;margin-bottom:6px">' +
+      catEmoji[cat] + ' ' + escHtml(catName) + ' <span style="font-weight:500;color:#9ca3af;font-size:.84em">(' + arr.length + ')</span></div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">';
+    arr.forEach(tt => {
+      const stage = tt.stageLabel || '?';
+      const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
+      const assignee = tt.assignedTo === '*' ? '(전체)' : (tt.assignedTo || tt.assignedToId || '?');
+      const doer = tt.completedBy || tt.startedBy || '';
+      const showDoer = doer && doer !== assignee;
+      let statusBadge, statusBg, statusFg;
+      if (tt.completedAt) {
+        statusBadge = LANG==='en' ? '✅ Done' : LANG==='es' ? '✅ Hecho' : '✅ 완료';
+        statusBg = '#dcfce7'; statusFg = '#15803d';
+      } else if (tt.startedAt) {
+        statusBadge = LANG==='en' ? '⏳ Doing' : LANG==='es' ? '⏳ En curso' : '⏳ 진행';
+        statusBg = '#fef3c7'; statusFg = '#92400e';
+      } else {
+        statusBadge = LANG==='en' ? '⬜ Pending' : LANG==='es' ? '⬜ Pendiente' : '⬜ 대기';
+        statusBg = '#f1f5f9'; statusFg = '#475569';
+      }
+      const cl = Array.isArray(tt.checklist) ? tt.checklist : [];
+      const clDone = cl.filter(c => c && c.done).length;
+      const clBadge = cl.length ? ' · ' + clDone + '/' + cl.length : '';
+      html += '<div class="shift-card" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:9px 11px;background:#fafafa">' +
+        '<div style="display:flex;justify-content:space-between;align-items:start;gap:6px;margin-bottom:4px">' +
+          '<div style="font-weight:800;font-size:.88em;color:#0f172a">' + escHtml(stage) + '</div>' +
+          '<span style="background:' + statusBg + ';color:' + statusFg + ';border-radius:10px;padding:2px 7px;font-size:.7em;font-weight:700;white-space:nowrap">' + statusBadge + '</span>' +
+        '</div>' +
+        '<div style="font-family:\'SF Mono\',Consolas,monospace;font-size:.82em;color:#1a5c3a;font-weight:700;margin-bottom:3px">⏰ ' + escHtml(range) + '</div>' +
+        '<div style="font-size:.86em;color:#374151;font-weight:600">👤 ' + escHtml(assignee) +
+          (showDoer ? ' <span style="color:#9ca3af;font-size:.84em">(실제: ' + escHtml(doer) + ')</span>' : '') + '</div>' +
+        (clBadge ? '<div style="font-size:.74em;color:#6b7280;margin-top:3px">📋' + clBadge + '</div>' : '') +
+      '</div>';
+    });
+    html += '</div></div>';
+  });
+  body.innerHTML = html;
+  if (statusEl) {
+    const total = shiftTasks.length;
+    const done = shiftTasks.filter(tt => tt.completedAt).length;
+    const prog = shiftTasks.filter(tt => tt.startedAt && !tt.completedAt).length;
+    statusEl.textContent = (LANG==='en' ? `${total} stages · ${done} done · ${prog} in progress`
+                           : LANG==='es' ? `${total} etapas · ${done} hechas · ${prog} en curso`
+                           : `전체 ${total}단계 · 완료 ${done} · 진행 ${prog}`);
+  }
+}
+window.renderShiftSchedule = renderShiftSchedule;
+
+// 🆕 2026-05-21 — 매장 게시판 부착용 인쇄 페이지. 새 창에 깔끔한 스타일로 표시.
+function printShiftSchedule(){
+  const activeBranch = MGR_BRANCH || (me && me.branch) || '';
+  if (!activeBranch) { alert('매장 선택 필요'); return; }
+  let rows = TASKS.slice().filter(tt => tt.branchId === activeBranch);
+  const shifts = rows.filter(tt => (tt.category === '캐셔' || tt.category === 'BOBA') && (tt.stageFrom || tt.stageLabel));
+  if (shifts.length === 0) { alert('오늘 시프트가 없습니다.'); return; }
+  const branchLbl = (BRANCHES.find(b => b.id === activeBranch) || {});
+  const branchName = branchLbl.ko || activeBranch;
+  // category 별로 묶기
+  const byCat = { '캐셔': [], 'BOBA': [] };
+  shifts.forEach(tt => { if (!byCat[tt.category]) byCat[tt.category] = []; byCat[tt.category].push(tt); });
+  Object.values(byCat).forEach(arr => arr.sort((a,b) => (a.stageFrom||'99').localeCompare(b.stageFrom||'99')));
+  const todayDate = new Date().toLocaleDateString('ko-KR', { year:'numeric', month:'long', day:'numeric', weekday:'long' });
+  let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>오늘 시프트 — ' + branchName + '</title><style>' +
+    '*{margin:0;padding:0;box-sizing:border-box;font-family:"Pretendard","Malgun Gothic",Arial,sans-serif}' +
+    'body{padding:30px;color:#0f172a;background:#fff}' +
+    'h1{font-size:28pt;color:#1a5c3a;margin-bottom:6px;border-bottom:3px solid #1a5c3a;padding-bottom:8px}' +
+    '.sub{font-size:13pt;color:#475569;margin-bottom:24px}' +
+    'h2{font-size:20pt;color:#1a5c3a;margin:20px 0 10px;padding:6px 12px;background:#dcfce7;border-radius:8px}' +
+    'table{width:100%;border-collapse:collapse;margin-bottom:14px}' +
+    'th,td{border:2px solid #1a5c3a;padding:14px 10px;text-align:center;font-size:14pt}' +
+    'th{background:#1a5c3a;color:#fff;font-weight:800}' +
+    'td.stage{font-weight:800;font-size:15pt}' +
+    'td.time{font-family:Consolas,monospace;font-weight:700;color:#0369a1;font-size:16pt}' +
+    'td.who{font-weight:800;font-size:16pt;background:#fef9c3}' +
+    'td.status{font-size:13pt}' +
+    '.footer{margin-top:30px;font-size:11pt;color:#94a3b8;text-align:right}' +
+    '@media print { body { padding:15px } h1{font-size:22pt} }' +
+    '</style></head><body>' +
+    '<h1>🛒 오늘 시프트 — ' + branchName + '</h1>' +
+    '<div class="sub">' + todayDate + '</div>';
+  ['캐셔','BOBA'].forEach(cat => {
+    const arr = byCat[cat];
+    if (!arr || arr.length === 0) return;
+    const emoji = cat === '캐셔' ? '🛒' : '🧋';
+    html += '<h2>' + emoji + ' ' + cat + '</h2>';
+    html += '<table><thead><tr><th>단계</th><th>시간</th><th>담당자</th><th>상태</th></tr></thead><tbody>';
+    arr.forEach(tt => {
+      const stage = tt.stageLabel || '?';
+      const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
+      const assignee = tt.assignedTo === '*' ? '(전체)' : (tt.assignedTo || '?');
+      const doer = tt.completedBy || tt.startedBy || '';
+      const status = tt.completedAt ? '✅ 완료'
+                   : tt.startedAt ? '⏳ 진행 중'
+                   : '⬜ 대기';
+      const whoDisp = (doer && doer !== assignee) ? assignee + ' → ' + doer : assignee;
+      html += '<tr>' +
+        '<td class="stage">' + escHtml(stage) + '</td>' +
+        '<td class="time">' + escHtml(range) + '</td>' +
+        '<td class="who">' + escHtml(whoDisp) + '</td>' +
+        '<td class="status">' + status + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+  });
+  html += '<div class="footer">출력: ' + new Date().toLocaleString('ko-KR') + ' · KIMCHI MART</div>';
+  html += '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<' + '/script>';
+  html += '</body></html>';
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (!w) { alert('팝업이 차단됐습니다. 브라우저에서 팝업 허용 후 다시 시도하세요.'); return; }
+  w.document.write(html);
+  w.document.close();
+}
+window.printShiftSchedule = printShiftSchedule;
 
 // 🆕 2026-05-20 — Manager View 매장 도면 히트맵 갱신.
 // activeBranch: 현재 보고 있는 매장 (MGR_BRANCH or me.branch)
