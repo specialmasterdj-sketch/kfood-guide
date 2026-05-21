@@ -11,7 +11,7 @@
 <script>
   // 🔄 BUST 마커 — 매장 직원 폰 자동 업데이트
   (function(){
-    var BUST = 'dailyreport_2026_05_20_d';   // Firebase 저장 실패해도 매니저 룸 발송은 계속 — 401 우회
+    var BUST = 'dailyreport_2026_05_21_a';   // 냉동·냉장 섹션에 온도 관리 앱 자동 연동
     var KEY = 'kmtools_bust_dailyreport';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -153,7 +153,15 @@ textarea.tasks-summary{min-height:140px;font-family:'SF Mono',Consolas,monospace
 
   <!-- 4. 냉동·냉장 상태 -->
   <div class="card">
-    <h2>🧊 <span id="lblFreezer">냉동·냉장 상태 / Freezer & Cooler</span></h2>
+    <h2>🧊 <span id="lblFreezer">냉동·냉장 상태 / Freezer & Cooler</span>
+      <button type="button" class="btn sec" style="margin-left:auto;font-size:.78em;padding:5px 10px" onclick="loadTempData()" id="btnTempLoad">🔄 <span id="lblTempLoad">온도 앱에서 가져오기</span></button>
+    </h2>
+    <!-- 🆕 2026-05-21 — 온도 관리 앱(temp.html) 데이터 자동 통합. -->
+    <div id="tempSummaryBox" style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.86em">
+      <div id="tempSummaryStats" style="margin-bottom:6px;font-weight:600;color:#0f766e"></div>
+      <div id="tempIssuesList"></div>
+      <div id="tempEmpty" style="color:#9ca3af;display:none">(온도 관리 앱에서 오늘 측정 기록 없음 — 매니저가 수동 체크)</div>
+    </div>
     <div class="radio-group">
       <label class="active" data-val="ok"><input type="radio" name="freezer" value="ok" checked><span id="lblFreezerOk">✅ 이상무</span></label>
       <label data-val="issue"><input type="radio" name="freezer" value="issue"><span id="lblFreezerIssue">⚠️ 이상있음</span></label>
@@ -280,6 +288,7 @@ const T = {
   lblFreezerOk: { ko:'✅ 이상무',            en:'✅ All OK',                 es:'✅ Todo OK' },
   lblFreezerIssue:{ ko:'⚠️ 이상있음',        en:'⚠️ Issue Found',           es:'⚠️ Problema Encontrado' },
   lblFreezerNote:{ ko:'상세 (어느 냉동·냉장이 문제인가)', en:'Details (which unit has the issue)', es:'Detalles (qué unidad tiene el problema)' },
+  lblTempLoad:  { ko:'온도 앱에서 가져오기', en:'Load from Temp App', es:'Cargar de App de Temperatura' },
   lblVendorIn:  { ko:'📦 오늘 배달 받은 벤더',en:'📦 Vendor Deliveries Received Today',es:'📦 Entregas de Proveedores Recibidas Hoy' },
   lblVendorInNote:{ ko:'메모 (시간·이상사항 등)', en:'Note (time, issues, etc.)', es:'Nota (hora, problemas, etc.)' },
   lblVendorOut: { ko:'📝 오늘 발주한 벤더', en:'📝 Orders Placed Today',  es:'📝 Pedidos Hechos Hoy' },
@@ -330,6 +339,7 @@ function applyI18n(){
   setText('lblFreezerOk', 'lblFreezerOk');
   setText('lblFreezerIssue', 'lblFreezerIssue');
   setText('lblFreezerNote', 'lblFreezerNote');
+  setText('lblTempLoad', 'lblTempLoad');
   setText('lblVendorIn', 'lblVendorIn');
   setText('lblVendorInNote', 'lblVendorInNote');
   setText('lblVendorOut', 'lblVendorOut');
@@ -389,7 +399,7 @@ function fillBranchSelect(){
   });
   // default: manager's branch
   if (me && me.branch && me.branch !== '*') sel.value = me.branch;
-  sel.addEventListener('change', () => loadTodayTasks());
+  sel.addEventListener('change', () => { loadTodayTasks(); loadTempData(); });
 }
 
 function initHeader(){
@@ -453,6 +463,108 @@ function initFreezerRadio(){
     });
   });
 }
+
+// ============== 🆕 2026-05-21 온도 관리 앱 (temp.html) 데이터 자동 통합 ==============
+// temp/{branch}/equipment + temp/{branch}/checks/{today} 로드 → 측정 안 한 장비 / 위험 장비 자동 추출.
+// 매니저는 별도 체크 없이 데이터가 자동으로 보고서에 들어감. 이상있음 자동 감지 시 라디오도 자동 전환.
+let __tempReport = null;   // { totalEq, checked, normal, warn, danger, issues: [...] }
+async function loadTempData(){
+  const branch = document.getElementById('branchSel').value;
+  const today = todayStr();
+  const statsEl = document.getElementById('tempSummaryStats');
+  const issuesEl = document.getElementById('tempIssuesList');
+  const emptyEl = document.getElementById('tempEmpty');
+  statsEl.textContent = (LANG==='en'?'⏳ Loading…':LANG==='es'?'⏳ Cargando…':'⏳ 로딩 중…');
+  issuesEl.innerHTML = '';
+  emptyEl.style.display = 'none';
+  try {
+    const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+    // 인증 토큰
+    let aq = '';
+    try {
+      const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+      if (tok) aq = '?auth=' + encodeURIComponent(tok);
+    } catch(_) {}
+    // 장비 목록
+    const eqR = await fetch(FB + '/temp/' + encodeURIComponent(branch) + '/equipment.json' + aq, { cache:'no-store' });
+    const equipment = eqR.ok ? (await eqR.json() || {}) : {};
+    const checksR = await fetch(FB + '/temp/' + encodeURIComponent(branch) + '/checks/' + today + '.json' + (aq ? aq.replace('?','&').replace(/^&/,'?') : ''), { cache:'no-store' });
+    // 두 번째 호출은 ? 가 이미 시작되므로 다시 추가하지 않게 정리. 단순화:
+    const checks = checksR.ok ? (await checksR.json() || {}) : {};
+    // equipment 가 없으면 빈 처리
+    const eqEntries = Object.entries(equipment);
+    if (eqEntries.length === 0) {
+      statsEl.textContent = (LANG==='en'?'⚠ No equipment registered for this branch yet'
+                            : LANG==='es'?'⚠ Sin equipos registrados para esta sucursal'
+                            : '⚠ 이 매장에 등록된 장비가 아직 없습니다');
+      __tempReport = null;
+      return;
+    }
+    // 각 장비별 오늘 최신 측정 추출 (모든 slot 중 가장 최근)
+    let checked = 0, normal = 0, warn = 0, danger = 0;
+    const issues = [];
+    const slotOrder = ['morning','afternoon','closing'];
+    eqEntries.forEach(([eqId, eq]) => {
+      if (!eq) return;
+      let latest = null;
+      for (const slot of slotOrder) {
+        const slotData = (checks && checks[slot]) || {};
+        const c = slotData[eqId];
+        if (c && (!latest || (c.ts||0) > (latest.ts||0))) latest = c;
+      }
+      if (!latest) return;   // 안 측정한 장비
+      checked++;
+      const st = latest.status || 'unknown';
+      if (st === 'normal') normal++;
+      else if (st === 'warn') { warn++; issues.push({ eq, latest, severity: 'warn' }); }
+      else if (st === 'danger') { danger++; issues.push({ eq, latest, severity: 'danger' }); }
+    });
+    __tempReport = { totalEq: eqEntries.length, checked, normal, warn, danger, issues };
+    // 화면 표시
+    const totalLbl = LANG==='en'?'equipment':LANG==='es'?'equipos':'장비';
+    statsEl.innerHTML = '📊 <b>' + checked + '/' + eqEntries.length + '</b> ' + totalLbl + ' · ✅ ' + normal + ' · ⚠️ ' + warn + ' · 🚨 ' + danger;
+    if (issues.length > 0) {
+      issuesEl.innerHTML = issues.map(({ eq, latest, severity }) => {
+        const icon = severity === 'danger' ? '🚨' : '⚠️';
+        const range = (eq.min !== undefined && eq.max !== undefined) ? ' (target: ' + eq.min + '~' + eq.max + '°)' : '';
+        return '<div style="padding:5px 0;border-top:1px solid #99f6e4;font-size:.82em;color:#7c2d12">' +
+          icon + ' <b>' + escHtml(eq.name || ('#' + eq.id)) + '</b> — ' +
+          latest.temp + '°' + range +
+          (latest.note ? ' · <i>' + escHtml(latest.note) + '</i>' : '') +
+          ' <span style="color:#9ca3af;font-size:.94em">(' + escHtml(latest.by || '?') + ')</span>' +
+          '</div>';
+      }).join('');
+      // 이상 감지 → 라디오 자동 전환 + 메모 자동 채움 (덮어쓰지 않음 — 비어있을 때만)
+      const issueLabel = document.querySelector('.radio-group label[data-val="issue"]');
+      const okLabel = document.querySelector('.radio-group label[data-val="ok"]');
+      if (issueLabel) {
+        document.querySelectorAll('.radio-group label[data-val]').forEach(l => l.classList.remove('active'));
+        issueLabel.classList.add('active');
+        const issueInput = issueLabel.querySelector('input');
+        if (issueInput) issueInput.checked = true;
+        document.getElementById('freezerIssueWrap').style.display = '';
+        const noteEl = document.getElementById('freezerIssueNote');
+        if (noteEl && !noteEl.value.trim()) {
+          noteEl.value = '🔄 ' + (LANG==='en'?'Auto-loaded from temp app':LANG==='es'?'Auto-cargado de app de temperatura':'온도 앱 자동 로드') + ':\n' +
+            issues.map(i => '• ' + (i.eq.name || '?') + ' = ' + i.latest.temp + '° (' + i.severity + ')').join('\n');
+        }
+      }
+    } else if (checked === eqEntries.length && checked > 0) {
+      issuesEl.innerHTML = '<div style="padding:4px 0;color:#15803d;font-weight:600;font-size:.84em">✅ ' +
+        (LANG==='en'?'All equipment within range':LANG==='es'?'Todos los equipos en rango':'모든 장비 정상 범위 내') + '</div>';
+    } else {
+      issuesEl.innerHTML = '<div style="padding:4px 0;color:#92400e;font-size:.82em">⏳ ' +
+        (LANG==='en'?(eqEntries.length-checked)+' equipment not yet checked today'
+         :LANG==='es'?(eqEntries.length-checked)+' equipos sin medir hoy'
+         :(eqEntries.length-checked) + '개 장비 오늘 미측정') + '</div>';
+    }
+  } catch(e) {
+    console.warn('[temp] load failed', e);
+    statsEl.textContent = '⚠ ' + (e.message || e);
+  }
+}
+window.loadTempData = loadTempData;
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ============== 오늘 직원 활동 자동 집계 ==============
 async function loadTodayTasks(){
@@ -656,6 +768,9 @@ async function submitReport(){
       taskSummary: document.getElementById('taskSummary').value.trim(),
       freezerStatus: document.querySelector('input[name="freezer"]:checked').value,
       freezerIssueNote: document.getElementById('freezerIssueNote').value.trim(),
+      // 🆕 2026-05-21 — 온도 관리 앱 데이터 스냅샷 (chat 메시지 안에도 들어가지만,
+      // Firebase 저장 시에도 함께 보존해 향후 분석/audit 에 활용)
+      tempReport: __tempReport || null,
       vendorIn: getCheckedVendors('vendorInGrid'),
       vendorInNote: document.getElementById('vendorInNote').value.trim(),
       vendorOut: getCheckedVendors('vendorOutGrid'),
@@ -710,10 +825,32 @@ async function submitReport(){
       lines.push(data.taskSummary);
     }
     lines.push('');
-    if (data.freezerStatus === 'ok') {
-      lines.push('🧊 냉동·냉장: ✅ 이상무');
+    // 🆕 2026-05-21 온도 관리 앱 데이터 통합 — chat 보고에 자세히 포함
+    if (__tempReport && __tempReport.totalEq > 0) {
+      lines.push('🧊 냉동·냉장 (' + __tempReport.checked + '/' + __tempReport.totalEq + ' 측정):');
+      if (__tempReport.issues && __tempReport.issues.length > 0) {
+        __tempReport.issues.forEach(i => {
+          const icon = i.severity === 'danger' ? '🚨' : '⚠️';
+          const range = (i.eq.min !== undefined && i.eq.max !== undefined) ? ' (목표 ' + i.eq.min + '~' + i.eq.max + '°)' : '';
+          lines.push('   ' + icon + ' ' + (i.eq.name || '?') + ' = ' + i.latest.temp + '°' + range +
+                     (i.latest.note ? ' · ' + i.latest.note : ''));
+        });
+      } else if (__tempReport.checked === __tempReport.totalEq) {
+        lines.push('   ✅ 모든 장비 정상 범위');
+      } else {
+        lines.push('   ⏳ ' + (__tempReport.totalEq - __tempReport.checked) + '개 장비 미측정');
+      }
+      // 매니저가 수동으로 메모 추가했으면 같이 포함
+      if (data.freezerIssueNote && !data.freezerIssueNote.startsWith('🔄')) {
+        lines.push('   📝 ' + data.freezerIssueNote);
+      }
     } else {
-      lines.push('🧊 냉동·냉장: ⚠️ 이상있음' + (data.freezerIssueNote ? ' — ' + data.freezerIssueNote : ''));
+      // 온도 앱 데이터 없으면 기존 방식
+      if (data.freezerStatus === 'ok') {
+        lines.push('🧊 냉동·냉장: ✅ 이상무');
+      } else {
+        lines.push('🧊 냉동·냉장: ⚠️ 이상있음' + (data.freezerIssueNote ? ' — ' + data.freezerIssueNote : ''));
+      }
     }
     if (data.vendorIn.length || data.vendorInNote) {
       lines.push('');
@@ -797,6 +934,7 @@ function init(){
   fillVendorGrid('vendorOutGrid', 'vendorOutSearch', 'vendorOutSummary');
   initFreezerRadio();
   loadTodayTasks();
+  loadTempData();   // 🆕 온도 관리 앱 데이터 자동 로드
 }
 
 // auth-gate 이 me 채울 때까지 잠시 대기
