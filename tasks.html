@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_21_c';   // 캐셔/보바 인쇄 페이지도 KO/EN/ES 다국어
+    var BUST = 'tasks_2026_05_21_d';   // 시프트 카드 ✏ 편집 버튼 — 시간/담당자 변경
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -7517,9 +7517,12 @@ function renderShiftSchedule(activeBranch, tasks){
       const cl = Array.isArray(tt.checklist) ? tt.checklist : [];
       const clDone = cl.filter(c => c && c.done).length;
       const clBadge = cl.length ? ' · ' + clDone + '/' + cl.length : '';
+      const editBtn = (isManager(me?.role) || isOwner())
+        ? '<button onclick="editShiftStage(\'' + tt.id + '\',\'' + tt.branchId + '\');event.stopPropagation()" style="background:transparent;border:0;color:#1a5c3a;cursor:pointer;font-size:.86em;padding:0 4px;font-weight:700" title="시프트 편집">✏</button>'
+        : '';
       html += '<div class="shift-card" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:9px 11px;background:#fafafa">' +
         '<div style="display:flex;justify-content:space-between;align-items:start;gap:6px;margin-bottom:4px">' +
-          '<div style="font-weight:800;font-size:.88em;color:#0f172a">' + escHtml(stage) + '</div>' +
+          '<div style="font-weight:800;font-size:.88em;color:#0f172a;display:flex;align-items:center;gap:4px">' + editBtn + '<span>' + escHtml(stage) + '</span></div>' +
           '<span style="background:' + statusBg + ';color:' + statusFg + ';border-radius:10px;padding:2px 7px;font-size:.7em;font-weight:700;white-space:nowrap">' + statusBadge + '</span>' +
         '</div>' +
         '<div style="font-family:\'SF Mono\',Consolas,monospace;font-size:.82em;color:#1a5c3a;font-weight:700;margin-bottom:3px">⏰ ' + escHtml(range) + '</div>' +
@@ -7541,6 +7544,62 @@ function renderShiftSchedule(activeBranch, tasks){
   }
 }
 window.renderShiftSchedule = renderShiftSchedule;
+
+// 🆕 2026-05-21 — 시프트 시간 / 담당자 편집. 매니저+ 만.
+// 시간 변경 시 task.stageFrom / stageTo / deadline / 체크리스트의 stageFrom·stageTo·stageRange 모두 갱신.
+async function editShiftStage(taskId, branchId){
+  if (!isManager(me?.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
+  if (!t) { alert('업무 없음'); return; }
+  const curFrom = t.stageFrom || '08:00';
+  const curTo = t.stageTo || '12:00';
+  const curAssignee = t.assignedTo || '';
+  // prompt 3개로 받음 (간단)
+  const titleLbl = LANG==='en' ? 'Edit Shift — ' : LANG==='es' ? 'Editar Turno — ' : '시프트 편집 — ';
+  const fromLbl = LANG==='en' ? 'Start time (HH:MM)' : LANG==='es' ? 'Hora inicio (HH:MM)' : '시작 시간 (HH:MM)';
+  const toLbl = LANG==='en' ? 'End time (HH:MM)' : LANG==='es' ? 'Fin time (HH:MM)' : '종료 시간 (HH:MM)';
+  const assigneeLbl = LANG==='en' ? 'Assignee (empty=keep, * = all)' : LANG==='es' ? 'Asignado (vacío=mantener, * = todos)' : '담당자 (빈칸=유지, * = 전체)';
+  const stageNm = t.stageLabel || '?';
+  const newFrom = prompt(titleLbl + stageNm + '\n\n' + fromLbl + ':', curFrom);
+  if (newFrom === null) return;
+  if (!/^\d{1,2}:\d{2}$/.test(newFrom.trim())) { alert('Invalid format. Use HH:MM (e.g., 08:00)'); return; }
+  const newTo = prompt(toLbl + ':', curTo);
+  if (newTo === null) return;
+  if (!/^\d{1,2}:\d{2}$/.test(newTo.trim())) { alert('Invalid format. Use HH:MM'); return; }
+  const newAssignee = prompt(assigneeLbl + ':\n\n' + (LANG==='en'?'Current':LANG==='es'?'Actual':'현재') + ': ' + (curAssignee || '?'), curAssignee);
+  if (newAssignee === null) return;
+  const stageFrom = newFrom.trim();
+  const stageTo = newTo.trim();
+  const stageRange = stageFrom + ' ~ ' + stageTo;
+  // 체크리스트의 각 항목에도 stageFrom/stageTo/stageRange 갱신
+  const updatedChecklist = Array.isArray(t.checklist)
+    ? t.checklist.map(c => Object.assign({}, c, { stageFrom, stageTo, stageRange }))
+    : t.checklist;
+  const upd = {
+    stageFrom, stageTo,
+    deadline: stageTo,   // deadline 은 stageTo 와 동기화
+    checklist: updatedChecklist,
+    editedBy: me.name,
+    editedAt: Date.now(),
+  };
+  if (newAssignee.trim() && newAssignee.trim() !== curAssignee) {
+    upd.assignedTo = newAssignee.trim();
+    upd.assignedToId = newAssignee.trim() === '*' ? null : newAssignee.trim();
+    upd.reassignedBy = me.name;
+    upd.reassignedAt = Date.now();
+  }
+  try {
+    const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+    Object.assign(t, upd);
+    showToast(LANG==='en'?'✏️ Shift updated':LANG==='es'?'✏️ Turno actualizado':'✏️ 시프트 갱신 완료',
+              stageNm + ' · ' + stageRange);
+    if (typeof renderMgr === 'function') renderMgr();
+  } catch(e) {
+    alert('Update failed: ' + (e.message || e));
+  }
+}
+window.editShiftStage = editShiftStage;
 
 // 🆕 2026-05-21 — 매장 게시판 부착용 인쇄 페이지. 현재 LANG (KO/EN/ES) 따라 다국어.
 function printShiftSchedule(){
