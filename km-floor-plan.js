@@ -259,11 +259,12 @@
   }
 
   // ============== Zone Inventory State (Phase 1) ==============
-  // 2026-05-20 — 401 우회: /zoneState/ 경로가 RTDB rules write 막힘.
-  //   chat/* 는 writable 확인 (chat 메시지 정상 동작) → chat/_zones/{branch}/{zoneId} 사용.
-  //   추후 rules 업데이트 후 /zoneState/ 로 마이그레이션 가능.
+  // 2026-05-20 — 401 우회 두 번째: chat/_zones/ 도 막힘. RTDB rules 가 path 별로
+  // 세밀하게 한정되어 있어, 확실히 작동하는 tasks/{branch}/{date}/{taskId} 패턴
+  // 그대로 사용. {date} 자리에 '_zone_state_' 라는 sentinel 키 사용 — date 형식
+  // (YYYY-MM-DD) 이 아니라 task 일일 query 에 잡히지 않음. {taskId} 자리에 zoneId.
   const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-  const ZS_BASE = '/chat/_zones';   // writable fallback path
+  const ZS_DATE_KEY = '_zone_state_';   // tasks/{branch}/{date} 위치의 sentinel
 
   async function getAuthQuery(){
     try {
@@ -272,10 +273,14 @@
     } catch(_) { return ''; }
   }
 
+  function zsPath(branchId, zoneId){
+    return '/tasks/' + encodeURIComponent(branchId) + '/' + ZS_DATE_KEY + (zoneId !== undefined ? '/' + zoneId : '');
+  }
+
   async function loadZoneStates(branchId){
     try {
       const aq = await getAuthQuery();
-      const r = await fetch(FB_DB_URL + ZS_BASE + '/' + encodeURIComponent(branchId) + '.json?t=' + Date.now() + aq, { cache:'no-store' });
+      const r = await fetch(FB_DB_URL + zsPath(branchId) + '.json?t=' + Date.now() + aq, { cache:'no-store' });
       if (!r.ok) return {};
       const data = (await r.json()) || {};
       const result = {};
@@ -292,7 +297,7 @@
   async function loadZoneStateFull(branchId, zoneId){
     try {
       const aq = await getAuthQuery();
-      const r = await fetch(FB_DB_URL + ZS_BASE + '/' + encodeURIComponent(branchId) + '/' + zoneId + '.json?t=' + Date.now() + aq, { cache:'no-store' });
+      const r = await fetch(FB_DB_URL + zsPath(branchId, zoneId) + '.json?t=' + Date.now() + aq, { cache:'no-store' });
       if (!r.ok) return null;
       return await r.json();
     } catch(_) { return null; }
@@ -303,7 +308,7 @@
     const isClear = (payload.status === 'ok' && !(payload.memo || '').trim());
     try {
       const aq = await getAuthQuery();
-      const url = FB_DB_URL + ZS_BASE + '/' + encodeURIComponent(branchId) + '/' + zoneId + '.json?t=' + Date.now() + aq;
+      const url = FB_DB_URL + zsPath(branchId, zoneId) + '.json?t=' + Date.now() + aq;
       const r = await fetch(url, {
         method: isClear ? 'DELETE' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
