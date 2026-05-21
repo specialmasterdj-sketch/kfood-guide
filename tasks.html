@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_21_b';   // 캐셔/보바 모달 다국어 — 스테이지·체크리스트 EN/ES
+    var BUST = 'tasks_2026_05_21_c';   // 캐셔/보바 인쇄 페이지도 KO/EN/ES 다국어
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -7542,21 +7542,53 @@ function renderShiftSchedule(activeBranch, tasks){
 }
 window.renderShiftSchedule = renderShiftSchedule;
 
-// 🆕 2026-05-21 — 매장 게시판 부착용 인쇄 페이지. 새 창에 깔끔한 스타일로 표시.
+// 🆕 2026-05-21 — 매장 게시판 부착용 인쇄 페이지. 현재 LANG (KO/EN/ES) 따라 다국어.
 function printShiftSchedule(){
   const activeBranch = MGR_BRANCH || (me && me.branch) || '';
-  if (!activeBranch) { alert('매장 선택 필요'); return; }
+  // 인쇄 문구 다국어
+  const i18n = {
+    needBranch: { ko:'매장 선택 필요', en:'Please select a branch', es:'Seleccione una sucursal' },
+    noShifts:   { ko:'오늘 시프트가 없습니다.', en:'No shifts assigned today.', es:'Sin turnos hoy.' },
+    popup:      { ko:'팝업이 차단됐습니다. 브라우저에서 팝업 허용 후 다시 시도하세요.', en:'Pop-up blocked. Allow pop-ups in your browser.', es:'Pop-up bloqueado. Permita pop-ups en el navegador.' },
+    title:      { ko:'오늘 시프트 — ', en:"Today's Shifts — ", es:'Turnos de Hoy — ' },
+    todayShifts:{ ko:'🛒 오늘 시프트 — ', en:"🛒 Today's Shifts — ", es:'🛒 Turnos de Hoy — ' },
+    catCashier: { ko:'캐셔', en:'Cashier', es:'Cajero' },
+    catBoba:    { ko:'BOBA', en:'BOBA', es:'BOBA' },
+    thStage:    { ko:'단계', en:'Stage', es:'Etapa' },
+    thTime:     { ko:'시간', en:'Time', es:'Hora' },
+    thWho:      { ko:'담당자', en:'Assignee', es:'Asignado' },
+    thStatus:   { ko:'상태', en:'Status', es:'Estado' },
+    stDone:     { ko:'✅ 완료', en:'✅ Done', es:'✅ Hecho' },
+    stProg:     { ko:'⏳ 진행 중', en:'⏳ In progress', es:'⏳ En curso' },
+    stPend:     { ko:'⬜ 대기', en:'⬜ Pending', es:'⬜ Pendiente' },
+    allBranch:  { ko:'(전체)', en:'(All)', es:'(Todos)' },
+    printedAt:  { ko:'출력: ', en:'Printed: ', es:'Impreso: ' },
+  };
+  const tt2 = (k) => (i18n[k] && (i18n[k][LANG] || i18n[k].en || i18n[k].ko)) || k;
+  if (!activeBranch) { alert(tt2('needBranch')); return; }
   let rows = TASKS.slice().filter(tt => tt.branchId === activeBranch);
   const shifts = rows.filter(tt => (tt.category === '캐셔' || tt.category === 'BOBA') && (tt.stageFrom || tt.stageLabel));
-  if (shifts.length === 0) { alert('오늘 시프트가 없습니다.'); return; }
-  const branchLbl = (BRANCHES.find(b => b.id === activeBranch) || {});
-  const branchName = branchLbl.ko || activeBranch;
+  if (shifts.length === 0) { alert(tt2('noShifts')); return; }
+  // 매장 이름 — 현재 언어 기준
+  const branchObj = BRANCHES.find(b => b.id === activeBranch) || {};
+  const branchName = branchObj[LANG] || branchObj.ko || activeBranch;
   // category 별로 묶기
   const byCat = { '캐셔': [], 'BOBA': [] };
   shifts.forEach(tt => { if (!byCat[tt.category]) byCat[tt.category] = []; byCat[tt.category].push(tt); });
   Object.values(byCat).forEach(arr => arr.sort((a,b) => (a.stageFrom||'99').localeCompare(b.stageFrom||'99')));
-  const todayDate = new Date().toLocaleDateString('ko-KR', { year:'numeric', month:'long', day:'numeric', weekday:'long' });
-  let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>오늘 시프트 — ' + branchName + '</title><style>' +
+  // 날짜 locale 도 LANG 따라
+  const dateLocale = LANG==='en' ? 'en-US' : LANG==='es' ? 'es-ES' : 'ko-KR';
+  const todayDate = new Date().toLocaleDateString(dateLocale, { year:'numeric', month:'long', day:'numeric', weekday:'long' });
+  // 스테이지 라벨 다국어 픽업 — stageLabel(stageObj) 우선, 없으면 task 의 stageLabelTr 또는 그대로
+  function stageDisplay(tt){
+    // task.stageLabel 은 저장 시 한국어로 들어가있음. STAGES_BY_CAT 에서 매칭 시도.
+    const cat = tt.category;
+    const stages = stagesFor(cat) || [];
+    const found = stages.find(s => s.label === tt.stageLabel);
+    if (found) return stageLabel(found);
+    return tt.stageLabel || '?';
+  }
+  let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + tt2('title') + branchName + '</title><style>' +
     '*{margin:0;padding:0;box-sizing:border-box;font-family:"Pretendard","Malgun Gothic",Arial,sans-serif}' +
     'body{padding:30px;color:#0f172a;background:#fff}' +
     'h1{font-size:28pt;color:#1a5c3a;margin-bottom:6px;border-bottom:3px solid #1a5c3a;padding-bottom:8px}' +
@@ -7572,37 +7604,38 @@ function printShiftSchedule(){
     '.footer{margin-top:30px;font-size:11pt;color:#94a3b8;text-align:right}' +
     '@media print { body { padding:15px } h1{font-size:22pt} }' +
     '</style></head><body>' +
-    '<h1>🛒 오늘 시프트 — ' + branchName + '</h1>' +
-    '<div class="sub">' + todayDate + '</div>';
+    '<h1>' + tt2('todayShifts') + escHtml(branchName) + '</h1>' +
+    '<div class="sub">' + escHtml(todayDate) + '</div>';
   ['캐셔','BOBA'].forEach(cat => {
     const arr = byCat[cat];
     if (!arr || arr.length === 0) return;
     const emoji = cat === '캐셔' ? '🛒' : '🧋';
-    html += '<h2>' + emoji + ' ' + cat + '</h2>';
-    html += '<table><thead><tr><th>단계</th><th>시간</th><th>담당자</th><th>상태</th></tr></thead><tbody>';
+    const catLbl = cat === '캐셔' ? tt2('catCashier') : tt2('catBoba');
+    html += '<h2>' + emoji + ' ' + escHtml(catLbl) + '</h2>';
+    html += '<table><thead><tr><th>' + tt2('thStage') + '</th><th>' + tt2('thTime') + '</th><th>' + tt2('thWho') + '</th><th>' + tt2('thStatus') + '</th></tr></thead><tbody>';
     arr.forEach(tt => {
-      const stage = tt.stageLabel || '?';
+      const stage = stageDisplay(tt);
       const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
-      const assignee = tt.assignedTo === '*' ? '(전체)' : (tt.assignedTo || '?');
+      const assignee = tt.assignedTo === '*' ? tt2('allBranch') : (tt.assignedTo || '?');
       const doer = tt.completedBy || tt.startedBy || '';
-      const status = tt.completedAt ? '✅ 완료'
-                   : tt.startedAt ? '⏳ 진행 중'
-                   : '⬜ 대기';
+      const status = tt.completedAt ? tt2('stDone')
+                   : tt.startedAt ? tt2('stProg')
+                   : tt2('stPend');
       const whoDisp = (doer && doer !== assignee) ? assignee + ' → ' + doer : assignee;
       html += '<tr>' +
         '<td class="stage">' + escHtml(stage) + '</td>' +
         '<td class="time">' + escHtml(range) + '</td>' +
         '<td class="who">' + escHtml(whoDisp) + '</td>' +
-        '<td class="status">' + status + '</td>' +
+        '<td class="status">' + escHtml(status) + '</td>' +
         '</tr>';
     });
     html += '</tbody></table>';
   });
-  html += '<div class="footer">출력: ' + new Date().toLocaleString('ko-KR') + ' · KIMCHI MART</div>';
+  html += '<div class="footer">' + tt2('printedAt') + new Date().toLocaleString(dateLocale) + ' · KIMCHI MART</div>';
   html += '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<' + '/script>';
   html += '</body></html>';
   const w = window.open('', '_blank', 'width=900,height=700');
-  if (!w) { alert('팝업이 차단됐습니다. 브라우저에서 팝업 허용 후 다시 시도하세요.'); return; }
+  if (!w) { alert(tt2('popup')); return; }
   w.document.write(html);
   w.document.close();
 }
