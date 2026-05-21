@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_20_c';   // 안내문 3개국어 (한국어·영어·스페인어) — 직원 다국적 사용 대응
+    var BUST = 'tasks_2026_05_20_d';   // 매니저 뷰에 매장 도면 히트맵 추가 (라스올라스 79 zone)
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -44,6 +44,8 @@
 <script src="./lang-sync.js?v=1"></script>
 <script src="./nav-sidebar.js?v=20" defer></script>
 <script src="./back-nav.js?v=1"></script>
+<!-- 🆕 2026-05-20 매장 도면 — Manager View 히트맵 + 업무 지시 zone 피커 -->
+<script src="./km-floor-plan.js?v=1"></script>
 <!-- 📤 km-chat-queue — 채팅 발송 실패 시 IndexedDB 큐 + 자동 재시도.
      2026-05-16 사건 (토큰 만료 / 401 silent fail) 영구 해결책.
      모든 chat post 가 큐 경유 → 페이지 로드 / 5분 / 토큰 갱신 시 자동 retry. -->
@@ -1069,6 +1071,20 @@ button{font-family:inherit;cursor:pointer}
     <input type="text" id="mgrSearch" placeholder="🔎 업무명 검색" oninput="MGR_QUERY=this.value;renderMgr()" style="flex:1;min-width:140px;border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em">
     <button class="btn sec" onclick="resetMgrFilters()" style="padding:6px 10px;font-size:.84em">초기화</button>
   </div>
+  <!-- 🆕 2026-05-20 매장 도면 히트맵 (접기 가능). -->
+  <details id="mgrFloorPlanWrap" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:10px">
+    <summary style="cursor:pointer;font-weight:700;font-size:.92em;color:#1a5c3a;list-style:none;display:flex;align-items:center;gap:8px">
+      <span style="font-size:1.1em">📐</span>
+      <span id="mgrFpTitle">매장 도면 — 오늘 진행 상황</span>
+      <span style="margin-left:auto;font-size:.78em;color:#6b7280;font-weight:500">
+        <span style="display:inline-block;width:10px;height:10px;background:#16a34a;border-radius:2px;margin-right:3px"></span>완료
+        <span style="display:inline-block;width:10px;height:10px;background:#f59e0b;border-radius:2px;margin:0 3px 0 8px"></span>진행
+        <span style="display:inline-block;width:10px;height:10px;background:#dc2626;border-radius:2px;margin:0 3px 0 8px"></span>대기
+      </span>
+    </summary>
+    <div id="mgrFloorPlan" style="margin-top:10px"></div>
+    <div id="mgrFpStatus" style="margin-top:6px;font-size:.78em;color:#9ca3af"></div>
+  </details>
   <div class="mgr-table">
     <table><thead><tr>
       <th>담당자</th><th>업무명</th><th>상태</th><th>완료 시간</th><th>증빙</th>
@@ -1143,6 +1159,8 @@ button{font-family:inherit;cursor:pointer}
       <label id="aPlaceLbl">📍 장소</label>
       <div style="display:flex;gap:4px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px">
         <button type="button" onclick="addNewPlace()" title="이 지점에 새 장소 추가" style="background:#0891b2;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:800;cursor:pointer;white-space:nowrap">＋ 장소</button>
+        <!-- 🆕 2026-05-20 도면에서 zone 직접 클릭으로 위치 선택 -->
+        <button type="button" onclick="openZonePicker()" title="매장 도면에서 위치 직접 선택" style="background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:800;cursor:pointer;white-space:nowrap">🗺 도면</button>
         <button type="button" id="aPlaceDelete" onclick="rmPlaceFromSelect()" title="이 장소를 우리 지점 목록에서 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:700;cursor:pointer;white-space:nowrap">삭제</button>
       </div>
       <select id="aDisplayPlace" onchange="onDisplayPlaceChange();updatePlaceEditButtons()">
@@ -1334,6 +1352,19 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="modal-actions">
       <button class="btn sec" onclick="closeOv('tplOv');populateTaskTemplates()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🆕 2026-05-20 ZONE PICKER MODAL — 매장 도면에서 위치 클릭으로 선택 -->
+<div class="overlay" id="zonePickerOv">
+  <div class="modal" style="max-width:900px;width:96vw">
+    <h3 style="margin-bottom:10px">🗺 <span id="zpTitle">매장 도면에서 위치 선택</span></h3>
+    <div id="zpHint" style="font-size:.84em;color:#6b7280;margin-bottom:10px">아래 도면에서 업무 위치 zone 을 클릭하세요. 클릭한 zone 이 '장소' 필드에 자동 입력됩니다.</div>
+    <div id="zonePickerCanvas" style="width:100%;max-height:65vh;overflow:auto"></div>
+    <div id="zonePickerStatus" style="margin-top:8px;font-size:.82em;color:#6b7280"></div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn sec" onclick="closeOv('zonePickerOv')">취소</button>
     </div>
   </div>
 </div>
@@ -6924,6 +6955,9 @@ function renderMgr(){
   let rows = TASKS.slice();
   if (activeBranch) rows = rows.filter(t => t.branchId === activeBranch);
   rows.forEach(t => t._status = computeStatus(t));
+  // 🆕 2026-05-20 — 도면 히트맵 갱신 (필터링 전 매장 내 전체 task 기준).
+  //    필터를 따라가지 않고 그 매장의 전체 진행 상황을 한눈에 보여줌.
+  try { updateMgrFloorPlan(activeBranch, rows); } catch(e) { console.warn('[fp] update fail', e); }
   if (MGR_FILTER !== 'all') rows = rows.filter(t => t._status === MGR_FILTER);
   if (MGR_PERSON) rows = rows.filter(t => t.assignedTo === MGR_PERSON);
   if (MGR_CAT)    rows = rows.filter(t => t.category === MGR_CAT);
@@ -7033,6 +7067,153 @@ function renderMgr(){
     </tr>${detailRows}`;
   }).join('');
 }
+// 🆕 2026-05-20 — Zone picker (업무 지시 모달에서 도면 클릭으로 위치 지정).
+// 현재 매장(getAssignTargetBranch) 도면을 로드해 보여주고, 클릭한 zone 의
+// label/num 을 aDisplayPlace 또는 custom input 에 자동 채움 + task.zoneId 저장.
+let __pickedZoneId = null;
+async function openZonePicker(){
+  const overlay = document.getElementById('zonePickerOv');
+  const canvas  = document.getElementById('zonePickerCanvas');
+  const statusEl = document.getElementById('zonePickerStatus');
+  if (!overlay || !canvas || !window.KMFloorPlan) {
+    alert(LANG==='en'?'Floor plan not loaded':LANG==='es'?'Plano no cargado':'도면 라이브러리 로드 실패');
+    return;
+  }
+  const branch = (typeof getAssignTargetBranch === 'function') ? getAssignTargetBranch() : ((me && me.branch) || '');
+  if (!branch) { alert(LANG==='en'?'Pick a branch first':LANG==='es'?'Seleccione sucursal':'먼저 매장을 선택하세요'); return; }
+  overlay.classList.add('show');
+  canvas.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">⏳ ' +
+    (LANG==='en'?'Loading floor plan…':LANG==='es'?'Cargando plano…':'도면 로딩 중…') + '</div>';
+  statusEl.textContent = '';
+  try {
+    const fp = await window.KMFloorPlan.load(branch);
+    const zones = fp.zones || [];
+    if (!zones.length) {
+      canvas.innerHTML = '<div style="padding:30px;text-align:center;color:#9ca3af;font-size:.92em">⚠ ' +
+        (LANG==='en'?'No floor plan for this branch yet — open floorplan/ to draw'
+         : LANG==='es'?'Sin plano dibujado para esta sucursal'
+         : '이 매장 도면이 아직 비어있음 — floorplan/ 에서 그려주세요') + '</div>';
+      return;
+    }
+    window.KMFloorPlan.render(canvas, zones, {
+      mode: 'pick',
+      onPick: (zone) => pickZone(zone, branch),
+    });
+    statusEl.textContent = (LANG==='en' ? `${zones.length} zones · click to pick`
+                          : LANG==='es' ? `${zones.length} zonas · clic para elegir`
+                          : `${zones.length}개 zone · 클릭해서 선택`);
+  } catch(e) {
+    canvas.innerHTML = '<div style="padding:20px;text-align:center;color:#dc2626;font-size:.85em">❌ ' + (e.message || e) + '</div>';
+  }
+}
+window.openZonePicker = openZonePicker;
+
+function pickZone(zone, branch){
+  if (!zone) return;
+  // zone 라벨 만들기 — num + label 조합 (예: "5,6 · Korean Ramen")
+  const labelText = (function(){
+    const parts = [];
+    if (zone.num && /^[\d]/.test(String(zone.num))) parts.push(String(zone.num).replace(/,/g,'/') + (LANG==='en'?' Aisle':LANG==='es'?' Pasillo':' 통로'));
+    else if (zone.num) parts.push(String(zone.num));
+    if (zone.label) parts.push(zone.label.replace(/<br>/g, ' ').trim());
+    if (zone.sub) parts.push('(' + zone.sub.replace(/<br>|\n/g, ' ').trim() + ')');
+    return parts.join(' · ');
+  })();
+  // aDisplayPlace select 에 해당 옵션이 있으면 선택, 없으면 custom input 채움
+  const sel = document.getElementById('aDisplayPlace');
+  const custom = document.getElementById('aDisplayPlaceCustom');
+  // 옵션 매치 시도
+  let matched = false;
+  if (sel) {
+    for (const opt of sel.options) {
+      if (opt.value && labelText.includes(opt.value)) {
+        sel.value = opt.value;
+        matched = true;
+        break;
+      }
+    }
+  }
+  if (!matched && sel && custom) {
+    // custom 모드로 전환
+    sel.value = '__custom__';
+    custom.value = labelText;
+    custom.style.display = '';
+    // onDisplayPlaceChange 호출해 UI 동기화
+    try { onDisplayPlaceChange(); } catch(_){}
+  }
+  __pickedZoneId = zone.id;
+  closeOv('zonePickerOv');
+  if (typeof showToast === 'function') {
+    showToast('📍 ' + (LANG==='en'?'Zone selected':LANG==='es'?'Zona seleccionada':'Zone 선택됨'), labelText);
+  }
+}
+window.pickZone = pickZone;
+
+// 🆕 2026-05-20 — Manager View 매장 도면 히트맵 갱신.
+// activeBranch: 현재 보고 있는 매장 (MGR_BRANCH or me.branch)
+// tasks: 그 매장의 task 전체 (필터 적용 전, 매장 단위)
+let __mgrFpCache = { branch: null, zones: null };
+async function updateMgrFloorPlan(activeBranch, tasks){
+  const wrap = document.getElementById('mgrFloorPlanWrap');
+  const container = document.getElementById('mgrFloorPlan');
+  const statusEl = document.getElementById('mgrFpStatus');
+  const titleEl = document.getElementById('mgrFpTitle');
+  if (!wrap || !container || !window.KMFloorPlan) return;
+  if (!activeBranch) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  // 매장 라벨 갱신
+  const branchLbl = (BRANCHES.find(b => b.id === activeBranch) || {});
+  const branchName = branchLbl[LANG] || branchLbl.ko || activeBranch;
+  if (titleEl) {
+    titleEl.textContent = (LANG==='en' ? '🗺 Store Floor Plan — '
+                        : LANG==='es' ? '🗺 Plano de Tienda — '
+                        : '🗺 매장 도면 — ') + branchName +
+                        (LANG==='en' ? ' · Today' : LANG==='es' ? ' · Hoy' : ' · 오늘');
+  }
+  // 매장 zone 데이터 로드 (캐시)
+  let zones;
+  if (__mgrFpCache.branch === activeBranch && __mgrFpCache.zones) {
+    zones = __mgrFpCache.zones;
+  } else {
+    try {
+      const fp = await window.KMFloorPlan.load(activeBranch);
+      zones = fp.zones || [];
+      __mgrFpCache = { branch: activeBranch, zones };
+    } catch(e) {
+      container.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">' +
+        (LANG==='en' ? '⚠ Floor plan not available for this branch'
+         : LANG==='es' ? '⚠ Plano no disponible para esta sucursal'
+         : '⚠ 이 매장의 도면이 아직 등록되지 않았습니다') + '</div>';
+      if (statusEl) statusEl.textContent = '';
+      return;
+    }
+  }
+  if (!zones || zones.length === 0) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">' +
+      (LANG==='en' ? '⚠ No zones drawn for this branch yet — open floorplan/ editor to draw'
+       : LANG==='es' ? '⚠ Esta sucursal no tiene zonas dibujadas aún'
+       : '⚠ 이 매장 도면이 비어있음 — floorplan/ 에디터에서 그려주세요') + '</div>';
+    if (statusEl) statusEl.textContent = '';
+    return;
+  }
+  // task → zone 상태 매핑
+  const states = window.KMFloorPlan.buildZoneStates(tasks || [], zones);
+  // 통계
+  let nDone = 0, nProg = 0, nPend = 0;
+  Object.values(states).forEach(s => { if (s==='done') nDone++; else if (s==='progress') nProg++; else if (s==='pending') nPend++; });
+  const nMapped = Object.keys(states).length;
+  // 렌더
+  window.KMFloorPlan.render(container, zones, { mode:'view', states });
+  if (statusEl) {
+    const totalTasks = (tasks || []).length;
+    statusEl.textContent =
+      (LANG==='en' ? `Mapped ${nMapped} zones · ${nDone} done · ${nProg} in progress · ${nPend} pending (of ${totalTasks} tasks)`
+       : LANG==='es' ? `Mapeadas ${nMapped} zonas · ${nDone} hechas · ${nProg} en curso · ${nPend} pendientes (de ${totalTasks} tareas)`
+       : `매핑된 ${nMapped} 영역 · 완료 ${nDone} · 진행 ${nProg} · 대기 ${nPend} (전체 ${totalTasks} 업무)`);
+  }
+}
+window.updateMgrFloorPlan = updateMgrFloorPlan;
+
 async function deleteTask(taskId, branchId, name, ev){
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   const msg = (LANG==='en') ? `Delete task "${name}"?\nThis cannot be undone.`
@@ -8189,7 +8370,11 @@ async function sendAssign(){
     // 📦 벤더 (Ordering Products 카테고리에서 선택했을 때만) — task 카드에
     // 그 벤더 이름이 노출되어 직원이 어느 거래처 주문서를 작성할지 명확.
     vendor: (document.getElementById('aVendor')?.value || null) || null,
+    // 🆕 2026-05-20 zone picker 로 선택한 도면 zone ID — Manager View 히트맵에
+    // 정확한 위치 매핑됨 (텍스트 fuzzy match 불필요).
+    zoneId: (typeof __pickedZoneId === 'number' ? __pickedZoneId : null),
   });
+  __pickedZoneId = null;  // 다음 발사를 위해 초기화
   // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
   sendTaskChatBackup(to, name, deadline);
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
