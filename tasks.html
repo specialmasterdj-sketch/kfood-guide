@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_21_d';   // 시프트 카드 ✏ 편집 버튼 — 시간/담당자 변경
+    var BUST = 'tasks_2026_05_21_e';   // 시프트 카드 stageLabel 다국어 변환 + 기본 언어 영어 강제
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2807,14 +2807,16 @@ const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE
 // ================= LANGUAGE / TRANSLATION =================
 const LANG_KEY = 'tasks.lang';
 function detectLang(){
-  // Honor any of the lang keys other pages set
+  // Honor any of the lang keys other pages set (explicit user choice)
   for (const k of [LANG_KEY, 'kimchi_lang', 'hub.lang']) {
     const v = localStorage.getItem(k);
     if (v && ['ko','en','es'].includes(v)) return v;
   }
+  // 🆕 2026-05-21 전무님 명시: 한국인 직원 2% 라 기본은 영어로 고정.
+  // navigator.language=ko 인 폰도 영어로 시작 (한국어 직원은 KO 버튼 직접 클릭하면 됨).
+  // 스페인어 폰만 자동 감지 (히스패닉 직원 80%).
   const nav = (navigator.language || navigator.userLanguage || '').slice(0,2).toLowerCase();
-  if (['ko','en','es'].includes(nav)) return nav;
-  // 🇺🇸 미국 매장 — 기본 폴백 영어. 스페인어 폰은 위 navigator.language 에서 자동 매칭됨.
+  if (nav === 'es') return 'es';
   return 'en';
 }
 let LANG = detectLang();
@@ -7498,7 +7500,11 @@ function renderShiftSchedule(activeBranch, tasks){
       catEmoji[cat] + ' ' + escHtml(catName) + ' <span style="font-weight:500;color:#9ca3af;font-size:.84em">(' + arr.length + ')</span></div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">';
     arr.forEach(tt => {
-      const stage = tt.stageLabel || '?';
+      // 🆕 2026-05-21 — 저장된 한국어 stageLabel 을 STAGES_BY_CAT 에서 찾아 LANG 에 맞춰 변환.
+      // 기존 task 는 stageLabel 이 한국어("① 오프닝") 로 박혀있어 EN/ES 모드에서도 그대로 나오던 버그.
+      const _stages = stagesFor(tt.category) || [];
+      const _found = _stages.find(s => s.label === tt.stageLabel);
+      const stage = _found ? stageLabel(_found) : (tt.stageLabel || '?');
       const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
       const assignee = tt.assignedTo === '*' ? '(전체)' : (tt.assignedTo || tt.assignedToId || '?');
       const doer = tt.completedBy || tt.startedBy || '';
