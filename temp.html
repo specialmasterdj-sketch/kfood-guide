@@ -698,6 +698,38 @@ function isManagerOrAbove(){
   return MGR_TOKENS.some(tok => r.includes(tok.toUpperCase()));
 }
 
+// =============== One-shot label fix (URL trigger) ===============
+// Usage: temp.html?fixhwmeat=1  (Hollywood: swap #24 and #26 labels)
+// Self-deletes after run via sessionStorage flag.
+let __oneShotFixRan = false;
+async function __runOneShotFix(){
+  if (__oneShotFixRan) return;
+  const qs = new URLSearchParams(location.search);
+  const fix = qs.get('fixhwmeat');
+  if (!fix) return;
+  if (sessionStorage.getItem('fix.hwmeat.done')) { __oneShotFixRan = true; return; }
+  if (BRANCH !== 'HOLLYWOOD') { alert('Switch to Hollywood branch first, then reload with ?fixhwmeat=1'); __oneShotFixRan = true; return; }
+  if (!EQUIPMENT || !EQUIPMENT.length) return; // wait for data
+  __oneShotFixRan = true;
+  const findByQr = (n) => EQUIPMENT.find(eq => {
+    const m = (eq.qr||'').match(/(\d+)/);
+    return m && parseInt(m[1],10) === n;
+  });
+  const a = findByQr(24), b = findByQr(26);
+  if (!a || !b) { alert('#24 or #26 not found in Hollywood equipment'); return; }
+  const before = { '#24': a.name, '#26': b.name };
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+a.id), { name: 'open freezer of meat 2' });
+    await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+b.id), { name: 'open freezer of meat 4' });
+    sessionStorage.setItem('fix.hwmeat.done', '1');
+    alert('✅ Swapped\nBefore: #24='+before['#24']+', #26='+before['#26']+'\nAfter: #24=open freezer of meat 2, #26=open freezer of meat 4');
+    // strip the query so reload doesn't re-trigger
+    history.replaceState(null, '', location.pathname);
+  } catch(e){
+    alert('Fix failed: '+(e?.message||e));
+  }
+}
+
 // =============== Firebase subscribe ===============
 let unsubs = [];
 function subscribe(){
@@ -709,6 +741,7 @@ function subscribe(){
     const v = snap.val() || {};
     EQUIPMENT = Object.entries(v).map(([id, eq]) => Object.assign({ id }, eq));
     renderAll();
+    __runOneShotFix();
   }));
   // Today's checks (and yesterday for late views)
   unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/checks/'+todayKey()), snap => {
