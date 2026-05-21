@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_21_a';   // 캐셔/보바 시프트 타임라인 + 인쇄 버튼
+    var BUST = 'tasks_2026_05_21_b';   // 캐셔/보바 모달 다국어 — 스테이지·체크리스트 EN/ES
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1248,7 +1248,7 @@ button{font-family:inherit;cursor:pointer}
       <label id="stagesLabel">🛒 캐셔 4교대 시간</label>
       <div id="cashierStagesGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px"></div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <span style="font-size:.78em;color:#374151;font-weight:600">지시할 업무 (체크 → 보냄)</span>
+        <span id="stagesPickHeader" style="font-size:.78em;color:#374151;font-weight:600">지시할 업무 (체크 → 보냄)</span>
         <button type="button" id="btnEditStageItems" onclick="openStageItemsEditor()" style="background:transparent;border:0;color:#1a5c3a;font-size:.78em;font-weight:700;cursor:pointer;padding:0">📝 항목 편집</button>
       </div>
       <div id="cashierItemsCheck" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px;max-height:280px;overflow:auto"></div>
@@ -1929,19 +1929,27 @@ const ALWAYS_CHECKLIST_CATS = ['캐셔', 'BOBA'];
 
 // 캐셔: 4 shifts across 8am–10pm. BOBA: 3 shifts across 10am–7pm (shorter day).
 // Each shift gets a from–to time the manager confirms every morning + assignee.
+// 2026-05-21 — 스테이지 라벨 다국어. labelTr.en / labelTr.es 사용 가능 (직원 화면 표시).
 const STAGES_BY_CAT = {
   '캐셔': [
-    { label: '① 오프닝',    from: '08:00', to: '12:00', size: 4 },
-    { label: '② 오전 교대', from: '12:00', to: '15:00', size: 4 },
-    { label: '③ 오후 교대', from: '15:00', to: '19:00', size: 3 },
-    { label: '④ 마감',     from: '19:00', to: '22:00', size: 3 },
+    { label: '① 오프닝',    labelTr: { en:'① Opening',    es:'① Apertura' },     from: '08:00', to: '12:00', size: 4 },
+    { label: '② 오전 교대', labelTr: { en:'② Morning Shift', es:'② Turno Mañana' }, from: '12:00', to: '15:00', size: 4 },
+    { label: '③ 오후 교대', labelTr: { en:'③ Afternoon Shift', es:'③ Turno Tarde' }, from: '15:00', to: '19:00', size: 3 },
+    { label: '④ 마감',     labelTr: { en:'④ Closing',    es:'④ Cierre' },        from: '19:00', to: '22:00', size: 3 },
   ],
   'BOBA': [
-    { label: '① 오프닝',    from: '10:00', to: '13:00' },
-    { label: '② 미드',      from: '13:00', to: '16:00' },
-    { label: '③ 마감',     from: '16:00', to: '19:00' },
+    { label: '① 오프닝',    labelTr: { en:'① Opening',    es:'① Apertura' },     from: '10:00', to: '13:00' },
+    { label: '② 미드',      labelTr: { en:'② Mid-Day',    es:'② Medio Día' },     from: '13:00', to: '16:00' },
+    { label: '③ 마감',     labelTr: { en:'③ Closing',    es:'③ Cierre' },        from: '16:00', to: '19:00' },
   ],
 };
+// 현재 LANG 기준 스테이지 라벨 (UI 표시용)
+function stageLabel(s){
+  if (!s) return '';
+  if (LANG !== 'ko' && s.labelTr && s.labelTr[LANG]) return s.labelTr[LANG];
+  return s.label || '';
+}
+window.stageLabel = stageLabel;
 function stagesFor(cat){ return STAGES_BY_CAT[cat] || STAGES_BY_CAT['캐셔']; }
 // Backwards-compat alias
 const CASHIER_STAGES = STAGES_BY_CAT['캐셔'];
@@ -1949,7 +1957,7 @@ function getCashierItemsByStage(cat){
   cat = cat || '캐셔';
   const stages = stagesFor(cat);
   const all = checklistItemsFor(cat);
-  const out = stages.map(s => ({ stage: s.label, items: [] }));
+  const out = stages.map(s => ({ stage: s.label, stageObj: s, items: [] }));
   // If items have explicit stage index, group by that — preserves the user's
   // intended bucket (e.g. BOBA 오픈/영업 중/마감) regardless of count
   const hasExplicit = all.some(t => typeof t.stage === 'number');
@@ -2414,8 +2422,22 @@ function onChecklistToggle(){
       const stagesLabel = document.getElementById('stagesLabel');
       if (stagesLabel) {
         const icon = cat === 'BOBA' ? '🥤' : '🛒';
-        stagesLabel.textContent = `${icon} ${cat} ${stages.length}교대 시간`;
+        const catName = LANG==='en' ? (cat === 'BOBA' ? 'BOBA' : 'Cashier') :
+                        LANG==='es' ? (cat === 'BOBA' ? 'BOBA' : 'Cajero') : cat;
+        const labelText = LANG==='en' ? `${icon} ${catName} ${stages.length}-Shift Times`
+                        : LANG==='es' ? `${icon} ${catName} — ${stages.length} Turnos`
+                        :              `${icon} ${cat} ${stages.length}교대 시간`;
+        stagesLabel.textContent = labelText;
       }
+      // 2026-05-21 — '지시할 업무' / '항목 편집' / 체크리스트 헤더 i18n
+      const piHdr = document.getElementById('stagesPickHeader');
+      if (piHdr) piHdr.textContent = LANG==='en' ? 'Tasks to assign (check → send)'
+                                   : LANG==='es' ? 'Tareas a asignar (marca → enviar)'
+                                   : '지시할 업무 (체크 → 보냄)';
+      const btnEdit = document.getElementById('btnEditStageItems');
+      if (btnEdit) btnEdit.textContent = LANG==='en' ? '📝 Edit items'
+                                       : LANG==='es' ? '📝 Editar ítems'
+                                       : '📝 항목 편집';
       const hint = document.getElementById('stagesHint');
       if (hint) {
         const hintText = LANG==='en'
@@ -2457,7 +2479,14 @@ async function renderCashierStageInputs(){
     const data = await fetch(`${FB_DB_URL}/schedules/${me.branch}.json`).then(r => r.json());
     if (data && Array.isArray(data.employees)) employees = data.employees;
   } catch(e){}
-  const empOptions = '<option value="">— 담당자 —</option><option value="*">📢 본 지점 전체</option>'
+  // 2026-05-21 — '담당자' default 다국어
+  const assigneeDefault = LANG==='en' ? '— Select employee —'
+                        : LANG==='es' ? '— Seleccionar empleado —'
+                        : '— 담당자 —';
+  const allBranchOpt = LANG==='en' ? '📢 All staff in this branch'
+                     : LANG==='es' ? '📢 Todos en esta sucursal'
+                     : '📢 본 지점 전체';
+  const empOptions = '<option value="">' + assigneeDefault + '</option><option value="*">' + allBranchOpt + '</option>'
     + employees.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}${e.role?` (${escHtml(e.role)})`:''}</option>`).join('');
   // 캐셔(4단계)=2x2 그리드, BOBA(3단계)=3컬럼
   grid.style.gridTemplateColumns = stages.length === 4 ? '1fr 1fr' : 'repeat(' + stages.length + ', 1fr)';
@@ -2465,7 +2494,7 @@ async function renderCashierStageInputs(){
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff">
       <label style="display:flex;align-items:center;gap:6px;font-size:.82em;font-weight:700;color:#1a5c3a;margin-bottom:6px;cursor:pointer">
         <input type="checkbox" class="cashier-stage-cb" id="aStageOn${i}" data-stage="${i}" style="width:16px;height:16px">
-        <span>${escHtml(s.label)}</span>
+        <span>${escHtml(stageLabel(s))}</span>
       </label>
       <div style="display:flex;align-items:center;gap:4px;font-size:.74em;color:#374151;margin-bottom:4px">
         <span style="flex:0 0 28px">⏰</span>
@@ -2500,23 +2529,86 @@ function renderCashierItemChecks(){
       subgroups[groupIndex[key]].items.push(it);
     });
     const itemsHtml = subgroups.map(sg => {
+      // 2026-05-21 — group 헤더 다국어 (BOBA 의 청결 & 위생 / 재료 & 재고 / 기기 & 장비 등)
+      const groupTr = {
+        '청결 & 위생':  { en:'Cleanliness & Hygiene', es:'Limpieza e Higiene' },
+        '재료 & 재고':  { en:'Ingredients & Stock',   es:'Ingredientes y Stock' },
+        '기기 & 장비':  { en:'Equipment',              es:'Equipos' },
+        '음료 제조':    { en:'Drink Preparation',      es:'Preparación de Bebidas' },
+        '고객 응대':    { en:'Customer Service',       es:'Atención al Cliente' },
+        '매장 유지':    { en:'Store Maintenance',      es:'Mantenimiento de Tienda' },
+        '정산 & 마감':  { en:'Cash Close & Settlement',es:'Cierre de Caja' },
+        '위생 마감':    { en:'Closing Hygiene',        es:'Higiene de Cierre' },
+        '보안 & 종료':  { en:'Security & Shutdown',    es:'Seguridad y Apagado' },
+      };
+      const groupDisp = sg.group ? ((groupTr[sg.group] && groupTr[sg.group][LANG]) || sg.group) : '';
       const groupHeader = sg.group
-        ? `<div style="font-size:.74em;font-weight:700;color:#374151;margin:6px 0 2px;padding-left:2px">▸ ${escHtml(sg.group)}</div>`
+        ? `<div style="font-size:.74em;font-weight:700;color:#374151;margin:6px 0 2px;padding-left:2px">▸ ${escHtml(groupDisp)}</div>`
         : '';
-      return groupHeader + sg.items.map(it => `
+      return groupHeader + sg.items.map(it => {
+        // 항목명 다국어 — nameTr 있으면 우선, 없으면 보조 사전 또는 원본
+        const disp = pickItemLabel(it);
+        return `
         <label style="display:flex;align-items:center;gap:8px;padding:3px 6px 3px 14px;cursor:pointer;font-size:.86em">
           <input type="checkbox" class="cashier-item-cb" data-name="${escHtml(it.name)}" data-stage="${sIdx}" style="width:16px;height:16px">
-          <span>${escHtml(it.name)}</span>
+          <span>${escHtml(disp)}</span>
         </label>
-      `).join('');
+      `;
+      }).join('');
     }).join('');
+    // 단계 헤더도 다국어 (stage label)
+    const stageHdr = g.stageObj ? stageLabel(g.stageObj) : g.stage;
+    const emptyLbl = LANG==='en' ? '— No items —' : LANG==='es' ? '— Sin ítems —' : '— 항목 없음 —';
     return `
       <div style="margin-top:${sIdx===0?'0':'10px'};padding-top:${sIdx===0?'0':'8px'};border-top:${sIdx===0?'0':'1px dashed #e5e7eb'}">
-        <div style="font-size:.82em;font-weight:800;color:#1a5c3a;margin-bottom:4px">${escHtml(g.stage)}</div>
-        ${itemsHtml || `<div style="font-size:.74em;color:#9ca3af;padding:4px 6px">— 항목 없음 —</div>`}
+        <div style="font-size:.82em;font-weight:800;color:#1a5c3a;margin-bottom:4px">${escHtml(stageHdr)}</div>
+        ${itemsHtml || `<div style="font-size:.74em;color:#9ca3af;padding:4px 6px">${emptyLbl}</div>`}
       </div>`;
   }).join('');
 }
+
+// 2026-05-21 — 체크리스트 항목 다국어 라벨 픽업. nameTr 있으면 사용, 없으면 BOBA_ITEM_TR 보조 사전 → 그래도 없으면 원본.
+const BOBA_ITEM_TR = {
+  '매장 바닥 청소 및 테이블 닦기':            { en:'Floor & table cleaning',                  es:'Limpieza piso y mesas' },
+  '머신·장비 외부 닦기':                       { en:'Wipe machines & equipment',                es:'Limpiar máquinas y equipos' },
+  '음료 준비 도구 세척 확인':                  { en:'Check drink prep tools cleaning',          es:'Limpieza utensilios bebida' },
+  '손 소독제 보충':                            { en:'Refill hand sanitizer',                    es:'Rellenar desinfectante' },
+  '타피오카 펄 삶기 (4~6시간 주기)':           { en:'Cook tapioca pearls (every 4~6h)',         es:'Cocer perlas tapioca (cada 4~6h)' },
+  '시럽·소스 잔량 확인 및 보충':               { en:'Check & refill syrups/sauces',             es:'Revisar y rellenar jarabes/salsas' },
+  '우유·크림·과일 냉장 확인':                  { en:'Check milk/cream/fruit refrigeration',     es:'Revisar refrigeración leche/crema/fruta' },
+  '컵·빨대·뚜껑 보충':                         { en:'Restock cups, straws, lids',               es:'Reabastecer vasos, popotes, tapas' },
+  '에스프레소 머신 예열 및 샷 추출 테스트':    { en:'Warm up espresso & test shot',             es:'Calentar espresso y probar shot' },
+  '블렌더 작동 확인':                          { en:'Check blender operation',                  es:'Revisar funcionamiento licuadora' },
+  '냉장고·냉동고 온도 체크':                   { en:'Check fridge/freezer temperature',         es:'Revisar temperatura refri/congelador' },
+  'POS 시스템 부팅 및 영수증지 확인':          { en:'Boot POS & check receipt paper',           es:'Encender POS y revisar papel' },
+  '보바 (펄) 신선도 체크 & 교체':              { en:'Check boba freshness & replace',           es:'Frescura del boba y reemplazar' },
+  '음료 온도(핫/아이스) 기준 준수':            { en:'Hot/iced drink temp standard',             es:'Temperatura bebidas frío/caliente' },
+  '당도·농도 조절 요청 대응':                  { en:'Handle sweetness/strength requests',       es:'Atender solicitudes dulzor/intensidad' },
+  '주문 접수 및 정확한 반복 확인':             { en:'Take orders & repeat accurately',          es:'Tomar pedidos y repetir' },
+  '대기 고객 안내':                            { en:'Guide waiting customers',                  es:'Atender clientes en espera' },
+  '불만 사항 1차 응대':                        { en:'Initial complaint handling',               es:'Atender quejas iniciales' },
+  '테이블·카운터 수시 닦기':                   { en:'Wipe tables & counter regularly',          es:'Limpiar mesas y mostrador' },
+  '쓰레기통 비우기':                           { en:'Empty trash bins',                         es:'Vaciar botes de basura' },
+  '재료 소진 시 즉시 매니저 보고':             { en:'Report to manager when out of stock',      es:'Reportar al gerente si se acaba' },
+  '픽업 선반 정리':                            { en:'Organize pickup shelf',                    es:'Organizar estante de recogida' },
+  '현금 정산 및 영수증 대조':                  { en:'Cash settlement & receipt match',          es:'Cuadre de caja y recibos' },
+  '일일 매출 기록 제출':                       { en:'Submit daily sales record',                es:'Enviar registro ventas diario' },
+  'POS 마감 처리':                             { en:'POS closing',                              es:'Cierre del POS' },
+  '모든 장비 세척·소독':                       { en:'Clean & sanitize all equipment',           es:'Limpiar y desinfectar equipo' },
+  '남은 펄·재료 냉장 보관 또는 폐기':          { en:'Store or discard remaining pearls',        es:'Guardar o desechar perlas' },
+  '바닥 청소 및 매장 정리':                    { en:'Floor cleaning & store tidy-up',           es:'Limpieza de piso y orden' },
+  '쓰레기 분리수거 및 배출':                   { en:'Sort & dispose trash',                     es:'Separar y sacar basura' },
+  '냉장·냉동고 온도 최종 확인':                { en:'Final fridge/freezer temp check',          es:'Última revisión temperatura' },
+  '가스·전기 기기 전원 OFF':                   { en:'Turn off gas/electric appliances',         es:'Apagar gas/electrodomésticos' },
+};
+function pickItemLabel(item){
+  if (!item) return '';
+  if (LANG === 'ko') return item.name || '';
+  if (item.nameTr && item.nameTr[LANG]) return item.nameTr[LANG];
+  if (BOBA_ITEM_TR[item.name] && BOBA_ITEM_TR[item.name][LANG]) return BOBA_ITEM_TR[item.name][LANG];
+  return item.name || '';
+}
+window.pickItemLabel = pickItemLabel;
 function checklistItemsFor(cat){
   const hidden = new Set(__HIDDEN_TPLS || []);
   const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
