@@ -774,6 +774,20 @@ function currentSlotKey(){
   }
   return null;
 }
+// 🆕 2026-05-21 옵션 3 — 매니저 override 용. 시간창 밖에서도 가장 가까운 슬롯 반환.
+// 각 슬롯의 중심 시각과의 거리 계산해 가장 가까운 슬롯을 골라줌.
+function nearestSlotKey(){
+  const slots = slotsForToday();
+  const now = nowMinutes();
+  let best = null, bestDist = Infinity;
+  for (const s of slots) {
+    const [openM, closeM] = slotMinutes(s);
+    const center = (openM + closeM) / 2;
+    const dist = Math.abs(now - center);
+    if (dist < bestDist) { bestDist = dist; best = s.key; }
+  }
+  return best;
+}
 function isSlotOpen(slotKey){
   const slot = slotsForToday().find(s => s.key === slotKey);
   if (!slot) return false;
@@ -1207,8 +1221,26 @@ async function saveCheck(){
   const v = parseFloat($('ipTemp').value);
   if (isNaN(v)) { showToast(t('saveTempNum'), true); return; }
   if (!__ipPhotoData) { showToast(t('saveTempPhoto'), true); return; }
-  const slotKey = currentSlotKey();
-  if (!slotKey) { showToast(t('outOfWindow'), true); return; }
+  let slotKey = currentSlotKey();
+  let lateEntry = false;
+  if (!slotKey) {
+    // 🆕 2026-05-21 옵션 3 — 매니저는 시간창 밖에서도 입력 가능 (지각 입력 마커).
+    if (!isManagerOrAbove()) { showToast(t('outOfWindow'), true); return; }
+    const near = nearestSlotKey();
+    if (!near) { showToast(t('outOfWindow'), true); return; }
+    const nearLbl = (function(){
+      const slotMap = { morning:{ko:'오전',en:'Morning',es:'Mañana'}, afternoon:{ko:'오후',en:'Afternoon',es:'Tarde'}, closing:{ko:'마감',en:'Closing',es:'Cierre'} };
+      const o = slotMap[near]; return o ? (o[LANG] || o.ko) : near;
+    })();
+    const confirmMsg = LANG==='en'
+      ? '⏰ Slot window closed.\n\nManager override available — save as LATE entry to "' + nearLbl + '" slot?\n\n(Marked 🕐 in records for audit.)'
+      : LANG==='es'
+      ? '⏰ Ventana de turno cerrada.\n\nSobrescritura de gerente disponible — guardar como entrada TARDÍA en turno "' + nearLbl + '"?\n\n(Marcado 🕐 en registros para auditoría.)'
+      : '⏰ 슬롯 시간창이 닫혔습니다.\n\n매니저 권한으로 지각 입력 가능 — "' + nearLbl + '" 슬롯에 🕐 지각 표시로 저장할까요?\n\n(audit 위해 기록에 표시됨)';
+    if (!confirm(confirmMsg)) return;
+    slotKey = near;
+    lateEntry = true;
+  }
   const me = getMe();
   const status = judgeTemp(v, eq);
   const btn = $('ipSave'); btn.disabled = true;
@@ -1221,6 +1253,7 @@ async function saveCheck(){
     ts: Date.now(),
     by: me?.name || '미등록',
     byRole: me?.role || null,
+    lateEntry: lateEntry || null,   // 🆕 매니저 지각 입력 표시 (audit)
   });
   btn.disabled = false;
   closeOv('inputOv');
@@ -1241,12 +1274,13 @@ async function maybePostSlotSummary(slotKey){
   const postKey = 'temp_posted_' + BRANCH + '_' + todayKey() + '_' + slotKey;
   if (localStorage.getItem(postKey)) return;   // 이미 발송
   // 요약 데이터 집계
-  let nNormal = 0, nWarn = 0, nDanger = 0;
+  let nNormal = 0, nWarn = 0, nDanger = 0, nLate = 0;
   const issues = [];
   EQUIPMENT.forEach(eq => {
     const c = slotData[eq.id];
     if (!c) return;
     const st = c.status || 'unknown';
+    if (c.lateEntry) nLate++;
     if (st === 'normal') nNormal++;
     else if (st === 'warn') { nWarn++; issues.push({ eq, c, severity:'warn' }); }
     else if (st === 'danger') { nDanger++; issues.push({ eq, c, severity:'danger' }); }
@@ -1262,17 +1296,19 @@ async function maybePostSlotSummary(slotKey){
   // chat 메시지 본문
   const lines = [];
   lines.push('🧊 ' + BRANCH + ' · ' + slotLbl + ' 온도 체크 완료');
-  lines.push('📊 ' + checkedCount + '/' + totalEq + ' · ✅ ' + nNormal + ' · ⚠️ ' + nWarn + ' · 🚨 ' + nDanger);
+  lines.push('📊 ' + checkedCount + '/' + totalEq + ' · ✅ ' + nNormal + ' · ⚠️ ' + nWarn + ' · 🚨 ' + nDanger +
+             (nLate > 0 ? ' · 🕐 지각 ' + nLate : ''));
   if (issues.length > 0) {
     lines.push('');
     issues.forEach(i => {
       const icon = i.severity === 'danger' ? '🚨' : '⚠️';
+      const late = i.c.lateEntry ? ' 🕐' : '';
       const range = (i.eq.min !== undefined && i.eq.max !== undefined) ? ' (목표 ' + i.eq.min + '~' + i.eq.max + '°)' : '';
-      lines.push('   ' + icon + ' ' + (i.eq.name || ('#' + i.eq.id)) + ' = ' + i.c.temp + '°' + range +
+      lines.push('   ' + icon + late + ' ' + (i.eq.name || ('#' + i.eq.id)) + ' = ' + i.c.temp + '°' + range +
                  (i.c.note ? ' · ' + i.c.note : ''));
     });
   } else {
-    lines.push('   ✅ 모든 장비 정상 범위');
+    lines.push('   ✅ 모든 장비 정상 범위' + (nLate > 0 ? ' (🕐 지각 입력 ' + nLate + '건)' : ''));
   }
   const text = lines.join('\n');
   const ts = Date.now();
