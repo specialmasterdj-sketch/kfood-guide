@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a5c3a">
+<title>매장 도면 — KIMCHI MART</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<link rel="icon" type="image/png" href="pwa-assets/icon-192.png">
+<link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
+<script>
+  (function(){
+    var BUST = 'storemap_2026_05_20_a';
+    var KEY = 'kmtools_bust_storemap';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+  })();
+</script>
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=4"></script>
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script src="./nav-sidebar.js?v=20" defer></script>
+<script src="./back-nav.js?v=1"></script>
+<script src="./km-floor-plan.js?v=1"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:'Pretendard Variable','Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;font-size:14px;padding-bottom:env(safe-area-inset-bottom,0)}
+.wrap{max-width:1180px;margin:0 auto;padding:14px 14px 80px;padding-left:54px}
+@media(min-width:761px){.wrap{padding-left:14px;margin-left:240px}}
+.top-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+h1{font-size:1.3em;font-weight:800;color:#1a5c3a;display:flex;align-items:center;gap:8px}
+.sub{color:#6b7280;font-size:.85em;margin-bottom:14px}
+.lang-tabs{display:flex;gap:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:3px;flex-shrink:0}
+.lang-tabs button{background:transparent;border:0;padding:5px 10px;border-radius:6px;font-family:inherit;font-size:.78em;font-weight:600;color:#6b7280;cursor:pointer}
+.lang-tabs button.active{background:#1a5c3a;color:#fff}
+
+.toolbar{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.toolbar select, .toolbar button{padding:8px 12px;border:1.5px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:.88em;background:#fff;color:#1f2937;cursor:pointer;font-weight:600}
+.toolbar select:focus{border-color:#1a5c3a;outline:none}
+.toolbar .stats{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:5px 11px;border-radius:14px;font-size:.82em;font-weight:700}
+.pill.out{background:#fee2e2;color:#991b1b}
+.pill.low{background:#fef3c7;color:#92400e}
+.pill.ok{background:#dcfce7;color:#166534}
+.pill.total{background:#f1f5f9;color:#475569}
+
+.canvas-box{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:10px;margin-bottom:14px;overflow:hidden}
+#mapCanvas{width:100%;min-height:320px}
+.empty-msg{padding:60px 20px;text-align:center;color:#9ca3af;font-size:.92em}
+
+.alerts-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px 16px;margin-bottom:14px}
+.alerts-card h3{font-size:.92em;font-weight:800;color:#1a5c3a;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.alert-row{padding:8px 11px;border-bottom:1px solid #f3f4f6;font-size:.86em;display:flex;align-items:center;gap:10px;cursor:pointer;transition:background .1s}
+.alert-row:hover{background:#f9fafb}
+.alert-row:last-child{border-bottom:0}
+.alert-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.alert-dot.out{background:#dc2626}
+.alert-dot.low{background:#f59e0b}
+.alert-row .name{font-weight:700;flex-shrink:0}
+.alert-row .memo{color:#6b7280;font-size:.85em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alert-row .by{color:#9ca3af;font-size:.74em;flex-shrink:0}
+
+/* Zone Detail Modal */
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;z-index:9000;padding:18px;opacity:0;visibility:hidden;transition:opacity .15s}
+.overlay.show{opacity:1;visibility:visible}
+.modal{background:#fff;border-radius:14px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;padding:20px}
+.modal h3{font-size:1.05em;font-weight:800;color:#1f2937;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.field{margin-top:14px}
+.field label{display:block;font-size:.84em;font-weight:700;color:#374151;margin-bottom:4px}
+.field textarea, .field input{width:100%;padding:9px 11px;border:1.5px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:.92em;color:#1f2937;background:#fff;outline:none}
+.field textarea{min-height:60px;resize:vertical}
+.status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
+.status-grid button{border:2px solid #e5e7eb;background:#f9fafb;color:#6b7280;border-radius:10px;padding:11px 6px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.92em}
+.modal-actions{margin-top:16px;display:flex;gap:8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;border:0;border-radius:10px;font-family:inherit;font-size:.92em;font-weight:700;cursor:pointer}
+.btn.primary{background:#1a5c3a;color:#fff;flex:2}
+.btn.primary:disabled{background:#9ca3af;cursor:not-allowed}
+.btn.sec{background:#f3f4f6;color:#374151;flex:1}
+.last-info{margin-top:10px;padding:8px 11px;background:#f9fafb;border-radius:8px;font-size:.78em;color:#6b7280}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:12px 22px;border-radius:24px;font-weight:700;font-size:.92em;box-shadow:0 4px 18px rgba(0,0,0,.18);z-index:9999;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-8px)}
+.toast.err{background:#dc2626}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="top-row">
+    <div>
+      <h1 id="pageTitle">🗺 매장 도면 — 실시간 재고 상태</h1>
+      <div class="sub" id="subTitle">영역 클릭 → 🟢 정상 / 🟡 부족 / 🔴 품절 상태 + 메모 즉시 기록</div>
+    </div>
+    <div class="lang-tabs">
+      <button onclick="setLang('ko')" data-lang="ko" class="active">한국어</button>
+      <button onclick="setLang('en')" data-lang="en">EN</button>
+      <button onclick="setLang('es')" data-lang="es">ES</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <label style="font-size:.84em;font-weight:700;color:#374151" id="lblBranch">📍 매장</label>
+    <select id="branchSel" onchange="changeBranch(this.value)"></select>
+    <button id="btnRefresh" onclick="refresh()">🔄 <span id="lblRefresh">새로고침</span></button>
+    <div class="stats" id="statsBox"></div>
+  </div>
+
+  <!-- 알림 카드 — 품절/부족 zone 만 모아 보기 -->
+  <div class="alerts-card" id="alertsCard" style="display:none">
+    <h3>⚠️ <span id="alertsTitle">주의 필요 영역</span></h3>
+    <div id="alertsList"></div>
+  </div>
+
+  <!-- 도면 캔버스 -->
+  <div class="canvas-box">
+    <div id="mapCanvas">
+      <div class="empty-msg" id="loadingMsg">⏳ 도면 로딩 중…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ZONE DETAIL MODAL -->
+<div class="overlay" id="zoneDetailOv">
+  <div class="modal">
+    <h3>
+      <span>📍</span>
+      <span id="zdTitle">Zone</span>
+      <button onclick="closeOv('zoneDetailOv')" style="margin-left:auto;background:transparent;border:0;color:#9ca3af;font-size:1.3em;cursor:pointer;line-height:1">✕</button>
+    </h3>
+    <div id="zdBranch" style="font-size:.78em;color:#6b7280;margin-bottom:6px"></div>
+
+    <div class="field">
+      <label id="zdStatusLbl">재고 상태</label>
+      <div class="status-grid">
+        <button type="button" class="zd-status-btn" data-status="ok">🟢 <span id="zdOk">정상</span></button>
+        <button type="button" class="zd-status-btn" data-status="low">🟡 <span id="zdLow">부족</span></button>
+        <button type="button" class="zd-status-btn" data-status="out">🔴 <span id="zdOut">품절</span></button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label id="zdMemoLbl">상세 메모 (선택)</label>
+      <textarea id="zdMemo" placeholder="예: 라면 박스 3개 부족 / -3°C 온도 이상"></textarea>
+    </div>
+
+    <div class="last-info" id="zdLastInfo" style="display:none"></div>
+
+    <div class="modal-actions">
+      <button class="btn sec" onclick="closeOv('zoneDetailOv')" id="zdCancelBtn">취소</button>
+      <button class="btn primary" onclick="saveZoneDetail()" id="zdSaveBtn">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BRANCHES = [
+  {id:'HOLLYWOOD',     ko:'헐리우드',       en:'Hollywood',       es:'Hollywood'},
+  {id:'MIAMI',         ko:'마이애미',       en:'Miami',           es:'Miami'},
+  {id:'PEMBROKE_PINES',ko:'펨브로크 파인스',en:'Pembroke Pines',  es:'Pembroke Pines'},
+  {id:'CORAL_SPRINGS', ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs'},
+  {id:'LASOLAS',       ko:'라스올라스',     en:'Las Olas',        es:'Las Olas'},
+];
+
+const T = {
+  pageTitle: { ko:'🗺 매장 도면 — 실시간 재고 상태', en:'🗺 Store Map — Live Stock Status', es:'🗺 Plano — Estado de Stock en Vivo' },
+  subTitle:  { ko:'영역 클릭 → 🟢 정상 / 🟡 부족 / 🔴 품절 상태 + 메모 즉시 기록',
+               en:'Click any zone → mark 🟢 OK / 🟡 Low / 🔴 Out + add memo. Real-time.',
+               es:'Clic en cualquier zona → marcar 🟢 OK / 🟡 Bajo / 🔴 Sin stock + nota.' },
+  docTitle:  { ko:'매장 도면 — KIMCHI MART', en:'Store Map — KIMCHI MART', es:'Plano — KIMCHI MART' },
+  branch:    { ko:'📍 매장', en:'📍 Branch', es:'📍 Sucursal' },
+  refresh:   { ko:'새로고침', en:'Refresh', es:'Actualizar' },
+  alertsTitle:{ ko:'주의 필요 영역', en:'Zones Needing Attention', es:'Zonas que Requieren Atención' },
+  loadingMsg:{ ko:'⏳ 도면 로딩 중…', en:'⏳ Loading map…', es:'⏳ Cargando plano…' },
+  emptyMap:  { ko:'⚠ 이 매장 도면이 아직 등록되지 않았습니다.\nfloorplan/ 에디터에서 그려주세요.',
+               en:'⚠ Floor plan not yet drawn for this branch.\nUse floorplan/ editor to draw.',
+               es:'⚠ Plano aún no dibujado para esta sucursal.\nUse el editor floorplan/.' },
+  status:    { ko:'재고 상태', en:'Stock Status', es:'Estado de Stock' },
+  memo:      { ko:'상세 메모 (선택)', en:'Detail Note (optional)', es:'Nota (opcional)' },
+  ok:        { ko:'정상', en:'OK', es:'OK' },
+  low:       { ko:'부족', en:'Low', es:'Bajo' },
+  out:       { ko:'품절', en:'Out', es:'Sin stock' },
+  cancel:    { ko:'취소', en:'Cancel', es:'Cancelar' },
+  save:      { ko:'💾 저장', en:'💾 Save', es:'💾 Guardar' },
+  saving:    { ko:'저장 중…', en:'Saving…', es:'Guardando…' },
+  saved:     { ko:'✅ 저장됨', en:'✅ Saved', es:'✅ Guardado' },
+  saveFail:  { ko:'❌ 저장 실패', en:'❌ Save failed', es:'❌ Error al guardar' },
+};
+let LANG = 'en';
+try {
+  var saved = localStorage.getItem('kimchi_lang') || localStorage.getItem('hub.lang') || localStorage.getItem('tasks.lang');
+  if (saved === 'ko' || saved === 'en' || saved === 'es') LANG = saved;
+  else {
+    var nav = (navigator.language || 'en').toLowerCase();
+    if (nav.startsWith('ko')) LANG = 'ko';
+    else if (nav.startsWith('es')) LANG = 'es';
+    else LANG = 'en';
+  }
+} catch(e){}
+function t(key){ return (T[key] && (T[key][LANG] || T[key].en || T[key].ko)) || key; }
+
+let me = null;
+try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+
+let CUR_BRANCH = (me && me.branch && me.branch !== '*') ? me.branch : 'LASOLAS';
+let CUR_ZONES = [];
+let CUR_INV = {};       // { zoneId: 'ok' | 'low' | 'out' }
+let CUR_DETAILS = {};   // { zoneId: { status, memo, updatedBy, updatedAt } }
+
+function applyI18n(){
+  document.title = t('docTitle');
+  document.getElementById('pageTitle').textContent = t('pageTitle');
+  document.getElementById('subTitle').textContent = t('subTitle');
+  document.getElementById('lblBranch').textContent = t('branch');
+  document.getElementById('lblRefresh').textContent = t('refresh');
+  document.getElementById('alertsTitle').textContent = t('alertsTitle');
+  document.querySelectorAll('.lang-tabs button').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-lang') === LANG);
+  });
+  // 매장 select 옵션
+  const sel = document.getElementById('branchSel');
+  if (sel) {
+    Array.from(sel.options).forEach(opt => {
+      const b = BRANCHES.find(x => x.id === opt.value);
+      if (b) opt.textContent = '🏪 ' + (b[LANG] || b.ko);
+    });
+  }
+}
+window.setLang = function(v){
+  if (v !== 'ko' && v !== 'en' && v !== 'es') return;
+  LANG = v;
+  try { localStorage.setItem('kimchi_lang', v); } catch(e){}
+  try { if (window.__langSync) window.__langSync.set(v); } catch(e){}
+  applyI18n();
+  refresh();
+};
+
+function fillBranchSelect(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = '';
+  BRANCHES.forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    opt.textContent = '🏪 ' + (b[LANG] || b.ko);
+    sel.appendChild(opt);
+  });
+  sel.value = CUR_BRANCH;
+}
+window.changeBranch = function(branch){
+  CUR_BRANCH = branch;
+  refresh();
+};
+
+async function refresh(){
+  const canvas = document.getElementById('mapCanvas');
+  canvas.innerHTML = '<div class="empty-msg">' + t('loadingMsg') + '</div>';
+  // zones 로드
+  let zones = [];
+  try {
+    const fp = await window.KMFloorPlan.load(CUR_BRANCH);
+    zones = fp.zones || [];
+  } catch(e) {
+    canvas.innerHTML = '<div class="empty-msg">⚠ ' + (e.message || e) + '</div>';
+    return;
+  }
+  if (!zones || zones.length === 0) {
+    canvas.innerHTML = '<div class="empty-msg">' + escHtml(t('emptyMap')).replace(/\n/g,'<br>') + '</div>';
+    document.getElementById('alertsCard').style.display = 'none';
+    document.getElementById('statsBox').innerHTML = '';
+    return;
+  }
+  CUR_ZONES = zones;
+  // 재고 상태 + 상세 같이 로드
+  let inv = {}, details = {};
+  try {
+    inv = await window.KMFloorPlan.loadZoneStates(CUR_BRANCH);
+    // 상세 한꺼번에 로드 (root path 한 번)
+    const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+    const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+    const aq = tok ? '&auth=' + encodeURIComponent(tok) : '';
+    const r = await fetch(FB_DB + '/tasks/' + encodeURIComponent(CUR_BRANCH) + '/_zone_state_.json?t=' + Date.now() + aq, { cache:'no-store' });
+    if (r.ok) details = (await r.json()) || {};
+  } catch(e) { console.warn('[map] load inv fail', e); }
+  CUR_INV = inv;
+  CUR_DETAILS = details;
+  // 렌더
+  window.KMFloorPlan.render(canvas, zones, {
+    mode: 'view',
+    inventory: inv,
+    onZoneClick: (zone) => openZoneDetail(zone, CUR_BRANCH),
+  });
+  // 통계
+  let nOut = 0, nLow = 0, nOk = 0;
+  Object.values(inv).forEach(s => { if (s==='out') nOut++; else if (s==='low') nLow++; else if (s==='ok') nOk++; });
+  const stats = document.getElementById('statsBox');
+  const labels = {
+    out: { ko:'🔴 품절', en:'🔴 Out', es:'🔴 Sin' },
+    low: { ko:'🟡 부족', en:'🟡 Low', es:'🟡 Bajo' },
+    ok:  { ko:'🟢 정상', en:'🟢 OK', es:'🟢 OK' },
+    total: { ko:'총', en:'Total', es:'Total' },
+  };
+  stats.innerHTML =
+    '<span class="pill out">' + labels.out[LANG] + ' ' + nOut + '</span>' +
+    '<span class="pill low">' + labels.low[LANG] + ' ' + nLow + '</span>' +
+    '<span class="pill ok">' + labels.ok[LANG] + ' ' + nOk + '</span>' +
+    '<span class="pill total">' + labels.total[LANG] + ' ' + zones.length + '</span>';
+  // 알림 카드 — out + low 만
+  renderAlerts(details, zones);
+}
+
+function renderAlerts(details, zones){
+  const card = document.getElementById('alertsCard');
+  const list = document.getElementById('alertsList');
+  const alerts = [];
+  Object.entries(details || {}).forEach(([zid, v]) => {
+    if (!v || !v.status) return;
+    if (v.status !== 'out' && v.status !== 'low') return;
+    const zone = zones.find(z => z.id === parseInt(zid, 10));
+    if (zone) alerts.push({ zone, ...v });
+  });
+  if (alerts.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  // 정렬: out 우선 → updatedAt 최신순
+  alerts.sort((a,b) => {
+    if (a.status !== b.status) return a.status === 'out' ? -1 : 1;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+  list.innerHTML = alerts.map(a => {
+    const lbl = zoneTitle(a.zone);
+    const time = a.updatedAt ? new Date(a.updatedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}) : '';
+    return '<div class="alert-row" onclick=\'_openByZoneId(' + a.zone.id + ')\'>' +
+      '<span class="alert-dot ' + a.status + '"></span>' +
+      '<span class="name">' + escHtml(lbl) + '</span>' +
+      '<span class="memo">' + escHtml(a.memo || '') + '</span>' +
+      '<span class="by">' + escHtml(a.updatedBy || '?') + (time ? ' · ' + time : '') + '</span>' +
+      '</div>';
+  }).join('');
+}
+function _openByZoneId(zoneId){
+  const z = CUR_ZONES.find(x => x.id === zoneId);
+  if (z) openZoneDetail(z, CUR_BRANCH);
+}
+window._openByZoneId = _openByZoneId;
+
+function zoneTitle(z){
+  const parts = [];
+  if (z.num) parts.push(String(z.num));
+  if (z.label) parts.push(z.label.replace(/<br>/g,' ').trim());
+  return parts.join(' · ') || ('Zone #' + z.id);
+}
+function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ============== Zone Detail Modal ==============
+let __zdCurrent = null;
+let __zdStatus = 'ok';
+async function openZoneDetail(zone, branch){
+  if (!zone || !branch) return;
+  __zdCurrent = { zone, branch };
+  // i18n
+  document.getElementById('zdStatusLbl').textContent = t('status');
+  document.getElementById('zdMemoLbl').textContent = t('memo');
+  document.getElementById('zdOk').textContent = t('ok');
+  document.getElementById('zdLow').textContent = t('low');
+  document.getElementById('zdOut').textContent = t('out');
+  document.getElementById('zdCancelBtn').textContent = t('cancel');
+  document.getElementById('zdSaveBtn').textContent = t('save');
+  // 제목
+  document.getElementById('zdTitle').textContent = zoneTitle(zone);
+  const branchLbl = (BRANCHES.find(b => b.id === branch) || {});
+  document.getElementById('zdBranch').textContent = '🏪 ' + (branchLbl[LANG] || branchLbl.ko || branch) +
+    (zone.sub ? ' · ' + zone.sub.replace(/<br>|\n/g,' ') : '');
+  // 초기화
+  document.getElementById('zdMemo').value = '';
+  setZdStatus('ok');
+  document.getElementById('zdLastInfo').style.display = 'none';
+  // 기존 상태 로드 (캐시된 details 우선, 없으면 fetch)
+  const cur = CUR_DETAILS[zone.id] || await window.KMFloorPlan.loadZoneStateFull(branch, zone.id);
+  if (cur && cur.status) {
+    setZdStatus(cur.status);
+    if (cur.memo) document.getElementById('zdMemo').value = cur.memo;
+    if (cur.updatedBy) {
+      const dt = cur.updatedAt ? new Date(cur.updatedAt).toLocaleString([], {month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+      const info = document.getElementById('zdLastInfo');
+      info.textContent = '✏️ ' + cur.updatedBy + (dt ? ' · ' + dt : '');
+      info.style.display = '';
+    }
+  }
+  document.getElementById('zoneDetailOv').classList.add('show');
+}
+window.openZoneDetail = openZoneDetail;
+
+function setZdStatus(st){
+  __zdStatus = st;
+  const colors = { ok: ['#15803d','#dcfce7','#22c55e'], low: ['#92400e','#fef3c7','#f59e0b'], out: ['#7f1d1d','#fee2e2','#dc2626'] };
+  document.querySelectorAll('.zd-status-btn').forEach(btn => {
+    const s = btn.dataset.status;
+    if (s === st) {
+      const c = colors[s];
+      btn.style.borderColor = c[2];
+      btn.style.background = c[1];
+      btn.style.color = c[0];
+      btn.style.fontWeight = '900';
+    } else {
+      btn.style.borderColor = '#e5e7eb';
+      btn.style.background = '#f9fafb';
+      btn.style.color = '#6b7280';
+      btn.style.fontWeight = '700';
+    }
+  });
+}
+window.setZdStatus = setZdStatus;
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.zd-status-btn');
+  if (btn && btn.dataset.status) setZdStatus(btn.dataset.status);
+});
+
+window.closeOv = function(id){
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('show');
+};
+
+async function saveZoneDetail(){
+  if (!__zdCurrent) return;
+  const { zone, branch } = __zdCurrent;
+  const memo = document.getElementById('zdMemo').value.trim();
+  const saveBtn = document.getElementById('zdSaveBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = '⏳ ' + t('saving');
+  try {
+    const res = await window.KMFloorPlan.saveZoneState(branch, zone.id, {
+      status: __zdStatus,
+      memo,
+      updatedBy: (me && me.name) || '?'
+    });
+    if (res.ok) {
+      closeOv('zoneDetailOv');
+      showToast(t('saved'), zoneTitle(zone));
+      refresh();   // 도면 + 알림 + 통계 모두 새로고침
+    } else {
+      showToast(t('saveFail') + ' (' + (res.status || res.error || '?') + ')', null, true);
+    }
+  } catch(e) {
+    showToast(t('saveFail') + ' — ' + (e.message || e), null, true);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = t('save');
+  }
+}
+window.saveZoneDetail = saveZoneDetail;
+
+function showToast(msg, sub, isErr){
+  const el = document.getElementById('toast');
+  el.textContent = msg + (sub ? ' — ' + sub : '');
+  el.classList.toggle('err', !!isErr);
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+// ============== Init ==============
+function init(){
+  applyI18n();
+  fillBranchSelect();
+  refresh();
+}
+function tryInit(){
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+  if (!me || !me.name) { setTimeout(tryInit, 250); return; }
+  // 본인 매장이 있으면 default
+  if (me.branch && me.branch !== '*' && !CUR_BRANCH) CUR_BRANCH = me.branch;
+  init();
+}
+window.addEventListener('km-identity-changed', () => {
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+});
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tryInit);
+else tryInit();
+</script>
+</body>
+</html>
