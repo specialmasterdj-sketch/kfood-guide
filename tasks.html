@@ -4704,7 +4704,6 @@ async function sendTempCheckDailyAll(){
         fromRole: me.role || 'MANAGER',
         createdAt: Date.now(),
         autoTempDaily: true,
-        noAutoChat: true,
         points: 1,
       };
       const w = await fetch(restUrl + (aq ? aq : ''), {
@@ -6911,6 +6910,7 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     'Sushi':      'sushi',
     'K-Food':     'kfood_eval',
     'Produce':    'produce',
+    '온도 체크':  'temp_eval',
   };
   const targetRoom = ROOM_BY_CATEGORY[task.category] || 'grocery_eval';
   // Look up branch label for a friendly header line
@@ -6983,6 +6983,19 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     undoneBlocks.forEach(l => lines.push(l));
   }
   if (memoText) { lines.push(''); lines.push(`📝 추가 보고: ${memoText}`); }
+  // 🌡 온도 체크 task — 오늘 매장 온도 측정 결과 자동 요약 첨부 (autoTempDaily).
+  // temp/{BRANCH}/equipment + temp/{BRANCH}/checks/{today} 를 읽어와서
+  // 측정/위험/미측정 요약을 메시지에 붙임.
+  let __tempSummaryLines = null;
+  if (task.autoTempDaily) {
+    try {
+      __tempSummaryLines = await __buildTempSummaryLines(task.branchId);
+      if (__tempSummaryLines && __tempSummaryLines.length) {
+        lines.push('');
+        __tempSummaryLines.forEach(l => lines.push(l));
+      }
+    } catch(e) { console.warn('[postCompletionToChat] temp summary fetch failed', e); }
+  }
   const text = lines.join('\n');
   const msg = {
     sender: senderName,
@@ -7019,6 +7032,11 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       // throw 안 하고 경고만 — task 자체는 완료 처리, 채팅은 자동 복구.
       console.warn('[postCompletionToChat] queued for retry —', result.error);
     }
+    // 🌡 온도 task 완료 → 일일 매니저 보고 (managers) 방에도 별도 발송.
+    if (task.autoTempDaily && __tempSummaryLines && __tempSummaryLines.length) {
+      try { await __postTempSummaryToManagers(task, branchLbl, senderName, ts, __tempSummaryLines); }
+      catch(e) { console.warn('[temp→managers] post failed', e); }
+    }
     return;
   }
   // Fallback — km-chat-queue 미로드 시 (옛 클라이언트). forceRefresh + status 체크.
@@ -7043,6 +7061,114 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: senderName })
+  }).catch(()=>{});
+  // 🌡 fallback path 에서도 온도 task 면 매니저 룸 발송
+  if (task.autoTempDaily && __tempSummaryLines && __tempSummaryLines.length) {
+    try { await __postTempSummaryToManagers(task, branchLbl, senderName, ts, __tempSummaryLines); }
+    catch(e) { console.warn('[temp→managers] post failed', e); }
+  }
+}
+
+// 🌡 헬퍼: temp/{branch}/equipment + checks/{today} 읽어와서 사람 읽기 좋은 요약 라인 배열로 빌드.
+// daily-report.html 의 loadTempData() 와 같은 데이터 셰이프 사용.
+async function __buildTempSummaryLines(branchId){
+  if (!branchId) return null;
+  const today = todayStr();
+  let aq = '';
+  try {
+    const u = window.__fb?.auth?.currentUser;
+    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+  const eqUrl = `${FB_DB_URL}/temp/${encodeURIComponent(branchId)}/equipment.json` + aq;
+  const chUrl = `${FB_DB_URL}/temp/${encodeURIComponent(branchId)}/checks/${today}.json` + aq;
+  const [eqR, chR] = await Promise.all([
+    fetch(eqUrl, { cache:'no-store' }),
+    fetch(chUrl, { cache:'no-store' }),
+  ]);
+  if (!eqR.ok) return null;
+  const eqObj = (await eqR.json()) || {};
+  const chObj = chR.ok ? ((await chR.json()) || {}) : {};
+  const eqEntries = Object.entries(eqObj).map(([id, eq]) => Object.assign({ id }, eq));
+  if (!eqEntries.length) return null;
+  // 장비별 최신 측정값 (해당 매장 오늘 checks 객체 안에서 eqId 매칭)
+  const latestByEq = {};
+  Object.values(chObj).forEach(c => {
+    if (!c || !c.eqId) return;
+    const cur = latestByEq[c.eqId];
+    if (!cur || (c.ts||0) > (cur.ts||0)) latestByEq[c.eqId] = c;
+  });
+  let checked = 0, normal = 0, warn = 0, danger = 0;
+  const issues = [];
+  eqEntries.forEach(eq => {
+    const last = latestByEq[eq.id];
+    if (!last) return;
+    checked++;
+    if (last.status === 'danger') { danger++; issues.push({ eq, last }); }
+    else if (last.status === 'warn') { warn++; issues.push({ eq, last }); }
+    else normal++;
+  });
+  const lines = [];
+  lines.push(`🌡 온도 체크 요약 (${checked}/${eqEntries.length} 측정 · 정상 ${normal} · ⚠️ ${warn} · 🚨 ${danger})`);
+  if (issues.length){
+    issues.slice(0, 10).forEach(i => {
+      const icon = i.last.status === 'danger' ? '🚨' : '⚠️';
+      const range = (i.eq.min != null && i.eq.max != null) ? ` (목표 ${i.eq.min}~${i.eq.max}°F)` : '';
+      const note = i.last.note ? ` · ${i.last.note}` : '';
+      lines.push(`   ${icon} ${i.eq.name || i.eq.qr || '?'} = ${i.last.temp}°F${range}${note}`);
+    });
+    if (issues.length > 10) lines.push(`   …외 ${issues.length - 10}건`);
+  } else if (checked === eqEntries.length) {
+    lines.push('   ✅ 모든 장비 정상 범위');
+  } else {
+    lines.push(`   ⏳ ${eqEntries.length - checked}개 장비 미측정`);
+  }
+  return lines;
+}
+
+// 🌡 헬퍼: 온도 task 완료 시 일일 매니저 보고 (managers) 방에 별도 메시지 발송.
+// kmChatQueue 우선, 미로드 시 REST fallback.
+async function __postTempSummaryToManagers(task, branchLbl, senderName, baseTs, tempLines){
+  const ts = baseTs + 1; // 매인 메시지와 분리되도록 +1ms
+  const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  const today = todayStr();
+  const text = [
+    `🌡 일일 온도 보고 — ${branchLbl}`,
+    `📅 ${today} · 담당: ${senderName}`,
+    '',
+    ...tempLines,
+    '',
+    `📌 출처: ${task.name || '온도 체크'} (자동 발송)`,
+  ].join('\n');
+  const msg = {
+    sender: senderName,
+    senderBranch: task.branchId || (me && me.branch) || '',
+    senderRole: (me && me.role) || 'STAFF',
+    isManager: !!(me && me.isManager),
+    color: (me && me.color) || '#0e7490',
+    text, ts,
+    photos: [],
+    meta: { kind:'temp_daily_summary', taskId: task.id, branch: task.branchId, completedBy: senderName, completedAt: ts }
+  };
+  if (window.kmChatQueue && typeof window.kmChatQueue.send === 'function'){
+    return window.kmChatQueue.send({
+      room: 'managers',
+      msgId,
+      msg,
+      roomPatch: { lastMsg: '🌡 일일 온도 보고 — ' + branchLbl, lastTs: ts, lastSender: senderName }
+    });
+  }
+  // Fallback
+  let aq = '';
+  try {
+    const u = window.__fb?.auth?.currentUser;
+    if (u) { const tok = await u.getIdToken(true); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+  await fetch(`${FB_DB_URL}/chat/messages/managers/${msgId}.json${aq}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
+  });
+  fetch(`${FB_DB_URL}/chat/rooms/managers.json${aq}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ lastMsg: '🌡 일일 온도 보고 — ' + branchLbl, lastTs: ts, lastSender: senderName })
   }).catch(()=>{});
 }
 
