@@ -699,31 +699,47 @@ function isManagerOrAbove(){
 }
 
 // =============== One-shot label fix (URL trigger) ===============
-// Usage: temp.html?fixhwmeat=1  (Hollywood: swap #24 and #26 labels)
+// Usage:
+//   temp.html?fixhwmeat=1  → Hollywood: swap #24 / #26 labels
+//   temp.html?fixhw33=1    → Hollywood: #33 → "Walk-In Freezer", type=freezer
 // Self-deletes after run via sessionStorage flag.
 let __oneShotFixRan = false;
 async function __runOneShotFix(){
   if (__oneShotFixRan) return;
   const qs = new URLSearchParams(location.search);
-  const fix = qs.get('fixhwmeat');
-  if (!fix) return;
-  if (sessionStorage.getItem('fix.hwmeat.done')) { __oneShotFixRan = true; return; }
-  if (BRANCH !== 'HOLLYWOOD') { alert('Switch to Hollywood branch first, then reload with ?fixhwmeat=1'); __oneShotFixRan = true; return; }
+  const tasks = [];
+  if (qs.get('fixhwmeat') && !sessionStorage.getItem('fix.hwmeat.done')) tasks.push('hwmeat');
+  if (qs.get('fixhw33')   && !sessionStorage.getItem('fix.hw33.done'))   tasks.push('hw33');
+  if (!tasks.length) return;
+  if (BRANCH !== 'HOLLYWOOD') { alert('Switch to Hollywood branch first, then reload.'); __oneShotFixRan = true; return; }
   if (!EQUIPMENT || !EQUIPMENT.length) return; // wait for data
   __oneShotFixRan = true;
   const findByQr = (n) => EQUIPMENT.find(eq => {
     const m = (eq.qr||'').match(/(\d+)/);
     return m && parseInt(m[1],10) === n;
   });
-  const a = findByQr(24), b = findByQr(26);
-  if (!a || !b) { alert('#24 or #26 not found in Hollywood equipment'); return; }
-  const before = { '#24': a.name, '#26': b.name };
+  const msgs = [];
   try {
-    await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+a.id), { name: 'open freezer of meat 2' });
-    await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+b.id), { name: 'open freezer of meat 4' });
-    sessionStorage.setItem('fix.hwmeat.done', '1');
-    alert('✅ Swapped\nBefore: #24='+before['#24']+', #26='+before['#26']+'\nAfter: #24=open freezer of meat 2, #26=open freezer of meat 4');
-    // strip the query so reload doesn't re-trigger
+    if (tasks.includes('hwmeat')){
+      const a = findByQr(24), b = findByQr(26);
+      if (!a || !b) throw new Error('#24 or #26 not found');
+      const before = { '#24': a.name, '#26': b.name };
+      await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+a.id), { name: 'open freezer of meat 2' });
+      await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+b.id), { name: 'open freezer of meat 4' });
+      sessionStorage.setItem('fix.hwmeat.done', '1');
+      msgs.push('✅ Swapped #24/#26\nBefore: #24='+before['#24']+', #26='+before['#26']);
+    }
+    if (tasks.includes('hw33')){
+      const e = findByQr(33);
+      if (!e) throw new Error('#33 not found');
+      const before = { name: e.name, type: e.type, min: e.min, max: e.max };
+      await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+e.id), {
+        name: 'Walk-In Freezer', type: 'freezer', min: -58, max: 0
+      });
+      sessionStorage.setItem('fix.hw33.done', '1');
+      msgs.push('✅ #33: '+before.name+' ('+before.type+', '+before.min+'~'+before.max+'°F) → Walk-In Freezer (freezer, -58~0°F)');
+    }
+    alert(msgs.join('\n\n'));
     history.replaceState(null, '', location.pathname);
   } catch(e){
     alert('Fix failed: '+(e?.message||e));
