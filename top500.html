@@ -203,6 +203,7 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
     <input type="text" id="searchBox" placeholder="🔎 상품명·코드 검색" oninput="QUERY=this.value;render()">
     <button class="btn sec" onclick="startScan()" id="scanBtn">📷 스캔</button>
     <button class="btn sec" onclick="setFilter('unset',null)" id="unsetBtn" title="아직 점검 안 한 항목">⬜ 미점검</button>
+    <button class="btn sec" onclick="setFilter('nophoto',null)" id="nophotoBtn" title="사진 없는 품목만 보기 — 누구든 한 번만 찍어 올리면 5매장 자동 공유" style="background:#fef3c7;border-color:#f59e0b;color:#92400e">📷 사진없음</button>
     <button class="btn sec" onclick="setFilter('all',null)" id="allBtn">전체</button>
   </div>
 
@@ -331,10 +332,13 @@ const I18N = {
     kpiLow: '🟡 부족',
     kpiOk: '🟢 정상',
     kpiUnsetBtn: (n) => `⬜ 미점검 ${n}`,
+    kpiNophotoBtn: (n) => `📷 사진없음 ${n}`,
     searchPh: '🔎 상품명·코드 검색',
     btnScan: '📷 스캔',
     btnUnset: '⬜ 미점검',
     btnUnsetTitle: '아직 점검 안 한 항목',
+    btnNophoto: '📷 사진없음',
+    btnNophotoTitle: '사진 없는 품목만 — 한 번만 찍어 올리면 5매장 자동 공유',
     btnAll: '전체',
     loading: '로딩 중…',
     pickBranch: '지점을 먼저 선택하세요',
@@ -414,10 +418,13 @@ const I18N = {
     kpiLow: '🟡 Low',
     kpiOk: '🟢 OK',
     kpiUnsetBtn: (n) => `⬜ Unchecked ${n}`,
+    kpiNophotoBtn: (n) => `📷 No photo ${n}`,
     searchPh: '🔎 Search name or code',
     btnScan: '📷 Scan',
     btnUnset: '⬜ Unchecked',
     btnUnsetTitle: 'Items not yet checked',
+    btnNophoto: '📷 No photo',
+    btnNophotoTitle: 'Only items without photos — take once, shared across all 5 branches',
     btnAll: 'All',
     loading: 'Loading…',
     pickBranch: 'Please select a branch first',
@@ -497,10 +504,13 @@ const I18N = {
     kpiLow: '🟡 Bajo',
     kpiOk: '🟢 OK',
     kpiUnsetBtn: (n) => `⬜ Sin revisar ${n}`,
+    kpiNophotoBtn: (n) => `📷 Sin foto ${n}`,
     searchPh: '🔎 Buscar nombre o código',
     btnScan: '📷 Escanear',
     btnUnset: '⬜ Sin revisar',
     btnUnsetTitle: 'Artículos sin revisar',
+    btnNophoto: '📷 Sin foto',
+    btnNophotoTitle: 'Solo artículos sin foto — sube una vez, compartido entre las 5 sucursales',
     btnAll: 'Todos',
     loading: 'Cargando…',
     pickBranch: 'Seleccione una sucursal primero',
@@ -888,6 +898,8 @@ function applyI18N(){
   $('allBtn').textContent = t.btnAll;
   $('unsetBtn').title = t.btnUnsetTitle;
   // unsetBtn 텍스트는 computeKpis() 에서 카운트와 함께 갱신
+  const nb = $('nophotoBtn'); if (nb) nb.title = t.btnNophotoTitle;
+  // nophotoBtn 텍스트도 computeKpis() 에서 카운트와 함께 갱신
   $('cancelBtn').textContent = t.btnCancel;
   $('saveBtn').textContent = t.btnSave;
   $('zeroBtn').textContent = t.zeroOut;
@@ -1209,7 +1221,8 @@ function render(){
       String(p.cat||'').toLowerCase().includes(q));
   }
   if (CATEGORY !== 'all') list = list.filter(p => (p.cat||'(no cat)') === CATEGORY);
-  if (FILTER !== 'all') list = list.filter(p => statusOf(p.code) === FILTER);
+  if (FILTER === 'nophoto') list = list.filter(p => !photoFor(p.code));
+  else if (FILTER !== 'all') list = list.filter(p => statusOf(p.code) === FILTER);
   if (!list.length){
     if (TOP500.length === 0) {
       $('list').innerHTML = `<div class="empty">
@@ -1228,18 +1241,20 @@ function render(){
 }
 
 function computeKpis(){
-  let crit=0, low=0, ok=0, unset=0;
+  let crit=0, low=0, ok=0, unset=0, nophoto=0;
   TOP500.forEach(p => {
     const s = statusOf(p.code);
     if (s==='crit') crit++;
     else if (s==='low') low++;
     else if (s==='ok') ok++;
     else unset++;
+    if (!photoFor(p.code)) nophoto++;
   });
   $('kpiCrit').textContent = crit;
   $('kpiLow').textContent = low;
   $('kpiOk').textContent = ok;
   $('unsetBtn').textContent = T().kpiUnsetBtn(unset);
+  const nb = $('nophotoBtn'); if (nb) nb.textContent = T().kpiNophotoBtn(nophoto);
 }
 
 function renderRow(p){
