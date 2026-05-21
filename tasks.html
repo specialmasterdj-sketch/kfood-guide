@@ -1056,6 +1056,7 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn sec" onclick="sendSeafoodDailyAll()" title="지점 + 직원을 골라 오늘 해산물 일일 작업 보고 발송" style="background:#cffafe;border-color:#0891b2;color:#155e75;font-weight:700">🐟 해산물 발송</button>
     <button class="btn sec" onclick="sendProduceDailyAll()" title="지점 + 직원을 골라 오늘 농산물 일일 작업 보고 발송" style="background:#dcfce7;border-color:#16a34a;color:#166534;font-weight:700">🥬 농산물 발송</button>
     <button class="btn sec" onclick="sendFrozenDailyAll()" title="지점 + 직원을 골라 오늘 냉동고 전체 진열 보고 발송 (2점)" style="background:#e0e7ff;border-color:#6366f1;color:#3730a3;font-weight:700">🧊 냉동고 발송</button>
+    <button class="btn sec" onclick="sendTempCheckDailyAll()" title="지점 전 직원에 오늘 온도 체크 업무 발송 — 카드 클릭 시 온도관리 앱으로 바로 이동" style="background:#cffafe;border-color:#0891b2;color:#0e7490;font-weight:700">🌡 온도 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -2854,6 +2855,8 @@ const I18N = {
   btnSendSeafood: { ko:'🐟 해산물 발송',   en:'🐟 Send Seafood',       es:'🐟 Enviar Mariscos' },
   btnSendProduce: { ko:'🥬 농산물 발송',   en:'🥬 Send Produce',       es:'🥬 Enviar Productos' },
   btnSendFrozen:  { ko:'🧊 냉동고 발송',   en:'🧊 Send Frozen',        es:'🧊 Enviar Congelados' },
+  btnSendTemp:    { ko:'🌡 온도 발송',     en:'🌡 Send Temp Check',    es:'🌡 Enviar Temp.' },
+  openTempApp:    { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Temp Tracker' },
   // Filter selects + search + reset
   filterPersonAll: { ko:'👤 담당자: 전체',   en:'👤 Assignee: All',      es:'👤 Encargado: Todos' },
   filterCatAll:    { ko:'📂 카테고리: 전체', en:'📂 Category: All',      es:'📂 Categoría: Todas' },
@@ -3121,6 +3124,7 @@ function refreshStaticI18n(){
     else if (oc.includes('sendSeafoodDailyAll')) b.textContent = t('btnSendSeafood');
     else if (oc.includes('sendProduceDailyAll')) b.textContent = t('btnSendProduce');
     else if (oc.includes('sendFrozenDailyAll'))  b.textContent = t('btnSendFrozen');
+    else if (oc.includes('sendTempCheckDailyAll')) b.textContent = t('btnSendTemp');
     else if (oc.includes('resetMgrFilters'))     b.textContent = t('btnReset');
   });
   // Filter selects — swap the first option (전체) text. Other options come
@@ -4640,6 +4644,85 @@ async function sendFrozenDailyAll(){
 }
 window.sendFrozenDailyAll = sendFrozenDailyAll;
 
+// 🌡 일일 온도 체크 일괄 발송 — checklist 없는 단순 task. 카드의 appLink 버튼
+// 으로 temp.html 로 바로 이동해서 거기서 입력. 직원은 온도 체크 끝나면 tasks
+// 로 돌아와서 "⚡ Quick done" 누름.
+async function sendTempCheckDailyAll(){
+  if (!me) { alert(LANG==='en'?'Please register your name first.':LANG==='es'?'Registre su nombre primero.':'이름 먼저 등록해 주세요.'); return; }
+  if (!isManager(me.role) && !isOwner()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
+  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowedBranches.length) { alert(LANG==='en'?'No branch info':LANG==='es'?'Sin info de sucursal':'지점 정보 없음'); return; }
+  let chosenBranch;
+  if (allowedBranches.length === 1) {
+    chosenBranch = allowedBranches[0].id;
+  } else {
+    chosenBranch = await pickBranchModal('🌡', LANG==='en'?'Send daily temp check — Which branch?':LANG==='es'?'Enviar revisión diaria de temperatura — ¿Qué sucursal?':'온도 체크 일일 발송 — 어느 지점에 보낼까요?', allowedBranches);
+    if (!chosenBranch) return;
+  }
+  const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
+  const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
+  const targetName = '*';
+  let created = 0, skipped = 0, failed = 0;
+  const today = todayStr();
+  const userKey = 'all';
+  const taskId = 'auto_temp_daily_' + userKey;
+  const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${today}/${taskId}.json`;
+  try {
+    let aq = '';
+    try {
+      const u = window.__fb?.auth?.currentUser;
+      if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+    } catch(_){}
+    const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
+    if (r.ok) {
+      const existing = await r.json();
+      if (existing && existing.autoTempDaily) { skipped = 1; }
+    }
+    if (!skipped) {
+      const payload = {
+        name: '🌡 온도 체크 (오전 / 오후 / 마감)',
+        nameTr: {
+          ko:'🌡 온도 체크 (오전 / 오후 / 마감)',
+          en:'🌡 Temperature Check (Morning / Afternoon / Closing)',
+          es:'🌡 Revisión de Temperatura (Mañana / Tarde / Cierre)'
+        },
+        deadline: '21:30',
+        category: '온도 체크',
+        requirePhoto: false,
+        place: '매장 전체',
+        locationNote: '오전·오후·마감 슬롯마다 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
+        locationNoteTr: {
+          ko:'오전·오후·마감 슬롯마다 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
+          en:'Enter temperature for every fridge/freezer in morning, afternoon, and closing slots. Tap the 🌡 button to open the app.',
+          es:'Registre la temperatura de cada refrigerador/congelador en los turnos mañana, tarde y cierre. Toque el botón 🌡 para abrir la app.',
+        },
+        appLink: 'temp.html',
+        appLinkLabel: { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Temp Tracker' },
+        assignedTo: targetName,
+        assignedToId: null,
+        from: me.name + ' (온도 일괄 발송)',
+        fromRole: me.role || 'MANAGER',
+        createdAt: Date.now(),
+        autoTempDaily: true,
+        noAutoChat: true,
+        points: 1,
+      };
+      const w = await fetch(restUrl + (aq ? aq : ''), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (w.ok) created = 1; else { console.warn('[temp-daily] write fail', chosenBranch, w.status); failed = 1; }
+    }
+  } catch(e) { console.warn('[temp-daily]', chosenBranch, e); failed = 1; }
+  const _hdr=LANG==='en'?'🌡 Temp check sent — ':LANG==='es'?'🌡 Revisión de temp. enviada — ':'🌡 온도 체크 일일 발송 — ';
+  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
+  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
+  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
+  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+}
+window.sendTempCheckDailyAll = sendTempCheckDailyAll;
+
 // K-Food '+ 음식 추가' / Seafood '+ 생선 추가' / Produce '+ 농산물 추가' —
 // iOS PWA 에서 prompt() 가 가끔 블록돼서 커스텀 모달 사용. 새 항목을 checklist
 // 배열 끝에 push, 기존 항목 데이터는 그대로 유지하며 새 빈 줄만 추가.
@@ -5303,6 +5386,17 @@ function renderTaskCard(t){
     }
   }
   else actions = `<button class="btn warn" onclick="startTask('${t.id}','${t.branchId}')">${labels.start[LANG]}</button> <button class="btn sec" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.quick[LANG]}</button>`;
+  // 🔗 외부 앱 연결 — task 에 appLink 가 있으면 클릭으로 해당 앱으로 이동.
+  // renderTaskCard 안에서는 파라미터 t 가 task 객체라서 i18n t() 함수가 가려짐 →
+  // 라벨은 인라인 fallback 으로 처리.
+  if (t.appLink) {
+    const linkLblFallback = LANG==='en' ? '🌡 Open Temp Tracker'
+                          : LANG==='es' ? '🌡 Abrir Temp Tracker'
+                          :               '🌡 온도 관리 앱 열기';
+    const linkLbl = t.appLinkLabel ? pickLang(t.appLinkLabel, linkLblFallback) : linkLblFallback;
+    const linkBtn = `<a href="${escHtml(t.appLink)}" class="btn" style="background:#0369a1;color:#fff;text-decoration:none;font-weight:800;margin-right:6px;display:inline-block">${escHtml(linkLbl)}</a>`;
+    actions = linkBtn + actions;
+  }
   const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
   // 📍 매니저 장소 사진 + 지시 내용 — 직원이 어디 무엇 할지 정확히 보이게
   const hasLocPhotos = t.locationPhotos && t.locationPhotos.length;
