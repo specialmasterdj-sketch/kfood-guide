@@ -2,6 +2,9 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Kimchi Mart — Floor Plan Editor</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -137,7 +140,8 @@ body{background:#e8ecf1;font-family:'Segoe UI',Arial,sans-serif;overflow:hidden;
 .zone[data-ftype="door-cooler"] .freezer-divider{position:absolute;left:50%;top:22px;bottom:22px;width:5px;margin-left:-2.5px;background:#1F618D;border-radius:2px;pointer-events:none;z-index:1;box-shadow:0 0 0 1px rgba(255,255,255,.4)}
 .zone .zone-num,.zone .zone-label,.zone .zone-sub{position:relative;z-index:1}
 .aisle-divider{position:absolute;left:50%;top:22px;bottom:22px;width:5px;margin-left:-2.5px;background:#2C3E50;border-radius:2px;pointer-events:none;z-index:0;box-shadow:0 0 0 1px rgba(255,255,255,.4)}
-.aisle-num-left,.aisle-num-right{position:absolute;top:50%;font-weight:900;font-size:18px;color:#8B4513;z-index:2;pointer-events:none;text-shadow:0 0 4px #fff,0 0 4px #fff,0 0 4px #fff;writing-mode:vertical-rl;text-orientation:upright;letter-spacing:0;line-height:.95;transform:translateY(-50%)}
+.aisle-num-left,.aisle-num-right{position:absolute;top:50%;font-weight:900;font-size:22px;color:#8B4513;z-index:3;cursor:pointer;text-shadow:0 0 4px #fff,0 0 4px #fff,0 0 4px #fff;writing-mode:vertical-rl;text-orientation:upright;letter-spacing:-3px;line-height:.85;transform:translateY(-50%);padding:4px 2px;border-radius:4px;transition:background .15s}
+.aisle-num-left:hover,.aisle-num-right:hover{background:rgba(241,196,15,.5);color:#0D47A1}
 .aisle-num-left{left:3px}
 .aisle-num-right{right:3px}
 .zone[data-aisle-split] .zone-num{display:none}
@@ -502,7 +506,7 @@ function createZoneEl(z) {
   if (isAisle && z.num && z.num.includes(',')) {
     const parts = z.num.split(',').map(s => s.trim());
     if (parts.length === 2) {
-      splitNums = `<span class="aisle-num-left">${parts[0]}</span><span class="aisle-num-right">${parts[1]}</span>`;
+      splitNums = `<span class="aisle-num-left" title="Click for planogram" onclick="openPlanogramForAisle(${z.id}, '${parts[0]}', event)">${parts[0]}</span><span class="aisle-num-right" title="Click for planogram" onclick="openPlanogramForAisle(${z.id}, '${parts[1]}', event)">${parts[1]}</span>`;
       el.dataset.aisleSplit = '1';
     }
   }
@@ -555,6 +559,57 @@ function refreshZoneEl(z) {
   z.el.querySelector('.zone-num').textContent = z.num;
   z.el.querySelector('.zone-label').innerHTML = z.label;
   z.el.querySelector('.zone-sub').innerHTML = z.sub;
+}
+
+// ========== PLANOGRAM INTEGRATION ==========
+const PLANO_CATEGORIES = ['hotfood','sidedish','sushi','seafood','produce','meat','poultry','ramen_noodles','dry_noodles','instant_dry','sauce','seasoning','flour_powder','sugar_salt','grain','mealkit','can','tea','snack','drinks','beer_sake_soju','houseware','sale_zone','wholesale_bulk','facility','signage','refrigerated','frozen','seaweed','dried_food'];
+function guessPlanoCategory(label, sub, num) {
+  const all = ((label||'') + ' ' + (sub||'') + ' ' + (num||'')).toLowerCase();
+  const map = [
+    [/ramen|cup\s*nood|shin|jin|samyang/, 'ramen_noodles'],
+    [/jp\/cn|dry.?noodl|naengmyeon|dangmyun|udon|somyeon/, 'dry_noodles'],
+    [/seaweed|gim|nori|nuts|jujube|anchov|kelp|shiitake/, 'seaweed'],
+    [/dried.?seafood|dried.?fish|jwipo|pollock/, 'dried_food'],
+    [/seafood|fish|shabu|tank|sashimi/, 'seafood'],
+    [/sushi/, 'sushi'],
+    [/produce|veget|fruit|pro/, 'produce'],
+    [/meat|poultry|chicken|pork|beef|bbq|bb\.q/, 'meat'],
+    [/banchan|side.?dish|kimchi|bibib/, 'sidedish'],
+    [/hot\s*food|food.?zone|pang|deli/, 'hotfood'],
+    [/soy.?sauce|gochujang|doenjang|sriracha|sauce/, 'sauce'],
+    [/gochugaru|seasoning|spice|dasida|hondashi|curry|furikake|wasabi/, 'seasoning'],
+    [/sugar|salt|jocheong|maesil/, 'sugar_salt'],
+    [/rice|grain|barley|misugaru|glutinous/, 'grain'],
+    [/flour|powder|pancake|starch|tempura|breadcrumb/, 'flour_powder'],
+    [/can|tuna|spam|coconut|condensed|tropical/, 'can'],
+    [/meal.?kit|instant|juk|bibigo|porridge/, 'instant_dry'],
+    [/snack|pepero|choco|kancho|pocky|calbee/, 'snack'],
+    [/tea|coffee|matcha|maxim/, 'tea'],
+    [/drink|beverage|juice|soda|water|bacchus|condition/, 'drinks'],
+    [/beer|sake|soju|wine|alcohol|makgeolli/, 'beer_sake_soju'],
+    [/houseware|cookware|tableware|sponge|cleaning/, 'houseware'],
+    [/sale|sz|promo/, 'sale_zone'],
+    [/wholesale|bulk/, 'wholesale_bulk'],
+    [/freez|frozen|fz/, 'frozen'],
+    [/cooler|refriger|cl|cold|op/, 'refrigerated'],
+    [/sign/, 'signage'],
+    [/walk-in|restroom|office|facility|bailer|sink|tv|music|lighting|garbage|trash/, 'facility'],
+  ];
+  for (const [re, cat] of map) if (re.test(all)) return cat;
+  return null;
+}
+function openPlanogramForAisle(zoneId, aisleNum, ev) {
+  ev && ev.stopPropagation();
+  const z = zones.find(x => x.id === zoneId);
+  if (!z) return;
+  let cat = z.plano || guessPlanoCategory(z.label, z.sub, z.num);
+  if (!cat) {
+    cat = prompt('Pick planogram category for aisle ' + aisleNum + ':\n\n' + PLANO_CATEGORIES.join(', '), 'sauce');
+    if (!cat || !PLANO_CATEGORIES.includes(cat)) return;
+    z.plano = cat;
+    autoSave();
+  }
+  window.open('../planogram.html#' + cat, '_blank');
 }
 
 function addEquip(ftype) {
