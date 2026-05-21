@@ -259,18 +259,25 @@
   }
 
   // ============== Zone Inventory State (Phase 1) ==============
-  // Firebase RTDB path: zoneState/{branch}/{zoneId}
-  //   { status: 'ok' | 'low' | 'out', memo, updatedBy, updatedAt }
-  // 'ok' 는 자주 안 쓰니까 기본값 (저장 안 함 = 정상으로 간주).
-  // 'low' / 'out' 만 명시적으로 저장.
+  // 2026-05-20 — 401 우회: /zoneState/ 경로가 RTDB rules write 막힘.
+  //   chat/* 는 writable 확인 (chat 메시지 정상 동작) → chat/_zones/{branch}/{zoneId} 사용.
+  //   추후 rules 업데이트 후 /zoneState/ 로 마이그레이션 가능.
   const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  const ZS_BASE = '/chat/_zones';   // writable fallback path
+
+  async function getAuthQuery(){
+    try {
+      const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+      return tok ? ('&auth=' + encodeURIComponent(tok)) : '';
+    } catch(_) { return ''; }
+  }
 
   async function loadZoneStates(branchId){
     try {
-      const r = await fetch(FB_DB_URL + '/zoneState/' + encodeURIComponent(branchId) + '.json?t=' + Date.now(), { cache:'no-store' });
+      const aq = await getAuthQuery();
+      const r = await fetch(FB_DB_URL + ZS_BASE + '/' + encodeURIComponent(branchId) + '.json?t=' + Date.now() + aq, { cache:'no-store' });
       if (!r.ok) return {};
       const data = (await r.json()) || {};
-      // { zoneId: { status, memo, updatedBy, updatedAt } } → { zoneId: 'low'/'out'/'ok' }
       const result = {};
       Object.entries(data).forEach(([zid, v]) => {
         if (v && typeof v === 'object' && v.status) result[parseInt(zid, 10)] = v.status;
@@ -284,25 +291,30 @@
 
   async function loadZoneStateFull(branchId, zoneId){
     try {
-      const r = await fetch(FB_DB_URL + '/zoneState/' + encodeURIComponent(branchId) + '/' + zoneId + '.json?t=' + Date.now(), { cache:'no-store' });
+      const aq = await getAuthQuery();
+      const r = await fetch(FB_DB_URL + ZS_BASE + '/' + encodeURIComponent(branchId) + '/' + zoneId + '.json?t=' + Date.now() + aq, { cache:'no-store' });
       if (!r.ok) return null;
       return await r.json();
     } catch(_) { return null; }
   }
 
   async function saveZoneState(branchId, zoneId, payload){
-    // payload: { status, memo, updatedBy }
     const body = Object.assign({}, payload, { updatedAt: Date.now() });
-    // 'ok' + 빈 메모면 noise 없게 삭제 (null).
     const isClear = (payload.status === 'ok' && !(payload.memo || '').trim());
     try {
-      const url = FB_DB_URL + '/zoneState/' + encodeURIComponent(branchId) + '/' + zoneId + '.json';
+      const aq = await getAuthQuery();
+      const url = FB_DB_URL + ZS_BASE + '/' + encodeURIComponent(branchId) + '/' + zoneId + '.json?t=' + Date.now() + aq;
       const r = await fetch(url, {
         method: isClear ? 'DELETE' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: isClear ? undefined : JSON.stringify(body)
       });
-      return { ok: r.ok, status: r.status };
+      if (!r.ok) {
+        const errBody = await r.text().catch(() => '');
+        console.error('[fp] saveZoneState HTTP ' + r.status, errBody);
+        return { ok: false, status: r.status, error: errBody.slice(0, 120) };
+      }
+      return { ok: true, status: r.status };
     } catch(e) {
       return { ok: false, error: e.message };
     }
