@@ -1225,8 +1225,99 @@ async function saveCheck(){
   btn.disabled = false;
   closeOv('inputOv');
   showToast(t('saved'));
+  // 🆕 2026-05-21 — slot 완료 시 자동 평가방 발송 (전무님 명시)
+  try { await maybePostSlotSummary(slotKey); } catch(e) { console.warn('[temp→chat]', e); }
 }
 window.saveCheck = saveCheck;
+
+// 🆕 2026-05-21 — slot 100% 완료 시 자동으로 'temp_eval' 평가방에 요약 발송.
+// localStorage 로 중복 발송 방지 (매장 × 날짜 × slot 단위).
+async function maybePostSlotSummary(slotKey){
+  if (!EQUIPMENT || EQUIPMENT.length === 0) return;
+  const slotData = ((CHECKS[todayKey()] || {})[slotKey]) || {};
+  const checkedCount = Object.keys(slotData).length;
+  const totalEq = EQUIPMENT.length;
+  if (checkedCount < totalEq) return;   // 아직 100% 아님
+  const postKey = 'temp_posted_' + BRANCH + '_' + todayKey() + '_' + slotKey;
+  if (localStorage.getItem(postKey)) return;   // 이미 발송
+  // 요약 데이터 집계
+  let nNormal = 0, nWarn = 0, nDanger = 0;
+  const issues = [];
+  EQUIPMENT.forEach(eq => {
+    const c = slotData[eq.id];
+    if (!c) return;
+    const st = c.status || 'unknown';
+    if (st === 'normal') nNormal++;
+    else if (st === 'warn') { nWarn++; issues.push({ eq, c, severity:'warn' }); }
+    else if (st === 'danger') { nDanger++; issues.push({ eq, c, severity:'danger' }); }
+  });
+  // 다국어 slot 라벨
+  const slotLbl = (function(){
+    const slotMap = { morning: { ko:'오전', en:'Morning', es:'Mañana' },
+                      afternoon: { ko:'오후', en:'Afternoon', es:'Tarde' },
+                      closing: { ko:'마감', en:'Closing', es:'Cierre' } };
+    const o = slotMap[slotKey];
+    return o ? (o[LANG] || o.ko) : slotKey;
+  })();
+  // chat 메시지 본문
+  const lines = [];
+  lines.push('🧊 ' + BRANCH + ' · ' + slotLbl + ' 온도 체크 완료');
+  lines.push('📊 ' + checkedCount + '/' + totalEq + ' · ✅ ' + nNormal + ' · ⚠️ ' + nWarn + ' · 🚨 ' + nDanger);
+  if (issues.length > 0) {
+    lines.push('');
+    issues.forEach(i => {
+      const icon = i.severity === 'danger' ? '🚨' : '⚠️';
+      const range = (i.eq.min !== undefined && i.eq.max !== undefined) ? ' (목표 ' + i.eq.min + '~' + i.eq.max + '°)' : '';
+      lines.push('   ' + icon + ' ' + (i.eq.name || ('#' + i.eq.id)) + ' = ' + i.c.temp + '°' + range +
+                 (i.c.note ? ' · ' + i.c.note : ''));
+    });
+  } else {
+    lines.push('   ✅ 모든 장비 정상 범위');
+  }
+  const text = lines.join('\n');
+  const ts = Date.now();
+  const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  const me = getMe();
+  const room = 'temp_eval';
+  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  let aq = '';
+  try {
+    const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+    if (tok) aq = '?auth=' + encodeURIComponent(tok);
+  } catch(_) {}
+  try {
+    // 평가방 메시지 발송
+    const r = await fetch(FB + '/chat/messages/' + room + '/' + msgId + '.json' + aq, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        sender: me?.name || 'AUTO 온도 보고',
+        senderBranch: BRANCH,
+        senderRole: me?.role || 'AUTO',
+        isManager: true,
+        color: nDanger > 0 ? '#dc2626' : nWarn > 0 ? '#f59e0b' : '#16a34a',
+        text, ts, photos: [], files: [],
+        _tempReport: true,
+        branch: BRANCH, slot: slotKey, totalEq, checked: checkedCount, normal: nNormal, warn: nWarn, danger: nDanger,
+      })
+    });
+    if (!r.ok) throw new Error('msg PUT ' + r.status);
+    // 방 메타 갱신 (lastMsg)
+    fetch(FB + '/chat/rooms/' + room + '.json' + aq, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name: '🧊 온도 보고', desc: '매장별 온도 체크 자동 보고',
+        lastMsg: '🧊 ' + BRANCH + ' · ' + slotLbl + (nDanger ? ' 🚨' : nWarn ? ' ⚠️' : ' ✅'),
+        lastTs: ts, lastSender: me?.name || 'AUTO 온도 보고'
+      })
+    }).catch(()=>{});
+    // 중복 발송 방지 마커
+    try { localStorage.setItem(postKey, String(ts)); } catch(_){}
+    showToast('📨 ' + (LANG==='en'?'Temp report sent to chat':LANG==='es'?'Reporte de temp. enviado':'평가방에 온도 보고 발송됨'));
+  } catch(e) {
+    console.warn('[temp→chat] post failed', e);
+  }
+}
+window.maybePostSlotSummary = maybePostSlotSummary;
 
 // =============== Assign / settings / equip-mgr ===============
 async function openAssignSheet(){
