@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_21_e';   // 시프트 카드 stageLabel 다국어 변환 + 기본 언어 영어 강제
+    var BUST = 'tasks_2026_05_21_f';   // isAssignedToMe 정규화 매칭 — 직원 업무 안 보이는 문제 해결
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -5226,17 +5226,26 @@ function renderEmp(){
   if (total === 0) { list.innerHTML = `<div class="empty">${t('emptyEmp')}</div>`; return; }
   list.innerHTML = my.map(renderTaskCard).join('');
 }
+// 🔧 2026-05-21 전무님 신고: 직원이 업무지시 안 보임 → 시작/완료 못함.
+// 원인: 매니저가 발사한 이름과 직원 me.name 이 대소문자·공백·구두점 차이로 매칭 실패.
+// (예: '*' assigned name='Rosa Monrroy' vs me.name='ROSA MONROY')
+// 해결: 정규화 함수로 양쪽 모두 비교 — trim + 소문자 + 공백/구두점 제거.
+function _normAssignName(s){
+  return String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '').trim();
+}
 function isAssignedToMe(t){
   if (!me) return false;
-  if (t.assignedToId && t.assignedToId === me.name) return true;
-  if (t.assignedTo && t.assignedTo.toLowerCase() === (me.name||'').toLowerCase()) return true;
-  // 🔧 2026-05-15: '*' (전체) 는 본인 매장 task 만 본인 업무로 잡음.
-  // 매니저는 5 지점 모두 subscribe 하므로 그냥 '*'== true 면 같은 카테고리
-  // task 가 5번 중복 표시 (정육 5번, K-Food 5번 …). 다른 매장 진행 상황은
-  // "매니저 뷰" 탭에서 별도 확인.
+  const myNorm = _normAssignName(me.name);
+  if (!myNorm) return false;
+  // 1) assignedToId 매칭 (정규화)
+  if (t.assignedToId && _normAssignName(t.assignedToId) === myNorm) return true;
+  // 2) assignedTo 매칭 (정규화 + 공백·구두점 무시)
+  if (t.assignedTo && t.assignedTo !== '*' && _normAssignName(t.assignedTo) === myNorm) return true;
+  // 3) '*' (전체) — 본인 매장 task 만
   if (t.assignedTo === '*') {
     return !t.branchId || !me.branch || t.branchId === me.branch;
   }
+  // 4) role 매칭
   if (t.assignedToRole && me.role && t.assignedToRole.toLowerCase() === me.role.toLowerCase()) return true;
   return false;
 }
