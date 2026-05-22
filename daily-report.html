@@ -235,6 +235,27 @@ textarea.tasks-summary{min-height:140px;font-family:'SF Mono',Consolas,monospace
 
   <!-- 제출 -->
   <button class="btn primary" id="btnSubmit" onclick="submitReport()">📨 <span id="lblSubmit">매니저 룸에 보고 발송</span></button>
+
+  <!-- 빠른 발주 보강 — 제출 후 빠진 벤더만 추가 발송. 매장+날짜는 위 헤더 선택 사용. -->
+  <div class="card" style="margin-top:14px;border:2px dashed #f59e0b;background:#fffbeb">
+    <h2 style="color:#92400e">📝 <span id="lblAmend">빠른 발주 보강 (제출 후 누락된 벤더 추가)</span></h2>
+    <div class="hint" id="lblAmendHint" style="color:#92400e">매장 + 날짜는 위 "기본 정보" 선택값 사용. 매니저 룸에 짧은 보강 메시지만 전송 (원본 보고는 그대로).</div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1">
+        <label id="lblAmendIn">📦 추가로 받은 벤더 (콤마)</label>
+        <input type="text" id="amendVendorIn" placeholder="예: BANDI FOOD, FRESHPOINT">
+      </div>
+      <div style="flex:1">
+        <label id="lblAmendOut">📝 추가로 발주한 벤더 (콤마)</label>
+        <input type="text" id="amendVendorOut" placeholder="예: BANDI FOOD, FRESHPOINT">
+      </div>
+    </div>
+    <div style="margin-top:8px">
+      <label id="lblAmendNote">메모 (선택)</label>
+      <input type="text" id="amendNote" placeholder="예: 새벽 배달 / 누락 발주 보강">
+    </div>
+    <button type="button" class="btn sec" id="btnAmendSend" onclick="sendAmendment()" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700;margin-top:10px">📤 <span id="lblAmendSend">보강 메시지 발송</span></button>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -304,6 +325,14 @@ const T = {
   lblPhotos:    { ko:'📷 사진 (선택, 최대 5장)', en:'📷 Photos (optional, max 5)', es:'📷 Fotos (opcional, máx 5)' },
   lblAddPhoto:  { ko:'사진 추가',           en:'Add Photo',               es:'Agregar Foto' },
   lblSubmit:    { ko:'매니저 룸에 보고 발송', en:'Send Report to Manager Room', es:'Enviar Reporte a Sala de Gerentes' },
+  lblAmend:     { ko:'빠른 발주 보강 (제출 후 누락된 벤더 추가)', en:'Quick Vendor Amendment (add missed vendors after submit)', es:'Enmienda Rápida (agregar vendedores faltantes)' },
+  lblAmendHint: { ko:'매장 + 날짜는 위 "기본 정보" 선택값 사용. 매니저 룸에 짧은 보강 메시지만 전송 (원본 보고는 그대로).',
+                  en:'Branch + date use the header selection above. Sends a short amendment to the Managers room (original report unchanged).',
+                  es:'Sucursal + fecha usa la selección de arriba. Envía una enmienda corta a la Sala de Gerentes (reporte original sin cambios).' },
+  lblAmendIn:   { ko:'📦 추가로 받은 벤더 (콤마)',   en:'📦 Additional received vendors (comma)',   es:'📦 Vendedores recibidos adicionales (coma)' },
+  lblAmendOut:  { ko:'📝 추가로 발주한 벤더 (콤마)', en:'📝 Additional ordered vendors (comma)',    es:'📝 Vendedores ordenados adicionales (coma)' },
+  lblAmendNote: { ko:'메모 (선택)', en:'Note (optional)', es:'Nota (opcional)' },
+  lblAmendSend: { ko:'보강 메시지 발송', en:'Send Amendment', es:'Enviar Enmienda' },
   toastSending: { ko:'보고 발송 중…',       en:'Sending report…',         es:'Enviando reporte…' },
   toastOk:      { ko:'✅ 매니저 룸에 발송 완료', en:'✅ Sent to Manager Room', es:'✅ Enviado a Sala de Gerentes' },
   toastErr:     { ko:'❌ 발송 실패 — 다시 시도하세요',en:'❌ Send failed — try again',es:'❌ Envío fallido — intente de nuevo' },
@@ -334,6 +363,12 @@ function applyI18n(){
   setText('dateBackdatedTxt', 'dateBackdated');
   // 날짜 라벨 (요일 표시) 갱신 — 언어 바뀔 때마다
   if (typeof refreshDateDisplay === 'function') refreshDateDisplay();
+  setText('lblAmend', 'lblAmend');
+  setText('lblAmendHint', 'lblAmendHint');
+  setText('lblAmendIn', 'lblAmendIn');
+  setText('lblAmendOut', 'lblAmendOut');
+  setText('lblAmendNote', 'lblAmendNote');
+  setText('lblAmendSend', 'lblAmendSend');
   setText('lblOnDuty', 'lblOnDuty');
   setText('lblDutyNames', 'lblDutyNames');
   setText('lblShiftHours', 'lblShiftHours');
@@ -415,6 +450,76 @@ function onDateChange(){
   loadTempData();
 }
 window.onDateChange = onDateChange;
+
+// 빠른 발주 보강 — 매니저가 원본 보고 제출 후 빠진 벤더를 발견했을 때 사용.
+// 원본 dailyReports 레코드는 건드리지 않고, 매니저 룸에 짧은 보강 메시지만 전송.
+async function sendAmendment(){
+  const branchId = document.getElementById('branchSel').value;
+  if (!branchId) { showToast(LANG==='en'?'Select a branch':LANG==='es'?'Seleccione sucursal':'매장을 선택하세요', true); return; }
+  const date = getReportDate();
+  const vIn  = document.getElementById('amendVendorIn').value.trim();
+  const vOut = document.getElementById('amendVendorOut').value.trim();
+  const note = document.getElementById('amendNote').value.trim();
+  if (!vIn && !vOut && !note) {
+    showToast(LANG==='en'?'Enter at least one vendor or note':LANG==='es'?'Ingrese vendedor o nota':'벤더 또는 메모를 입력하세요', true);
+    return;
+  }
+  const btn = document.getElementById('btnAmendSend');
+  const orig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ ' + (LANG==='en'?'Sending…':LANG==='es'?'Enviando…':'발송 중…');
+  try {
+    let authQuery = '';
+    try {
+      const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+      if (tok) authQuery = '?auth=' + encodeURIComponent(tok);
+    } catch(_){}
+    if (!authQuery) throw new Error('인증 토큰 없음 — 페이지 새로고침 후 다시');
+    const branchLbl = (BRANCHES.find(b => b.id === branchId)||{}).ko || branchId;
+    const ts = Date.now();
+    const msgId = 'm' + ts + Math.floor(Math.random()*900);
+    const isBackdated = (date !== todayStr());
+    const tag = isBackdated ? ' (소급 / Late)' : '';
+    const lines = ['📝 발주 보강 — ' + branchLbl + tag];
+    lines.push('📅 ' + date + ' · ' + ((me&&me.name)||'?'));
+    if (vIn)  lines.push('📦 추가 받음: ' + vIn);
+    if (vOut) lines.push('📝 추가 발주: ' + vOut);
+    if (note) lines.push('💬 ' + note);
+    const text = lines.join('\n');
+    const msg = {
+      sender: (me && me.name) || '?',
+      senderBranch: branchId,
+      senderRole: (me && me.role) || 'MANAGER',
+      isManager: true,
+      color: '#1a5c3a',
+      text, ts,
+      photos: [],
+      _dailyReportAmendment: true,
+      meta: { kind:'daily_amend', branch: branchId, date }
+    };
+    const r = await fetch(FB_DB_URL + '/chat/messages/managers/' + msgId + '.json' + authQuery, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(()=>'');
+      throw new Error('HTTP ' + r.status + ' — ' + body.slice(0, 120));
+    }
+    fetch(FB_DB_URL + '/chat/rooms/managers.json' + authQuery, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg: '📝 발주 보강 — ' + branchLbl + (isBackdated ? ' (' + date + ')' : ''), lastTs: ts, lastSender: (me&&me.name)||'?' })
+    }).catch(()=>{});
+    showToast(LANG==='en'?'✅ Amendment sent':LANG==='es'?'✅ Enmienda enviada':'✅ 보강 발송됨');
+    // 입력 비우기
+    document.getElementById('amendVendorIn').value = '';
+    document.getElementById('amendVendorOut').value = '';
+    document.getElementById('amendNote').value = '';
+  } catch(e) {
+    console.error('[amend]', e);
+    showToast((LANG==='en'?'❌ Failed: ':LANG==='es'?'❌ Falló: ':'❌ 실패: ') + (e.message || e), true);
+  } finally {
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
+window.sendAmendment = sendAmendment;
 
 function fillBranchSelect(){
   const sel = document.getElementById('branchSel');
