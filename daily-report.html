@@ -121,7 +121,9 @@ textarea.tasks-summary{min-height:140px;font-family:'SF Mono',Consolas,monospace
       </div>
       <div>
         <label id="lblDate">날짜</label>
-        <input type="text" id="dateDisplay" readonly style="background:#f9fafb">
+        <input type="date" id="dateDisplay" onchange="onDateChange()" style="background:#f9fafb">
+        <div id="dateDayLabel" style="margin-top:3px;font-size:.78em;color:#6b7280;font-weight:600"></div>
+        <div id="dateBackdatedNotice" style="display:none;margin-top:4px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:6px;padding:3px 7px;font-size:.74em;font-weight:700">⚠ <span id="dateBackdatedTxt">소급 입력 — 오늘이 아닌 날짜</span></div>
       </div>
     </div>
   </div>
@@ -272,6 +274,7 @@ const T = {
   lblBranch:    { ko:'매장',                en:'Branch',                  es:'Sucursal' },
   lblManager:   { ko:'작성 매니저',         en:'Reporting Manager',       es:'Gerente que Reporta' },
   lblDate:      { ko:'날짜',                en:'Date',                    es:'Fecha' },
+  dateBackdated:{ ko:'소급 입력 — 오늘이 아닌 날짜', en:'Late entry — not today', es:'Entrada tardía — no es hoy' },
   lblOnDuty:    { ko:'👥 근무 매니저',      en:'👥 Managers on Duty',     es:'👥 Gerentes en Turno' },
   lblDutyNames: { ko:'근무 매니저 이름 (콤마로 구분)', en:'Names of managers on duty (comma-separated)', es:'Nombres de gerentes en turno (separados por coma)' },
   lblShiftHours:{ ko:'영업 시간',           en:'Shift Hours',             es:'Horario de Turno' },
@@ -328,6 +331,9 @@ function applyI18n(){
   setText('lblBranch', 'lblBranch');
   setText('lblManager', 'lblManager');
   setText('lblDate', 'lblDate');
+  setText('dateBackdatedTxt', 'dateBackdated');
+  // 날짜 라벨 (요일 표시) 갱신 — 언어 바뀔 때마다
+  if (typeof refreshDateDisplay === 'function') refreshDateDisplay();
   setText('lblOnDuty', 'lblOnDuty');
   setText('lblDutyNames', 'lblDutyNames');
   setText('lblShiftHours', 'lblShiftHours');
@@ -378,15 +384,37 @@ let me = null;
 try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
 
 function todayStr(){ return new Date().toLocaleDateString('en-CA', { timeZone:'America/New_York' }); }
-function todayKr(){
+// 보고서 대상 날짜 — 사용자가 dateDisplay 에서 선택한 값. 비어있으면 오늘.
+function getReportDate(){
+  const el = document.getElementById('dateDisplay');
+  const v = el && el.value ? el.value : '';
+  return v || todayStr();
+}
+function dayOfWeekLabel(dateStr){
   const days = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
   const daysEn = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const daysEs = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-  const dt = new Date();
+  // YYYY-MM-DD 안전 파싱 — 타임존 영향 없이 요일 산출
+  const dt = new Date(dateStr + 'T12:00:00');
   const d = dt.getDay();
-  const dayName = LANG === 'en' ? daysEn[d] : LANG === 'es' ? daysEs[d] : days[d];
-  return todayStr() + ' · ' + dayName;
+  return LANG === 'en' ? daysEn[d] : LANG === 'es' ? daysEs[d] : days[d];
 }
+function refreshDateDisplay(){
+  const d = getReportDate();
+  const lbl = document.getElementById('dateDayLabel');
+  if (lbl) lbl.textContent = '📅 ' + dayOfWeekLabel(d);
+  const isToday = (d === todayStr());
+  const notice = document.getElementById('dateBackdatedNotice');
+  const inp = document.getElementById('dateDisplay');
+  if (notice) notice.style.display = isToday ? 'none' : '';
+  if (inp) inp.style.background = isToday ? '#f9fafb' : '#fef3c7';
+}
+function onDateChange(){
+  refreshDateDisplay();
+  loadTodayTasks();
+  loadTempData();
+}
+window.onDateChange = onDateChange;
 
 function fillBranchSelect(){
   const sel = document.getElementById('branchSel');
@@ -404,7 +432,8 @@ function fillBranchSelect(){
 
 function initHeader(){
   document.getElementById('managerName').value = (me && me.name) || '?';
-  document.getElementById('dateDisplay').value = todayKr();
+  document.getElementById('dateDisplay').value = todayStr();
+  refreshDateDisplay();
 }
 
 // ============== 벤더 체크박스 + 검색 필터 ==============
@@ -470,7 +499,7 @@ function initFreezerRadio(){
 let __tempReport = null;   // { totalEq, checked, normal, warn, danger, issues: [...] }
 async function loadTempData(){
   const branch = document.getElementById('branchSel').value;
-  const today = todayStr();
+  const today = getReportDate();
   const statsEl = document.getElementById('tempSummaryStats');
   const issuesEl = document.getElementById('tempIssuesList');
   const emptyEl = document.getElementById('tempEmpty');
@@ -569,7 +598,7 @@ function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;'
 // ============== 오늘 직원 활동 자동 집계 ==============
 async function loadTodayTasks(){
   const branch = document.getElementById('branchSel').value;
-  const today = todayStr();
+  const today = getReportDate();
   const ta = document.getElementById('taskSummary');
   const stats = document.getElementById('taskSummaryStats');
   ta.value = t('taskLoading');
@@ -751,7 +780,8 @@ async function submitReport(){
   btn.innerHTML = '⏳ ' + t('toastSending');
   showToast(t('toastSending'));
   try {
-    const today = todayStr();
+    const today = getReportDate();
+    const isBackdated = (today !== todayStr());
     const ts = Date.now();
     const reportId = 'r_' + ts + '_' + Math.floor(Math.random()*999);
     const branchLbl = (BRANCHES.find(b => b.id === branchId)||{}).ko || branchId;
@@ -815,7 +845,8 @@ async function submitReport(){
 
     // managers chat room 으로 발송
     const lines = [];
-    lines.push('📋 일일 매니저 보고 — ' + branchLbl);
+    const backdatedTag = isBackdated ? ' (소급 입력 / Late entry)' : '';
+    lines.push('📋 일일 매니저 보고 — ' + branchLbl + backdatedTag);
     lines.push('📅 ' + today + ' · ' + data.managerName + ' · ' + new Date(ts).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}));
     lines.push('');
     lines.push('👥 근무: ' + duty + (data.shiftHours ? ' (' + data.shiftHours + ')' : ''));
@@ -903,7 +934,7 @@ async function submitReport(){
     // rooms PATCH 실패는 비치명적 (lastMsg 만 갱신)
     fetch(FB_DB_URL + '/chat/rooms/managers.json' + authQuery, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ lastMsg: '📋 일일 보고 — ' + branchLbl, lastTs: ts, lastSender: data.managerName })
+      body: JSON.stringify({ lastMsg: '📋 일일 보고 — ' + branchLbl + (isBackdated ? ' (' + today + ')' : ''), lastTs: ts, lastSender: data.managerName })
     }).catch(e => console.warn('[daily-report] rooms patch failed', e));
 
     showToast(t('toastOk'));
