@@ -38,8 +38,20 @@
   }
 
   // 1) 페이지 로드 시 즉시 정규화 — 한 키만 셋팅된 상태였다면 나머지 채움
+  //    🆕 2026-05-22 전무님 — 한국 직원이 2% 라 기본 언어 영어 강제.
+  //    A) 첫 방문 (localStorage 비어있음) → 'en' 강제
+  //    B) 기존 사용자 (마이그레이션 마커 없음) → 한 번만 'en' 으로 reset.
+  //       이후 사용자가 KO/ES 클릭하면 그 값이 저장되고 다시는 강제 안 됨.
+  var MIG_KEY = 'lang_default_v1_en_migration';
+  var migrated = false;
+  try { migrated = !!localStorage.getItem(MIG_KEY); } catch(e){}
   var current = readCurrent();
-  if (current) mirrorAll(current);
+  if (!current || !migrated) {
+    current = 'en';
+    KEYS.forEach(function(k){ try { localStorage.setItem(k, 'en'); } catch(e){} });
+    try { localStorage.setItem(MIG_KEY, String(Date.now())); } catch(e){}
+  }
+  mirrorAll(current);
 
   // 2) 다른 탭/창에서 변경 시
   window.addEventListener('storage', function(e){
