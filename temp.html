@@ -1294,6 +1294,8 @@ async function saveCheck(){
   showToast(t('saved'));
   // 🆕 2026-05-21 — slot 완료 시 자동 평가방 발송 (전무님 명시)
   try { await maybePostSlotSummary(slotKey); } catch(e) { console.warn('[temp→chat]', e); }
+  // 🆕 2026-05-22 — 3개 슬롯 모두 완료 시 tasks.html 의 일일 온도 task 자동 완료 + managers 방 일일 요약 발송
+  try { await maybeCompleteTempDailyTask(); } catch(e) { console.warn('[temp→task]', e); }
 }
 window.saveCheck = saveCheck;
 
@@ -1388,6 +1390,114 @@ async function maybePostSlotSummary(slotKey){
   }
 }
 window.maybePostSlotSummary = maybePostSlotSummary;
+
+// 🆕 2026-05-22 — 오늘 3개 슬롯 (오전·오후·마감) 모두 완료 시 tasks.html 의
+// auto_temp_daily_all task 자동 완료 처리 + managers 방에 일일 종합 요약 발송.
+// localStorage 마커로 중복 발송 방지.
+async function maybeCompleteTempDailyTask(){
+  if (!EQUIPMENT || EQUIPMENT.length === 0) return;
+  const totalEq = EQUIPMENT.length;
+  const todayChecks = CHECKS[todayKey()] || {};
+  const slots = ['morning','afternoon','closing'];
+  // 모든 슬롯이 100% 완료인지 확인
+  const allDone = slots.every(s => Object.keys(todayChecks[s] || {}).length >= totalEq);
+  if (!allDone) return;
+  const markerKey = 'temp_task_completed_' + BRANCH + '_' + todayKey();
+  if (localStorage.getItem(markerKey)) return; // 이미 처리됨
+  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  let aq = '';
+  try {
+    const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+    if (tok) aq = '?auth=' + encodeURIComponent(tok);
+  } catch(_){}
+  const me = getMe();
+  // 1) tasks/{BRANCH}/{today}/auto_temp_daily_all 자동 완료
+  const taskId = 'auto_temp_daily_all';
+  const taskUrl = FB + '/tasks/' + BRANCH + '/' + todayKey() + '/' + taskId + '.json' + aq;
+  try {
+    const r = await fetch(taskUrl, { cache:'no-store' });
+    if (r.ok) {
+      const task = await r.json();
+      if (task && !task.completedAt) {
+        await fetch(taskUrl, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            startedAt: task.startedAt || Date.now(),
+            startedBy: task.startedBy || me?.name || '온도 자동',
+            completedAt: Date.now(),
+            completedBy: me?.name || '온도 자동',
+            autoCompletedByTempApp: true,
+          })
+        });
+      }
+    }
+  } catch(e) { console.warn('[temp→task complete]', e); }
+  // 2) 일일 종합 요약 빌드 (3슬롯 합산)
+  let n=0, normal=0, warn=0, danger=0, late=0;
+  const issues = [];
+  const perSlot = {};
+  slots.forEach(s => {
+    const slotData = todayChecks[s] || {};
+    perSlot[s] = Object.keys(slotData).length;
+    EQUIPMENT.forEach(eq => {
+      const c = slotData[eq.id];
+      if (!c) return;
+      n++;
+      if (c.lateEntry) late++;
+      if (c.status === 'danger') { danger++; issues.push({eq, c, slot:s, severity:'danger'}); }
+      else if (c.status === 'warn') { warn++; issues.push({eq, c, slot:s, severity:'warn'}); }
+      else if (c.status === 'normal') normal++;
+    });
+  });
+  // 3) managers 방 발송
+  const ts = Date.now();
+  const msgId = 'm' + ts + Math.floor(Math.random()*900);
+  const lines = [];
+  lines.push('🌡 일일 온도 보고 — ' + BRANCH);
+  lines.push('📅 ' + todayKey() + ' · 오전·오후·마감 3슬롯 완료');
+  lines.push('📊 총 ' + n + '회 측정 · ✅ ' + normal + ' · ⚠️ ' + warn + ' · 🚨 ' + danger + (late > 0 ? ' · 🕐 지각 ' + late : ''));
+  lines.push('   슬롯: 🌅 ' + perSlot.morning + '/' + totalEq + ' · ☀️ ' + perSlot.afternoon + '/' + totalEq + ' · 🌙 ' + perSlot.closing + '/' + totalEq);
+  if (issues.length > 0){
+    lines.push('');
+    lines.push('⚠️ 이상 ' + issues.length + '건:');
+    issues.slice(0, 12).forEach(i => {
+      const icon = i.severity === 'danger' ? '🚨' : '⚠️';
+      const slotLbl = i.slot === 'morning' ? '오전' : i.slot === 'afternoon' ? '오후' : '마감';
+      const range = (i.eq.min != null && i.eq.max != null) ? ' (목표 ' + i.eq.min + '~' + i.eq.max + '°)' : '';
+      lines.push('   ' + icon + ' [' + slotLbl + '] ' + (i.eq.name || ('#' + i.eq.id)) + ' = ' + i.c.temp + '°' + range +
+                 (i.c.note ? ' · ' + i.c.note : ''));
+    });
+    if (issues.length > 12) lines.push('   …외 ' + (issues.length - 12) + '건');
+  } else {
+    lines.push('   ✅ 모든 측정 정상 범위');
+  }
+  lines.push('');
+  lines.push('📌 업무지시 자동 완료됨 (온도 관리 앱)');
+  const text = lines.join('\n');
+  try {
+    const r = await fetch(FB + '/chat/messages/managers/' + msgId + '.json' + aq, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        sender: me?.name || '온도 자동',
+        senderBranch: BRANCH,
+        senderRole: me?.role || 'AUTO',
+        isManager: true,
+        color: danger > 0 ? '#dc2626' : warn > 0 ? '#f59e0b' : '#16a34a',
+        text, ts, photos: [], files: [],
+        _tempDailyReport: true,
+        meta: { kind:'temp_daily_complete', branch: BRANCH, date: todayKey(), totalChecks:n, normal, warn, danger, late }
+      })
+    });
+    if (!r.ok) throw new Error('managers PUT ' + r.status);
+    fetch(FB + '/chat/rooms/managers.json' + aq, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lastMsg: '🌡 일일 온도 보고 — ' + BRANCH + (danger ? ' 🚨' : warn ? ' ⚠️' : ' ✅'), lastTs: ts, lastSender: me?.name || '온도 자동' })
+    }).catch(()=>{});
+    try { localStorage.setItem(markerKey, String(ts)); } catch(_){}
+    showToast('✅ ' + (LANG==='en'?'Temp task auto-completed':LANG==='es'?'Tarea de temp. completada':'온도 업무 자동 완료'));
+  } catch(e) { console.warn('[temp→managers] post failed', e); }
+}
+window.maybeCompleteTempDailyTask = maybeCompleteTempDailyTask;
 
 // =============== Assign / settings / equip-mgr ===============
 async function openAssignSheet(){
