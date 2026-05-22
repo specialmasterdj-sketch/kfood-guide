@@ -698,6 +698,39 @@ function isManagerOrAbove(){
   return MGR_TOKENS.some(tok => r.includes(tok.toUpperCase()));
 }
 
+// =============== One-shot fix (URL trigger) — Hollywood #33 → freezer (재시도) ===============
+// Usage: temp.html?fixhw33b=1
+// 이전 ?fixhw33=1 가 type 변경 안 됐는지 확인 — 이번엔 BEFORE/AFTER 둘 다 alert 로 출력.
+let __oneShotFixRan = false;
+async function __runOneShotFix(){
+  if (__oneShotFixRan) return;
+  const qs = new URLSearchParams(location.search);
+  if (!qs.get('fixhw33b')) return;
+  if (sessionStorage.getItem('fix.hw33b.done')) { __oneShotFixRan = true; return; }
+  if (BRANCH !== 'HOLLYWOOD') { alert('Switch to Hollywood branch first, then reload with ?fixhw33b=1'); __oneShotFixRan = true; return; }
+  if (!EQUIPMENT || !EQUIPMENT.length) return; // wait for data
+  __oneShotFixRan = true;
+  const e = EQUIPMENT.find(eq => {
+    const m = (eq.qr||'').match(/(\d+)/);
+    return m && parseInt(m[1],10) === 33;
+  });
+  if (!e) { alert('#33 not found in Hollywood equipment'); return; }
+  const before = { id: e.id, qr: e.qr, name: e.name, type: e.type, min: e.min, max: e.max };
+  try {
+    await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/HOLLYWOOD/equipment/'+e.id), {
+      name: 'Walk-In Freezer',
+      type: 'freezer',
+      min: -58,
+      max: 0,
+    });
+    sessionStorage.setItem('fix.hw33b.done', '1');
+    alert('✅ #33 강제 업데이트 완료\n\nBEFORE:\n  name=' + before.name + '\n  type=' + before.type + '\n  min=' + before.min + '\n  max=' + before.max + '\n\nAFTER:\n  name=Walk-In Freezer\n  type=freezer\n  min=-58\n  max=0');
+    history.replaceState(null, '', location.pathname);
+  } catch(err) {
+    alert('❌ Fix failed: ' + (err?.message || err));
+  }
+}
+
 // =============== Firebase subscribe ===============
 let unsubs = [];
 function subscribe(){
@@ -709,6 +742,7 @@ function subscribe(){
     const v = snap.val() || {};
     EQUIPMENT = Object.entries(v).map(([id, eq]) => Object.assign({ id }, eq));
     renderAll();
+    __runOneShotFix();
   }));
   // Today's checks (and yesterday for late views)
   unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/checks/'+todayKey()), snap => {
