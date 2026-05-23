@@ -4644,9 +4644,9 @@ async function sendFrozenDailyAll(){
 }
 window.sendFrozenDailyAll = sendFrozenDailyAll;
 
-// 🌡 일일 온도 체크 일괄 발송 — checklist 없는 단순 task. 카드의 appLink 버튼
-// 으로 temp.html 로 바로 이동해서 거기서 입력. 직원은 온도 체크 끝나면 tasks
-// 로 돌아와서 "⚡ Quick done" 누름.
+// 🌡 일일 온도 체크 일괄 발송 — 3개 슬롯 (오전 / 오후 / 마감) 따로 발송.
+// 직원이 한 task 면 잊기 쉬워서 (전무님 요청, 2026-05-23) 각 슬롯 별도 카드로 분리.
+// 슬롯별 task 는 temp.html 에서 해당 슬롯 50/50 완료 시 자동으로 completedAt 채움.
 async function sendTempCheckDailyAll(){
   if (!me) { alert(LANG==='en'?'Please register your name first.':LANG==='es'?'Registre su nombre primero.':'이름 먼저 등록해 주세요.'); return; }
   if (!isManager(me.role) && !isOwner()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
@@ -4664,38 +4664,70 @@ async function sendTempCheckDailyAll(){
   const targetName = '*';
   let created = 0, skipped = 0, failed = 0;
   const today = todayStr();
-  const userKey = 'all';
-  const taskId = 'auto_temp_daily_' + userKey;
-  const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${today}/${taskId}.json`;
+  // 3개 슬롯 정의 — temp.html 의 SETTINGS.slot1/2/3 과 일치 (08:00 / 14:00 / 21:00 기본)
+  const SLOTS = [
+    {
+      key: 'morning',
+      taskId: 'auto_temp_daily_morning_all',
+      deadline: '11:00',
+      name: '🌅 온도 체크 — 오전',
+      nameTr: { ko:'🌅 온도 체크 — 오전 (08:00)', en:'🌅 Temperature Check — Morning (08:00)', es:'🌅 Revisión Temp. — Mañana (08:00)' },
+      locationNote: '오전 슬롯 — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
+      locationNoteTr: {
+        ko:'오전 슬롯 (08:00) — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
+        en:'Morning slot (08:00) — enter temperature for every fridge/freezer. Tap the 🌡 button to open the app.',
+        es:'Turno mañana (08:00) — registre la temperatura de cada refrigerador/congelador. Toque 🌡 para abrir la app.',
+      },
+    },
+    {
+      key: 'afternoon',
+      taskId: 'auto_temp_daily_afternoon_all',
+      deadline: '17:00',
+      name: '☀️ 온도 체크 — 오후',
+      nameTr: { ko:'☀️ 온도 체크 — 오후 (14:00)', en:'☀️ Temperature Check — Afternoon (14:00)', es:'☀️ Revisión Temp. — Tarde (14:00)' },
+      locationNote: '오후 슬롯 — 모든 냉장·냉동고 온도 입력.',
+      locationNoteTr: {
+        ko:'오후 슬롯 (14:00) — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
+        en:'Afternoon slot (14:00) — enter temperature for every fridge/freezer. Tap the 🌡 button to open the app.',
+        es:'Turno tarde (14:00) — registre la temperatura de cada refrigerador/congelador. Toque 🌡 para abrir la app.',
+      },
+    },
+    {
+      key: 'closing',
+      taskId: 'auto_temp_daily_closing_all',
+      deadline: '22:00',
+      name: '🌙 온도 체크 — 마감',
+      nameTr: { ko:'🌙 온도 체크 — 마감 (21:00)', en:'🌙 Temperature Check — Closing (21:00)', es:'🌙 Revisión Temp. — Cierre (21:00)' },
+      locationNote: '마감 슬롯 — 모든 냉장·냉동고 온도 입력.',
+      locationNoteTr: {
+        ko:'마감 슬롯 (21:00) — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
+        en:'Closing slot (21:00) — enter temperature for every fridge/freezer. Tap the 🌡 button to open the app.',
+        es:'Turno cierre (21:00) — registre la temperatura de cada refrigerador/congelador. Toque 🌡 para abrir la app.',
+      },
+    },
+  ];
+  let aq = '';
   try {
-    let aq = '';
+    const u = window.__fb?.auth?.currentUser;
+    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+  for (const slot of SLOTS){
+    const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${today}/${slot.taskId}.json` + (aq ? aq : '');
     try {
-      const u = window.__fb?.auth?.currentUser;
-      if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
-    } catch(_){}
-    const r = await fetch(restUrl + (aq ? aq : ''), { cache:'no-store' });
-    if (r.ok) {
-      const existing = await r.json();
-      if (existing && existing.autoTempDaily) { skipped = 1; }
-    }
-    if (!skipped) {
+      const r = await fetch(restUrl, { cache:'no-store' });
+      if (r.ok) {
+        const existing = await r.json();
+        if (existing && (existing.autoTempDailySlot === slot.key || existing.autoTempDaily)) { skipped++; continue; }
+      }
       const payload = {
-        name: '🌡 온도 체크 (오전 / 오후 / 마감)',
-        nameTr: {
-          ko:'🌡 온도 체크 (오전 / 오후 / 마감)',
-          en:'🌡 Temperature Check (Morning / Afternoon / Closing)',
-          es:'🌡 Revisión de Temperatura (Mañana / Tarde / Cierre)'
-        },
-        deadline: '21:30',
+        name: slot.name,
+        nameTr: slot.nameTr,
+        deadline: slot.deadline,
         category: '온도 체크',
         requirePhoto: false,
         place: '매장 전체',
-        locationNote: '오전·오후·마감 슬롯마다 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
-        locationNoteTr: {
-          ko:'오전·오후·마감 슬롯마다 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
-          en:'Enter temperature for every fridge/freezer in morning, afternoon, and closing slots. Tap the 🌡 button to open the app.',
-          es:'Registre la temperatura de cada refrigerador/congelador en los turnos mañana, tarde y cierre. Toque el botón 🌡 para abrir la app.',
-        },
+        locationNote: slot.locationNote,
+        locationNoteTr: slot.locationNoteTr,
         appLink: 'temp.html',
         appLinkLabel: { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Temp Tracker' },
         assignedTo: targetName,
@@ -4703,22 +4735,26 @@ async function sendTempCheckDailyAll(){
         from: me.name + ' (온도 일괄 발송)',
         fromRole: me.role || 'MANAGER',
         createdAt: Date.now(),
-        autoTempDaily: true,
+        autoTempDaily: true,           // 기존 헬퍼 호환용 — 사진 면제 등
+        autoTempDailySlot: slot.key,   // 🆕 슬롯별 식별자 — temp.html 자동완료가 이걸로 매칭
         points: 1,
       };
-      const w = await fetch(restUrl + (aq ? aq : ''), {
+      const w = await fetch(restUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (w.ok) created = 1; else { console.warn('[temp-daily] write fail', chosenBranch, w.status); failed = 1; }
-    }
-  } catch(e) { console.warn('[temp-daily]', chosenBranch, e); failed = 1; }
-  const _hdr=LANG==='en'?'🌡 Temp check sent — ':LANG==='es'?'🌡 Revisión de temp. enviada — ':'🌡 온도 체크 일일 발송 — ';
-  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
-  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
-  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
-  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+      if (w.ok) created++; else { console.warn('[temp-daily] write fail', chosenBranch, slot.key, w.status); failed++; }
+    } catch(e) { console.warn('[temp-daily]', chosenBranch, slot.key, e); failed++; }
+  }
+  const _hdr=LANG==='en'?'🌡 Temp check sent (3 slots) — ':LANG==='es'?'🌡 Revisión temp. enviada (3 turnos) — ':'🌡 온도 체크 발송 (3 슬롯) — ';
+  const _sent=LANG==='en'?'  Newly sent: ':LANG==='es'?'  Enviado: ':'  새로 발송: ';
+  const _skip=LANG==='en'?'  Already exists: ':LANG==='es'?'  Ya existe: ':'  이미 있음: ';
+  const _fail=LANG==='en'?'  Failed: ':LANG==='es'?'  Fallido: ':'  실패: ';
+  alert(_hdr + branchKo + '\n' +
+    (created?(_sent+created+'\n'):'') +
+    (skipped?(_skip+skipped+'\n'):'') +
+    (failed?(_fail+failed+'\n'):''));
 }
 window.sendTempCheckDailyAll = sendTempCheckDailyAll;
 

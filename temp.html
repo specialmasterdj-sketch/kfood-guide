@@ -1296,7 +1296,9 @@ async function saveCheck(){
   showToast(t('saved'));
   // 🆕 2026-05-21 — slot 완료 시 자동 평가방 발송 (전무님 명시)
   try { await maybePostSlotSummary(slotKey); } catch(e) { console.warn('[temp→chat]', e); }
-  // 🆕 2026-05-22 — 3개 슬롯 모두 완료 시 tasks.html 의 일일 온도 task 자동 완료 + managers 방 일일 요약 발송
+  // 🆕 2026-05-23 — 각 슬롯 완료 시 해당 슬롯 task 자동 완료 (3 task 분리 발송 후)
+  try { await maybeCompleteTempSlotTask(slotKey); } catch(e) { console.warn('[temp→slot-task]', e); }
+  // 🆕 2026-05-22 — 3개 슬롯 모두 완료 시 managers 방 일일 종합 요약 발송 (+ 레거시 단일 task 호환)
   try { await maybeCompleteTempDailyTask(); } catch(e) { console.warn('[temp→task]', e); }
 }
 window.saveCheck = saveCheck;
@@ -1392,6 +1394,60 @@ async function maybePostSlotSummary(slotKey){
   }
 }
 window.maybePostSlotSummary = maybePostSlotSummary;
+
+// 🆕 2026-05-23 — 슬롯 100% 완료 시 해당 슬롯의 tasks.html task 자동 완료.
+// 매니저가 3개 슬롯 따로 발송 (auto_temp_daily_morning_all 등) 한 경우 작동.
+async function maybeCompleteTempSlotTask(slotKey){
+  if (!EQUIPMENT || EQUIPMENT.length === 0) return;
+  const totalEq = EQUIPMENT.length;
+  const slotData = ((CHECKS[todayKey()] || {})[slotKey]) || {};
+  if (Object.keys(slotData).length < totalEq) return; // 아직 100% 아님
+  const taskIdBySlot = {
+    morning:   'auto_temp_daily_morning_all',
+    afternoon: 'auto_temp_daily_afternoon_all',
+    closing:   'auto_temp_daily_closing_all',
+  };
+  const taskId = taskIdBySlot[slotKey];
+  if (!taskId) return;
+  const markerKey = 'temp_slot_task_done_' + BRANCH + '_' + todayKey() + '_' + slotKey;
+  if (localStorage.getItem(markerKey)) return;
+  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  let aq = '';
+  try {
+    const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+    if (tok) aq = '?auth=' + encodeURIComponent(tok);
+  } catch(_){}
+  const me = getMe();
+  const taskUrl = FB + '/tasks/' + BRANCH + '/' + todayKey() + '/' + taskId + '.json' + aq;
+  try {
+    const r = await fetch(taskUrl, { cache:'no-store' });
+    if (!r.ok) { console.warn('[slot-task] fetch fail', r.status); return; }
+    const task = await r.json();
+    if (!task) return; // 매니저가 이 슬롯 task 안 발송함
+    if (task.completedAt) {
+      try { localStorage.setItem(markerKey, '1'); } catch(_){}
+      return;
+    }
+    await fetch(taskUrl, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        startedAt: task.startedAt || Date.now(),
+        startedBy: task.startedBy || me?.name || '온도 자동',
+        completedAt: Date.now(),
+        completedBy: me?.name || '온도 자동',
+        autoCompletedByTempApp: true,
+      })
+    });
+    try { localStorage.setItem(markerKey, '1'); } catch(_){}
+    const slotLbl = slotKey === 'morning' ? '오전' : slotKey === 'afternoon' ? '오후' : '마감';
+    showToast('✅ ' + (LANG==='en' ? slotKey + ' temp task auto-completed'
+                    : LANG==='es' ? 'Tarea temp. ' + slotKey + ' completada'
+                    :               slotLbl + ' 온도 task 자동 완료'));
+  } catch(e) {
+    console.warn('[slot-task complete]', e);
+  }
+}
+window.maybeCompleteTempSlotTask = maybeCompleteTempSlotTask;
 
 // 🆕 2026-05-22 — 매장 → 워크허브 채팅방 매핑.
 //    슬롯 시간 지났는데 체크 시작 안 하면 이 방에 자동 알림 발송.
