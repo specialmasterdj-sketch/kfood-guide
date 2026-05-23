@@ -6839,10 +6839,12 @@ window.forceCompleteTask = async function(taskId, branchId){
         })
       : [];
     const chatPhotos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
-    const memoText = `(${me.name} 매니저가 ${credit} 의 업무를 강제 종료)`;
+    // 🆕 2026-05-23 — 강제 종료 메모 자동 첨부 제거. 평가방에 노이즈 됨 ("매니저가
+    // ... 강제 종료" 라인이 보고마다 따라붙어 거슬렸음). 누가 강제 처리했는지는
+    // task.forceCompletedBy 필드에 그대로 저장되니 audit 가능, 평가방 노출만 끈다.
     let chatOk = false;
     try {
-      await postCompletionToChat(t, chatPhotos, memoText, { senderOverride: credit, senderBranch: t.branchId });
+      await postCompletionToChat(t, chatPhotos, null, { senderOverride: credit, senderBranch: t.branchId });
       chatOk = true;
     }
     catch(e){
@@ -7011,27 +7013,51 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       if (b) branchLbl = b[LANG] || b.ko || task.branchId;
     }
   } catch(_){}
-  const taskName = task.name || '(이름 없음)';
-  const lines = [
-    `✅ 업무 완료 — ${taskName}`,
-    `🏢 ${branchLbl} · 담당: ${senderName}`,
-  ];
-  if (task.place) lines.push(`📍 장소: ${task.place}`);
-  // 🚫 2026-05-19 시간 데드라인 라인 제거 — 평가방 보고에도 시간 표시 안 함.
-  if (task.locationNote) lines.push(`📝 지시: ${task.locationNote}`);
-  // 🐂🐖🐔🥬 체크리스트 항목별 entries / memo / 사진 (작업한 종류·수량) 포함.
-  // 메모만 보내면 작업한 품목·수량이 빠져 평가방에서 진짜 중요한 정보가 사라짐.
-  // 2026-05-16: "작업 내용 다 안 나옴" 사건 후 보강 —
-  //   · 체크된 항목은 무조건 표시 (memo 비어도 ✓ 만이라도)
-  //   · 항목별 사진 개수 같이 표시 (📷×N)
-  //   · 미완료 항목은 따로 ⏸ 섹션으로 분리 → 작업 여부 한눈에 파악
+  // 🆕 2026-05-23 — 다국어 메시지 빌더. viewer LANG 에 맞춰 채팅에 표시되도록
+  // ko/en/es 세 가지 텍스트를 모두 빌드해 textTr 에 담는다. text 필드는 기존 호환을
+  // 위해 sender LANG (또는 ko fallback) 으로 유지.
+  const COMPLETION_I18N = {
+    ko: {
+      doneHead: '✅ 업무 완료',
+      branch: '🏢', assignee: '담당',
+      place: '📍 장소', instruct: '📝 지시',
+      doneList: '📋 완료 작업', undoneList: '⏸ 미완료 항목',
+      addReport: '📝 추가 보고',
+      noName: '(이름 없음)',
+      forceMemo: (mgr, who) => `(${mgr} 매니저가 ${who} 의 업무를 강제 종료)`,
+    },
+    en: {
+      doneHead: '✅ Task complete',
+      branch: '🏢', assignee: 'Assignee',
+      place: '📍 Place', instruct: '📝 Instructions',
+      doneList: '📋 Completed', undoneList: '⏸ Pending items',
+      addReport: '📝 Additional report',
+      noName: '(no name)',
+      forceMemo: (mgr, who) => `(Manager ${mgr} force-ended ${who}'s task)`,
+    },
+    es: {
+      doneHead: '✅ Tarea completa',
+      branch: '🏢', assignee: 'Encargado',
+      place: '📍 Lugar', instruct: '📝 Instrucciones',
+      doneList: '📋 Completadas', undoneList: '⏸ Pendientes',
+      addReport: '📝 Reporte adicional',
+      noName: '(sin nombre)',
+      forceMemo: (mgr, who) => `(El gerente ${mgr} terminó la tarea de ${who})`,
+    },
+  };
+  // memoText 가 한국어 force-end 패턴이면 매니저/대상자 추출해 lang 별로 재포맷.
+  // 외부에서 들어온 자유 메모는 그대로 통과.
+  function _parseForceMemo(txt){
+    if (!txt) return null;
+    const re = /^\((.+?)\s*매니저가\s*(.+?)\s*의 업무를 강제 종료\)\s*$/;
+    const m = String(txt).match(re);
+    return m ? { mgr: m[1].trim(), who: m[2].trim() } : null;
+  }
+  const _forceMemoParts = _parseForceMemo(memoText);
+  // 체크리스트 항목 사전 가공 — 사진 개수/엔트리/메모는 언어 무관이므로 1회만 계산.
   const cl = Array.isArray(task.checklist) ? task.checklist : [];
-  const doneBlocks = [];
-  const undoneBlocks = [];
-  cl.forEach(item => {
-    if (!item) return;
-    const nm = pickLang(item.nameTr, item.name) || item.name || '';
-    // 항목별 사진 개수 — entries 의 photos 또는 item.photos / item.photo
+  const __clPrep = cl.map(item => {
+    if (!item) return null;
     let photoCnt = 0;
     if (Array.isArray(item.photos)) photoCnt += item.photos.length;
     else if (item.photo) photoCnt += 1;
@@ -7041,38 +7067,69 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       if (Array.isArray(e.photos)) photoCnt += e.photos.length;
       else if (e.photo) photoCnt += 1;
     });
-    const photoSfx = photoCnt > 0 ? ' 📷×' + photoCnt : '';
-    // 텍스트 정보 수집 — entries[].text + item.memo
-    const lines2 = entries.map(e => String(e.text||'').trim()).filter(Boolean);
-    if (item.memo) lines2.push(String(item.memo).trim());
-    if (item.done) {
-      if (lines2.length) {
-        // 첫 줄은 항목명 + 첫 메모, 추가 entries 는 들여쓰기
-        doneBlocks.push('· ' + nm + ': ' + lines2[0] + photoSfx);
-        for (let i = 1; i < lines2.length; i++) doneBlocks.push('   · ' + lines2[i]);
-      } else {
-        doneBlocks.push('· ' + nm + ' ✓' + photoSfx);
+    const memoLines = entries.map(e => String(e.text||'').trim()).filter(Boolean);
+    if (item.memo) memoLines.push(String(item.memo).trim());
+    return { item, photoCnt, memoLines };
+  }).filter(Boolean);
+  // 언어별 텍스트 빌더 — 입력 lang 으로 모든 라벨/이름을 재해석.
+  function _buildLines(lang){
+    const T = COMPLETION_I18N[lang] || COMPLETION_I18N.ko;
+    // 지점 라벨 — 언어별 재조회
+    let bLbl = task.branchId || '';
+    try {
+      if (typeof BRANCHES !== 'undefined') {
+        const b = BRANCHES.find(x => x.id === task.branchId);
+        if (b) bLbl = b[lang] || b.ko || task.branchId;
       }
-    } else {
-      // 체크 안 됐어도 메모/사진 있으면 "진행 중" 으로 표시 (정보 보존)
-      if (lines2.length || photoCnt > 0) {
-        undoneBlocks.push('· ⏸ ' + nm + (lines2.length ? ': ' + lines2[0] : '') + photoSfx);
+    } catch(_){}
+    // 업무명 — nameTr 가 있으면 lang 별로
+    const nmRaw = (task.nameTr && (task.nameTr[lang] || task.nameTr.ko)) || task.name || T.noName;
+    const out = [
+      `${T.doneHead} — ${nmRaw}`,
+      `${T.branch} ${bLbl} · ${T.assignee}: ${senderName}`,
+    ];
+    if (task.place) out.push(`${T.place}: ${task.place}`);
+    if (task.locationNote) out.push(`${T.instruct}: ${task.locationNote}`);
+    const done = [], undone = [];
+    __clPrep.forEach(({ item, photoCnt, memoLines }) => {
+      const nm = (item.nameTr && (item.nameTr[lang] || item.nameTr.ko)) || item.name || '';
+      const photoSfx = photoCnt > 0 ? ' 📷×' + photoCnt : '';
+      if (item.done) {
+        if (memoLines.length) {
+          done.push('· ' + nm + ': ' + memoLines[0] + photoSfx);
+          for (let i = 1; i < memoLines.length; i++) done.push('   · ' + memoLines[i]);
+        } else {
+          done.push('· ' + nm + ' ✓' + photoSfx);
+        }
       } else {
-        undoneBlocks.push('· ⏸ ' + nm);
+        if (memoLines.length || photoCnt > 0) {
+          undone.push('· ⏸ ' + nm + (memoLines.length ? ': ' + memoLines[0] : '') + photoSfx);
+        } else {
+          undone.push('· ⏸ ' + nm);
+        }
       }
+    });
+    if (done.length) {
+      out.push('');
+      out.push(`${T.doneList} (` + done.filter(l => !l.startsWith('   ')).length + '/' + __clPrep.length + '):');
+      done.forEach(l => out.push(l));
     }
-  });
-  if (doneBlocks.length) {
-    lines.push('');
-    lines.push('📋 완료 작업 (' + doneBlocks.filter(l => !l.startsWith('   ')).length + '/' + cl.length + '):');
-    doneBlocks.forEach(l => lines.push(l));
+    if (undone.length) {
+      out.push('');
+      out.push(`${T.undoneList}:`);
+      undone.forEach(l => out.push(l));
+    }
+    if (memoText) {
+      out.push('');
+      const memoForLang = _forceMemoParts
+        ? T.forceMemo(_forceMemoParts.mgr, _forceMemoParts.who)
+        : memoText;
+      out.push(`${T.addReport}: ${memoForLang}`);
+    }
+    return out;
   }
-  if (undoneBlocks.length) {
-    lines.push('');
-    lines.push('⏸ 미완료 항목:');
-    undoneBlocks.forEach(l => lines.push(l));
-  }
-  if (memoText) { lines.push(''); lines.push(`📝 추가 보고: ${memoText}`); }
+  const taskName = task.name || '(이름 없음)';
+  const lines = _buildLines(LANG || 'ko');
   // 🌡 온도 체크 task — 오늘 매장 온도 측정 결과 자동 요약 첨부 (autoTempDaily).
   // temp/{BRANCH}/equipment + temp/{BRANCH}/checks/{today} 를 읽어와서
   // 측정/위험/미측정 요약을 메시지에 붙임.
@@ -7087,13 +7144,25 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     } catch(e) { console.warn('[postCompletionToChat] temp summary fetch failed', e); }
   }
   const text = lines.join('\n');
+  // 🆕 2026-05-23 — 3개 언어 텍스트를 모두 빌드해 textTr 에 저장.
+  // chat.html 에서 viewer LANG 에 맞는 것을 우선 사용. 온도 요약 라인은
+  // 언어 무관 표 형식이라 그대로 모든 lang 에 같이 붙임.
+  const textTr = {};
+  ['ko','en','es'].forEach(lng => {
+    const ls = _buildLines(lng);
+    if (__tempSummaryLines && __tempSummaryLines.length) {
+      ls.push('');
+      __tempSummaryLines.forEach(l => ls.push(l));
+    }
+    textTr[lng] = ls.join('\n');
+  });
   const msg = {
     sender: senderName,
     senderBranch,
     senderRole: opts.senderRole || me.role || '',
     isManager: opts.senderOverride ? false : !!me.isManager,
     color: opts.senderColor || me.color || '#1a5c3a',
-    text, ts,
+    text, textTr, ts,
     photos: Array.isArray(photoUrls) ? photoUrls.slice(0, 20) : [],
     meta: {
       kind: 'task_complete',
@@ -7115,7 +7184,7 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       room: targetRoom,
       msgId,
       msg,
-      roomPatch: { lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: senderName }
+      roomPatch: { lastMsg: '✅ ' + ((task.nameTr && (task.nameTr[LANG] || task.nameTr.ko)) || taskName).slice(0, 30), lastTs: ts, lastSender: senderName }
     });
     if (!result.ok){
       // 즉시 발송 실패 — 큐에 저장됨. 우상단 뱃지에 표시되며 자동 재시도.
@@ -9055,7 +9124,16 @@ async function sendAssign(){
       name = pickedItems.length === 1 ? pickedItems[0].name : (pickedItems[0].cat + ' 체크리스트');
     }
   }
-  if (!name && !STAGE_MODE_CATS.includes(cat)) { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
+  // 🆕 2026-05-23 — 업무명 강제 검증 alert 완전 제거.
+  // 매니저가 모달 안에 보이는 두 입력칸 ("📌 Add to '카테고리'" 인라인 추가칸 +
+  // "또는 직접 입력" 메인 칸) 을 헷갈려서 어디에 써도 알러트로 막혀 답답해 했음.
+  // → 이름이 비면 인라인 추가칸(inlineNewTplName) → 템플릿 모달(tplNewName) 순서로
+  // 자동으로 줍고, 그것도 비면 '업무' 기본값으로 그냥 보낸다. 발사 자체는 절대 막지 않음.
+  if (!name && !STAGE_MODE_CATS.includes(cat)) {
+    const inlineFallback = (document.getElementById('inlineNewTplName')?.value || '').trim();
+    const tplFallback = (document.getElementById('tplNewName')?.value || '').trim();
+    name = inlineFallback || tplFallback || '업무';
+  }
   if (!to && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
   // 장소가 선택돼 있으면 카테고리 무관하게 업무명 앞에 [장소] prefix 를 붙이고
   // task.place 필드로도 저장해 카드·매니저 뷰·채팅 자동 공유에서 같은

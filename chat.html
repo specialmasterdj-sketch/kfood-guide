@@ -2094,11 +2094,61 @@ function localizePayrollMessage(m){
   return m.text || '';
 }
 
+// 🆕 2026-05-23 — 옛 task_complete 메시지 (textTr 필드 없는 것) 도 라벨만이라도
+// viewer LANG 으로 보이게 하는 파서. API 호출 없음, 즉시 렌더.
+// tasks.html postCompletionToChat 의 고정 라벨 (✅ 업무 완료, 담당, 📍 장소, 📝 지시,
+// 📋 완료 작업, ⏸ 미완료 항목, 📝 추가 보고) 만 단순 치환. 사용자 입력 (장소명/지시
+// 내용/체크리스트 항목명) 은 손대지 않음 — 그건 자동 번역 (AUTO_TRANSLATE) 에 맡김.
+const TASK_LABEL_TR = {
+  en: [
+    ['✅ 업무 완료', '✅ Task complete'],
+    ['📋 완료 작업', '📋 Completed'],
+    ['⏸ 미완료 항목', '⏸ Pending items'],
+    ['📝 추가 보고', '📝 Additional report'],
+    ['📍 장소', '📍 Place'],
+    ['📝 지시', '📝 Instructions'],
+    [' · 담당: ', ' · Assignee: '],
+  ],
+  es: [
+    ['✅ 업무 완료', '✅ Tarea completa'],
+    ['📋 완료 작업', '📋 Completadas'],
+    ['⏸ 미완료 항목', '⏸ Pendientes'],
+    ['📝 추가 보고', '📝 Reporte adicional'],
+    ['📍 장소', '📍 Lugar'],
+    ['📝 지시', '📝 Instrucciones'],
+    [' · 담당: ', ' · Encargado: '],
+  ],
+};
+function localizeTaskCompleteText(m){
+  if (!m || !m.text) return null;
+  // textTr 가 있는 새 메시지는 그쪽이 우선이므로 null 반환 (호출 측에서 textTr 먼저 검사)
+  if (m.textTr && (m.textTr[LANG] || m.textTr.ko)) return null;
+  // task_complete kind 도 아니고 "✅ 업무 완료" 로 시작하지도 않으면 패스
+  const looksLikeCompletion = (m.meta && m.meta.kind === 'task_complete')
+                            || /^✅\s*업무\s*완료/.test(m.text);
+  if (!looksLikeCompletion) return null;
+  if (LANG === 'ko') return null;   // 한국인 viewer 는 원본 그대로
+  const rules = TASK_LABEL_TR[LANG];
+  if (!rules) return null;
+  let out = String(m.text);
+  for (const [ko, tr] of rules) out = out.split(ko).join(tr);
+  return out;
+}
+
 // 🌐 메시지 번역 헬퍼 — 한글/스페인어/영어 자동 감지 + viewer LANG 과 다르면 번역 버튼 표시.
 // MyMemory 무료 API 사용 (5000자 / 50k chars 일일 한도, API key 불필요).
 // 2026-05-16: 클릭 안 해도 자동 번역하는 AUTO_TRANSLATE 모드 추가.
+// 🆕 2026-05-23 — LANG ≠ 'ko' 사용자에겐 기본 ON. 영어/스페인어 매니저는 평가방의
+// 옛 한국어 보고가 자동으로 번역돼 보임. localStorage 에 명시적 OFF 가 저장돼 있으면
+// 사용자 의사 존중.
 let AUTO_TRANSLATE = (function(){
-  try { return localStorage.getItem('chat.autoTranslate') === '1'; } catch(_){ return false; }
+  try {
+    const v = localStorage.getItem('chat.autoTranslate');
+    if (v === '1') return true;
+    if (v === '0') return false;
+    // 미설정 — LANG 이 ko 아니면 자동 ON
+    return (typeof LANG !== 'undefined') && LANG !== 'ko';
+  } catch(_){ return false; }
 })();
 function setAutoTranslate(on){
   AUTO_TRANSLATE = !!on;
@@ -2401,7 +2451,14 @@ function renderMessages(){
     const dateBadge = fmtMsgDateBadge(d);
     const dateBadgeHtml = dateBadge ? ` <span class="date-badge">${escapeHtml(dateBadge)}</span>` : '';
     // payroll 룸 메시지 — viewer 언어로 동적 재포맷 (옛 메시지의 한국어 텍스트도 localize)
-    const localizedText = localizePayrollMessage(m);
+    // 🆕 2026-05-23 — 우선순위:
+    //   1) textTr (새 task_complete 메시지: ko/en/es 모두 빌드돼서 옴 — API 불필요)
+    //   2) localizeTaskCompleteText (옛 task_complete: 라벨만 LANG 으로 치환)
+    //   3) localizePayrollMessage (payroll 룸 메시지)
+    //   4) raw m.text
+    const localizedText = (m.textTr && (m.textTr[LANG] || m.textTr.ko))
+                       || localizeTaskCompleteText(m)
+                       || localizePayrollMessage(m);
     const translateBtn = needsTranslate(localizedText)
       ? `<button class="translate-btn" onclick="translateMessage('${m.id}', this)" title="${({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate')}">🌐 ${({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate')}</button>`
       : '';

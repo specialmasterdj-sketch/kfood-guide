@@ -687,6 +687,33 @@ async function loadPhotos(){
       }
     }
   } catch(e) { console.warn('[photos rtdb]', e); }
+  // 🆕 2026-05-23 — 실시간 sync 위해 PHOTOS / render 를 window 에 노출.
+  // km-firebase onValue 구독자 (아래 module script) 가 다른 지점 업로드를
+  // 즉시 반영할 때 이 핸들을 통해 PHOTOS 갱신 + 화면 재렌더.
+  window.__top500 = window.__top500 || {};
+  window.__top500.PHOTOS = PHOTOS;
+  window.__top500.normBarcode = normBarcode;
+  window.__top500.render = () => { try { if (typeof render === 'function') render(); } catch(_){} };
+  // 사용자 업로드 사진 snapshot 머지 — 추가/변경은 PHOTOS 에 덮어쓰고, 사라진 user 사진은 제거.
+  window.__top500.applyPhotoSnapshot = function(raw){
+    raw = raw || {};
+    const newUserKeys = new Set();
+    for (const [code, dataURL] of Object.entries(raw)){
+      if (typeof dataURL !== 'string') continue;
+      PHOTOS[code] = dataURL;
+      newUserKeys.add(code);
+      const n = normBarcode(code);
+      if (n && n !== code) { PHOTOS[n] = dataURL; newUserKeys.add(n); }
+    }
+    // 누가 다른 지점에서 삭제한 user 사진 — 메모리에서도 제거 (static URL 은 보존).
+    Object.keys(PHOTOS).forEach(k => {
+      const v = PHOTOS[k];
+      if (typeof v === 'string' && v.startsWith('data:') && !newUserKeys.has(k)) {
+        delete PHOTOS[k];
+      }
+    });
+    window.__top500.render();
+  };
   // 2. 정적 카탈로그 매칭 fallback
   try {
     const r2 = await fetch('./top500/photos-map.json?t=' + Date.now(), { cache:'no-store' });
@@ -1759,6 +1786,36 @@ function init(){
   await Promise.all([loadTop500(), loadState(), loadPhotos()]);
   render();
 })();
+</script>
+
+<!-- 🆕 2026-05-23 — 전 지점 사진 실시간 sync.
+     /catalog/photos 에 RTDB onValue 구독을 걸어 어느 지점에서든 사진을 올리거나
+     삭제하면 같은 페이지를 열어둔 다른 지점 화면이 즉시 갱신됨 (새로고침 불필요).
+     loadPhotos 가 PHOTOS / render / applyPhotoSnapshot 를 window.__top500 에
+     노출해 두므로 이 module 스크립트는 inline 코드와 충돌 없이 붙일 수 있음.
+     CLAUDE.md 패턴 준수 — km-firebase.js 만 import (initializeApp 직접 호출 금지). -->
+<script type="module">
+  import { db, ref, onValue, authReady } from './km-firebase.js?v=1';
+  await authReady;
+  // applyPhotoSnapshot 이 window.__top500 에 붙을 때까지 대기 (loadPhotos 완료 후).
+  // 최대 10초 — 그래도 없으면 onValue 구독은 진행하되 첫 콜백에서 함수 재확인.
+  for (let i = 0; i < 50 && !(window.__top500 && window.__top500.applyPhotoSnapshot); i++) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  let __firstSnap = true;
+  onValue(ref(db, 'catalog/photos'), (snap) => {
+    const val = snap.val() || {};
+    // 첫 snapshot 은 loadPhotos REST 호출과 중복일 가능성 — 그래도 머지 결과는 같음.
+    // 이후 snapshot 부터가 진짜 실시간 sync (다른 지점 업로드/삭제 반영).
+    const fn = window.__top500 && window.__top500.applyPhotoSnapshot;
+    if (fn) fn(val);
+    if (__firstSnap) {
+      __firstSnap = false;
+      console.log('[top500] 🌐 사진 실시간 sync 활성 — 다른 지점 업로드 즉시 반영');
+    }
+  }, (err) => {
+    console.warn('[top500] /catalog/photos onValue 실패 — 실시간 sync OFF, REST 로 폴백', err);
+  });
 </script>
 </body>
 </html>
