@@ -248,10 +248,33 @@ window.saveEdit = async function(){
       alert('저장 실패: ' + r.status + '\n' + t);
       return;
     }
+    // 🆕 2026-05-22 — task_complete 메시지면 원본 task 레코드도 같이 패치.
+    // 안 그러면 leaderboard 가 task.completedBy 만 보기 때문에 점수가
+    // 잘못된 사람한테 그대로 남음.
+    let taskFixMsg = '';
+    if (m && m.meta && m.meta.kind === 'task_complete' && m.meta.taskId && m.meta.branch){
+      try {
+        const dateStr = new Date(m.ts || m.meta.completedAt || Date.now()).toLocaleDateString('en-CA', { timeZone:'America/New_York' });
+        const taskUrl = `${FB_DB_URL}/tasks/${m.meta.branch}/${dateStr}/${m.meta.taskId}.json${q}`;
+        const tr = await fetch(taskUrl, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ completedBy: newSender, completedByEditedAt: Date.now() })
+        });
+        if (tr.ok) {
+          taskFixMsg = '\n✅ task 레코드 completedBy 도 갱신됨 → 점수 ' + newSender + ' 에게 적립';
+        } else {
+          const body = await tr.text().catch(()=>'');
+          taskFixMsg = '\n⚠️ task 레코드 갱신 실패 (HTTP ' + tr.status + ') — leaderboard 점수는 옛 이름으로 남을 수 있음.\n경로: ' + taskUrl.split('?')[0] + '\n' + body.slice(0, 120);
+        }
+      } catch(e) {
+        taskFixMsg = '\n⚠️ task 갱신 오류: ' + (e?.message || e);
+      }
+    }
     // 메모리 동기화
     Object.assign(CURRENT_MSGS[EDIT_ID], patch);
     renderList(CURRENT_MSGS);
     closeModal();
+    if (taskFixMsg) alert('💾 채팅 저장 완료' + taskFixMsg);
   } catch(e){
     alert('오류: ' + e.message);
   } finally {
