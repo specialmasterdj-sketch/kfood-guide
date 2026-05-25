@@ -1112,6 +1112,40 @@ function showStatus(msg, isErr){
   clearTimeout(showStatus._t); showStatus._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
 function fbKey(){ return (TYPE==='cpa'?'payroll-cpa/':'payroll/') + BRANCH + '/' + WEEK; }
+function fbKeyFor(wk){ return (TYPE==='cpa'?'payroll-cpa/':'payroll/') + BRANCH + '/' + wk; }
+function prevWeekKey(wk){
+  const m = mondayFromWeekKey(wk);
+  if (!m || isNaN(m.getTime())) return null;
+  m.setDate(m.getDate() - 7);
+  return isoWeekKey(m);
+}
+// 지난 주 명단을 그대로 복사 (시간·금액은 비우고, 이름·시급·메모·SSN 유지)
+// — 매니저가 지난 주에 추가/삭제한 명단 변경이 자동으로 새 주에 반영됨.
+function _rowsFromLastWeek(lastWeekData){
+  if (!lastWeekData || !Array.isArray(lastWeekData.rows)) return null;
+  const rows = lastWeekData.rows.filter(r => r && r.name).map(r => {
+    const row = {
+      name: r.name,
+      hours: null,         // 새 주 — 시간 비움
+      rate: r.rate,        // 시급 그대로
+      current: 0,          // 금액 0 으로 리셋
+      memo: r.memo || ''   // 메모 그대로 (주급/SALARY/40h CHECK 등)
+    };
+    if (r.ssn) row.ssn = r.ssn;
+    return row;
+  });
+  return rows.length ? rows : null;
+}
+function prefillFromLastWeek(){
+  if (DATA.rows && DATA.rows.length) return false;
+  const prev = prevWeekKey(WEEK);
+  if (!prev) return false;
+  let last = null;
+  try { last = JSON.parse(localStorage.getItem(fbKeyFor(prev)) || 'null'); } catch(_){}
+  const rows = _rowsFromLastWeek(last);
+  if (rows){ DATA.rows = rows; return true; }
+  return false;
+}
 function prefillFromRoster(){
   const roster = (TYPE==='cpa' ? PAYROLL_ROSTER_CPA : PAYROLL_ROSTER)[BRANCH];
   if (!roster) return;
@@ -1153,23 +1187,45 @@ function loadReport(){
   const local = (() => { try { return JSON.parse(localStorage.getItem(fbKey()) || 'null'); } catch(_){ return null; } })();
   DATA = local || { rows: [], total: 0, sig: '', sigDate: '' };
   const wasEmpty = !DATA.rows || !DATA.rows.length;
-  if (wasEmpty) prefillFromRoster();
+  if (wasEmpty){
+    // 우선 지난 주 명단 (local) 복사 시도 → 정적 roster fallback
+    if (!prefillFromLastWeek()) prefillFromRoster();
+  }
   applyRosterDefaults();
   applyPayrollLang();    // i18n 한 번 적용 (renderHeader 도 안에서 호출됨)
   renderRows();
-  // Pull remote — remote은 lastChangedAt가 있으면 무조건 우선 (저장된 데이터)
+  // Pull remote — 현재 주 저장본이 있으면 그게 절대 우선
   fetch(FB_DB_URL + '/' + fbKey() + '.json?t=' + Date.now(), {cache:'no-store'})
     .then(r => r.ok ? r.json() : null)
     .then(remote => {
-      if (!remote || !remote.rows) return;
-      const remoteNewer = (remote.lastChangedAt||0) > (DATA.lastChangedAt||0);
-      // 로컬이 단지 roster prefill 상태면 remote가 어떻든 받기
-      if (remoteNewer || wasEmpty){
-        DATA = remote;
-        applyRosterDefaults();
-        localStorage.setItem(fbKey(), JSON.stringify(DATA));
-        renderRows();
+      if (remote && remote.rows){
+        const remoteNewer = (remote.lastChangedAt||0) > (DATA.lastChangedAt||0);
+        // 로컬이 단지 prefill 상태면 remote가 어떻든 받기
+        if (remoteNewer || wasEmpty){
+          DATA = remote;
+          applyRosterDefaults();
+          localStorage.setItem(fbKey(), JSON.stringify(DATA));
+          renderRows();
+        }
+        return;
       }
+      // 현재 주 remote 도 없고 local 도 처음 비어 있었다면 → 지난 주 remote 명단 가져오기
+      if (!wasEmpty) return;
+      const prev = prevWeekKey(WEEK);
+      if (!prev) return;
+      fetch(FB_DB_URL + '/' + fbKeyFor(prev) + '.json?t=' + Date.now(), {cache:'no-store'})
+        .then(r => r.ok ? r.json() : null)
+        .then(lastRemote => {
+          const rows = _rowsFromLastWeek(lastRemote);
+          if (!rows) return;
+          // 이 시점 사용자가 이미 편집했으면 덮어쓰지 않음
+          if (DATA.lastChangedAt) return;
+          DATA.rows = rows;
+          applyRosterDefaults();
+          localStorage.setItem(fbKey(), JSON.stringify(DATA));
+          renderRows();
+          showStatus('지난 주 명단 ' + rows.length + '명 가져옴', false);
+        }).catch(()=>{});
     }).catch(()=>{});
   // Pull global owners (for role lookup + me modal)
   fetch(FB_DB_URL + '/schedules/_global.json?t=' + Date.now(), {cache:'no-store'})

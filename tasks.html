@@ -5366,20 +5366,46 @@ function renderEmp(){
   list.innerHTML = my.map(renderTaskCard).join('');
 }
 // 🔧 2026-05-21 전무님 신고: 직원이 업무지시 안 보임 → 시작/완료 못함.
-// 원인: 매니저가 발사한 이름과 직원 me.name 이 대소문자·공백·구두점 차이로 매칭 실패.
+// 원인 #1: 매니저가 발사한 이름과 직원 me.name 이 대소문자·공백·구두점 차이로 매칭 실패.
 // (예: '*' assigned name='Rosa Monrroy' vs me.name='ROSA MONROY')
-// 해결: 정규화 함수로 양쪽 모두 비교 — trim + 소문자 + 공백/구두점 제거.
+// 해결 #1: 정규화 함수로 양쪽 모두 비교 — trim + 소문자 + 공백/구두점 제거.
+//
+// 🔧 2026-05-23 Darleny (펨브로크) 신고: Karla Duarte 가 본인 업무 안 보임.
+// 원인 #2: 매니저가 짧은 이름으로 발사 (예: 'KARLA') vs 직원이 풀네임으로 가입 (me.name='Karla Duarte').
+// 정규화해도 'karla' !== 'karladuarte' 라 여전히 매칭 실패.
+// 해결 #2: 짧은 쪽 이름 토큰이 긴 쪽 이름 토큰의 부분집합이면 일치로 인정.
+// 'KARLA' {karla} ⊂ 'Karla Duarte' {karla,duarte} → 매칭 OK.
+// 같은 first name 다른 사람 둘이 있는 경우엔 둘 다 볼 수 있지만, 매니저가 더 구체적인 이름으로 발사하면 한쪽만 매칭됨.
 function _normAssignName(s){
   return String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '').trim();
 }
+function _nameTokens(s){
+  return String(s||'').toLowerCase()
+    .split(/[\s\-_.,/()]+/)
+    .map(t => t.replace(/[^a-z0-9가-힣]+/g, ''))
+    .filter(t => t.length >= 2);
+}
+function _namesMatch(a, b){
+  if (!a || !b) return false;
+  const na = _normAssignName(a);
+  const nb = _normAssignName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;                                   // 정규화 완전 일치
+  // 토큰 부분집합 매칭: 짧은 쪽 토큰 셋이 긴 쪽 토큰 셋에 모두 포함되면 매칭
+  const ta = _nameTokens(a);
+  const tb = _nameTokens(b);
+  if (!ta.length || !tb.length) return false;
+  const [shortArr, longArr] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  const longSet = new Set(longArr);
+  for (const tok of shortArr){ if (!longSet.has(tok)) return false; }
+  return true;
+}
 function isAssignedToMe(t){
-  if (!me) return false;
-  const myNorm = _normAssignName(me.name);
-  if (!myNorm) return false;
-  // 1) assignedToId 매칭 (정규화)
-  if (t.assignedToId && _normAssignName(t.assignedToId) === myNorm) return true;
-  // 2) assignedTo 매칭 (정규화 + 공백·구두점 무시)
-  if (t.assignedTo && t.assignedTo !== '*' && _normAssignName(t.assignedTo) === myNorm) return true;
+  if (!me || !me.name) return false;
+  // 1) assignedToId 매칭 (정규화 + 토큰 부분집합)
+  if (_namesMatch(t.assignedToId, me.name)) return true;
+  // 2) assignedTo 매칭 (정규화 + 토큰 부분집합)
+  if (t.assignedTo && t.assignedTo !== '*' && _namesMatch(t.assignedTo, me.name)) return true;
   // 3) '*' (전체) — 본인 매장 task 만
   if (t.assignedTo === '*') {
     return !t.branchId || !me.branch || t.branchId === me.branch;
