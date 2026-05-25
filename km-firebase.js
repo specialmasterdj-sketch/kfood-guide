@@ -117,27 +117,68 @@ export async function safeFetch(path, opts = {}) {
 }
 
 // (5) retryBackups — 페이지 로드 때 자동 실행. 이전에 실패한 저장 재시도.
+// 🛡️ 2026-05-25 데이터 손실 사건 후 안전장치:
+//   (a) 24시간 이상 묵은 backup 은 자동 폐기 — 너무 오래된 데이터로 현재 상태 덮어쓰기 방지.
+//   (b) 재시도 직전 remote 의 savedAt 와 backup 의 savedAt 비교 — backup 이 더 오래된 경우 skip.
+//   (c) 재시도 성공 시 savedAt 을 Date.now() 로 갱신 후 PUT — replay 임을 timestamp 에 반영.
+const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 export async function retryBackups() {
   let backup = {};
   try { backup = JSON.parse(localStorage.getItem('km.saveBackup') || '{}'); } catch (_) {}
   if (!Object.keys(backup).length) return { ok: 0, fail: 0 };
   await authReady;
-  let ok = 0, fail = 0;
+  let ok = 0, fail = 0, expired = 0, skipped = 0;
+  const now = Date.now();
   for (const [key, item] of Object.entries(backup)) {
     const path = key.split(':').slice(1).join(':');
+    // (a) 24시간 이상 묵은 backup 폐기
+    if (item.ts && (now - item.ts) > MAX_BACKUP_AGE_MS){
+      delete backup[key];
+      expired++;
+      continue;
+    }
+    // (b) remote 의 savedAt 가 backup 의 savedAt 보다 newer 면 skip (옛 데이터로 덮어쓰기 방지)
+    let remoteNewer = false;
+    if (item.data && typeof item.data === 'object' && 'savedAt' in item.data){
+      try {
+        const checkR = await fetch(`${FB_DB_URL}/${path}.json?shallow=true`, {cache:'no-store'});
+        if (checkR.ok){
+          // shallow fetch returns top-level keys — savedAt 확인 위해 별도 호출
+          const tsR = await fetch(`${FB_DB_URL}/${path}/savedAt.json`, {cache:'no-store'});
+          if (tsR.ok){
+            const remoteTs = await tsR.json();
+            if (typeof remoteTs === 'number' && remoteTs > (item.data.savedAt||0)){
+              remoteNewer = true;
+            }
+          }
+        }
+      } catch(_){}
+    }
+    if (remoteNewer){
+      delete backup[key];   // remote 가 newer → 이 backup 폐기
+      skipped++;
+      continue;
+    }
+    // (c) savedAt 갱신해서 보내기
+    let body = item.data;
+    if (body && typeof body === 'object' && 'savedAt' in body){
+      body = { ...body, savedAt: now };
+    }
     try {
       const r = await fetch(`${FB_DB_URL}/${path}.json`, {
         method: item.method || 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item.data),
+        body: JSON.stringify(body),
       });
       if (r.ok) { ok++; delete backup[key]; }
       else fail++;
     } catch (_) { fail++; }
   }
   try { localStorage.setItem('km.saveBackup', JSON.stringify(backup)); } catch (_) {}
-  if (ok > 0) console.info('[km-fb] auto-retried', ok, 'backed-up writes (fail:', fail, ')');
-  return { ok, fail };
+  if (ok > 0 || expired > 0 || skipped > 0){
+    console.info('[km-fb] retryBackups — ok:', ok, 'expired:', expired, 'skipped(stale):', skipped, 'fail:', fail);
+  }
+  return { ok, fail, expired, skipped };
 }
 
 // 페이지 로드마다 자동 재시도 — 이전에 실패한 저장이 살아남음
