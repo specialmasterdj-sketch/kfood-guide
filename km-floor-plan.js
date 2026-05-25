@@ -90,6 +90,16 @@
       ok:       { fill:'#16a34a', stroke:'#15803d', alpha:0.65 },   // 약한 녹색 (덜 강조)
     };
 
+    // ============== 2D / 3D 분기 — options.iso === true 일 때만 입체 ==============
+    // (헐리우드만 3D, 다른 매장은 평면도 유지)
+    let svgParts;
+    if (!options.iso) {
+      svgParts = renderFlat2DParts(zones, options, STATE_COLOR, INV_COLOR);
+      container.innerHTML = svgParts.join('');
+      attachClickHandlers(container, zones, mode, onPick, onZoneClick);
+      return;
+    }
+
     // ============== 3D isometric 렌더링 ==============
     // 2026-05-25 — 입체 매장 도면 (hollywood-floorplan-3d 와 동일 룩)
     const COS30 = 0.8660254037844387, SIN30 = 0.5;
@@ -146,7 +156,7 @@
     const vbX = minSX - PAD, vbY = minSY - PAD;
     const vbW = (maxSX - minSX) + PAD*2, vbH = (maxSY - minSY) + PAD*2;
 
-    const svgParts = [];
+    svgParts = [];
     svgParts.push(
       '<svg viewBox="' + vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH + '" ' +
       'preserveAspectRatio="xMidYMid meet" ' +
@@ -252,27 +262,100 @@
 
     svgParts.push('</svg>');
     container.innerHTML = svgParts.join('');
+    attachClickHandlers(container, zones, mode, onPick, onZoneClick);
+  }
 
-    // pick 모드 — 클릭 핸들러 등록
+  function attachClickHandlers(container, zones, mode, onPick, onZoneClick){
     if (mode === 'pick' && typeof onPick === 'function') {
       container.querySelectorAll('.km-fp-zone').forEach(g => {
-        g.addEventListener('click', (e) => {
+        g.addEventListener('click', () => {
           const id = parseInt(g.dataset.zoneId, 10);
           const z = zones.find(x => x.id === id);
           if (z) onPick(z);
         });
       });
-    }
-    // 일반 view/heatmap 에서도 onZoneClick 받으면 클릭 활성
-    else if (typeof onZoneClick === 'function') {
+    } else if (typeof onZoneClick === 'function') {
       container.querySelectorAll('.km-fp-zone').forEach(g => {
-        g.addEventListener('click', (e) => {
+        g.addEventListener('click', () => {
           const id = parseInt(g.dataset.zoneId, 10);
           const z = zones.find(x => x.id === id);
           if (z) onZoneClick(z);
         });
       });
     }
+  }
+
+  // ============== 2D 평면 렌더링 (기존 룩 유지 — 헐리우드 외 매장용) ==============
+  function renderFlat2DParts(zones, options, STATE_COLOR, INV_COLOR){
+    const mode = options.mode || 'view';
+    const states = options.states || {};
+    const inventory = options.inventory || {};
+    const canvasW = options.canvasW || 1100;
+    const canvasH = options.canvasH || 780;
+    const onPick = options.onPick;
+    const onZoneClick = options.onZoneClick;
+    const hi = options.highlightZoneId;
+    const parts = [];
+    parts.push(
+      '<svg viewBox="0 0 ' + canvasW + ' ' + canvasH + '" ' +
+      'preserveAspectRatio="xMidYMid meet" ' +
+      'style="width:100%;height:auto;display:block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit">'
+    );
+    parts.push('<rect x="2" y="2" width="' + (canvasW-4) + '" height="' + (canvasH-4) + '" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6,4"/>');
+    zones.forEach(z => {
+      const invState = inventory[z.id];
+      const ic = INV_COLOR[invState];
+      const taskState = states[z.id];
+      const sc = STATE_COLOR[taskState];
+      const eff = ic || sc;
+      const fillColor = eff ? eff.fill : (z.color || '#94a3b8');
+      const fillOpacity = eff ? eff.alpha : 1;
+      const strokeColor = eff ? eff.stroke : '#475569';
+      const strokeW = (hi && hi === z.id) ? 3.5 : 1.5;
+      const cursor = (mode === 'pick' || onZoneClick) ? 'pointer' : 'default';
+      const transform = z.rot ? ('rotate(' + z.rot + ' ' + (z.x + z.w/2) + ' ' + (z.y + z.h/2) + ')') : '';
+      parts.push(
+        '<g class="km-fp-zone" data-zone-id="' + z.id + '" ' +
+        (transform ? 'transform="' + transform + '" ' : '') +
+        'style="cursor:' + cursor + '">' +
+        '<rect x="' + z.x + '" y="' + z.y + '" width="' + z.w + '" height="' + z.h + '" ' +
+        'fill="' + fillColor + '" fill-opacity="' + fillOpacity + '" ' +
+        'stroke="' + strokeColor + '" stroke-width="' + strokeW + '" rx="4" ry="4"/>'
+      );
+      const minDim = Math.min(z.w, z.h);
+      if (minDim >= 24) {
+        const cx = z.x + z.w / 2;
+        const cy = z.y + z.h / 2;
+        const lines = [];
+        if (z.num) lines.push(String(z.num));
+        if (z.label && minDim >= 40) {
+          String(z.label).split(/<br>|\n/).forEach(l => { if (l.trim()) lines.push(l.trim()); });
+        }
+        const fs = minDim < 40 ? 8 : minDim < 60 ? 10 : minDim < 90 ? 11 : 12;
+        const totalH = lines.length * (fs + 1);
+        const startY = cy - totalH / 2 + fs;
+        const textColor = eff ? '#fff' : (isLightColor(fillColor) ? '#1f2937' : '#fff');
+        lines.forEach((line, i) => {
+          parts.push(
+            '<text x="' + cx + '" y="' + (startY + i * (fs + 1)) + '" ' +
+            'text-anchor="middle" font-size="' + fs + '" font-weight="700" ' +
+            'fill="' + textColor + '" pointer-events="none">' + escHtml(line) + '</text>'
+          );
+        });
+      }
+      if (invState && minDim >= 30) {
+        const icon = invState === 'out' ? '🚫' : invState === 'low' ? '⚠' : '';
+        if (icon) {
+          parts.push(
+            '<text x="' + (z.x + 4) + '" y="' + (z.y + 14) + '" font-size="12" ' +
+            'pointer-events="none">' + icon + '</text>'
+          );
+        }
+      }
+      parts.push('</g>');
+    });
+    parts.push('</svg>');
+    return parts;
   }
 
   // 밝은 색인지 판별 — 텍스트 가독성용
