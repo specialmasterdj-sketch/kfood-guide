@@ -265,7 +265,8 @@ const DEFAULT_FIXTURES = JSON.parse(JSON.stringify(FIXTURES));
 FIXTURES.forEach((f,i)=>{ f.id = i+1; });
 DEFAULT_FIXTURES.forEach((f,i)=>{ f.id = i+1; });
 
-// 3D fixture → 2D zone (store-map 호환 — floorplan/shared 형식)
+// ===== 2D ↔ 3D 변환 =====
+// 3D fixture → 2D zone (store-map / floorplan editor 형식)
 const _TYPE_2D = {
   'door':    { type:'front-door',   ftype:'front-door' },
   'check':   { type:'checkout',     ftype:null },
@@ -289,6 +290,36 @@ function _to2DZones(fixtures){
     };
   });
 }
+// 2D zone → 3D fixture (floorplan/index.html 에서 편집한 데이터 import 용)
+const _TYPE_FROM_2D = {
+  'front-door':   'door',
+  'checkout':     'check',
+  'perimeter':    'rim',
+  'open-cooler':  'cool',
+  'open-freezer': 'frz',
+  'door-freezer': 'door-fz',
+  'aisle':        'aisle',
+};
+const _Z_BY_TYPE = {
+  'door': 6, 'check': 24, 'rim': 60,
+  'cool': 50, 'frz': 50, 'door-fz': 92, 'aisle': 80,
+};
+function _from2DZones(zones){
+  if (!Array.isArray(zones)) return null;
+  return zones.map((z, i) => {
+    const t3d = _TYPE_FROM_2D[z.type] || z.type || 'rim';
+    return {
+      type: t3d,
+      x: z.x, y: z.y, w: z.w, h: z.h,
+      z: _Z_BY_TYPE[t3d] || 55,
+      num: z.num || '',
+      main: z.label || '',
+      sub: z.sub || '',
+      color: z.color || '#888',
+      id: i + 1,
+    };
+  });
+}
 
 function loadStateLocal(){
   try{
@@ -304,19 +335,53 @@ function loadStateLocal(){
   return false;
 }
 
-// Firebase 에서 가져와 FIXTURES 와 localStorage 갱신 — 어떤 기기·브라우저에서도 동일한 편집본 보임
+// Firebase 에서 가져와 FIXTURES 와 localStorage 갱신.
+// 우선순위:
+//   1) floorplan/shared (2D editor + store-map 가 쓰는 공용 경로) — 2D 편집본을 3D 로 자동 변환
+//   2) floorplan/hollywood-3d (3D 전용, z 등 풀 필드)
+// — 둘 다 있을 때 shared 의 savedAt 가 hollywood-3d-savedAt 보다 newer 면 shared 우선.
 async function loadStateRemote(){
-  try{
+  let shared2d = null, sharedTs = 0;
+  let own3d = null, own3dTs = 0;
+  try {
+    const r = await fetch(FB_URL + '/floorplan/shared.json?t=' + Date.now(), {cache:'no-store'});
+    if (r.ok) {
+      const s = await r.json();
+      if (s){
+        const hwZones = s.stores && s.stores.hollywood;
+        if (Array.isArray(hwZones) && hwZones.length){
+          shared2d = _from2DZones(hwZones);
+          sharedTs = s.savedAt || 0;
+        }
+      }
+    }
+  } catch(e){ console.warn('shared 2d load fail', e); }
+  try {
     const r = await fetch(FB_URL + FB_PATH + '?t=' + Date.now(), {cache:'no-store'});
-    if(!r.ok) return false;
-    const arr = await r.json();
-    if(!Array.isArray(arr) || !arr.length) return false;
-    FIXTURES.length = 0;
-    arr.forEach((f,i)=>{ if(!f.id) f.id = i+1; FIXTURES.push(f); });
-    try{ localStorage.setItem(LS_KEY, JSON.stringify(FIXTURES)); }catch(_){}
-    return true;
-  }catch(e){ console.warn('remote load failed', e); }
-  return false;
+    if (r.ok) {
+      const arr = await r.json();
+      if (Array.isArray(arr) && arr.length){
+        own3d = arr;
+      }
+    }
+    const r2 = await fetch(FB_URL + '/floorplan/hollywood-3d-savedAt.json?t=' + Date.now(), {cache:'no-store'});
+    if (r2.ok){ const v = await r2.json(); own3dTs = v || 0; }
+  } catch(e){ console.warn('hw-3d load fail', e); }
+
+  // 둘 다 있으면 newer 우선; 한쪽만 있으면 그쪽
+  let chosen = null, source = '';
+  if (shared2d && own3d){
+    if (sharedTs > own3dTs){ chosen = shared2d; source = '2D editor'; }
+    else { chosen = own3d; source = '3D 자체'; }
+  } else if (shared2d){ chosen = shared2d; source = '2D editor'; }
+  else if (own3d){ chosen = own3d; source = '3D 자체'; }
+  if (!chosen) return false;
+
+  FIXTURES.length = 0;
+  chosen.forEach((f,i)=>{ if(!f.id) f.id = i+1; FIXTURES.push(f); });
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(FIXTURES)); }catch(_){}
+  loadStateRemote._lastSource = source;
+  return true;
 }
 
 function saveStateLocal(){
@@ -332,16 +397,25 @@ function scheduleRemoteSave(){
 async function saveStateRemote(){
   const indicator = document.getElementById('syncDot');
   if (indicator) indicator.textContent = '🟡';
+  const now = Date.now();
   try{
     // 1) 풀 3D 데이터 (자기 자신이 다시 로드할 때 쓸 데이터)
     await fetch(FB_URL + FB_PATH, {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(FIXTURES)
     });
-    // 2) store-map 이 읽는 2D zone 배열 (floorplan/shared 와 호환)
+    await fetch(FB_URL + '/floorplan/hollywood-3d-savedAt.json', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(now)
+    });
+    // 2) store-map 이 읽는 2D zone 배열 + savedAt (floorplan/shared 와 호환)
     await fetch(FB_URL + FB_SHARED_PATH, {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(_to2DZones(FIXTURES))
+    });
+    await fetch(FB_URL + '/floorplan/shared/savedAt.json', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(now)
     });
     if (indicator){ indicator.textContent = '🟢'; setTimeout(()=>{ if(indicator.textContent==='🟢') indicator.textContent='☁️'; }, 1200); }
   }catch(e){
@@ -371,7 +445,8 @@ loadStateLocal();
 loadStateRemote().then(applied => {
   if (applied){
     if (typeof redraw === 'function') redraw();
-    showToast('☁️ 클라우드 편집본 동기화됨');
+    const src = loadStateRemote._lastSource || '클라우드';
+    showToast('☁️ ' + src + ' 에서 가져옴');
   }
 });
 
