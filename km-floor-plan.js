@@ -26,8 +26,25 @@
   };
 
   let CACHED_DATA = null;
+  const FB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+
+  // 우선순위: 1) Firebase floorplan/shared (매니저가 floorplan editor 에서 저장한 최신본)
+  //          2) 정적 floorplan-data.json (번들된 기본값)
+  // — fb-auth-fetch.js 가 글로벌 fetch 에 auth 토큰 자동 첨부.
   async function loadData(){
     if (CACHED_DATA) return CACHED_DATA;
+    // 1) Firebase 시도
+    try {
+      const r = await fetch(FB_URL + '/floorplan/shared.json?t=' + Date.now(), { cache:'no-store' });
+      if (r.ok) {
+        const fb = await r.json();
+        if (fb && fb.stores) {
+          CACHED_DATA = fb;
+          return CACHED_DATA;
+        }
+      }
+    } catch(e) { console.warn('[floor-plan] Firebase load failed, falling back to static', e); }
+    // 2) 정적 JSON fallback
     try {
       const r = await fetch(DATA_URL + '?t=' + Date.now(), { cache:'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
