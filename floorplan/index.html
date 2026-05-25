@@ -1516,29 +1516,73 @@ function loadZones(data) {
 }
 
 let autoSaveTimer = null;
+let __fbSaveOk = true;   // 마지막 Firebase 저장 성공 여부 — 빨간 배너 표시 조건
+let __unsavedChanges = 0; // 변경 카운트 — N 회마다 자동 export 백업
 function autoSave() {
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
     stores[currentStore] = serialize();
+    const ts = Date.now();
     localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+    localStorage.setItem('kimchi-floorplans-savedAt', String(ts));  // 🛡️ 로드 시 stale 비교용
     const dot = document.getElementById('save-indicator');
     if (dot) { dot.style.background = '#27AE60'; dot.title = 'Auto-saved ' + new Date().toLocaleTimeString(); setTimeout(() => { dot.style.background = '#555'; }, 1500); }
     autoSaveToFile();
     autoSaveToServer();
+    // 🛡️ 50회 변경마다 자동 백업 다운로드 — Firebase 실패해도 파일로 보관
+    __unsavedChanges++;
+    if (__unsavedChanges >= 50){
+      __unsavedChanges = 0;
+      try {
+        const blob = new Blob([JSON.stringify({stores, savedAt: ts}, null, 0)], {type:'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'floorplan-backup-' + new Date(ts).toISOString().slice(0,19).replace(/:/g,'-') + '.json';
+        a.click();
+        setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+      } catch(_){}
+    }
   }, 300);
 }
 
 function autoSaveToServer() {
-  // Use Firebase via km-firebase.js (window.KM). Falls back gracefully if not loaded yet.
-  if (!window.KM || !window.KM.safeSave) return;
+  if (!window.KM || !window.KM.safeSave) { setUnsavedBanner(true, '클라우드 모듈 없음'); return; }
   window.KM.safeSave('floorplan/shared', { stores, currentStore, savedAt: Date.now() }, { silent: true })
     .then(r => {
       if (r && r.ok) {
+        __fbSaveOk = true;
+        setUnsavedBanner(false);
         const d = document.getElementById('save-indicator');
         if (d) { d.style.background = '#2ECC71'; d.title = 'Synced to Firebase ' + new Date().toLocaleTimeString(); }
+      } else {
+        __fbSaveOk = false;
+        setUnsavedBanner(true, 'HTTP ' + (r && r.status ? r.status : '?'));
       }
     })
-    .catch(() => {});
+    .catch(err => {
+      __fbSaveOk = false;
+      setUnsavedBanner(true, err && err.message || 'network');
+    });
+}
+
+// 🛡️ Firebase 저장 실패 상태 — 큰 빨간 배너로 사용자에게 경고. 클라우드 동기화 안 되면
+// 다른 기기에서 못 보고, 캐시 클리어 시 잃을 위험 → 명확하게 알림.
+function setUnsavedBanner(show, reason){
+  let el = document.getElementById('unsaved-banner');
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'unsaved-banner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#dc2626;color:#fff;padding:10px 16px;font-weight:700;font-size:13px;z-index:99999;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3);display:none';
+    document.body.appendChild(el);
+  }
+  if (show){
+    el.innerHTML = '⚠️ <strong>클라우드 저장 실패!</strong> 작업본은 이 브라우저에만 있습니다. 캐시 비우면 잃습니다 — 지금 ' +
+      '<button onclick="exportFile()" style="background:#fff;color:#dc2626;border:0;padding:4px 10px;border-radius:4px;font-weight:800;cursor:pointer;margin:0 6px">📥 백업 다운로드</button>' +
+      ' 하세요. (이유: ' + (reason||'?') + ')';
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 function saveStore() {
@@ -1780,7 +1824,9 @@ function initFromData(data) {
   });
 }
 
-// Priority: 1) Firebase RTDB (shared) → 2) localStorage → 3) floorplan-data.json → 4) Base Template
+// Priority: 1) NEWER of (Firebase, localStorage) → 2) floorplan-data.json → 3) Base Template
+// 🛡️ 2026-05-25 데이터 손실 사건 후 — Firebase 가 무조건 우선이었던 게 옛 데이터로
+// 새 작업본을 덮어쓰는 사고 유발. 이제 양쪽 savedAt 비교 후 newer 선택.
 async function initLoad() {
   const savedStore = localStorage.getItem('kimchi-currentStore');
   if (savedStore) currentStore = savedStore;
@@ -1792,30 +1838,55 @@ async function initLoad() {
     });
   }
 
-  // 1) Try Firebase first (shared across all managers)
+  // 양쪽 fetch & timestamp 비교
+  let fbData = null, fbTs = 0;
   if (window.KM && window.KM.safeFetch) {
     try {
       const r = await window.KM.safeFetch('floorplan/shared');
-      if (r && r.ok && r.data && r.data.stores) {
-        Object.assign(stores, r.data.stores);
-        if (r.data.currentStore) currentStore = r.data.currentStore;
-        if (stores[currentStore]) loadZones(JSON.parse(JSON.stringify(stores[currentStore])));
-        else loadBaseTemplate();
-        setActiveTab();
-        showToast('✓ Loaded from Firebase (shared)');
-        return;
-      }
+      if (r && r.ok && r.data && r.data.stores) { fbData = r.data; fbTs = r.data.savedAt || 0; }
     } catch (e) { console.warn('[floorplan] Firebase load failed:', e); }
   }
+  let localData = null, localTs = 0;
+  try {
+    const raw = localStorage.getItem('kimchi-floorplans');
+    if (raw) {
+      localData = { stores: JSON.parse(raw) };
+      localTs = parseInt(localStorage.getItem('kimchi-floorplans-savedAt') || '0', 10) || 0;
+    }
+  } catch(_){}
 
-  // 2) Fallback: localStorage
-  const saved = localStorage.getItem('kimchi-floorplans');
-  if (saved) {
-    Object.assign(stores, JSON.parse(saved));
-    if (stores[currentStore]) loadZones(stores[currentStore]);
-    else if (currentStore !== 'miami' && stores.miami) loadZones(JSON.parse(JSON.stringify(stores.miami)));
+  // newer 선택 — 동률이면 Firebase (둘이 같은 데이터일 가능성)
+  let chosen = null, source = '';
+  if (fbData && localData){
+    if (localTs > fbTs){
+      // ⚠️ localStorage 가 newer — Firebase 에 못 올라간 작업본이 있음.
+      // 사용자에게 명시적 선택을 강요 — 자동 덮어쓰기 금지.
+      const localCount = (localData.stores && localData.stores[currentStore] || []).length;
+      const fbCount = (fbData.stores && fbData.stores[currentStore] || []).length;
+      const fbDate = fbTs ? new Date(fbTs).toLocaleString() : '?';
+      const localDate = localTs ? new Date(localTs).toLocaleString() : '?';
+      const useLocal = confirm(
+        '⚠️ 데이터 충돌 감지\n\n' +
+        '· 이 브라우저 (' + localDate + ', ' + localCount + '개 매대)\n' +
+        '· 클라우드 (' + fbDate + ', ' + fbCount + '개 매대)\n\n' +
+        '브라우저 쪽이 더 최신입니다. 브라우저 데이터를 사용할까요?\n' +
+        '(취소 = 클라우드 데이터 사용 — 브라우저 작업본은 사라집니다)'
+      );
+      if (useLocal){ chosen = localData; source = 'localStorage (newer)'; }
+      else { chosen = fbData; source = 'Firebase'; }
+    } else {
+      chosen = fbData; source = 'Firebase (newer or equal)';
+    }
+  } else if (fbData){ chosen = fbData; source = 'Firebase only'; }
+  else if (localData){ chosen = localData; source = 'localStorage only'; }
+
+  if (chosen){
+    Object.assign(stores, chosen.stores);
+    if (chosen.currentStore) currentStore = chosen.currentStore;
+    if (stores[currentStore]) loadZones(JSON.parse(JSON.stringify(stores[currentStore])));
     else loadBaseTemplate();
     setActiveTab();
+    showToast('✓ Loaded from ' + source);
     return;
   }
 
