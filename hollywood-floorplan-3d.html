@@ -398,29 +398,24 @@ async function saveStateRemote(){
   const indicator = document.getElementById('syncDot');
   if (indicator) indicator.textContent = '🟡';
   const now = Date.now();
+  const puts = [
+    [FB_PATH,                                  JSON.stringify(FIXTURES)],
+    ['/floorplan/hollywood-3d-savedAt.json',   JSON.stringify(now)],
+    [FB_SHARED_PATH,                           JSON.stringify(_to2DZones(FIXTURES))],
+    ['/floorplan/shared/savedAt.json',         JSON.stringify(now)],
+  ];
   try{
-    // 1) 풀 3D 데이터 (자기 자신이 다시 로드할 때 쓸 데이터)
-    await fetch(FB_URL + FB_PATH, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(FIXTURES)
-    });
-    await fetch(FB_URL + '/floorplan/hollywood-3d-savedAt.json', {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(now)
-    });
-    // 2) store-map 이 읽는 2D zone 배열 + savedAt (floorplan/shared 와 호환)
-    await fetch(FB_URL + FB_SHARED_PATH, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(_to2DZones(FIXTURES))
-    });
-    await fetch(FB_URL + '/floorplan/shared/savedAt.json', {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(now)
-    });
+    for (const [path, body] of puts){
+      const r = await fetch(FB_URL + path, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' on ' + path);
+    }
     if (indicator){ indicator.textContent = '🟢'; setTimeout(()=>{ if(indicator.textContent==='🟢') indicator.textContent='☁️'; }, 1200); }
   }catch(e){
     console.warn('remote save failed', e);
-    if (indicator) indicator.textContent = '⚠️';
+    if (indicator){ indicator.textContent = '⚠️'; indicator.title = '저장 실패: ' + e.message; }
+    showToast('⚠️ 클라우드 저장 실패 (' + e.message + ') — 로컬엔 저장됨');
   }
 }
 
