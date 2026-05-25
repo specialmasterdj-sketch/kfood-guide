@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>헐리우드 매장 도면 · 3D Isometric</title>
+<!-- Firebase auth — 글로벌 fetch 에 auth 토큰 자동 첨부 (RTDB 인증) -->
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <style>
   :root{
     --bg1:#0b1020; --bg2:#141a2e;
@@ -125,6 +127,7 @@
 </div>
 
 <div class="controls">
+  <button id="syncDot" title="Firebase 동기화 상태" style="font-size:18px;cursor:default">☁️</button>
   <button id="btnEdit"    title="편집 모드 (위치/크기 조정)">✏️</button>
   <button id="btnExport"  title="JSON 내보내기">📋</button>
   <button id="btnRestore" title="원본 복원">⟲</button>
@@ -254,36 +257,123 @@ function shade(arr, pct){
 
 /* ---------- Persistence (localStorage) ---------- */
 const LS_KEY = 'hollywood_floorplan_v2';
+const FB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const FB_PATH = '/floorplan/hollywood-3d.json';  // 3D 전용 (z·main 같은 풀 필드 유지)
+const FB_SHARED_PATH = '/floorplan/shared/stores/hollywood.json';  // store-map 호환 2D 형식
 const DEFAULT_FIXTURES = JSON.parse(JSON.stringify(FIXTURES));
 // assign stable ids
 FIXTURES.forEach((f,i)=>{ f.id = i+1; });
 DEFAULT_FIXTURES.forEach((f,i)=>{ f.id = i+1; });
 
-function loadState(){
+// 3D fixture → 2D zone (store-map 호환 — floorplan/shared 형식)
+const _TYPE_2D = {
+  'door':    { type:'front-door',   ftype:'front-door' },
+  'check':   { type:'checkout',     ftype:null },
+  'rim':     { type:'perimeter',    ftype:null },
+  'cool':    { type:'open-cooler',  ftype:'open-cooler' },
+  'frz':     { type:'open-freezer', ftype:'open-freezer' },
+  'door-fz': { type:'door-freezer', ftype:'door-freezer' },
+  'aisle':   { type:'aisle',        ftype:'half-aisle-top' },
+};
+function _to2DZones(fixtures){
+  return fixtures.map(f => {
+    const m = _TYPE_2D[f.type] || { type:f.type, ftype:null };
+    return {
+      id: 200 + (f.id || 1),
+      type: m.type, ftype: m.ftype,
+      x: f.x, y: f.y, w: f.w, h: f.h, rot: 0,
+      num: f.num || '',
+      label: f.main || '',
+      sub: f.sub || '',
+      color: f.color || '#888'
+    };
+  });
+}
+
+function loadStateLocal(){
   try{
     const s = localStorage.getItem(LS_KEY);
-    if(!s) return;
+    if(!s) return false;
     const arr = JSON.parse(s);
     if(Array.isArray(arr) && arr.length){
       FIXTURES.length = 0;
       arr.forEach((f,i)=>{ if(!f.id) f.id = i+1; FIXTURES.push(f); });
+      return true;
     }
-  }catch(e){ console.warn('load failed', e); }
+  }catch(e){ console.warn('local load failed', e); }
+  return false;
 }
-function saveState(){
+
+// Firebase 에서 가져와 FIXTURES 와 localStorage 갱신 — 어떤 기기·브라우저에서도 동일한 편집본 보임
+async function loadStateRemote(){
+  try{
+    const r = await fetch(FB_URL + FB_PATH + '?t=' + Date.now(), {cache:'no-store'});
+    if(!r.ok) return false;
+    const arr = await r.json();
+    if(!Array.isArray(arr) || !arr.length) return false;
+    FIXTURES.length = 0;
+    arr.forEach((f,i)=>{ if(!f.id) f.id = i+1; FIXTURES.push(f); });
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(FIXTURES)); }catch(_){}
+    return true;
+  }catch(e){ console.warn('remote load failed', e); }
+  return false;
+}
+
+function saveStateLocal(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(FIXTURES)); }catch(e){}
 }
+
+// Firebase 동기화 — debounce 300ms (드래그 중 매번 PUT 안 함)
+let _saveTimer = null;
+function scheduleRemoteSave(){
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveStateRemote, 350);
+}
+async function saveStateRemote(){
+  const indicator = document.getElementById('syncDot');
+  if (indicator) indicator.textContent = '🟡';
+  try{
+    // 1) 풀 3D 데이터 (자기 자신이 다시 로드할 때 쓸 데이터)
+    await fetch(FB_URL + FB_PATH, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(FIXTURES)
+    });
+    // 2) store-map 이 읽는 2D zone 배열 (floorplan/shared 와 호환)
+    await fetch(FB_URL + FB_SHARED_PATH, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(_to2DZones(FIXTURES))
+    });
+    if (indicator){ indicator.textContent = '🟢'; setTimeout(()=>{ if(indicator.textContent==='🟢') indicator.textContent='☁️'; }, 1200); }
+  }catch(e){
+    console.warn('remote save failed', e);
+    if (indicator) indicator.textContent = '⚠️';
+  }
+}
+
+function saveState(){
+  saveStateLocal();
+  scheduleRemoteSave();
+}
+
 function restoreDefaults(){
-  if(!confirm('손그림 도면 기본값으로 되돌릴까요? 편집 내용이 사라집니다.')) return;
+  if(!confirm('손그림 도면 기본값으로 되돌릴까요? 편집 내용이 사라집니다 (Firebase 도 초기화).')) return;
   localStorage.removeItem(LS_KEY);
   FIXTURES.length = 0;
   DEFAULT_FIXTURES.forEach(f => FIXTURES.push(JSON.parse(JSON.stringify(f))));
   selected = null;
   redraw();
+  scheduleRemoteSave();
   showToast('원본 복원 완료');
 }
 
-loadState();
+// 초기 로드 — local 우선 (즉시 표시) + remote 비동기 갱신
+loadStateLocal();
+loadStateRemote().then(applied => {
+  if (applied){
+    if (typeof redraw === 'function') redraw();
+    showToast('☁️ 클라우드 편집본 동기화됨');
+  }
+});
 
 /* ---------- Render ---------- */
 const scene  = document.getElementById('scene');
