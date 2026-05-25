@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>헐리우드 매장 도면 · 3D Isometric</title>
+<style>
+  :root{
+    --bg1:#0b1020; --bg2:#141a2e;
+    --ink:#e8eaed; --mute:#94a3b8;
+    --panel:rgba(15,23,42,.82);
+    --line:rgba(255,255,255,.08);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:radial-gradient(ellipse at 50% 0%, var(--bg2) 0%, var(--bg1) 70%);color:var(--ink);font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',-apple-system,Segoe UI,sans-serif;overflow:hidden}
+  body{display:flex;flex-direction:column}
+
+  .topbar{position:fixed;top:0;left:0;right:0;padding:12px 22px;display:flex;align-items:center;gap:18px;background:linear-gradient(180deg,rgba(11,16,32,.92),rgba(11,16,32,.55) 70%,transparent);z-index:30;pointer-events:none}
+  .topbar h1{margin:0;font-size:18px;font-weight:800;letter-spacing:-.5px;white-space:nowrap}
+  .topbar h1 .pin{color:#ef4444;margin-right:6px}
+  .topbar .sub{color:var(--mute);font-size:12px;white-space:nowrap}
+  .topbar .meta{margin-left:auto;color:var(--mute);font-size:11px;text-align:right;line-height:1.4;white-space:nowrap}
+  @media (max-width:720px){ .topbar .sub, .topbar .meta{display:none} }
+
+  .stage{flex:1;position:relative;display:grid;place-items:center;overflow:hidden}
+  .canvas{position:relative;width:100%;height:100%}
+  svg.scene{position:absolute;inset:0;width:100%;height:100%}
+
+  .labels{position:absolute;inset:0;pointer-events:none}
+  .lbl{position:absolute;transform:translate(-50%,-50%);color:#fff;text-align:center;line-height:1.15;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.95),0 0 5px rgba(0,0,0,.8);user-select:none;background:rgba(0,0,0,.35);padding:2px 6px;border-radius:5px;backdrop-filter:blur(2px)}
+  .lbl .num{display:inline-block;font-weight:900;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.75);margin-bottom:2px;letter-spacing:.5px;font-size:calc(11px * var(--ls, 1))}
+  .lbl .main{font-weight:800;font-size:calc(10px * var(--ls, 1))}
+  .lbl .sub{font-weight:500;opacity:.9;margin-top:1px;white-space:pre-line;font-size:calc(8px * var(--ls, 1))}
+  .lbl.big .num{font-size:calc(13px * var(--ls, 1))}
+  .lbl.big .main{font-size:calc(12px * var(--ls, 1))}
+  .lbl.tiny .sub{display:none}
+  .lbl.aisle .num{font-size:calc(16px * var(--ls, 1));background:rgba(0,0,0,.65);padding:2px 9px}
+
+  .legend{position:fixed;left:16px;bottom:16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:12px;backdrop-filter:blur(12px);z-index:20;max-width:320px}
+  .legend h3{margin:0 0 8px;font-size:11px;font-weight:700;color:#cbd5e1;letter-spacing:1px;text-transform:uppercase}
+  .legend ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:5px 12px}
+  .legend li{display:flex;align-items:center;gap:7px;color:#d4d8e0}
+  .legend .sw{width:12px;height:12px;border-radius:3px;box-shadow:0 1px 2px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2)}
+
+  .compass{position:fixed;right:16px;top:64px;width:88px;height:88px;z-index:20;opacity:.85}
+
+  .controls{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:20}
+  .controls button{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:18px;cursor:pointer;backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center}
+  .controls button:hover{background:rgba(30,41,59,.95)}
+
+  .fixture-top{filter:drop-shadow(0 2px 0 rgba(0,0,0,.18))}
+  .fixture-group:hover .fixture-top{filter:brightness(1.15) drop-shadow(0 0 10px rgba(255,255,255,.15))}
+  .fixture-group{cursor:default;transition:filter .18s}
+
+  /* edit mode */
+  body.edit-mode .fixture-group{cursor:move}
+  body.edit-mode .fixture-top{stroke-dasharray:3 2}
+  .fixture-group.selected .fixture-top{stroke:#fbbf24 !important;stroke-width:2.5 !important;filter:brightness(1.25) drop-shadow(0 0 12px rgba(251,191,36,.7))}
+  body.edit-mode .lbl{pointer-events:none}
+
+  /* property panel */
+  .prop-panel{position:fixed;top:64px;left:16px;width:260px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;font-size:12px;backdrop-filter:blur(12px);z-index:25;display:none}
+  .prop-panel.show{display:block}
+  .prop-panel h3{margin:0 0 10px;font-size:13px;color:#fbbf24;font-weight:800;display:flex;align-items:center;gap:6px}
+  .prop-panel .sel-name{color:#fff;font-size:11px;background:rgba(0,0,0,.4);padding:2px 7px;border-radius:5px;margin-left:auto}
+  .prop-panel .row{display:grid;grid-template-columns:32px 1fr auto auto;gap:5px;align-items:center;margin-bottom:6px}
+  .prop-panel label{color:#94a3b8;font-weight:700}
+  .prop-panel input[type=number]{width:100%;background:rgba(0,0,0,.4);color:#fff;border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px;font-weight:600;text-align:right;font-family:inherit}
+  .prop-panel input[type=text]{width:100%;background:rgba(0,0,0,.4);color:#fff;border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:11px;font-family:inherit;margin-bottom:6px}
+  .prop-panel button.step{width:24px;height:24px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:#fff;cursor:pointer;font-weight:700;font-size:11px;padding:0}
+  .prop-panel button.step:hover{background:rgba(255,255,255,.15)}
+  .prop-panel .actions{display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .prop-panel .actions button{flex:1;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);color:#fca5a5;border-radius:6px;padding:6px;font-size:11px;cursor:pointer;font-weight:700}
+  .prop-panel .actions button:hover{background:rgba(239,68,68,.25)}
+  .prop-panel .hint{color:#64748b;font-size:10px;margin-top:8px;line-height:1.4}
+
+  .controls button.active{background:#fbbf24;color:#0b1020;border-color:#fbbf24}
+  .controls button.active:hover{background:#f59e0b}
+  .toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:rgba(34,197,94,.95);color:#fff;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:700;z-index:50;opacity:0;transition:opacity .3s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1><span class="pin">📍</span>헐리우드 매장 도면</h1>
+  <span class="sub">Hollywood Store · 3D Isometric Layout</span>
+  <div class="meta">통로 7개 · 38 fixtures<br>updated 2026-05-24</div>
+</div>
+
+<div class="stage">
+  <div class="canvas">
+    <svg class="scene" id="scene" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="labels" id="labels"></div>
+  </div>
+</div>
+
+<svg class="compass" viewBox="-50 -50 100 100" aria-hidden="true">
+  <defs>
+    <radialGradient id="cg" cx=".3" cy=".3"><stop offset="0" stop-color="#1e293b"/><stop offset="1" stop-color="#0b1020"/></radialGradient>
+  </defs>
+  <circle r="42" fill="url(#cg)" stroke="rgba(255,255,255,.18)" stroke-width="1.2"/>
+  <g transform="rotate(-30)">
+    <path d="M0,-32 L9,2 L0,-4 L-9,2 Z" fill="#ef4444"/>
+    <path d="M0,32 L9,-2 L0,4 L-9,-2 Z" fill="#64748b"/>
+  </g>
+  <text y="-26" text-anchor="middle" fill="#fff" font-size="11" font-weight="800" transform="rotate(-30)">N</text>
+  <text x="0" y="46" text-anchor="middle" fill="#94a3b8" font-size="8">매장 후면 →</text>
+</svg>
+
+<div class="legend">
+  <h3>섹션 구분</h3>
+  <ul>
+    <li><span class="sw" style="background:#27AE60"></span>야채 / Produce</li>
+    <li><span class="sw" style="background:#E74C3C"></span>정육 / Meat</li>
+    <li><span class="sw" style="background:#2E86C1"></span>수산 / Seafood</li>
+    <li><span class="sw" style="background:#C0392B"></span>김치 / Kimchi</li>
+    <li><span class="sw" style="background:#5499C7"></span>음료 / Beverage</li>
+    <li><span class="sw" style="background:#9B59B6"></span>반찬·스시 / Banchan</li>
+    <li><span class="sw" style="background:#A9C7E2"></span>냉동 / Frozen</li>
+    <li><span class="sw" style="background:#B8860B"></span>통로 / Aisles</li>
+    <li><span class="sw" style="background:#F39C12"></span>세일존 / Sale</li>
+    <li><span class="sw" style="background:#95A5A6"></span>계산대 / Checkout</li>
+  </ul>
+</div>
+
+<div class="controls">
+  <button id="btnEdit"    title="편집 모드 (위치/크기 조정)">✏️</button>
+  <button id="btnExport"  title="JSON 내보내기">📋</button>
+  <button id="btnRestore" title="원본 복원">⟲</button>
+  <button id="btnZoomIn"  title="확대">＋</button>
+  <button id="btnZoomOut" title="축소">−</button>
+  <button id="btnReset"   title="뷰 리셋">⟳</button>
+</div>
+
+<div class="prop-panel" id="propPanel">
+  <h3>✏️ 편집 <span class="sel-name" id="selName">-</span></h3>
+  <input type="text" id="inMain" placeholder="이름 (예: 야채)">
+  <input type="text" id="inSub"  placeholder="영문 (예: Produce)">
+
+  <div class="row"><label>X</label><input type="number" id="inX" step="5"><button class="step" data-prop="x" data-step="-5">−</button><button class="step" data-prop="x" data-step="5">＋</button></div>
+  <div class="row"><label>Y</label><input type="number" id="inY" step="5"><button class="step" data-prop="y" data-step="-5">−</button><button class="step" data-prop="y" data-step="5">＋</button></div>
+  <div class="row"><label>W</label><input type="number" id="inW" step="5" min="10"><button class="step" data-prop="w" data-step="-5">−</button><button class="step" data-prop="w" data-step="5">＋</button></div>
+  <div class="row"><label>H</label><input type="number" id="inH" step="5" min="10"><button class="step" data-prop="h" data-step="-5">−</button><button class="step" data-prop="h" data-step="5">＋</button></div>
+  <div class="row"><label>높이</label><input type="number" id="inZ" step="5" min="5"><button class="step" data-prop="z" data-step="-5">−</button><button class="step" data-prop="z" data-step="5">＋</button></div>
+
+  <div class="actions">
+    <button id="btnDelete">🗑 삭제</button>
+    <button id="btnDup">⧉ 복제</button>
+  </div>
+  <div class="hint">매대 클릭 → 드래그로 이동<br>변경사항은 자동 저장됨</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- Fixtures (Hollywood store, v2 — 사용자 손그림 기반) ---------- */
+const FIXTURES = [
+  // ━━━ NORTH WALL (top row) ━━━
+  {type:'rim',     x:8,   y:8,   w:78,  h:50,  z:65, num:'A1', main:'해산물 코너', sub:'Seafood Corner', color:'#2E86C1'},
+  {type:'door-fz', x:90,  y:8,   w:188, h:50,  z:92, num:'A2', main:'냉동',        sub:'Frozen',         color:'#A9C7E2'},
+  {type:'cool',    x:282, y:8,   w:188, h:50,  z:55, num:'A3', main:'냉장',        sub:'Refrigerated',   color:'#5DADE2'},
+  {type:'door-fz', x:570, y:8,   w:240, h:50,  z:92, num:'A4', main:'김치 냉장고', sub:'Kimchi Fridge',  color:'#C0392B'},
+
+  // ━━━ NORTH-2ND ROW (수족관 / 오픈 냉동고 / 오픈 냉장고) ━━━
+  {type:'rim',     x:90,  y:62,  w:55,  h:48,  z:80, num:'A5', main:'수족관',      sub:'Fish Tank',      color:'#1F618D'},
+  {type:'cool',    x:149, y:62,  w:321, h:48,  z:50, num:'A6', main:'오픈 냉동고', sub:'Open Freezer',   color:'#1ABC9C'},
+  {type:'cool',    x:570, y:62,  w:240, h:48,  z:50, num:'A7', main:'오픈 냉장고', sub:'Open Cooler',    color:'#3498DB'},
+
+  // ━━━ EAST COLUMN — 누들 냉장 (top of east wall) ━━━
+  {type:'door-fz', x:820, y:8,   w:110, h:104, z:92, num:'B1', main:'누들 냉장',   sub:'Noodle Fridge',  color:'#A9C7E2'},
+
+  // ━━━ WEST WALL (left column) ━━━
+  {type:'cool',    x:8,   y:62,  w:78,  h:360, z:70, num:'C1', main:'음료 냉장',   sub:'Beverage',       color:'#5499C7'},
+  {type:'door-fz', x:8,   y:426, w:78,  h:170, z:92, num:'C2', main:'냉동',        sub:'Frozen',         color:'#A9C7E2'},
+
+  // ━━━ SPECIAL VERTICAL COLUMN (between west wall and aisles) ━━━
+  // 냉장 / 냉동 / B+B+B / 스시 / 냉동 — 5 stacked sections
+  {type:'rim',     x:90,  y:118, w:55,  h:62,  z:65, num:'D1', main:'냉장',        sub:'Cold',           color:'#5DADE2'},
+  {type:'frz',     x:90,  y:184, w:55,  h:62,  z:65, num:'D2', main:'냉동',        sub:'Frozen',         color:'#76D7C4'},
+  {type:'rim',     x:90,  y:250, w:55,  h:78,  z:70, num:'D3', main:'B+B+B',       sub:'반찬',           color:'#9B59B6'},
+  {type:'rim',     x:90,  y:332, w:55,  h:78,  z:70, num:'D4', main:'스시',        sub:'Sushi',          color:'#E67E22'},
+  {type:'frz',     x:90,  y:414, w:55,  h:78,  z:65, num:'D5', main:'냉동',        sub:'Frozen',         color:'#76D7C4'},
+
+  // ━━━ CENTRAL AISLES — 7 aisles, numbered 7..1 (LEFT → RIGHT) ━━━
+  {type:'aisle',   x:165, y:118, w:60,  h:340, z:80, num:'7', main:'7-① · 7-②', sub:'',  color:'#B8860B'},
+  {type:'aisle',   x:245, y:118, w:60,  h:340, z:80, num:'6', main:'6-① · 6-②', sub:'',  color:'#C0392B'},
+  {type:'aisle',   x:325, y:118, w:60,  h:340, z:80, num:'5', main:'5-① · 5-②', sub:'',  color:'#D68910'},
+  {type:'aisle',   x:405, y:118, w:60,  h:340, z:80, num:'4', main:'4-① · 4-②', sub:'',  color:'#A37700'},
+  {type:'aisle',   x:485, y:118, w:60,  h:340, z:80, num:'3', main:'3-① · 3-②', sub:'',  color:'#CA6F1E'},
+  {type:'aisle',   x:565, y:118, w:60,  h:340, z:80, num:'2', main:'2-① · 2-②', sub:'',  color:'#196F3D'},
+  {type:'aisle',   x:645, y:118, w:60,  h:340, z:80, num:'1', main:'1-① · 1-②', sub:'',  color:'#1F618D'},
+
+  // ━━━ END CAPS at south end of each aisle ━━━
+  {type:'rim',     x:165, y:462, w:60,  h:22,  z:52, num:'',  main:'endcap', sub:'', color:'#7F8C8D'},
+  {type:'rim',     x:245, y:462, w:60,  h:22,  z:52, num:'',  main:'e.c',    sub:'', color:'#7F8C8D'},
+  {type:'rim',     x:325, y:462, w:60,  h:22,  z:52, num:'',  main:'e.c',    sub:'', color:'#7F8C8D'},
+  {type:'rim',     x:405, y:462, w:60,  h:22,  z:52, num:'',  main:'e.c',    sub:'', color:'#7F8C8D'},
+  {type:'rim',     x:485, y:462, w:60,  h:22,  z:52, num:'',  main:'e.c',    sub:'', color:'#7F8C8D'},
+
+  // ━━━ SALE ZONE (vertical wide block right side, between aisle 1 and east wall) ━━━
+  {type:'rim',     x:720, y:120, w:95,  h:340, z:78, num:'★', main:'세일존',      sub:'SALE / PROMO',   color:'#F39C12'},
+
+  // ━━━ EAST WALL (below 누들 냉장) ━━━
+  {type:'rim',     x:820, y:120, w:110, h:80,  z:65, num:'B2', main:'샐러드',      sub:'Salad / Deli',   color:'#27AE60'},
+  {type:'cool',    x:820, y:208, w:110, h:90,  z:55, num:'B3', main:'냉장 고기',   sub:'Refrig. Meat',   color:'#E74C3C'},
+  {type:'door-fz', x:820, y:306, w:110, h:80,  z:92, num:'B4', main:'냉동',        sub:'Frozen',         color:'#A9C7E2'},
+
+  // ━━━ 야채 row (above 계산대, right of aisles) ━━━
+  {type:'rim',     x:565, y:494, w:160, h:24,  z:48, num:'E1', main:'야채',        sub:'Produce',        color:'#27AE60'},
+
+  // ━━━ CHECKOUT row ━━━
+  {type:'check',   x:90,  y:524, w:435, h:32,  z:24, num:'🛒', main:'계산대',      sub:'CHECKOUT',       color:'#95A5A6'},
+  {type:'rim',     x:565, y:524, w:160, h:24,  z:45, num:'E2', main:'세일존',      sub:'SALE',           color:'#F39C12'},
+
+  // ━━━ BOTTOM row — 선반 진열대 + 세일존 ━━━
+  {type:'rim',     x:90,  y:572, w:380, h:36,  z:55, num:'F1', main:'선반 진열대', sub:'Shelf Display',  color:'#8B5A2B'},
+  {type:'rim',     x:480, y:572, w:140, h:36,  z:55, num:'F2', main:'세일존',      sub:'SALE',           color:'#F39C12'},
+
+  // ━━━ FRONT DOOR (entrance, bottom-right) ━━━
+  {type:'door',    x:760, y:610, w:170, h:80,  z:6,  num:'▶',  main:'출입문',      sub:'ENTRANCE',       color:'#1B4F72'},
+
+  // ━━━ OFFICE (bottom-left) ━━━
+  {type:'rim',     x:8,   y:610, w:78,  h:80,  z:60, num:'X1', main:'사무실',      sub:'Office',         color:'#6C757D'},
+];
+
+/* ---------- Isometric projection ---------- */
+const COS30 = Math.cos(Math.PI/6); // 0.866
+const SIN30 = Math.sin(Math.PI/6); // 0.5
+function iso(x,y,z){
+  return { sx:(x - y) * COS30, sy:(x + y) * SIN30 - z };
+}
+
+/* ---------- Canvas dimensions ---------- */
+const CANVAS_W = 940, CANVAS_H = 700;
+
+/* ---------- Color helpers ---------- */
+function hexToRgb(h){
+  h = h.replace('#','');
+  if(h.length===3) h = h.split('').map(c=>c+c).join('');
+  const n = parseInt(h,16);
+  return [n>>16&255, n>>8&255, n&255];
+}
+function rgb(arr,a){ return `rgba(${arr[0]},${arr[1]},${arr[2]},${a==null?1:a})`; }
+function shade(arr, pct){
+  const f = pct < 0 ? 0 : 255;
+  const t = Math.abs(pct);
+  return [
+    Math.round((f - arr[0]) * t + arr[0]),
+    Math.round((f - arr[1]) * t + arr[1]),
+    Math.round((f - arr[2]) * t + arr[2]),
+  ];
+}
+
+/* ---------- Persistence (localStorage) ---------- */
+const LS_KEY = 'hollywood_floorplan_v2';
+const DEFAULT_FIXTURES = JSON.parse(JSON.stringify(FIXTURES));
+// assign stable ids
+FIXTURES.forEach((f,i)=>{ f.id = i+1; });
+DEFAULT_FIXTURES.forEach((f,i)=>{ f.id = i+1; });
+
+function loadState(){
+  try{
+    const s = localStorage.getItem(LS_KEY);
+    if(!s) return;
+    const arr = JSON.parse(s);
+    if(Array.isArray(arr) && arr.length){
+      FIXTURES.length = 0;
+      arr.forEach((f,i)=>{ if(!f.id) f.id = i+1; FIXTURES.push(f); });
+    }
+  }catch(e){ console.warn('load failed', e); }
+}
+function saveState(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(FIXTURES)); }catch(e){}
+}
+function restoreDefaults(){
+  if(!confirm('손그림 도면 기본값으로 되돌릴까요? 편집 내용이 사라집니다.')) return;
+  localStorage.removeItem(LS_KEY);
+  FIXTURES.length = 0;
+  DEFAULT_FIXTURES.forEach(f => FIXTURES.push(JSON.parse(JSON.stringify(f))));
+  selected = null;
+  redraw();
+  showToast('원본 복원 완료');
+}
+
+loadState();
+
+/* ---------- Render ---------- */
+const scene  = document.getElementById('scene');
+const labels = document.getElementById('labels');
+const STAGE  = document.querySelector('.stage');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs){
+  const e = document.createElementNS(SVG_NS, tag);
+  for(const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+let editMode = false;
+let selected = null;
+let dragging = null;
+
+function drawScene(){
+  let minSX= Infinity,maxSX=-Infinity,minSY=Infinity,maxSY=-Infinity;
+  const corners = [[0,0,0],[CANVAS_W,0,0],[CANVAS_W,CANVAS_H,0],[0,CANVAS_H,0]];
+  corners.forEach(([x,y,z])=>{ const p=iso(x,y,z); minSX=Math.min(minSX,p.sx); maxSX=Math.max(maxSX,p.sx); minSY=Math.min(minSY,p.sy); maxSY=Math.max(maxSY,p.sy); });
+  minSY -= 100;
+  const PAD = 60;
+  const vbX = minSX - PAD, vbY = minSY - PAD;
+  const vbW = (maxSX - minSX) + PAD*2;
+  const vbH = (maxSY - minSY) + PAD*2;
+  scene.setAttribute('viewBox', `${vbX} ${vbY} ${vbW} ${vbH}`);
+
+  const defs = el('defs');
+  defs.innerHTML = `
+    <linearGradient id="floorGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a2342"/>
+      <stop offset="100%" stop-color="#0c1226"/>
+    </linearGradient>
+    <pattern id="tilePat" x="0" y="0" width="80" height="40" patternUnits="userSpaceOnUse">
+      <rect width="80" height="40" fill="transparent"/>
+      <path d="M0 40 L40 20 L80 40 M0 20 L40 0 L80 20 M40 0 L40 20 L0 40 M40 0 L40 20 L80 40" stroke="rgba(255,255,255,.05)" fill="none" stroke-width=".7"/>
+    </pattern>
+    <radialGradient id="floorVignette" cx=".5" cy=".5" r=".7">
+      <stop offset="0%" stop-color="rgba(0,0,0,0)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,.55)"/>
+    </radialGradient>
+  `;
+  scene.appendChild(defs);
+
+  const fl = corners.map(c=>iso(c[0],c[1],c[2]));
+  const floorPts = fl.map(p=>`${p.sx},${p.sy}`).join(' ');
+  scene.appendChild(el('polygon',{points:floorPts, fill:'url(#floorGrad)', stroke:'rgba(255,255,255,.10)', 'stroke-width':1.5}));
+  scene.appendChild(el('polygon',{points:floorPts, fill:'url(#tilePat)', 'pointer-events':'none'}));
+  scene.appendChild(el('polygon',{points:floorPts, fill:'url(#floorVignette)', 'pointer-events':'none'}));
+
+  const wallH = 18;
+  const wN = [iso(0,0,0), iso(CANVAS_W,0,0), iso(CANVAS_W,0,wallH), iso(0,0,wallH)].map(p=>`${p.sx},${p.sy}`).join(' ');
+  const wW = [iso(0,0,0), iso(0,CANVAS_H,0), iso(0,CANVAS_H,wallH), iso(0,0,wallH)].map(p=>`${p.sx},${p.sy}`).join(' ');
+  scene.appendChild(el('polygon',{points:wN, fill:'rgba(255,255,255,.04)', stroke:'rgba(255,255,255,.10)'}));
+  scene.appendChild(el('polygon',{points:wW, fill:'rgba(255,255,255,.025)', stroke:'rgba(255,255,255,.08)'}));
+
+  const sorted = [...FIXTURES].sort((a,b)=>{
+    return (a.x + a.w/2 + a.y + a.h/2) - (b.x + b.w/2 + b.y + b.h/2);
+  });
+
+  const labelInfo = [];
+
+  for(const f of sorted){
+    const rgbBase = hexToRgb(f.color);
+    const cTop   = rgb(shade(rgbBase,  .12), 1);
+    const cRight = rgb(shade(rgbBase, -.18), 1);
+    const cFront = rgb(shade(rgbBase, -.32), 1);
+    const cStroke= rgb(shade(rgbBase, -.55), 1);
+
+    const x=f.x,y=f.y,w=f.w,h=f.h,z=f.z;
+    const B = [iso(x,y,0), iso(x+w,y,0), iso(x+w,y+h,0), iso(x,y+h,0)];
+    const T = [iso(x,y,z), iso(x+w,y,z), iso(x+w,y+h,z), iso(x,y+h,z)];
+
+    const g = el('g', {class:'fixture-group' + (selected===f ? ' selected':''), 'data-fid':f.id});
+    g.addEventListener('mousedown', e => onFixtureMouseDown(e, f));
+
+    const shPts = B.map(p=>`${p.sx},${p.sy+3}`).join(' ');
+    g.appendChild(el('polygon',{points:shPts, fill:'rgba(0,0,0,.35)', filter:'blur(4px)'}));
+
+    const rPts = [B[1],B[2],T[2],T[1]].map(p=>`${p.sx},${p.sy}`).join(' ');
+    g.appendChild(el('polygon',{points:rPts, fill:cRight, stroke:cStroke, 'stroke-width':.8, 'stroke-linejoin':'round'}));
+    const fPts = [B[3],B[2],T[2],T[3]].map(p=>`${p.sx},${p.sy}`).join(' ');
+    g.appendChild(el('polygon',{points:fPts, fill:cFront, stroke:cStroke, 'stroke-width':.8, 'stroke-linejoin':'round'}));
+    const tPts = T.map(p=>`${p.sx},${p.sy}`).join(' ');
+    g.appendChild(el('polygon',{points:tPts, fill:cTop, stroke:cStroke, 'stroke-width':1, 'stroke-linejoin':'round', class:'fixture-top'}));
+
+    addTopDecoration(g, f, T);
+
+    const ttl = document.createElementNS(SVG_NS,'title');
+    ttl.textContent = `${f.num}  ${f.main}  ·  ${f.sub.replace(/\n/g,' / ')}`;
+    g.appendChild(ttl);
+
+    scene.appendChild(g);
+
+    // 라벨 위치 = 8개 꼭짓점 투영 평균 (박스의 시각적 중심)
+    // — 손그림과 매칭되도록 박스 가운데에 라벨이 앉음
+    const all8 = [B[0],B[1],B[2],B[3],T[0],T[1],T[2],T[3]];
+    const cx = all8.reduce((s,p)=>s+p.sx, 0) / 8;
+    const cy = all8.reduce((s,p)=>s+p.sy, 0) / 8;
+    labelInfo.push({f, cx, cy});
+  }
+
+  positionLabels(labelInfo, vbX, vbY, vbW, vbH);
+  window.__labelInfo = {labelInfo, vbX, vbY, vbW, vbH};
+}
+
+function addTopDecoration(g, f, T){
+  if(f.type === 'aisle'){
+    const steps = 5;
+    for(let i=1;i<steps;i++){
+      const t = i/steps;
+      const ax = f.x + f.w/2 + (t-.5)*f.w*.6;
+      const p1 = iso(ax, f.y+4,     f.z+0.1);
+      const p2 = iso(ax, f.y+f.h-4, f.z+0.1);
+      g.appendChild(el('line',{x1:p1.sx,y1:p1.sy,x2:p2.sx,y2:p2.sy, stroke:'rgba(0,0,0,.18)','stroke-width':.7}));
+    }
+  } else if(f.type === 'cool' || f.type === 'frz'){
+    const ribs = 4;
+    for(let i=1;i<ribs;i++){
+      const t = i/ribs;
+      const ay = f.y + t*f.h;
+      const p1 = iso(f.x+3, ay, f.z+0.1);
+      const p2 = iso(f.x+f.w-3, ay, f.z+0.1);
+      g.appendChild(el('line',{x1:p1.sx,y1:p1.sy,x2:p2.sx,y2:p2.sy, stroke:'rgba(255,255,255,.25)','stroke-width':.7}));
+    }
+  } else if(f.type === 'door-fz'){
+    const cols = Math.max(2, Math.round(Math.max(f.w,f.h)/45));
+    if(f.w >= f.h){
+      for(let i=1;i<cols;i++){
+        const t = i/cols;
+        const ax = f.x + t*f.w;
+        const p1 = iso(ax, f.y+2, f.z+0.1);
+        const p2 = iso(ax, f.y+f.h-2, f.z+0.1);
+        g.appendChild(el('line',{x1:p1.sx,y1:p1.sy,x2:p2.sx,y2:p2.sy, stroke:'rgba(255,255,255,.35)','stroke-width':.8}));
+      }
+    } else {
+      for(let i=1;i<cols;i++){
+        const t = i/cols;
+        const ay = f.y + t*f.h;
+        const p1 = iso(f.x+2, ay, f.z+0.1);
+        const p2 = iso(f.x+f.w-2, ay, f.z+0.1);
+        g.appendChild(el('line',{x1:p1.sx,y1:p1.sy,x2:p2.sx,y2:p2.sy, stroke:'rgba(255,255,255,.35)','stroke-width':.8}));
+      }
+    }
+  } else if(f.type === 'check'){
+    const slots = 3;
+    for(let i=0;i<slots;i++){
+      const cxw = f.x + 50 + i*(f.w-100)/Math.max(1,slots-1);
+      const p1 = iso(cxw-22, f.y+5, f.z+1);
+      const p2 = iso(cxw+22, f.y+5, f.z+1);
+      const p3 = iso(cxw+22, f.y+27,f.z+1);
+      const p4 = iso(cxw-22, f.y+27,f.z+1);
+      g.appendChild(el('polygon',{points:[p1,p2,p3,p4].map(p=>`${p.sx},${p.sy}`).join(' '), fill:'rgba(0,0,0,.3)', stroke:'rgba(255,255,255,.2)','stroke-width':.7}));
+    }
+  } else if(f.type === 'door'){
+    const ax = f.x + f.w/2;
+    const ay = f.y + f.h/2;
+    const a1 = iso(ax-44, ay+12, f.z+0.5);
+    const a2 = iso(ax+44, ay+12, f.z+0.5);
+    const a3 = iso(ax+44, ay-12, f.z+0.5);
+    const a4 = iso(ax-44, ay-12, f.z+0.5);
+    g.appendChild(el('polygon',{points:[a1,a2,a3,a4].map(p=>`${p.sx},${p.sy}`).join(' '), fill:'rgba(255,255,255,.18)', stroke:'rgba(255,255,255,.4)','stroke-width':.7,'stroke-dasharray':'2 2'}));
+  }
+}
+
+function positionLabels(info, vbX, vbY, vbW, vbH){
+  labels.innerHTML = '';
+  const rect = scene.getBoundingClientRect();
+  const scale = Math.min(rect.width / vbW, rect.height / vbH);
+  const offsetX = (rect.width  - vbW*scale)/2 - vbX*scale;
+  const offsetY = (rect.height - vbH*scale)/2 - vbY*scale;
+  const ls = Math.min(1, Math.max(.55, scale * 1.7));
+  for(const {f, cx, cy} of info){
+    const px = offsetX + cx*scale;
+    const py = offsetY + cy*scale;
+    const div = document.createElement('div');
+    const big  = (f.w*f.h) >= 150*120;
+    const tiny = (f.w*f.h) < 80*50;
+    const isAisle = f.type === 'aisle';
+    div.className = 'lbl' + (big ? ' big':'') + (tiny ? ' tiny':'') + (isAisle ? ' aisle':'');
+    div.style.left = px + 'px';
+    div.style.top  = py + 'px';
+    div.style.setProperty('--ls', ls.toFixed(3));
+    let html = '';
+    if(f.num) html += `<div class="num">${f.num}</div>`;
+    if(f.main) html += `<div class="main">${f.main}</div>`;
+    if(!tiny && f.sub) html += `<div class="sub">${f.sub}</div>`;
+    div.innerHTML = html;
+    labels.appendChild(div);
+  }
+}
+
+/* ---------- Pan / zoom ---------- */
+let viewScale = 1, viewTX = 0, viewTY = 0;
+function applyTransform(){
+  scene.style.transform = `translate(${viewTX}px,${viewTY}px) scale(${viewScale})`;
+  scene.style.transformOrigin = '50% 50%';
+  labels.style.transform = `translate(${viewTX}px,${viewTY}px) scale(${viewScale})`;
+  labels.style.transformOrigin = '50% 50%';
+}
+document.getElementById('btnZoomIn' ).addEventListener('click', ()=>{ viewScale = Math.min(2.5, viewScale*1.15); applyTransform(); });
+document.getElementById('btnZoomOut').addEventListener('click', ()=>{ viewScale = Math.max(0.5, viewScale/1.15); applyTransform(); });
+document.getElementById('btnReset'  ).addEventListener('click', ()=>{ viewScale=1; viewTX=0; viewTY=0; applyTransform(); });
+
+let panning=false, lastX=0, lastY=0;
+STAGE.addEventListener('mousedown', e=>{
+  // don't pan when clicking a fixture in edit mode (drag handles it)
+  if(editMode && e.target.closest && e.target.closest('.fixture-group')) return;
+  panning=true; lastX=e.clientX; lastY=e.clientY; STAGE.style.cursor='grabbing';
+});
+window.addEventListener('mousemove', e=>{
+  if(!panning) return;
+  viewTX += (e.clientX-lastX);
+  viewTY += (e.clientY-lastY);
+  lastX=e.clientX; lastY=e.clientY;
+  applyTransform();
+});
+window.addEventListener('mouseup', ()=>{ panning=false; STAGE.style.cursor=''; });
+STAGE.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const dir = e.deltaY > 0 ? 1/1.1 : 1.1;
+  viewScale = Math.min(2.5, Math.max(0.5, viewScale*dir));
+  applyTransform();
+}, {passive:false});
+
+function reflow(){
+  if(window.__labelInfo){
+    const {labelInfo, vbX, vbY, vbW, vbH} = window.__labelInfo;
+    positionLabels(labelInfo, vbX, vbY, vbW, vbH);
+  }
+}
+window.addEventListener('resize', reflow);
+
+/* ---------- Re-render helper (clears SVG and redraws) ---------- */
+function redraw(){
+  while(scene.firstChild) scene.removeChild(scene.firstChild);
+  drawScene();
+  updatePropPanel();
+}
+
+/* ---------- Toast ---------- */
+const toast = document.getElementById('toast');
+let toastTimer = null;
+function showToast(msg){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toast.classList.remove('show'), 1400);
+}
+
+/* ---------- Screen → world delta (inverse iso, z=0 plane) ---------- */
+function screenToWorld(dScreenX, dScreenY){
+  if(!window.__labelInfo) return {dx:0, dy:0};
+  const rect = scene.getBoundingClientRect();
+  const {vbW, vbH} = window.__labelInfo;
+  const svgScale = Math.min(rect.width / vbW, rect.height / vbH);
+  const eff = svgScale * viewScale;
+  if(eff <= 0) return {dx:0, dy:0};
+  const dsx = dScreenX / eff;
+  const dsy = dScreenY / eff;
+  const dx = (dsx/COS30 + dsy/SIN30) / 2;
+  const dy = (dsy/SIN30 - dsx/COS30) / 2;
+  return {dx, dy};
+}
+
+/* ---------- Fixture interaction ---------- */
+function onFixtureMouseDown(e, f){
+  if(!editMode) return;
+  e.stopPropagation();
+  e.preventDefault();
+  selected = f;
+  dragging = {
+    f,
+    startMouseX: e.clientX,
+    startMouseY: e.clientY,
+    origX: f.x,
+    origY: f.y,
+    moved: false,
+  };
+  redraw();
+}
+
+window.addEventListener('mousemove', e=>{
+  if(!dragging) return;
+  const dScreenX = e.clientX - dragging.startMouseX;
+  const dScreenY = e.clientY - dragging.startMouseY;
+  if(Math.abs(dScreenX) < 2 && Math.abs(dScreenY) < 2 && !dragging.moved) return;
+  dragging.moved = true;
+  const {dx, dy} = screenToWorld(dScreenX, dScreenY);
+  const snap = 5;
+  dragging.f.x = Math.round((dragging.origX + dx)/snap)*snap;
+  dragging.f.y = Math.round((dragging.origY + dy)/snap)*snap;
+  redraw();
+});
+
+window.addEventListener('mouseup', ()=>{
+  if(dragging){
+    if(dragging.moved){ saveState(); showToast('저장됨'); }
+    dragging = null;
+  }
+});
+
+// click outside fixture clears selection
+STAGE.addEventListener('mousedown', e=>{
+  if(e.target.closest('.fixture-group')) return;
+  if(!editMode) return;
+  // pan vs deselect — allow pan but deselect
+  selected = null;
+  updatePropPanel();
+});
+
+/* ---------- Property panel ---------- */
+const propPanel = document.getElementById('propPanel');
+const inX = document.getElementById('inX');
+const inY = document.getElementById('inY');
+const inW = document.getElementById('inW');
+const inH = document.getElementById('inH');
+const inZ = document.getElementById('inZ');
+const inMain = document.getElementById('inMain');
+const inSub  = document.getElementById('inSub');
+const selName = document.getElementById('selName');
+
+function updatePropPanel(){
+  // update selected outline (in case redraw didn't include it)
+  document.querySelectorAll('.fixture-group').forEach(g=>{
+    g.classList.toggle('selected', selected && +g.getAttribute('data-fid') === selected.id);
+  });
+  if(!editMode || !selected){
+    propPanel.classList.remove('show');
+    return;
+  }
+  propPanel.classList.add('show');
+  selName.textContent = selected.num ? `${selected.num} · ${selected.main||''}` : (selected.main||'-');
+  inX.value = selected.x;
+  inY.value = selected.y;
+  inW.value = selected.w;
+  inH.value = selected.h;
+  inZ.value = selected.z;
+  inMain.value = selected.main || '';
+  inSub.value  = selected.sub  || '';
+}
+
+function bindNumberInput(input, prop, opts={}){
+  input.addEventListener('input', ()=>{
+    if(!selected) return;
+    const v = parseFloat(input.value);
+    if(isNaN(v)) return;
+    selected[prop] = Math.max(opts.min ?? -9999, v);
+    saveState();
+    redraw();
+  });
+}
+bindNumberInput(inX, 'x');
+bindNumberInput(inY, 'y');
+bindNumberInput(inW, 'w', {min:10});
+bindNumberInput(inH, 'h', {min:10});
+bindNumberInput(inZ, 'z', {min:2});
+
+function bindTextInput(input, prop){
+  input.addEventListener('input', ()=>{
+    if(!selected) return;
+    selected[prop] = input.value;
+    saveState();
+    redraw();
+  });
+}
+bindTextInput(inMain, 'main');
+bindTextInput(inSub,  'sub');
+
+// step buttons
+propPanel.querySelectorAll('button.step').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    if(!selected) return;
+    const prop = b.getAttribute('data-prop');
+    const step = parseInt(b.getAttribute('data-step'),10);
+    selected[prop] = (selected[prop]||0) + step;
+    if((prop==='w'||prop==='h') && selected[prop] < 10) selected[prop] = 10;
+    if(prop==='z' && selected[prop] < 2) selected[prop] = 2;
+    saveState();
+    redraw();
+  });
+});
+
+// delete
+document.getElementById('btnDelete').addEventListener('click', ()=>{
+  if(!selected) return;
+  if(!confirm(`'${selected.main||selected.num}' 삭제할까요?`)) return;
+  const idx = FIXTURES.indexOf(selected);
+  if(idx>=0) FIXTURES.splice(idx,1);
+  selected = null;
+  saveState();
+  redraw();
+  showToast('삭제됨');
+});
+
+// duplicate
+document.getElementById('btnDup').addEventListener('click', ()=>{
+  if(!selected) return;
+  const copy = JSON.parse(JSON.stringify(selected));
+  copy.id = Math.max(0, ...FIXTURES.map(f=>f.id||0)) + 1;
+  copy.x += 30; copy.y += 30;
+  FIXTURES.push(copy);
+  selected = copy;
+  saveState();
+  redraw();
+  showToast('복제됨');
+});
+
+/* ---------- Edit toggle ---------- */
+const btnEdit = document.getElementById('btnEdit');
+btnEdit.addEventListener('click', ()=>{
+  editMode = !editMode;
+  document.body.classList.toggle('edit-mode', editMode);
+  btnEdit.classList.toggle('active', editMode);
+  if(!editMode) selected = null;
+  updatePropPanel();
+  showToast(editMode ? '편집 모드 ON · 매대 클릭→드래그' : '편집 모드 OFF');
+});
+
+/* ---------- Export JSON ---------- */
+document.getElementById('btnExport').addEventListener('click', ()=>{
+  const data = JSON.stringify(FIXTURES, null, 2);
+  navigator.clipboard.writeText(data).then(
+    ()=>showToast('JSON 클립보드에 복사됨'),
+    ()=>{
+      // fallback: download
+      const blob = new Blob([data], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'hollywood-floorplan.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('JSON 다운로드');
+    }
+  );
+});
+
+/* ---------- Restore defaults ---------- */
+document.getElementById('btnRestore').addEventListener('click', restoreDefaults);
+
+drawScene();
+window.requestAnimationFrame(reflow);
+</script>
+</body>
+</html>
