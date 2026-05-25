@@ -90,68 +90,160 @@
       ok:       { fill:'#16a34a', stroke:'#15803d', alpha:0.65 },   // 약한 녹색 (덜 강조)
     };
 
+    // ============== 3D isometric 렌더링 ==============
+    // 2026-05-25 — 입체 매장 도면 (hollywood-floorplan-3d 와 동일 룩)
+    const COS30 = 0.8660254037844387, SIN30 = 0.5;
+    function iso(x,y,z){ return { sx:(x-y)*COS30, sy:(x+y)*SIN30 - z }; }
+    const Z_HEIGHT = {
+      'front-door':   6,
+      'checkout':     24,
+      'perimeter':    60,
+      'open-cooler':  50,
+      'open-freezer': 50,
+      'door-freezer': 92,
+      'aisle':        80,
+    };
+    const zof = z => Z_HEIGHT[z.type] || 55;
+
+    function hexToRgbA(c){
+      let s = String(c||'#888').trim();
+      if (s.startsWith('rgb')) {
+        const m = s.match(/\d+(\.\d+)?/g);
+        if (m && m.length >= 3) return [parseFloat(m[0])|0, parseFloat(m[1])|0, parseFloat(m[2])|0];
+        return [136,136,136];
+      }
+      s = s.replace('#','');
+      if (s.length === 3) s = s.split('').map(ch=>ch+ch).join('');
+      const n = parseInt(s,16);
+      if (isNaN(n)) return [136,136,136];
+      return [(n>>16)&255, (n>>8)&255, n&255];
+    }
+    function shadeArr(rgb, pct){
+      const f = pct < 0 ? 0 : 255;
+      const t = Math.abs(pct);
+      return [
+        Math.round((f - rgb[0])*t + rgb[0]),
+        Math.round((f - rgb[1])*t + rgb[1]),
+        Math.round((f - rgb[2])*t + rgb[2]),
+      ];
+    }
+    const toHex = a => '#' + a.map(c => Math.max(0,Math.min(255,c)).toString(16).padStart(2,'0')).join('');
+
+    // 모든 8 꼭짓점 투영으로 viewBox 자동 계산
+    let minSX=Infinity, maxSX=-Infinity, minSY=Infinity, maxSY=-Infinity;
+    zones.forEach(z => {
+      const h = zof(z);
+      [[z.x,z.y,0],[z.x+z.w,z.y,0],[z.x+z.w,z.y+z.h,0],[z.x,z.y+z.h,0],
+       [z.x,z.y,h],[z.x+z.w,z.y,h],[z.x+z.w,z.y+z.h,h],[z.x,z.y+z.h,h]
+      ].forEach(([x,y,zz])=>{
+        const p = iso(x,y,zz);
+        if (p.sx < minSX) minSX = p.sx; if (p.sx > maxSX) maxSX = p.sx;
+        if (p.sy < minSY) minSY = p.sy; if (p.sy > maxSY) maxSY = p.sy;
+      });
+    });
+    if (!isFinite(minSX)) { minSX=0; maxSX=canvasW; minSY=0; maxSY=canvasH; }
+    const PAD = 30;
+    const vbX = minSX - PAD, vbY = minSY - PAD;
+    const vbW = (maxSX - minSX) + PAD*2, vbH = (maxSY - minSY) + PAD*2;
+
     const svgParts = [];
     svgParts.push(
-      '<svg viewBox="0 0 ' + canvasW + ' ' + canvasH + '" ' +
+      '<svg viewBox="' + vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH + '" ' +
       'preserveAspectRatio="xMidYMid meet" ' +
       'style="width:100%;height:auto;display:block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit">'
     );
-    // 외곽 매장 테두리 (선택적)
-    svgParts.push('<rect x="2" y="2" width="' + (canvasW-4) + '" height="' + (canvasH-4) + '" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6,4"/>');
 
-    zones.forEach(z => {
-      // 재고(inventory) 가 task state 보다 우선 — 매장 운영 critical.
+    // 바닥 (4 모서리 iso 투영) — 약한 회색 채움
+    const floorCorners = [iso(0,0,0), iso(canvasW,0,0), iso(canvasW,canvasH,0), iso(0,canvasH,0)];
+    const floorPts = floorCorners.map(p => p.sx+','+p.sy).join(' ');
+    svgParts.push('<polygon points="'+floorPts+'" fill="#eef2f7" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,3" pointer-events="none"/>');
+
+    // back-to-front 정렬 — 멀리 있는 것부터 그려서 가까운 게 위에 겹침
+    const sorted = zones.slice().sort((a,b) => {
+      return (a.x + a.w/2 + a.y + a.h/2) - (b.x + b.w/2 + b.y + b.h/2);
+    });
+
+    sorted.forEach(z => {
       const invState = inventory[z.id];
       const ic = INV_COLOR[invState];
       const taskState = states[z.id];
       const sc = STATE_COLOR[taskState];
-      // priority: inventory > task state > zone default color
       const eff = ic || sc;
-      const fillColor = eff ? eff.fill : (z.color || '#94a3b8');
+      const baseColor = eff ? eff.fill : (z.color || '#94a3b8');
       const fillOpacity = eff ? eff.alpha : 1;
       const strokeColor = eff ? eff.stroke : '#475569';
-      const strokeW = (hi && hi === z.id) ? 3.5 : 1.5;
+      const strokeW = (hi && hi === z.id) ? 2.2 : 0.9;
+
+      const rgb = hexToRgbA(baseColor);
+      const colTop   = toHex(shadeArr(rgb,  0.10));
+      const colRight = toHex(shadeArr(rgb, -0.20));
+      const colFront = toHex(shadeArr(rgb, -0.34));
+
+      const h = zof(z);
+      const B = [
+        iso(z.x,     z.y,     0),
+        iso(z.x+z.w, z.y,     0),
+        iso(z.x+z.w, z.y+z.h, 0),
+        iso(z.x,     z.y+z.h, 0),
+      ];
+      const T = [
+        iso(z.x,     z.y,     h),
+        iso(z.x+z.w, z.y,     h),
+        iso(z.x+z.w, z.y+z.h, h),
+        iso(z.x,     z.y+z.h, h),
+      ];
+
       const cursor = (mode === 'pick' || onZoneClick) ? 'pointer' : 'default';
-      const transform = z.rot ? ('rotate(' + z.rot + ' ' + (z.x + z.w/2) + ' ' + (z.y + z.h/2) + ')') : '';
-      // 클릭 핸들러용 데이터 속성
-      svgParts.push(
-        '<g class="km-fp-zone" data-zone-id="' + z.id + '" ' +
-        (transform ? 'transform="' + transform + '" ' : '') +
-        'style="cursor:' + cursor + '">' +
-        '<rect x="' + z.x + '" y="' + z.y + '" width="' + z.w + '" height="' + z.h + '" ' +
-        'fill="' + fillColor + '" fill-opacity="' + fillOpacity + '" ' +
-        'stroke="' + strokeColor + '" stroke-width="' + strokeW + '" rx="4" ry="4"/>'
-      );
-      // 라벨 — num + label (HTML <br> 을 줄바꿈으로). 작은 zone 은 글자 생략.
+      svgParts.push('<g class="km-fp-zone" data-zone-id="'+z.id+'" style="cursor:'+cursor+'">');
+
+      // 그림자
+      const shPts = B.map(p => p.sx+','+(p.sy+2)).join(' ');
+      svgParts.push('<polygon points="'+shPts+'" fill="rgba(0,0,0,.18)" pointer-events="none"/>');
+
+      // 우측면 (+x face)
+      const rPts = [B[1],B[2],T[2],T[1]].map(p=>p.sx+','+p.sy).join(' ');
+      svgParts.push('<polygon points="'+rPts+'" fill="'+colRight+'" fill-opacity="'+fillOpacity+'" stroke="'+strokeColor+'" stroke-width="'+strokeW+'" stroke-linejoin="round"/>');
+
+      // 정면 (+y face)
+      const fPts = [B[3],B[2],T[2],T[3]].map(p=>p.sx+','+p.sy).join(' ');
+      svgParts.push('<polygon points="'+fPts+'" fill="'+colFront+'" fill-opacity="'+fillOpacity+'" stroke="'+strokeColor+'" stroke-width="'+strokeW+'" stroke-linejoin="round"/>');
+
+      // 윗면
+      const tPts = T.map(p=>p.sx+','+p.sy).join(' ');
+      svgParts.push('<polygon points="'+tPts+'" fill="'+colTop+'" fill-opacity="'+fillOpacity+'" stroke="'+strokeColor+'" stroke-width="'+(strokeW+0.2)+'" stroke-linejoin="round"/>');
+
+      // 라벨 — 8 꼭짓점 중심에 그리기 (박스 시각 중심)
       const minDim = Math.min(z.w, z.h);
       if (minDim >= 24) {
-        const cx = z.x + z.w / 2;
-        const cy = z.y + z.h / 2;
+        const all8 = [B[0],B[1],B[2],B[3],T[0],T[1],T[2],T[3]];
+        const cx = all8.reduce((s,p)=>s+p.sx,0)/8;
+        const cy = all8.reduce((s,p)=>s+p.sy,0)/8;
         const lines = [];
         if (z.num) lines.push(String(z.num));
         if (z.label && minDim >= 40) {
           String(z.label).split(/<br>|\n/).forEach(l => { if (l.trim()) lines.push(l.trim()); });
         }
-        // 폰트 사이즈 자동 — 작은 zone 은 더 작게
-        const fs = minDim < 40 ? 8 : minDim < 60 ? 10 : minDim < 90 ? 11 : 12;
+        const fs = minDim < 40 ? 9 : minDim < 60 ? 11 : minDim < 90 ? 12 : 13;
         const totalH = lines.length * (fs + 1);
-        const startY = cy - totalH / 2 + fs;
-        const textColor = eff ? '#fff' : (isLightColor(fillColor) ? '#1f2937' : '#fff');
+        const startY = cy - totalH/2 + fs;
+        const textColor = '#fff';
         lines.forEach((line, i) => {
           svgParts.push(
-            '<text x="' + cx + '" y="' + (startY + i * (fs + 1)) + '" ' +
-            'text-anchor="middle" font-size="' + fs + '" font-weight="700" ' +
-            'fill="' + textColor + '" pointer-events="none">' + escHtml(line) + '</text>'
+            '<text x="'+cx+'" y="'+(startY + i*(fs+1))+'" '+
+            'text-anchor="middle" font-size="'+fs+'" font-weight="800" '+
+            'fill="'+textColor+'" stroke="rgba(0,0,0,.5)" stroke-width="2.6" paint-order="stroke" '+
+            'pointer-events="none">'+escHtml(line)+'</text>'
           );
         });
       }
-      // 🆕 재고 상태 아이콘 (좌상단) — 한눈에 인지
+
+      // 재고 아이콘 — 윗면 좌상단 (T[0])
       if (invState && minDim >= 30) {
         const icon = invState === 'out' ? '🚫' : invState === 'low' ? '⚠' : '';
         if (icon) {
           svgParts.push(
-            '<text x="' + (z.x + 4) + '" y="' + (z.y + 14) + '" font-size="12" ' +
-            'pointer-events="none">' + icon + '</text>'
+            '<text x="'+(T[0].sx + 4)+'" y="'+(T[0].sy + 13)+'" font-size="13" '+
+            'pointer-events="none">'+icon+'</text>'
           );
         }
       }
