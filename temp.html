@@ -258,6 +258,12 @@ img{max-width:100%}
       <div class="body"><b id="btnAlertNav">위험·미체크 알림</b><span class="sub" id="btnAlertNavSub">즉시 조치 필요한 항목</span></div>
       <div class="arrow">›</div>
     </button>
+    <!-- 📤 측정 끝나면 클릭 — 매니저룸·평가·온도보고 3개 방에 동시 보고 -->
+    <button class="big-btn" id="btnSendReport" onclick="sendTempReportToRooms()" style="background:linear-gradient(135deg,#2563eb,#1e40af);color:#fff;border:0;display:none">
+      <div class="ic">📤</div>
+      <div class="body"><b id="btnSendReportTitle">📤 매니저룸·평가·온도보고 3개 방에 보고 발송</b><span class="sub" id="btnSendReportSub">측정 완료 후 클릭 → 자동으로 채팅방 3곳에 요약 전송</span></div>
+      <div class="arrow" style="color:#fff">›</div>
+    </button>
   </div>
 </div>
 
@@ -873,6 +879,7 @@ function renderAll(){
   renderResp();
   renderSlots();
   renderKpis();
+  if (typeof updateSendReportBtnVisibility === 'function') updateSendReportBtnVisibility();
   if (PAGE === 'check') renderCheckList();
   else if (PAGE === 'alerts') renderAlerts();
   else if (PAGE === 'report') renderReport();
@@ -1663,6 +1670,152 @@ async function maybeCompleteTempDailyTask(){
   } catch(e) { console.warn('[temp→managers] post failed', e); }
 }
 window.maybeCompleteTempDailyTask = maybeCompleteTempDailyTask;
+
+// =============== 📤 수동 보고 발송 (managers + kfood_eval + temp_eval) ===============
+// 2026-05-25 전무님 지시: 자동 발송 차단, 측정 끝나면 수동 클릭으로만 3개 방 동시 발송.
+// (직원이 측정 안 하고 task 만 닫을 때 매니저 룸에 의미없는 0/N 보고 쌓이는 거 방지.)
+
+// 오늘 측정 요약 빌드 (모든 슬롯 합산)
+function __buildTodayTempSummary(){
+  const today = todayKey();
+  const todayChecks = CHECKS[today] || {};
+  const slots = slotsForToday();
+  const totalEq = EQUIPMENT.length;
+  let n=0, normal=0, warn=0, danger=0, late=0;
+  const issues = [];
+  const perSlot = {};
+  slots.forEach(s => {
+    const slotData = todayChecks[s.key] || {};
+    perSlot[s.key] = Object.keys(slotData).filter(eqId => EQUIPMENT.find(e => e.id === eqId)).length;
+    EQUIPMENT.forEach(eq => {
+      const c = slotData[eq.id];
+      if (!c) return;
+      n++;
+      if (c.lateEntry) late++;
+      if (c.status === 'danger') { danger++; issues.push({eq, c, slot:s.key, severity:'danger'}); }
+      else if (c.status === 'warn') { warn++; issues.push({eq, c, slot:s.key, severity:'warn'}); }
+      else if (c.status === 'normal') normal++;
+    });
+  });
+  return { n, normal, warn, danger, late, issues, perSlot, totalEq, slots };
+}
+
+function __buildTempReportText(summary){
+  const { n, normal, warn, danger, late, issues, perSlot, totalEq, slots } = summary;
+  const lines = [];
+  lines.push('🌡 일일 온도 보고 — ' + BRANCH);
+  lines.push('📅 ' + todayKey() + ' · 담당: ' + (me?.name || '익명'));
+  lines.push('📊 총 ' + n + '/' + (slots.length * totalEq) + ' 측정 · ✅ ' + normal + ' · ⚠️ ' + warn + ' · 🚨 ' + danger + (late > 0 ? ' · 🕐 지각 ' + late : ''));
+  const slotIcons = { morning:'🌅', afternoon:'☀️', closing:'🌙' };
+  const slotLine = slots.map(s => (slotIcons[s.key] || '·') + ' ' + (perSlot[s.key]||0) + '/' + totalEq).join(' · ');
+  lines.push('   슬롯: ' + slotLine);
+  if (issues.length > 0){
+    lines.push('');
+    lines.push('⚠️ 이상 ' + issues.length + '건:');
+    issues.slice(0, 12).forEach(i => {
+      const icon = i.severity === 'danger' ? '🚨' : '⚠️';
+      const slotLbl = i.slot === 'morning' ? '오전' : i.slot === 'afternoon' ? '오후' : '마감';
+      const range = (i.eq.min != null && i.eq.max != null) ? ' (목표 ' + i.eq.min + '~' + i.eq.max + '°)' : '';
+      lines.push('   ' + icon + ' [' + slotLbl + '] ' + (i.eq.name || ('#' + i.eq.id)) + ' = ' + i.c.temp + '°' + range +
+                 (i.c.note ? ' · ' + i.c.note : ''));
+    });
+    if (issues.length > 12) lines.push('   …외 ' + (issues.length - 12) + '건');
+  } else if (n > 0) {
+    lines.push('   ✅ 측정한 ' + n + '건 모두 정상 범위');
+  }
+  lines.push('');
+  lines.push('📤 수동 발송 (' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}) + ')');
+  return lines.join('\n');
+}
+
+async function sendTempReportToRooms(){
+  const summary = __buildTodayTempSummary();
+  if (summary.n === 0){
+    showToast(LANG==='ko'?'⚠️ 측정 데이터 0건 — 발송 안 됨':'No measurements yet', true);
+    return;
+  }
+  const confirmMsg = LANG==='ko'
+    ? `📤 보고 발송\n\n${summary.n}건 측정\n위험 ${summary.danger}건 · 주의 ${summary.warn}건 · 정상 ${summary.normal}건\n\n매니저룸 + K-FOOD 평가 + 온도 보고 3개 방에 발송할까요?`
+    : `Send ${summary.n} measurements to 3 chat rooms?`;
+  if (!confirm(confirmMsg)) return;
+
+  const btn = document.getElementById('btnSendReport');
+  if (btn) btn.disabled = true;
+
+  const text = __buildTempReportText(summary);
+  const ts = Date.now();
+  const baseMsg = {
+    sender: me?.name || '온도 담당',
+    senderBranch: BRANCH,
+    senderRole: me?.role || 'STAFF',
+    isManager: !!(me?.isManager),
+    color: summary.danger > 0 ? '#dc2626' : summary.warn > 0 ? '#f59e0b' : '#16a34a',
+    text,
+    photos: [],
+    files: [],
+    _tempReport: true,
+    meta: { kind:'temp_manual_report', branch:BRANCH, date:todayKey(), totalChecks:summary.n, normal:summary.normal, warn:summary.warn, danger:summary.danger }
+  };
+  const ROOMS = ['managers', 'kfood_eval', 'temp_eval'];
+  const ROOM_LABELS = { managers:'매니저룸', kfood_eval:'K-FOOD 평가', temp_eval:'온도 보고' };
+  let aq = '';
+  try {
+    const u = window.__fb?.auth?.currentUser;
+    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+
+  const sentOk = [];
+  const sentFail = [];
+  for (const room of ROOMS){
+    const msgTs = ts + ROOMS.indexOf(room); // 1ms apart
+    const msgId = 'm' + msgTs + Math.floor(Math.random()*900);
+    const msg = { ...baseMsg, ts: msgTs };
+    try {
+      const r = await fetch(FB + '/chat/messages/' + room + '/' + msgId + '.json' + aq, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      // room lastMsg patch
+      fetch(FB + '/chat/rooms/' + room + '.json' + aq, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          lastMsg:'🌡 ' + BRANCH + ' · ' + summary.n + '건 측정' + (summary.danger ? ' 🚨' : summary.warn ? ' ⚠️' : ' ✅'),
+          lastTs: msgTs, lastSender: me?.name || '온도 담당'
+        })
+      }).catch(()=>{});
+      sentOk.push(ROOM_LABELS[room] || room);
+    } catch(e){
+      console.warn('[temp report] send failed for', room, e);
+      sentFail.push(ROOM_LABELS[room] || room);
+    }
+  }
+
+  if (btn) btn.disabled = false;
+  if (sentFail.length === 0){
+    showToast('✅ ' + sentOk.length + '개 방에 보고 완료: ' + sentOk.join(', '));
+  } else if (sentOk.length > 0){
+    showToast('⚠️ 일부만 발송: ✓' + sentOk.join(',') + ' / ✗' + sentFail.join(','), true);
+  } else {
+    showToast('❌ 전체 발송 실패 (네트워크 확인)', true);
+  }
+}
+window.sendTempReportToRooms = sendTempReportToRooms;
+
+// 발송 버튼 표시 토글 — 오늘 측정 1건 이상이면 노출
+function updateSendReportBtnVisibility(){
+  const btn = document.getElementById('btnSendReport');
+  if (!btn) return;
+  const today = todayKey();
+  const todayChecks = CHECKS[today] || {};
+  let count = 0;
+  Object.values(todayChecks).forEach(slot => {
+    Object.keys(slot || {}).forEach(eqId => { if (EQUIPMENT.find(e => e.id === eqId)) count++; });
+  });
+  btn.style.display = count > 0 ? 'flex' : 'none';
+  const titleEl = document.getElementById('btnSendReportTitle');
+  if (titleEl) titleEl.textContent = '📤 보고 발송 (' + count + '건 측정 · 3개 방)';
+}
+window.updateSendReportBtnVisibility = updateSendReportBtnVisibility;
 
 // =============== Assign / settings / equip-mgr ===============
 async function openAssignSheet(){
