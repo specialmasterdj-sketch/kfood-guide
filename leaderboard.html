@@ -479,17 +479,17 @@ async function fetchChat(agg, since){
           const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
           if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
 
-          // 👍 Reactions on this message — credit each user who reacted
-          // with +0.2. Reactions don't carry their own timestamp, so we
-          // gate by the parent message's ts (good-enough proxy).
-          if (m.reactions && typeof m.reactions === 'object') {
+          // 👍 Reactions on this message — credit the message AUTHOR (m.sender)
+          // not the reactor. 2026-05-27 전무님 지시: 좋아요 받은 사람이 포인트.
+          // 자기 메시지에 자기가 좋아요 누르는 self-react 는 점수 카운트 제외 (어뷰징 방지).
+          if (m.reactions && typeof m.reactions === 'object' && m.sender){
             for (const emoji of Object.keys(m.reactions)) {
               const usersMap = m.reactions[emoji];
               if (!usersMap || typeof usersMap !== 'object') continue;
-              // userKey is "branch_name" (sanitized); value is display name
               for (const [, displayName] of Object.entries(usersMap)) {
                 if (!displayName) continue;
-                bumpAgg(agg, displayName, '', 'reaction', 1);
+                if (displayName === m.sender) continue;  // self-react 제외
+                bumpAgg(agg, m.sender, m.senderBranch || '', 'reaction', 1, m.color);
               }
             }
           }
