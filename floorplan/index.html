@@ -540,14 +540,14 @@ function createZoneEl(z) {
     if (parts.length === 4) {
       // 4-corner: parts = [BL=N-L-1, BR=N-R-1, TL=N-L-2, TR=N-R-2]
       // 진열대 4구역 — 아래 L-1/R-1, 위 L-2/R-2
-      splitNums = `<span class="aisle-num-bl" title="L-1" onclick="openPlanogramForAisle(${z.id}, '${parts[0]}', event)">${parts[0]}</span>` +
-                  `<span class="aisle-num-br" title="R-1" onclick="openPlanogramForAisle(${z.id}, '${parts[1]}', event)">${parts[1]}</span>` +
-                  `<span class="aisle-num-tl" title="L-2" onclick="openPlanogramForAisle(${z.id}, '${parts[2]}', event)">${parts[2]}</span>` +
-                  `<span class="aisle-num-tr" title="R-2" onclick="openPlanogramForAisle(${z.id}, '${parts[3]}', event)">${parts[3]}</span>`;
+      splitNums = `<span class="aisle-num-bl" title="${parts[0]} 사진" onclick="openShelfPhotos('${parts[0]}', event)">${parts[0]}</span>` +
+                  `<span class="aisle-num-br" title="${parts[1]} 사진" onclick="openShelfPhotos('${parts[1]}', event)">${parts[1]}</span>` +
+                  `<span class="aisle-num-tl" title="${parts[2]} 사진" onclick="openShelfPhotos('${parts[2]}', event)">${parts[2]}</span>` +
+                  `<span class="aisle-num-tr" title="${parts[3]} 사진" onclick="openShelfPhotos('${parts[3]}', event)">${parts[3]}</span>`;
       extraDivider = '<div class="aisle-divider-h"></div>';
       el.dataset.aisleSplit = '4';
     } else if (parts.length === 2) {
-      splitNums = `<span class="aisle-num-left" title="Click for planogram" onclick="openPlanogramForAisle(${z.id}, '${parts[0]}', event)">${parts[0]}</span><span class="aisle-num-right" title="Click for planogram" onclick="openPlanogramForAisle(${z.id}, '${parts[1]}', event)">${parts[1]}</span>`;
+      splitNums = `<span class="aisle-num-left" title="${parts[0]} 사진" onclick="openShelfPhotos('${parts[0]}', event)">${parts[0]}</span><span class="aisle-num-right" title="${parts[1]} 사진" onclick="openShelfPhotos('${parts[1]}', event)">${parts[1]}</span>`;
       el.dataset.aisleSplit = '2';
     }
   }
@@ -695,6 +695,162 @@ function closePlanogramModal() {
   const modal = document.getElementById('plano-modal');
   if (modal) { modal.style.display = 'none'; document.getElementById('plano-iframe').src = 'about:blank'; }
 }
+
+// ============== 📷 매대 위치별 사진 (1L-1, 2R-2 등) ==============
+// 2026-05-27 전무님 요청: 매대 클릭 → 그 위치 사진 보기 + 업로드.
+// 저장: Firebase Storage 에 'shelf-photos/{branch}/{posId}/{ts}.jpg'
+// 메타: RTDB 'floorplan/shelf-photos/{branch}/{posId}/{photoId}' = {url, ts, by}
+const SHELF_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+const SHELF_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${SHELF_STORAGE_BUCKET}/o`;
+const SHELF_FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+
+function _getMeName(){
+  try { const me = JSON.parse(localStorage.getItem('chat.me')||'null'); return (me && me.name) || '익명'; } catch(_) { return '익명'; }
+}
+function _getBranch(){
+  // currentStore 가 'hollywood' 같은 식으로 들어있음 — 대문자로 변환해서 일관성 있게
+  return (typeof currentStore === 'string' ? currentStore : 'unknown').toUpperCase();
+}
+async function _compressImage(file, maxDim=1200){
+  // 이미지 리사이즈 → JPEG 압축 (업로드 속도 ↑, 저장 비용 ↓)
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let {width, height} = img;
+      if (width > maxDim || height > maxDim){
+        const r = Math.min(maxDim/width, maxDim/height);
+        width = Math.round(width * r);
+        height = Math.round(height * r);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(b => resolve(b), 'image/jpeg', 0.85);
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function openShelfPhotos(posId, ev){
+  ev && ev.stopPropagation && ev.stopPropagation();
+  const branch = _getBranch();
+  let modal = document.getElementById('shelf-modal');
+  if (!modal){
+    modal = document.createElement('div');
+    modal.id = 'shelf-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:12px;width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)">
+        <div style="background:#0D47A1;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px">
+          <strong id="shelf-title" style="flex:1;font-size:15px"></strong>
+          <label style="background:#27AE60;color:#fff;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700">
+            📷 사진 추가
+            <input type="file" id="shelf-file" accept="image/*" multiple style="display:none">
+          </label>
+          <button onclick="closeShelfModal()" style="background:#E74C3C;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700">✕ 닫기</button>
+        </div>
+        <div id="shelf-status" style="background:#FFF3CD;color:#856404;padding:8px 16px;font-size:12px;display:none"></div>
+        <div id="shelf-gallery" style="flex:1;overflow:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;background:#f4f6f9"></div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeShelfModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && modal.style.display !== 'none') closeShelfModal(); });
+    document.getElementById('shelf-file').addEventListener('change', e => uploadShelfPhotos(e.target.files));
+  }
+  modal.dataset.pos = posId;
+  modal.dataset.branch = branch;
+  document.getElementById('shelf-title').textContent = `📷 ${branch} · ${posId} 사진`;
+  modal.style.display = 'flex';
+  document.getElementById('shelf-file').value = '';
+  await renderShelfGallery();
+}
+function closeShelfModal(){
+  const modal = document.getElementById('shelf-modal');
+  if (modal) modal.style.display = 'none';
+}
+function shelfStatus(msg, type){
+  const el = document.getElementById('shelf-status');
+  if (!msg){ el.style.display = 'none'; return; }
+  el.textContent = msg;
+  el.style.background = type === 'err' ? '#F8D7DA' : type === 'ok' ? '#D4EDDA' : '#FFF3CD';
+  el.style.color = type === 'err' ? '#721C24' : type === 'ok' ? '#155724' : '#856404';
+  el.style.display = 'block';
+}
+async function renderShelfGallery(){
+  const modal = document.getElementById('shelf-modal');
+  const branch = modal.dataset.branch, posId = modal.dataset.pos;
+  const gallery = document.getElementById('shelf-gallery');
+  gallery.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;grid-column:1/-1">⏳ 로딩...</div>';
+  let aq = '';
+  try { const tok = window.__getAuthToken && await window.__getAuthToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } catch(_){}
+  try {
+    const r = await fetch(`${SHELF_FB_DB}/floorplan/shelf-photos/${branch}/${encodeURIComponent(posId)}.json${aq}&_t=${Date.now()}`.replace('?&','?'), {cache:'no-store'});
+    const data = await r.json() || {};
+    const photos = Object.entries(data).map(([id, v]) => ({id, ...v})).sort((a,b) => (b.ts||0) - (a.ts||0));
+    if (!photos.length){
+      gallery.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;grid-column:1/-1">📭 아직 사진 없음. 위 \"📷 사진 추가\" 클릭하세요.</div>';
+      return;
+    }
+    gallery.innerHTML = photos.map(p => `
+      <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1);position:relative">
+        <img src="${p.url}" style="width:100%;height:200px;object-fit:cover;cursor:pointer" onclick="window.open('${p.url}','_blank')">
+        <div style="padding:6px 10px;font-size:11px;color:#374151;display:flex;align-items:center;gap:6px">
+          <span style="flex:1">${p.by || '익명'} · ${new Date(p.ts).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+          <button onclick="deleteShelfPhoto('${p.id}')" style="background:#E74C3C;color:#fff;border:0;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:10px">삭제</button>
+        </div>
+      </div>
+    `).join('');
+  } catch(e){
+    gallery.innerHTML = `<div style="padding:40px;text-align:center;color:#E74C3C;grid-column:1/-1">❌ 로딩 실패: ${e.message}</div>`;
+  }
+}
+async function uploadShelfPhotos(files){
+  if (!files || !files.length) return;
+  const modal = document.getElementById('shelf-modal');
+  const branch = modal.dataset.branch, posId = modal.dataset.pos;
+  const by = _getMeName();
+  let aq = '';
+  try { const tok = window.__getAuthToken && await window.__getAuthToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } catch(_){}
+  let okN = 0, failN = 0;
+  for (const file of files){
+    shelfStatus(`⏳ 업로드 중 (${okN+failN+1}/${files.length}): ${file.name}`, 'info');
+    try {
+      const blob = await _compressImage(file, 1400);
+      const ts = Date.now();
+      const safePos = posId.replace(/[^A-Za-z0-9-]/g, '_');
+      const storagePath = `shelf-photos/${branch}/${safePos}/${ts}.jpg`;
+      const upUrl = `${SHELF_STORAGE_URL}?name=${encodeURIComponent(storagePath)}&uploadType=media`;
+      const upRes = await fetch(upUrl, {method:'POST', headers:{'Content-Type':'image/jpeg'}, body: blob});
+      if (!upRes.ok) throw new Error('storage upload ' + upRes.status);
+      const meta = await upRes.json();
+      const downloadUrl = `${SHELF_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+      const photoId = 'p' + ts + Math.floor(Math.random()*900);
+      const dbUrl = `${SHELF_FB_DB}/floorplan/shelf-photos/${branch}/${encodeURIComponent(posId)}/${photoId}.json${aq}`;
+      const dbRes = await fetch(dbUrl, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: downloadUrl, ts, by})});
+      if (!dbRes.ok) throw new Error('db put ' + dbRes.status);
+      okN++;
+    } catch(e){ console.warn('upload fail', e); failN++; }
+  }
+  shelfStatus(`${failN === 0 ? '✓' : '⚠️'} ${okN}장 성공${failN ? `, ${failN}장 실패` : ''}`, failN === 0 ? 'ok' : 'err');
+  setTimeout(() => shelfStatus(null), 3000);
+  await renderShelfGallery();
+}
+async function deleteShelfPhoto(photoId){
+  if (!confirm('이 사진을 삭제할까요?')) return;
+  const modal = document.getElementById('shelf-modal');
+  const branch = modal.dataset.branch, posId = modal.dataset.pos;
+  let aq = '';
+  try { const tok = window.__getAuthToken && await window.__getAuthToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } catch(_){}
+  try {
+    await fetch(`${SHELF_FB_DB}/floorplan/shelf-photos/${branch}/${encodeURIComponent(posId)}/${photoId}.json${aq}`, {method:'DELETE'});
+    await renderShelfGallery();
+  } catch(e){ alert('삭제 실패: ' + e.message); }
+}
+window.openShelfPhotos = openShelfPhotos;
+window.closeShelfModal = closeShelfModal;
+window.deleteShelfPhoto = deleteShelfPhoto;
 
 function addEquip(ftype) {
   const configs = {
