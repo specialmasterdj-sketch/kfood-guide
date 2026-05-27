@@ -154,6 +154,23 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;display:flex;align-items:center
 
     <div class="last-info" id="zdLastInfo" style="display:none"></div>
 
+    <!-- 📷 매대 사진 갤러리 (floorplan editor 에서 업로드한 사진 보기 + 신규 추가) -->
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:8px">
+        📷 매대 사진
+        <label style="background:#16a34a;color:#fff;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.78em;font-weight:700">
+          📸 촬영
+          <input type="file" id="sm-camera" accept="image/*" capture="environment" style="display:none">
+        </label>
+        <label style="background:#27AE60;color:#fff;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.78em;font-weight:700">
+          🖼 갤러리
+          <input type="file" id="sm-file" accept="image/*" multiple style="display:none">
+        </label>
+      </label>
+      <div id="sm-photo-status" style="display:none;background:#fef3c7;color:#92400e;padding:6px 10px;border-radius:6px;font-size:.78em;margin-top:6px"></div>
+      <div id="sm-photos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;margin-top:8px;max-height:280px;overflow:auto"></div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn sec" onclick="closeOv('zoneDetailOv')" id="zdCancelBtn">취소</button>
       <button class="btn primary" onclick="saveZoneDetail()" id="zdSaveBtn">💾 저장</button>
@@ -400,8 +417,121 @@ async function openZoneDetail(zone, branch){
     }
   }
   document.getElementById('zoneDetailOv').classList.add('show');
+  // 📷 매대 사진 로드
+  __smCurZone = zone;
+  __smCurBranch = branch;
+  loadSmPhotos();
 }
 window.openZoneDetail = openZoneDetail;
+
+// ========== 📷 매대 사진 (floorplan editor 의 사진 공유 — 직원도 볼 수 있게) ==========
+let __smCurZone = null;
+let __smCurBranch = null;
+const SM_FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const SM_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/kimchi-mart-order.firebasestorage.app/o';
+
+function smZonePosId(zone){
+  // floorplan editor 와 동일 ID 로직 — num > label > box-{id}
+  let pos = '';
+  if (zone.num && String(zone.num).trim()) pos = String(zone.num).trim();
+  else if (zone.label && String(zone.label).trim()) pos = String(zone.label).replace(/<br>/g,' ').trim();
+  else pos = 'box-' + zone.id;
+  return pos.replace(/[\/.#$\[\]]/g, '_');
+}
+async function loadSmPhotos(){
+  if (!__smCurZone) return;
+  const posId = smZonePosId(__smCurZone);
+  const wrap = document.getElementById('sm-photos');
+  wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#9ca3af;font-size:.82em;grid-column:1/-1">⏳ 사진 로딩...</div>';
+  let aq = '';
+  try { const tok = window.__getAuthToken && await window.__getAuthToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } catch(_){}
+  try {
+    const r = await fetch(`${SM_FB_DB}/floorplan/shelf-photos/${__smCurBranch}/${encodeURIComponent(posId)}.json${aq}&_t=${Date.now()}`.replace('?&','?'), {cache:'no-store'});
+    const data = await r.json() || {};
+    const photos = Object.entries(data).map(([id, v]) => ({id, ...v})).sort((a,b) => (b.ts||0) - (a.ts||0));
+    if (!photos.length){
+      wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#9ca3af;font-size:.82em;grid-column:1/-1">📭 아직 사진 없음. <b style="color:#16a34a">📸 촬영</b> 또는 <b style="color:#27AE60">🖼 갤러리</b> 클릭.</div>';
+      return;
+    }
+    wrap.innerHTML = photos.map(p => `
+      <div style="background:#fff;border-radius:6px;overflow:hidden;border:1px solid #e5e7eb">
+        <img src="${p.url}" style="width:100%;height:90px;object-fit:cover;cursor:pointer;display:block" onclick="window.open('${p.url}','_blank')">
+        <div style="padding:3px 6px;font-size:.7em;color:#6b7280;line-height:1.2">${p.by || '?'}<br>${new Date(p.ts).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'})}</div>
+      </div>
+    `).join('');
+  } catch(e){
+    wrap.innerHTML = `<div style="padding:14px;text-align:center;color:#dc2626;font-size:.82em;grid-column:1/-1">❌ 로드 실패: ${e.message}</div>`;
+  }
+}
+async function _smCompressImage(file, maxDim=1400){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let {width, height} = img;
+      if (width > maxDim || height > maxDim){
+        const r = Math.min(maxDim/width, maxDim/height);
+        width = Math.round(width * r); height = Math.round(height * r);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(b => resolve(b), 'image/jpeg', 0.85);
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function _smGetMeName(){
+  try { const me = JSON.parse(localStorage.getItem('chat.me')||'null'); return (me && me.name) || '익명'; } catch(_){ return '익명'; }
+}
+function smPhotoStatus(msg, type){
+  const el = document.getElementById('sm-photo-status');
+  if (!msg){ el.style.display = 'none'; return; }
+  el.textContent = msg;
+  el.style.background = type === 'err' ? '#FEE2E2' : type === 'ok' ? '#D1FAE5' : '#FEF3C7';
+  el.style.color = type === 'err' ? '#7F1D1D' : type === 'ok' ? '#065F46' : '#92400E';
+  el.style.display = 'block';
+}
+async function smUploadPhotos(files){
+  if (!files || !files.length || !__smCurZone || !__smCurBranch) return;
+  const posId = smZonePosId(__smCurZone);
+  const by = _smGetMeName();
+  let aq = '';
+  try { const tok = window.__getAuthToken && await window.__getAuthToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } catch(_){}
+  let okN = 0, failN = 0;
+  for (const file of files){
+    smPhotoStatus(`⏳ 업로드 중 (${okN+failN+1}/${files.length})`, 'info');
+    try {
+      const blob = await _smCompressImage(file, 1400);
+      const ts = Date.now();
+      const safePos = posId.replace(/[^A-Za-z0-9-]/g, '_');
+      const storagePath = `shelf-photos/${__smCurBranch}/${safePos}/${ts}.jpg`;
+      const upUrl = `${SM_STORAGE_URL}?name=${encodeURIComponent(storagePath)}&uploadType=media`;
+      const upRes = await fetch(upUrl, {method:'POST', headers:{'Content-Type':'image/jpeg'}, body: blob});
+      if (!upRes.ok) throw new Error('storage ' + upRes.status);
+      const meta = await upRes.json();
+      const downloadUrl = `${SM_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+      const photoId = 'p' + ts + Math.floor(Math.random()*900);
+      const dbRes = await fetch(`${SM_FB_DB}/floorplan/shelf-photos/${__smCurBranch}/${encodeURIComponent(posId)}/${photoId}.json${aq}`, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: downloadUrl, ts, by})
+      });
+      if (!dbRes.ok) throw new Error('db ' + dbRes.status);
+      okN++;
+    } catch(e){ console.warn('sm upload fail', e); failN++; }
+  }
+  smPhotoStatus(failN === 0 ? `✓ ${okN}장 업로드 완료` : `⚠️ ${okN}장 성공, ${failN}장 실패`, failN === 0 ? 'ok' : 'err');
+  setTimeout(() => smPhotoStatus(null), 2500);
+  await loadSmPhotos();
+}
+// 파일 입력 이벤트 바인딩 (DOMContentLoaded 후 또는 즉시)
+function _smBindFileInputs(){
+  const fInput = document.getElementById('sm-file');
+  const cInput = document.getElementById('sm-camera');
+  if (fInput && !fInput._bound){ fInput.addEventListener('change', e => { smUploadPhotos(e.target.files); e.target.value=''; }); fInput._bound = true; }
+  if (cInput && !cInput._bound){ cInput.addEventListener('change', e => { smUploadPhotos(e.target.files); e.target.value=''; }); cInput._bound = true; }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _smBindFileInputs);
+else _smBindFileInputs();
 
 function setZdStatus(st){
   __zdStatus = st;
