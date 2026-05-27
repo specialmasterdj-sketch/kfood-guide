@@ -905,13 +905,27 @@ function renderSlots(){
   }).join('');
 }
 function renderKpis(){
+  // 2026-05-27 전무님 지적: 슬롯 카드 49/50 인데 KPI 미체크 0 — 일관성 없음.
+  // → 현재 활성 슬롯(진행중) 기준으로 계산. 슬롯 카드와 KPI 항상 동기화.
   let danger = 0, missing = 0, ok = 0;
+  const today = todayKey();
+  const todayChecks = CHECKS[today] || {};
+  const slots = slotsForToday();
+  // 활성 슬롯 결정: 1) 현재 시간상 진행중 슬롯  2) 없으면 오늘 중 데이터 있는 가장 최근 슬롯  3) 그것도 없으면 첫 슬롯
+  let activeKey = currentSlotKey();
+  if (!activeKey){
+    for (let i = slots.length - 1; i >= 0; i--){
+      const sk = slots[i].key;
+      if (todayChecks[sk] && Object.keys(todayChecks[sk]).length > 0){ activeKey = sk; break; }
+    }
+    if (!activeKey && slots.length) activeKey = slots[0].key;
+  }
+  const slotChecks = (activeKey && todayChecks[activeKey]) || {};
   EQUIPMENT.forEach(eq => {
-    const last = lastCheckFor(eq.id);
-    if (!last) { missing++; return; }
-    if (last.status === 'danger') danger++;
-    else if (last.status === 'normal') ok++;
-    else if (last.status === 'warn') ok++;
+    const c = slotChecks[eq.id];
+    if (!c) { missing++; return; }
+    if (c.status === 'danger') danger++;
+    else ok++;  // normal·warn 다 정상 카운트
   });
   $('kpiDanger').textContent = danger;
   $('kpiMissing').textContent = missing;
