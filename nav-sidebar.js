@@ -47,8 +47,9 @@
     { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
     { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
     { ic: '📅', lbl: { ko:'스케줄',       en:'Schedule',    es:'Horario' },     href: './shifts.html' },
-    { ic: '💵', lbl: { ko:'급여 (현금)', en:'Payroll (Cash)', es:'Nómina (Efectivo)' }, href: './payroll.html?type=cash', payroll: true },
-    { ic: '📊', lbl: { ko:'급여 (CPA)',  en:'Payroll (CPA)',  es:'Nómina (CPA)' },      href: './payroll.html?type=cpa',  payroll: true },
+    // 🔒 2026-05-27 전무님 지시: 급여 메뉴는 매니저앱 사이드바에서 완전 제거.
+    // 별도 앱으로 분리 운영 — 매니저는 직접 URL 북마크로 접근.
+    // (./payroll.html?type=cash · ./payroll.html?type=cpa)
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true, badge: 'chat' },
