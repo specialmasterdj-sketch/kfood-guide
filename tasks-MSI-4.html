@@ -6,50 +6,12 @@
 <title>김치마트 — 업무 지시</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
-<script>
-  // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
-  // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
-  // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
-  (function(){
-    var BUST = 'tasks_2026_05_21_f';   // isAssignedToMe 정규화 매칭 — 직원 업무 안 보이는 문제 해결
-    var KEY = 'kmtools_bust_tasks';
-    try {
-      if (localStorage.getItem(KEY) !== BUST) {
-        localStorage.setItem(KEY, BUST);
-        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
-          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
-          .catch(function(){ location.reload(); });
-        return;
-      }
-    } catch(e){}
-    // 폴링 — 이미 열린 페이지를 위한 자동 업데이트
-    function pollBust(){
-      fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
-        .then(function(r){ return r.text(); })
-        .then(function(t){
-          var m = t.match(/var BUST = '([^']+)'/);
-          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
-        }).catch(function(){});
-    }
-    setInterval(pollBust, 5 * 60 * 1000);
-    document.addEventListener('visibilitychange', function(){
-      if (document.visibilityState === 'visible') pollBust();
-    });
-    window.addEventListener('focus', pollBust);
-  })();
-</script>
 <script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=4"></script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
 <script src="./nav-sidebar.js?v=21-no-payroll" defer></script>
 <script src="./back-nav.js?v=1"></script>
-<!-- 🆕 2026-05-20 매장 도면 — Manager View 히트맵 + 업무 지시 zone 피커 -->
-<script src="./km-floor-plan.js?v=4-fb-first"></script>
-<!-- 📤 km-chat-queue — 채팅 발송 실패 시 IndexedDB 큐 + 자동 재시도.
-     2026-05-16 사건 (토큰 만료 / 401 silent fail) 영구 해결책.
-     모든 chat post 가 큐 경유 → 페이지 로드 / 5분 / 토큰 갱신 시 자동 retry. -->
-<script src="./km-chat-queue.js?v=1"></script>
 
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
@@ -452,300 +414,6 @@ button{font-family:inherit;cursor:pointer}
 .dash-action.act-stock{--bar:#d97706;--bg:linear-gradient(135deg,#f59e0b,#d97706);--shadow:rgba(217,119,6,.28)}
 .dash-action.act-receive{--bar:#0891b2;--bg:linear-gradient(135deg,#06b6d4,#0891b2);--shadow:rgba(8,145,178,.28)}
 
-/* 🎮 게임화 — streak + 동기부여 카드 */
-.dash-gamify{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:12px;
-  margin:18px 0 0;
-}
-.streak-card{
-  background:linear-gradient(135deg,#fef3c7 0%,#fcd34d 100%);
-  border-radius:18px;padding:16px 18px;position:relative;overflow:hidden;
-  display:flex;align-items:center;gap:14px;
-  box-shadow:0 4px 14px rgba(245,158,11,.18);
-  border:1px solid rgba(245,158,11,.25);
-  cursor:default;transition:transform .25s;
-}
-.streak-card:hover{transform:translateY(-2px)}
-.streak-card::before{
-  content:'';position:absolute;top:-30px;right:-30px;width:120px;height:120px;
-  background:radial-gradient(circle,rgba(255,255,255,.5) 0%,transparent 70%);
-  pointer-events:none;
-}
-.streak-flame{font-size:2.4em;animation:flameDance 1.6s ease-in-out infinite;filter:drop-shadow(0 2px 4px rgba(220,38,38,.35))}
-@keyframes flameDance{
-  0%,100%{transform:rotate(-4deg) scale(1)}
-  25%{transform:rotate(3deg) scale(1.08)}
-  50%{transform:rotate(-2deg) scale(.95)}
-  75%{transform:rotate(5deg) scale(1.05)}
-}
-.streak-text{flex:1;min-width:0;z-index:1;position:relative}
-.streak-n{font-size:2.2em;font-weight:900;color:#92400e;line-height:1;letter-spacing:-.02em}
-.streak-lbl{font-size:.74em;color:#78350f;font-weight:700;margin-top:3px}
-.streak-tip{font-size:.7em;color:#92400e;font-weight:600;position:absolute;bottom:8px;right:12px;background:rgba(255,255,255,.55);padding:3px 8px;border-radius:8px;backdrop-filter:blur(4px)}
-
-.motivation-card{
-  background:linear-gradient(135deg,#ede9fe 0%,#c4b5fd 100%);
-  border-radius:18px;padding:16px 18px;position:relative;overflow:hidden;
-  display:flex;align-items:center;gap:12px;
-  box-shadow:0 4px 14px rgba(124,58,237,.18);
-  border:1px solid rgba(124,58,237,.25);
-  transition:transform .25s;
-}
-.motivation-card:hover{transform:translateY(-2px)}
-.motivation-card::before{
-  content:'';position:absolute;bottom:-25px;left:-25px;width:100px;height:100px;
-  background:radial-gradient(circle,rgba(255,255,255,.55) 0%,transparent 70%);
-  pointer-events:none;
-}
-.motiv-emoji{font-size:2em;animation:motivPulse 2.4s ease-in-out infinite;flex-shrink:0;z-index:1;position:relative}
-@keyframes motivPulse{
-  0%,100%{transform:scale(1)}
-  50%{transform:scale(1.12) rotate(8deg)}
-}
-.motiv-msg{font-size:.82em;color:#5b21b6;font-weight:700;line-height:1.35;letter-spacing:-.01em;z-index:1;position:relative}
-
-@media(max-width:640px){
-  .dash-gamify{grid-template-columns:1fr;gap:10px}
-  .streak-card,.motivation-card{padding:13px 14px}
-  .streak-n{font-size:1.8em}
-}
-
-/* 🏆 LIVE 매장 점수 전광판 (LED 스타일) */
-.scoreboard{
-  background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#0f172a 100%);
-  border-radius:20px;
-  padding:18px 16px 14px;
-  margin:18px 0 0;
-  position:relative;
-  overflow:hidden;
-  box-shadow:0 10px 40px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.10);
-}
-.scoreboard::before{
-  /* 미세한 LED 점 패턴 */
-  content:'';position:absolute;inset:0;pointer-events:none;
-  background-image:radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px);
-  background-size:18px 18px;
-  opacity:.4;
-}
-.scoreboard::after{
-  /* 위 상단 네온 글로우 */
-  content:'';position:absolute;top:-30px;left:50%;transform:translateX(-50%);
-  width:60%;height:80px;
-  background:radial-gradient(ellipse,rgba(250,204,21,.30) 0%,transparent 70%);
-  pointer-events:none;
-}
-.sb-header{
-  display:flex;align-items:center;gap:12px;
-  margin-bottom:14px;position:relative;z-index:2;
-}
-.sb-led{
-  font-size:.7em;font-weight:800;color:#dc2626;
-  background:rgba(220,38,38,.15);padding:4px 9px;border-radius:12px;
-  border:1px solid rgba(220,38,38,.40);
-  letter-spacing:.15em;
-  animation:sbBlink 1.6s steps(2) infinite;
-  display:inline-flex;align-items:center;gap:5px;
-}
-@keyframes sbBlink{
-  0%,49%{opacity:1;box-shadow:0 0 12px rgba(220,38,38,.6)}
-  50%,100%{opacity:.55;box-shadow:0 0 4px rgba(220,38,38,.2)}
-}
-.sb-title{
-  flex:1;font-size:1.05em;font-weight:900;color:#fde047;
-  text-shadow:0 0 12px rgba(253,224,71,.7),0 0 24px rgba(250,204,21,.4);
-  letter-spacing:-.01em;
-}
-.sb-clock{
-  font-family:'Courier New',monospace;font-size:.9em;font-weight:800;color:#22d3ee;
-  background:rgba(34,211,238,.08);padding:4px 9px;border-radius:8px;
-  border:1px solid rgba(34,211,238,.30);
-  text-shadow:0 0 8px rgba(34,211,238,.6);
-  letter-spacing:.08em;
-}
-.sb-rows{display:flex;flex-direction:column;gap:8px;position:relative;z-index:2}
-.sb-row{
-  display:grid;
-  grid-template-columns:32px 1fr 80px;
-  gap:10px;align-items:center;
-  padding:10px 12px;
-  background:rgba(255,255,255,.04);
-  border-radius:12px;
-  border:1px solid rgba(255,255,255,.06);
-  position:relative;
-  transition:all .3s cubic-bezier(.2,.8,.2,1);
-}
-.sb-row:hover{background:rgba(255,255,255,.07);transform:translateX(3px)}
-.sb-row.rank-1{
-  background:linear-gradient(90deg,rgba(250,204,21,.18),rgba(250,204,21,.04));
-  border-color:rgba(250,204,21,.50);
-  box-shadow:0 0 24px rgba(250,204,21,.15), inset 0 0 0 1px rgba(250,204,21,.3);
-}
-.sb-row.rank-1::before{
-  content:'';position:absolute;left:-1px;top:0;bottom:0;width:3px;
-  background:linear-gradient(180deg,#fde047,#f59e0b);
-  border-radius:3px 0 0 3px;
-  box-shadow:0 0 12px rgba(250,204,21,.8);
-}
-.sb-row.rank-2{
-  background:linear-gradient(90deg,rgba(203,213,225,.13),rgba(203,213,225,.03));
-  border-color:rgba(203,213,225,.30);
-}
-.sb-row.rank-3{
-  background:linear-gradient(90deg,rgba(217,119,6,.13),rgba(217,119,6,.03));
-  border-color:rgba(217,119,6,.30);
-}
-.sb-rank-badge{
-  display:inline-flex;align-items:center;justify-content:center;
-  width:30px;height:30px;border-radius:50%;
-  background:rgba(255,255,255,.08);
-  color:#94a3b8;font-weight:900;font-size:.9em;
-  border:1.5px solid rgba(255,255,255,.10);
-}
-.sb-row.rank-1 .sb-rank-badge{
-  background:linear-gradient(135deg,#fde047,#f59e0b);
-  color:#7c2d12;border-color:#fbbf24;
-  box-shadow:0 0 16px rgba(250,204,21,.7), inset 0 0 8px rgba(255,255,255,.4);
-  font-size:1.1em;
-}
-.sb-row.rank-2 .sb-rank-badge{
-  background:linear-gradient(135deg,#e5e7eb,#94a3b8);
-  color:#1e293b;border-color:#cbd5e1;
-}
-.sb-row.rank-3 .sb-rank-badge{
-  background:linear-gradient(135deg,#fbbf24,#b45309);
-  color:#fff;border-color:#d97706;
-}
-.sb-mid{min-width:0;display:flex;flex-direction:column;gap:4px}
-.sb-name{
-  font-size:.92em;font-weight:800;color:#f1f5f9;
-  letter-spacing:-.005em;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.sb-row.rank-1 .sb-name{color:#fde047;text-shadow:0 0 8px rgba(253,224,71,.4)}
-.sb-bar{
-  height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;
-  position:relative;
-}
-.sb-bar-fill{
-  height:100%;width:0%;
-  background:linear-gradient(90deg,#22d3ee,#0ea5e9);
-  border-radius:3px;
-  transition:width 1s cubic-bezier(.2,.8,.2,1);
-  box-shadow:0 0 8px rgba(34,211,238,.5);
-}
-.sb-row.rank-1 .sb-bar-fill{
-  background:linear-gradient(90deg,#fde047,#f59e0b,#dc2626);
-  box-shadow:0 0 12px rgba(250,204,21,.8);
-}
-.sb-row.rank-2 .sb-bar-fill{background:linear-gradient(90deg,#cbd5e1,#94a3b8)}
-.sb-row.rank-3 .sb-bar-fill{background:linear-gradient(90deg,#fbbf24,#b45309)}
-.sb-score{
-  font-family:'Courier New',monospace;
-  font-size:1.5em;font-weight:900;color:#22d3ee;
-  text-align:right;
-  text-shadow:0 0 12px rgba(34,211,238,.6);
-  letter-spacing:.02em;
-  font-variant-numeric:tabular-nums;
-}
-.sb-row.rank-1 .sb-score{
-  color:#fde047;
-  text-shadow:0 0 16px rgba(253,224,71,.8),0 0 32px rgba(250,204,21,.5);
-  font-size:1.7em;
-}
-.sb-pt{font-size:.5em;font-weight:700;color:#64748b;margin-left:3px;letter-spacing:.1em}
-.sb-row.rank-1 .sb-pt{color:#fbbf24}
-.sb-footer{
-  margin-top:12px;padding-top:10px;
-  border-top:1px dashed rgba(255,255,255,.08);
-  font-size:.72em;color:#64748b;text-align:center;
-  letter-spacing:.02em;position:relative;z-index:2;
-}
-.sb-trophy{display:inline-block;animation:sbTrophy 2s ease-in-out infinite;margin-right:4px}
-@keyframes sbTrophy{
-  0%,100%{transform:rotate(-5deg) scale(1)}
-  50%{transform:rotate(5deg) scale(1.1)}
-}
-@media(max-width:640px){
-  .scoreboard{padding:14px 12px 10px;border-radius:16px}
-  .sb-title{font-size:.92em}
-  .sb-clock{font-size:.78em}
-  .sb-row{grid-template-columns:28px 1fr 70px;padding:8px 10px}
-  .sb-score{font-size:1.3em}
-  .sb-row.rank-1 .sb-score{font-size:1.5em}
-}
-
-/* 🎯 미션 + 🏅 업적 카드 */
-.dash-gamify-row2{
-  display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;
-}
-.mission-card,.achievements-card{
-  background:#fff;border-radius:16px;padding:14px;
-  box-shadow:0 4px 14px rgba(15,23,42,.06);
-  border:1px solid rgba(15,23,42,.05);
-  transition:transform .25s;
-}
-.mission-card:hover,.achievements-card:hover{transform:translateY(-2px)}
-.mc-hdr,.ac-hdr,.rc-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.mc-icon,.ac-icon,.rc-icon{font-size:1.3em}
-.mc-title,.ac-title,.rc-title{flex:1;font-size:.95em;font-weight:800;color:#0f172a;letter-spacing:-.01em}
-.mc-progress{font-size:.78em;font-weight:800;color:#16a34a;background:#dcfce7;padding:2px 9px;border-radius:10px}
-.ac-sub{font-size:.74em;color:#64748b;font-weight:600}
-.mc-list{display:flex;flex-direction:column;gap:7px}
-.mc-item{
-  display:flex;align-items:center;gap:9px;
-  padding:8px 10px;background:#f8fafc;border-radius:9px;
-  font-size:.85em;color:#475569;font-weight:600;
-  transition:all .25s;
-}
-.mc-item.done{
-  background:linear-gradient(90deg,#dcfce7,#f0fdf4);
-  color:#15803d;
-  text-decoration:line-through;
-  animation:missionBounce .5s ease-out;
-}
-@keyframes missionBounce{
-  0%{transform:scale(1)}
-  50%{transform:scale(1.05)}
-  100%{transform:scale(1)}
-}
-.mc-check{font-size:1.1em;flex-shrink:0}
-.ac-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-.ac-badge{
-  aspect-ratio:1;
-  background:#f8fafc;border-radius:12px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:1.5em;
-  position:relative;cursor:default;
-  border:1.5px solid transparent;
-  transition:transform .25s;
-}
-.ac-badge:hover{transform:scale(1.1) rotate(-5deg)}
-.ac-badge.locked{filter:grayscale(1);opacity:.30}
-.ac-badge.earned{
-  background:linear-gradient(135deg,#fef3c7,#fde047);
-  border-color:#fbbf24;
-  box-shadow:0 4px 12px rgba(250,204,21,.30);
-  animation:badgeShine 3s ease-in-out infinite;
-}
-@keyframes badgeShine{
-  0%,100%{box-shadow:0 4px 12px rgba(250,204,21,.30)}
-  50%{box-shadow:0 4px 20px rgba(250,204,21,.55), 0 0 24px rgba(250,204,21,.30)}
-}
-.ac-badge .ac-tooltip{
-  position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);
-  background:#0f172a;color:#fff;font-size:.7em;font-weight:700;
-  padding:5px 9px;border-radius:6px;white-space:nowrap;
-  opacity:0;pointer-events:none;transition:opacity .2s;z-index:5;
-}
-.ac-badge:hover .ac-tooltip{opacity:1}
-@media(max-width:640px){
-  .dash-gamify-row2{grid-template-columns:1fr;gap:10px}
-  .ac-grid{grid-template-columns:repeat(5,1fr)}
-}
-
 /* Today's tasks 미니 리스트 (옵션 — 진행중인 업무) */
 .dash-section-h{
   display:flex;align-items:center;justify-content:space-between;
@@ -902,17 +570,6 @@ button{font-family:inherit;cursor:pointer}
       </div>
     </div>
 
-    <!-- 🏆 LIVE 매장 점수판 (전광판 스타일) — 대시보드 최상단 (자극 효과) -->
-    <div class="scoreboard" id="scoreboard">
-      <div class="sb-header">
-        <div class="sb-led" id="sbLed">● LIVE</div>
-        <div class="sb-title" id="sbTitle">🏆 매장 점수판</div>
-        <div class="sb-clock" id="sbClock">00:00</div>
-      </div>
-      <div class="sb-rows" id="sbRows"></div>
-      <div class="sb-footer" id="sbFooter">매장별 오늘 누적 점수 — 1위 매장은 🥇 자동 표시</div>
-    </div>
-
     <!-- Hero — 큰 점수 카드 -->
     <div class="dash-hero">
       <div class="hero-grid">
@@ -946,8 +603,7 @@ button{font-family:inherit;cursor:pointer}
         <div class="lbl" id="dashStatReportsLbl">오늘 보고</div>
         <div class="arrow">›</div>
       </a>
-      <!-- 🚫 2026-05-17 사용자 명시: 데드라인 개념 제거 — Delayed 카드 비활성화 -->
-      <a class="dash-stat danger" onclick="dashGoStat('delayed')" style="display:none">
+      <a class="dash-stat danger" onclick="dashGoStat('delayed')">
         <div class="ic">⏰</div>
         <div class="num" id="dashStatDelayed">0</div>
         <div class="lbl" id="dashStatDelayedLbl">지연 업무</div>
@@ -972,43 +628,20 @@ button{font-family:inherit;cursor:pointer}
         </div>
         <span class="badge" id="dashActReportBadge" style="display:none">0</span>
       </a>
-      <!-- 🚫 유통기한 / 입고 스캔 카드 제거 (전무님 요청 — 별도 앱으로 분리됨) -->
-    </div>
-
-    <!-- 🎮 게임화 — 매니저가 자주 들어오고 싶게 만드는 시각적 요소 -->
-    <div class="dash-gamify">
-      <div class="streak-card" id="streakCard">
-        <div class="streak-flame" id="streakFlame">🔥</div>
-        <div class="streak-text">
-          <div class="streak-n" id="streakN">0</div>
-          <div class="streak-lbl" id="streakLbl">일 연속 매니저 출석</div>
+      <a class="dash-action act-stock" href="./expiry.html">
+        <div class="ic-wrap">📦</div>
+        <div>
+          <div class="nm" id="dashActStockNm">유통기한</div>
+          <div class="ds" id="dashActStockDs">D-3 임박 / 폐기 / 손실</div>
         </div>
-        <div class="streak-tip" id="streakTip"></div>
-      </div>
-      <div class="motivation-card" id="motivCard">
-        <div class="motiv-emoji" id="motivEmoji">✨</div>
-        <div class="motiv-msg" id="motivMsg"></div>
-      </div>
-    </div>
-
-    <!-- 🎯 일일 미션 + 🏅 업적 -->
-    <div class="dash-gamify-row2">
-      <div class="mission-card">
-        <div class="mc-hdr">
-          <span class="mc-icon">🎯</span>
-          <span class="mc-title" id="missionTitle">오늘의 미션</span>
-          <span class="mc-progress" id="missionProgress">0/3</span>
+      </a>
+      <a class="dash-action act-receive" href="./receiving-scan.html">
+        <div class="ic-wrap">🔍</div>
+        <div>
+          <div class="nm" id="dashActReceiveNm">입고 스캔</div>
+          <div class="ds" id="dashActReceiveDs">바코드 검수 + 등록</div>
         </div>
-        <div class="mc-list" id="missionList"></div>
-      </div>
-      <div class="achievements-card">
-        <div class="ac-hdr">
-          <span class="ac-icon">🏅</span>
-          <span class="ac-title" id="achievementTitle">업적</span>
-          <span class="ac-sub" id="achievementCount">0 / 9</span>
-        </div>
-        <div class="ac-grid" id="achievementGrid"></div>
-      </div>
+      </a>
     </div>
 
     <!-- 진행중 업무 미니 리스트 -->
@@ -1056,7 +689,6 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn sec" onclick="sendSeafoodDailyAll()" title="지점 + 직원을 골라 오늘 해산물 일일 작업 보고 발송" style="background:#cffafe;border-color:#0891b2;color:#155e75;font-weight:700">🐟 해산물 발송</button>
     <button class="btn sec" onclick="sendProduceDailyAll()" title="지점 + 직원을 골라 오늘 농산물 일일 작업 보고 발송" style="background:#dcfce7;border-color:#16a34a;color:#166534;font-weight:700">🥬 농산물 발송</button>
     <button class="btn sec" onclick="sendFrozenDailyAll()" title="지점 + 직원을 골라 오늘 냉동고 전체 진열 보고 발송 (2점)" style="background:#e0e7ff;border-color:#6366f1;color:#3730a3;font-weight:700">🧊 냉동고 발송</button>
-    <button class="btn sec" onclick="sendTempCheckDailyAll()" title="지점 전 직원에 오늘 온도 체크 업무 발송 — 카드 클릭 시 온도관리 앱으로 바로 이동" style="background:#cffafe;border-color:#0891b2;color:#0e7490;font-weight:700">🌡 온도 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -1072,31 +704,9 @@ button{font-family:inherit;cursor:pointer}
     <input type="text" id="mgrSearch" placeholder="🔎 업무명 검색" oninput="MGR_QUERY=this.value;renderMgr()" style="flex:1;min-width:140px;border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:.84em">
     <button class="btn sec" onclick="resetMgrFilters()" style="padding:6px 10px;font-size:.84em">초기화</button>
   </div>
-  <!-- 🆕 2026-05-21 캐셔/보바 시프트 타임라인 (접기 가능, 인쇄 가능). -->
-  <details id="mgrShiftWrap" open style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:10px">
-    <summary style="cursor:pointer;font-weight:700;font-size:.92em;color:#1a5c3a;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <span style="font-size:1.1em">🛒</span>
-      <span id="mgrShiftTitle">오늘 캐셔 / 보바 시프트</span>
-      <button type="button" onclick="printShiftSchedule();event.preventDefault();event.stopPropagation();" style="margin-left:auto;background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:.78em;font-weight:700;cursor:pointer">🖨 <span id="mgrShiftPrint">인쇄</span></button>
-    </summary>
-    <div id="mgrShiftBody" style="margin-top:10px"></div>
-    <div id="mgrShiftStatus" style="margin-top:6px;font-size:.78em;color:#9ca3af"></div>
-  </details>
-  <!-- 🆕 2026-05-20 매장 도면 히트맵 (접기 가능). -->
-  <details id="mgrFloorPlanWrap" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin-bottom:10px">
-    <summary style="cursor:pointer;font-weight:700;font-size:.92em;color:#1a5c3a;list-style:none;display:flex;align-items:center;gap:8px">
-      <span style="font-size:1.1em">📐</span>
-      <span id="mgrFpTitle">매장 도면 — 오늘 진행 상황</span>
-      <span style="margin-left:auto;font-size:.74em;color:#6b7280;font-weight:500">
-        🔴 품절 🟡 부족 🟢 정상 · 영역 클릭 = 재고/메모 입력
-      </span>
-    </summary>
-    <div id="mgrFloorPlan" style="margin-top:10px"></div>
-    <div id="mgrFpStatus" style="margin-top:6px;font-size:.78em;color:#9ca3af"></div>
-  </details>
   <div class="mgr-table">
     <table><thead><tr>
-      <th>담당자</th><th>업무명</th><th>상태</th><th>완료 시간</th><th>증빙</th>
+      <th>담당자</th><th>업무명</th><th>데드라인</th><th>상태</th><th>완료 시간</th><th>증빙</th>
     </tr></thead><tbody id="mgrRows"></tbody></table>
   </div>
 </div>
@@ -1168,8 +778,6 @@ button{font-family:inherit;cursor:pointer}
       <label id="aPlaceLbl">📍 장소</label>
       <div style="display:flex;gap:4px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px">
         <button type="button" onclick="addNewPlace()" title="이 지점에 새 장소 추가" style="background:#0891b2;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:800;cursor:pointer;white-space:nowrap">＋ 장소</button>
-        <!-- 🆕 2026-05-20 도면에서 zone 직접 클릭으로 위치 선택 -->
-        <button type="button" onclick="openZonePicker()" title="매장 도면에서 위치 직접 선택" style="background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:800;cursor:pointer;white-space:nowrap">🗺 도면</button>
         <button type="button" id="aPlaceDelete" onclick="rmPlaceFromSelect()" title="이 장소를 우리 지점 목록에서 삭제" style="display:none;background:#fff;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:6px 12px;font-size:.82em;font-weight:700;cursor:pointer;white-space:nowrap">삭제</button>
       </div>
       <select id="aDisplayPlace" onchange="onDisplayPlaceChange();updatePlaceEditButtons()">
@@ -1249,19 +857,13 @@ button{font-family:inherit;cursor:pointer}
       <label id="stagesLabel">🛒 캐셔 4교대 시간</label>
       <div id="cashierStagesGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px"></div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <span id="stagesPickHeader" style="font-size:.78em;color:#374151;font-weight:600">지시할 업무 (체크 → 보냄)</span>
+        <span style="font-size:.78em;color:#374151;font-weight:600">지시할 업무 (체크 → 보냄)</span>
         <button type="button" id="btnEditStageItems" onclick="openStageItemsEditor()" style="background:transparent;border:0;color:#1a5c3a;font-size:.78em;font-weight:700;cursor:pointer;padding:0">📝 항목 편집</button>
       </div>
       <div id="cashierItemsCheck" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px;max-height:280px;overflow:auto"></div>
       <div class="hint" id="stagesHint" style="margin-top:6px" data-t-key="stagesHint">단계별 시간 4개를 설정하세요. 14개 항목 중 보낼 것만 체크. 각 항목은 자기 단계 시간으로 직원에게 표시됩니다.</div>
     </div>
-    <!-- 🚫 5매장 요구 — 업무 지시 시 시간 제한 (데드라인) 입력 항목 완전 제거.
-         시간 관계 없이 직원이 편하게 업무 진행하도록. 기존 데이터 호환을 위해
-         input 은 hidden 으로 남기되 기본값을 빈 문자열로 설정. -->
-    <div class="field" id="deadlineField" style="display:none">
-      <label id="aDeadlineLbl">③ 데드라인</label>
-      <input type="time" id="aDeadline" value="">
-    </div>
+    <div class="field" id="deadlineField"><label id="aDeadlineLbl">③ 데드라인</label><input type="time" id="aDeadline" value="11:00"></div>
     <div class="field" id="taskNameField">
       <label style="display:flex;align-items:center;justify-content:space-between">
         <span id="aTaskNameLbl">④ 업무명 — 체크해서 한 번에 보내기</span>
@@ -1365,81 +967,14 @@ button{font-family:inherit;cursor:pointer}
   </div>
 </div>
 
-<!-- 🆕 2026-05-20 ZONE DETAIL MODAL — Smart Zone Map: 재고 상태 + task 보기 + 메모 -->
-<div class="overlay" id="zoneDetailOv">
-  <div class="modal" style="max-width:520px">
-    <h3 style="margin-bottom:6px;display:flex;align-items:center;gap:8px">
-      <span>📍</span>
-      <span id="zdTitle">Zone</span>
-      <button onclick="closeOv('zoneDetailOv')" style="margin-left:auto;background:transparent;border:0;color:#9ca3af;font-size:1.3em;cursor:pointer;line-height:1">✕</button>
-    </h3>
-    <div id="zdBranch" style="font-size:.78em;color:#6b7280;margin-bottom:14px"></div>
-
-    <!-- 재고 상태 picker -->
-    <div class="field">
-      <label style="font-size:.84em;font-weight:700;color:#374151" id="zdStatusLbl">재고 상태</label>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px">
-        <button type="button" class="zd-status-btn" data-status="ok"
-          style="border:2px solid #e5e7eb;background:#f9fafb;color:#6b7280;border-radius:10px;padding:11px 6px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.92em">
-          🟢 <span id="zdOk">정상</span>
-        </button>
-        <button type="button" class="zd-status-btn" data-status="low"
-          style="border:2px solid #e5e7eb;background:#f9fafb;color:#6b7280;border-radius:10px;padding:11px 6px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.92em">
-          🟡 <span id="zdLow">부족</span>
-        </button>
-        <button type="button" class="zd-status-btn" data-status="out"
-          style="border:2px solid #e5e7eb;background:#f9fafb;color:#6b7280;border-radius:10px;padding:11px 6px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.92em">
-          🔴 <span id="zdOut">품절</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- 메모 -->
-    <div class="field" style="margin-top:14px">
-      <label style="font-size:.84em;font-weight:700;color:#374151" id="zdMemoLbl">상세 메모 (선택)</label>
-      <textarea id="zdMemo" placeholder="예: 라면 박스 3개 부족 / -3°C 온도 이상"
-        style="width:100%;padding:9px 11px;border:1.5px solid #e5e7eb;border-radius:8px;font-family:inherit;font-size:.92em;min-height:60px;resize:vertical;margin-top:4px"></textarea>
-    </div>
-
-    <!-- 이전 업데이트 정보 -->
-    <div id="zdLastInfo" style="margin-top:10px;padding:8px 11px;background:#f9fafb;border-radius:8px;font-size:.78em;color:#6b7280;display:none"></div>
-
-    <!-- 오늘 이 zone 의 task 들 -->
-    <div class="field" style="margin-top:14px">
-      <label style="font-size:.84em;font-weight:700;color:#374151" id="zdTasksLbl">오늘 이 영역 업무</label>
-      <div id="zdTasksList" style="margin-top:6px;max-height:200px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:8px"></div>
-    </div>
-
-    <div class="modal-actions" style="margin-top:16px;display:flex;gap:8px">
-      <button class="btn sec" onclick="closeOv('zoneDetailOv')" style="flex:1" id="zdCancelBtn">취소</button>
-      <button class="btn" onclick="saveZoneDetail()" style="flex:2;background:#1a5c3a;color:#fff" id="zdSaveBtn">💾 저장</button>
-    </div>
-  </div>
-</div>
-
-<!-- 🆕 2026-05-20 ZONE PICKER MODAL — 매장 도면에서 위치 클릭으로 선택 -->
-<div class="overlay" id="zonePickerOv">
-  <div class="modal" style="max-width:900px;width:96vw">
-    <h3 style="margin-bottom:10px">🗺 <span id="zpTitle">매장 도면에서 위치 선택</span></h3>
-    <div id="zpHint" style="font-size:.84em;color:#6b7280;margin-bottom:10px">아래 도면에서 업무 위치 zone 을 클릭하세요. 클릭한 zone 이 '장소' 필드에 자동 입력됩니다.</div>
-    <div id="zonePickerCanvas" style="width:100%;max-height:65vh;overflow:auto"></div>
-    <div id="zonePickerStatus" style="margin-top:8px;font-size:.82em;color:#6b7280"></div>
-    <div class="modal-actions" style="margin-top:12px">
-      <button class="btn sec" onclick="closeOv('zonePickerOv')">취소</button>
-    </div>
-  </div>
-</div>
-
 <!-- COMPLETE MODAL -->
 <div class="overlay" id="doneOv">
   <div class="modal">
     <h3>✅ 업무 완료 보고</h3>
     <div id="doneTaskInfo" style="background:#f0fdf4;border-radius:10px;padding:12px;margin-bottom:14px;font-size:.88em;font-weight:600;color:#15803d"></div>
-    <!-- 🆕 모달 안에도 체크리스트 표시 (Antonio Zhao 클레임 해결) -->
-    <div id="doneChecklistBox" style="display:none;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:14px"></div>
     <div class="field" id="donePhotoField">
       <label style="display:flex;align-items:center;justify-content:space-between">
-        <span id="donePhotoLabelMain">📷 완료 사진 <span id="donePhotoLabelReq" style="color:#dc2626;font-weight:800">(최소 3장 필수)</span></span>
+        <span>📷 완료 사진 <span style="color:#dc2626;font-weight:800">(최소 3장 필수)</span></span>
         <span id="donePhotoCount" style="background:#fef3c7;color:#92400e;border-radius:10px;padding:3px 10px;font-size:.78em;font-weight:800">0 / 3</span>
       </label>
       <div style="display:flex;gap:6px;margin:6px 0;flex-wrap:wrap">
@@ -1849,17 +1384,6 @@ function populateTaskCheckList(){
     if (hidden.has(t.name)) return false;
     if (seen.has(t.name)) return false;
     seen.add(t.name);
-    // 🆕 2026-05-17 다국어 노이즈 제거 — EN/ES 모드에서 한국어 전용 custom 항목 hide.
-    // (빌트인 TASK_TEMPLATES 는 nameTr 가 있어서 통과. 매니저가 자유 입력한 한국어 항목만 차단)
-    if (LANG !== 'ko' && !(t.nameTr && t.nameTr[LANG])) {
-      if (/[가-힣]/.test(t.name)) return false;
-    }
-    // KO 모드에서는 영어/스페인어 custom 도 noise — 영문/스페인어 전용 항목 hide
-    if (LANG === 'ko' && !(t.nameTr && t.nameTr.ko)) {
-      const hasKor = /[가-힣]/.test(t.name);
-      const hasLatin = /[a-zA-Z]/.test(t.name);
-      if (!hasKor && hasLatin) return false;
-    }
     return true;
   });
   // 🎯 카테고리별 필터링 — 매니저가 카테고리 dropdown 에서 선택한 값과
@@ -1930,27 +1454,19 @@ const ALWAYS_CHECKLIST_CATS = ['캐셔', 'BOBA'];
 
 // 캐셔: 4 shifts across 8am–10pm. BOBA: 3 shifts across 10am–7pm (shorter day).
 // Each shift gets a from–to time the manager confirms every morning + assignee.
-// 2026-05-21 — 스테이지 라벨 다국어. labelTr.en / labelTr.es 사용 가능 (직원 화면 표시).
 const STAGES_BY_CAT = {
   '캐셔': [
-    { label: '① 오프닝',    labelTr: { en:'① Opening',    es:'① Apertura' },     from: '08:00', to: '12:00', size: 4 },
-    { label: '② 오전 교대', labelTr: { en:'② Morning Shift', es:'② Turno Mañana' }, from: '12:00', to: '15:00', size: 4 },
-    { label: '③ 오후 교대', labelTr: { en:'③ Afternoon Shift', es:'③ Turno Tarde' }, from: '15:00', to: '19:00', size: 3 },
-    { label: '④ 마감',     labelTr: { en:'④ Closing',    es:'④ Cierre' },        from: '19:00', to: '22:00', size: 3 },
+    { label: '① 오프닝',    from: '08:00', to: '12:00', size: 4 },
+    { label: '② 오전 교대', from: '12:00', to: '15:00', size: 4 },
+    { label: '③ 오후 교대', from: '15:00', to: '19:00', size: 3 },
+    { label: '④ 마감',     from: '19:00', to: '22:00', size: 3 },
   ],
   'BOBA': [
-    { label: '① 오프닝',    labelTr: { en:'① Opening',    es:'① Apertura' },     from: '10:00', to: '13:00' },
-    { label: '② 미드',      labelTr: { en:'② Mid-Day',    es:'② Medio Día' },     from: '13:00', to: '16:00' },
-    { label: '③ 마감',     labelTr: { en:'③ Closing',    es:'③ Cierre' },        from: '16:00', to: '19:00' },
+    { label: '① 오프닝',    from: '10:00', to: '13:00' },
+    { label: '② 미드',      from: '13:00', to: '16:00' },
+    { label: '③ 마감',     from: '16:00', to: '19:00' },
   ],
 };
-// 현재 LANG 기준 스테이지 라벨 (UI 표시용)
-function stageLabel(s){
-  if (!s) return '';
-  if (LANG !== 'ko' && s.labelTr && s.labelTr[LANG]) return s.labelTr[LANG];
-  return s.label || '';
-}
-window.stageLabel = stageLabel;
 function stagesFor(cat){ return STAGES_BY_CAT[cat] || STAGES_BY_CAT['캐셔']; }
 // Backwards-compat alias
 const CASHIER_STAGES = STAGES_BY_CAT['캐셔'];
@@ -1958,7 +1474,7 @@ function getCashierItemsByStage(cat){
   cat = cat || '캐셔';
   const stages = stagesFor(cat);
   const all = checklistItemsFor(cat);
-  const out = stages.map(s => ({ stage: s.label, stageObj: s, items: [] }));
+  const out = stages.map(s => ({ stage: s.label, items: [] }));
   // If items have explicit stage index, group by that — preserves the user's
   // intended bucket (e.g. BOBA 오픈/영업 중/마감) regardless of count
   const hasExplicit = all.some(t => typeof t.stage === 'number');
@@ -2086,45 +1602,9 @@ const HOLLYWOOD_BUILTIN_PLACES = [
   'Walk-in Freezer (A · B · C · D)',
   'Walk-in Cooler (A · B · C · D)',
 ];
-// 🏢 라스올라스 전용 장소 — Las Olas daily check sheet 기준 (2026-05-17)
-const LASOLAS_BUILTIN_PLACES = [
-  // 통로 (Aisle, Front & Back)
-  'Aisle #1-2 (Front & Back)',
-  'Aisle #3-4 (Front & Back)',
-  'Aisle #5-6 (Front & Back)',
-  'Aisle #7-8 (Front & Back)',
-  'Aisle #9-10 (Front & Back)',
-  // 엔드캡 / 프론트캡
-  'End Cap #1-2',
-  'End Cap #3-4',
-  'End Cap #5-6',
-  'End Cap #7-8',
-  'End Cap #9-10',
-  // 일반 매대
-  'Grains · Beans · Mushroom',
-  'Houseware Section',
-  'Expired or Upcoming Items (Report)',
-  // 오픈 쿨러
-  'Open Cooler — Sake · Beer · Drink',
-  'Open Cooler — Bread',
-  'Open Cooler — Kimchi · Noodles · Radish',
-  'Open Cooler — Eggs · Toppoki · Tofu · Soup',
-  // 오픈 프리저
-  'Open Freezers West — Dumpling',
-  'Open Freezers — Fish · Seafood · Ice Cream',
-  'Ice Cream Cooler (Front Side)',
-  // 세일 존
-  'Sale Zone — Backside (Fish Tank & Open Frozen)',
-  'Sale Zone — Main Entrance',
-  'Sale Zone — Snack Area (Next to Open Frozen)',
-  'Sale Zone — Frontside (Rice & Snack)',
-  // 건물 점검
-  'Building Check — Inside / Outside (Clean · Cart · Light · Temp)',
-];
 const BUILTIN_PLACES_BY_BRANCH = {
   'HOLLYWOOD': HOLLYWOOD_BUILTIN_PLACES,
   'MIAMI': MIAMI_BUILTIN_PLACES,
-  'LASOLAS': LASOLAS_BUILTIN_PLACES,
 };
 
 // 정적 HTML 옵션 (1번~7번 통로 등 헐리우드 기준) 의 원본 백업.
@@ -2423,22 +1903,8 @@ function onChecklistToggle(){
       const stagesLabel = document.getElementById('stagesLabel');
       if (stagesLabel) {
         const icon = cat === 'BOBA' ? '🥤' : '🛒';
-        const catName = LANG==='en' ? (cat === 'BOBA' ? 'BOBA' : 'Cashier') :
-                        LANG==='es' ? (cat === 'BOBA' ? 'BOBA' : 'Cajero') : cat;
-        const labelText = LANG==='en' ? `${icon} ${catName} ${stages.length}-Shift Times`
-                        : LANG==='es' ? `${icon} ${catName} — ${stages.length} Turnos`
-                        :              `${icon} ${cat} ${stages.length}교대 시간`;
-        stagesLabel.textContent = labelText;
+        stagesLabel.textContent = `${icon} ${cat} ${stages.length}교대 시간`;
       }
-      // 2026-05-21 — '지시할 업무' / '항목 편집' / 체크리스트 헤더 i18n
-      const piHdr = document.getElementById('stagesPickHeader');
-      if (piHdr) piHdr.textContent = LANG==='en' ? 'Tasks to assign (check → send)'
-                                   : LANG==='es' ? 'Tareas a asignar (marca → enviar)'
-                                   : '지시할 업무 (체크 → 보냄)';
-      const btnEdit = document.getElementById('btnEditStageItems');
-      if (btnEdit) btnEdit.textContent = LANG==='en' ? '📝 Edit items'
-                                       : LANG==='es' ? '📝 Editar ítems'
-                                       : '📝 항목 편집';
       const hint = document.getElementById('stagesHint');
       if (hint) {
         const hintText = LANG==='en'
@@ -2480,14 +1946,7 @@ async function renderCashierStageInputs(){
     const data = await fetch(`${FB_DB_URL}/schedules/${me.branch}.json`).then(r => r.json());
     if (data && Array.isArray(data.employees)) employees = data.employees;
   } catch(e){}
-  // 2026-05-21 — '담당자' default 다국어
-  const assigneeDefault = LANG==='en' ? '— Select employee —'
-                        : LANG==='es' ? '— Seleccionar empleado —'
-                        : '— 담당자 —';
-  const allBranchOpt = LANG==='en' ? '📢 All staff in this branch'
-                     : LANG==='es' ? '📢 Todos en esta sucursal'
-                     : '📢 본 지점 전체';
-  const empOptions = '<option value="">' + assigneeDefault + '</option><option value="*">' + allBranchOpt + '</option>'
+  const empOptions = '<option value="">— 담당자 —</option><option value="*">📢 본 지점 전체</option>'
     + employees.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}${e.role?` (${escHtml(e.role)})`:''}</option>`).join('');
   // 캐셔(4단계)=2x2 그리드, BOBA(3단계)=3컬럼
   grid.style.gridTemplateColumns = stages.length === 4 ? '1fr 1fr' : 'repeat(' + stages.length + ', 1fr)';
@@ -2495,7 +1954,7 @@ async function renderCashierStageInputs(){
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff">
       <label style="display:flex;align-items:center;gap:6px;font-size:.82em;font-weight:700;color:#1a5c3a;margin-bottom:6px;cursor:pointer">
         <input type="checkbox" class="cashier-stage-cb" id="aStageOn${i}" data-stage="${i}" style="width:16px;height:16px">
-        <span>${escHtml(stageLabel(s))}</span>
+        <span>${escHtml(s.label)}</span>
       </label>
       <div style="display:flex;align-items:center;gap:4px;font-size:.74em;color:#374151;margin-bottom:4px">
         <span style="flex:0 0 28px">⏰</span>
@@ -2530,86 +1989,23 @@ function renderCashierItemChecks(){
       subgroups[groupIndex[key]].items.push(it);
     });
     const itemsHtml = subgroups.map(sg => {
-      // 2026-05-21 — group 헤더 다국어 (BOBA 의 청결 & 위생 / 재료 & 재고 / 기기 & 장비 등)
-      const groupTr = {
-        '청결 & 위생':  { en:'Cleanliness & Hygiene', es:'Limpieza e Higiene' },
-        '재료 & 재고':  { en:'Ingredients & Stock',   es:'Ingredientes y Stock' },
-        '기기 & 장비':  { en:'Equipment',              es:'Equipos' },
-        '음료 제조':    { en:'Drink Preparation',      es:'Preparación de Bebidas' },
-        '고객 응대':    { en:'Customer Service',       es:'Atención al Cliente' },
-        '매장 유지':    { en:'Store Maintenance',      es:'Mantenimiento de Tienda' },
-        '정산 & 마감':  { en:'Cash Close & Settlement',es:'Cierre de Caja' },
-        '위생 마감':    { en:'Closing Hygiene',        es:'Higiene de Cierre' },
-        '보안 & 종료':  { en:'Security & Shutdown',    es:'Seguridad y Apagado' },
-      };
-      const groupDisp = sg.group ? ((groupTr[sg.group] && groupTr[sg.group][LANG]) || sg.group) : '';
       const groupHeader = sg.group
-        ? `<div style="font-size:.74em;font-weight:700;color:#374151;margin:6px 0 2px;padding-left:2px">▸ ${escHtml(groupDisp)}</div>`
+        ? `<div style="font-size:.74em;font-weight:700;color:#374151;margin:6px 0 2px;padding-left:2px">▸ ${escHtml(sg.group)}</div>`
         : '';
-      return groupHeader + sg.items.map(it => {
-        // 항목명 다국어 — nameTr 있으면 우선, 없으면 보조 사전 또는 원본
-        const disp = pickItemLabel(it);
-        return `
+      return groupHeader + sg.items.map(it => `
         <label style="display:flex;align-items:center;gap:8px;padding:3px 6px 3px 14px;cursor:pointer;font-size:.86em">
           <input type="checkbox" class="cashier-item-cb" data-name="${escHtml(it.name)}" data-stage="${sIdx}" style="width:16px;height:16px">
-          <span>${escHtml(disp)}</span>
+          <span>${escHtml(it.name)}</span>
         </label>
-      `;
-      }).join('');
+      `).join('');
     }).join('');
-    // 단계 헤더도 다국어 (stage label)
-    const stageHdr = g.stageObj ? stageLabel(g.stageObj) : g.stage;
-    const emptyLbl = LANG==='en' ? '— No items —' : LANG==='es' ? '— Sin ítems —' : '— 항목 없음 —';
     return `
       <div style="margin-top:${sIdx===0?'0':'10px'};padding-top:${sIdx===0?'0':'8px'};border-top:${sIdx===0?'0':'1px dashed #e5e7eb'}">
-        <div style="font-size:.82em;font-weight:800;color:#1a5c3a;margin-bottom:4px">${escHtml(stageHdr)}</div>
-        ${itemsHtml || `<div style="font-size:.74em;color:#9ca3af;padding:4px 6px">${emptyLbl}</div>`}
+        <div style="font-size:.82em;font-weight:800;color:#1a5c3a;margin-bottom:4px">${escHtml(g.stage)}</div>
+        ${itemsHtml || `<div style="font-size:.74em;color:#9ca3af;padding:4px 6px">— 항목 없음 —</div>`}
       </div>`;
   }).join('');
 }
-
-// 2026-05-21 — 체크리스트 항목 다국어 라벨 픽업. nameTr 있으면 사용, 없으면 BOBA_ITEM_TR 보조 사전 → 그래도 없으면 원본.
-const BOBA_ITEM_TR = {
-  '매장 바닥 청소 및 테이블 닦기':            { en:'Floor & table cleaning',                  es:'Limpieza piso y mesas' },
-  '머신·장비 외부 닦기':                       { en:'Wipe machines & equipment',                es:'Limpiar máquinas y equipos' },
-  '음료 준비 도구 세척 확인':                  { en:'Check drink prep tools cleaning',          es:'Limpieza utensilios bebida' },
-  '손 소독제 보충':                            { en:'Refill hand sanitizer',                    es:'Rellenar desinfectante' },
-  '타피오카 펄 삶기 (4~6시간 주기)':           { en:'Cook tapioca pearls (every 4~6h)',         es:'Cocer perlas tapioca (cada 4~6h)' },
-  '시럽·소스 잔량 확인 및 보충':               { en:'Check & refill syrups/sauces',             es:'Revisar y rellenar jarabes/salsas' },
-  '우유·크림·과일 냉장 확인':                  { en:'Check milk/cream/fruit refrigeration',     es:'Revisar refrigeración leche/crema/fruta' },
-  '컵·빨대·뚜껑 보충':                         { en:'Restock cups, straws, lids',               es:'Reabastecer vasos, popotes, tapas' },
-  '에스프레소 머신 예열 및 샷 추출 테스트':    { en:'Warm up espresso & test shot',             es:'Calentar espresso y probar shot' },
-  '블렌더 작동 확인':                          { en:'Check blender operation',                  es:'Revisar funcionamiento licuadora' },
-  '냉장고·냉동고 온도 체크':                   { en:'Check fridge/freezer temperature',         es:'Revisar temperatura refri/congelador' },
-  'POS 시스템 부팅 및 영수증지 확인':          { en:'Boot POS & check receipt paper',           es:'Encender POS y revisar papel' },
-  '보바 (펄) 신선도 체크 & 교체':              { en:'Check boba freshness & replace',           es:'Frescura del boba y reemplazar' },
-  '음료 온도(핫/아이스) 기준 준수':            { en:'Hot/iced drink temp standard',             es:'Temperatura bebidas frío/caliente' },
-  '당도·농도 조절 요청 대응':                  { en:'Handle sweetness/strength requests',       es:'Atender solicitudes dulzor/intensidad' },
-  '주문 접수 및 정확한 반복 확인':             { en:'Take orders & repeat accurately',          es:'Tomar pedidos y repetir' },
-  '대기 고객 안내':                            { en:'Guide waiting customers',                  es:'Atender clientes en espera' },
-  '불만 사항 1차 응대':                        { en:'Initial complaint handling',               es:'Atender quejas iniciales' },
-  '테이블·카운터 수시 닦기':                   { en:'Wipe tables & counter regularly',          es:'Limpiar mesas y mostrador' },
-  '쓰레기통 비우기':                           { en:'Empty trash bins',                         es:'Vaciar botes de basura' },
-  '재료 소진 시 즉시 매니저 보고':             { en:'Report to manager when out of stock',      es:'Reportar al gerente si se acaba' },
-  '픽업 선반 정리':                            { en:'Organize pickup shelf',                    es:'Organizar estante de recogida' },
-  '현금 정산 및 영수증 대조':                  { en:'Cash settlement & receipt match',          es:'Cuadre de caja y recibos' },
-  '일일 매출 기록 제출':                       { en:'Submit daily sales record',                es:'Enviar registro ventas diario' },
-  'POS 마감 처리':                             { en:'POS closing',                              es:'Cierre del POS' },
-  '모든 장비 세척·소독':                       { en:'Clean & sanitize all equipment',           es:'Limpiar y desinfectar equipo' },
-  '남은 펄·재료 냉장 보관 또는 폐기':          { en:'Store or discard remaining pearls',        es:'Guardar o desechar perlas' },
-  '바닥 청소 및 매장 정리':                    { en:'Floor cleaning & store tidy-up',           es:'Limpieza de piso y orden' },
-  '쓰레기 분리수거 및 배출':                   { en:'Sort & dispose trash',                     es:'Separar y sacar basura' },
-  '냉장·냉동고 온도 최종 확인':                { en:'Final fridge/freezer temp check',          es:'Última revisión temperatura' },
-  '가스·전기 기기 전원 OFF':                   { en:'Turn off gas/electric appliances',         es:'Apagar gas/electrodomésticos' },
-};
-function pickItemLabel(item){
-  if (!item) return '';
-  if (LANG === 'ko') return item.name || '';
-  if (item.nameTr && item.nameTr[LANG]) return item.nameTr[LANG];
-  if (BOBA_ITEM_TR[item.name] && BOBA_ITEM_TR[item.name][LANG]) return BOBA_ITEM_TR[item.name][LANG];
-  return item.name || '';
-}
-window.pickItemLabel = pickItemLabel;
 function checklistItemsFor(cat){
   const hidden = new Set(__HIDDEN_TPLS || []);
   const merged = [...TASK_TEMPLATES, ...(__BRANCH_TPLS||[])];
@@ -2808,17 +2204,14 @@ const FB_STORAGE_URL = `https://firebasestorage.googleapis.com/v0/b/${FB_STORAGE
 // ================= LANGUAGE / TRANSLATION =================
 const LANG_KEY = 'tasks.lang';
 function detectLang(){
-  // Honor any of the lang keys other pages set (explicit user choice)
+  // Honor any of the lang keys other pages set
   for (const k of [LANG_KEY, 'kimchi_lang', 'hub.lang']) {
     const v = localStorage.getItem(k);
     if (v && ['ko','en','es'].includes(v)) return v;
   }
-  // 🆕 2026-05-21 전무님 명시: 한국인 직원 2% 라 기본은 영어로 고정.
-  // navigator.language=ko 인 폰도 영어로 시작 (한국어 직원은 KO 버튼 직접 클릭하면 됨).
-  // 스페인어 폰만 자동 감지 (히스패닉 직원 80%).
-  const nav = (navigator.language || navigator.userLanguage || '').slice(0,2).toLowerCase();
-  if (nav === 'es') return 'es';
-  return 'en';
+  const nav = (navigator.language || 'ko').slice(0,2).toLowerCase();
+  if (['ko','en','es'].includes(nav)) return nav;
+  return 'ko';
 }
 let LANG = detectLang();
 function setLang(l){
@@ -2855,8 +2248,6 @@ const I18N = {
   btnSendSeafood: { ko:'🐟 해산물 발송',   en:'🐟 Send Seafood',       es:'🐟 Enviar Mariscos' },
   btnSendProduce: { ko:'🥬 농산물 발송',   en:'🥬 Send Produce',       es:'🥬 Enviar Productos' },
   btnSendFrozen:  { ko:'🧊 냉동고 발송',   en:'🧊 Send Frozen',        es:'🧊 Enviar Congelados' },
-  btnSendTemp:    { ko:'🌡 온도 발송',     en:'🌡 Send Temp Check',    es:'🌡 Enviar Temp.' },
-  openTempApp:    { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Temp Tracker' },
   // Filter selects + search + reset
   filterPersonAll: { ko:'👤 담당자: 전체',   en:'👤 Assignee: All',      es:'👤 Encargado: Todos' },
   filterCatAll:    { ko:'📂 카테고리: 전체', en:'📂 Category: All',      es:'📂 Categoría: Todas' },
@@ -2880,22 +2271,6 @@ const I18N = {
   cat_cash:     { ko:'현금',       en:'Cash',            es:'Efectivo' },
   cat_cashier:  { ko:'캐셔',       en:'Cashier',         es:'Cajero' },
   cat_other:    { ko:'기타',       en:'Other',           es:'Otros' },
-  cat_price_tag:{ ko:'가격표생성',  en:'Price Tag',       es:'Etiqueta de Precio' },
-  cat_frozen:   { ko:'냉동',       en:'Frozen',          es:'Congelado' },
-  cat_manager:  { ko:'매니저 지시', en:'Manager Order',   es:'Orden del Gerente' },
-  cat_delivery: { ko:'배달 박스',   en:'Delivery Box',    es:'Caja de Entrega' },
-  cat_meat:     { ko:'정육',       en:'Meat',            es:'Carne' },
-  cat_kfood:    { ko:'K-Food',     en:'K-Food',          es:'K-Food' },
-  cat_produce:  { ko:'농산물',     en:'Produce',         es:'Productos' },
-  cat_seafood:  { ko:'해산물',     en:'Seafood',         es:'Mariscos' },
-  // 2026-05-23 — 매장 사용자 추가 카테고리 EN/ES
-  cat_freezer_room:  { ko:'냉동고',         en:'Freezer Room',     es:'Cuarto Frío' },
-  cat_icecream:      { ko:'아이스크림',     en:'Ice Cream',        es:'Helado' },
-  cat_delivery_org:  { ko:'배달 박스 정리', en:'Delivery Box Org', es:'Org. de Cajas' },
-  cat_fruit_fridge:  { ko:'과일 냉장고',    en:'Fruit Fridge',     es:'Refri Frutas' },
-  cat_sale_zone:     { ko:'세일존',         en:'Sale Zone',        es:'Zona de Oferta' },
-  cat_invoice_check: { ko:'인보이스 체크',  en:'Invoice Check',    es:'Revisar Factura' },
-  cat_invoice_write: { ko:'인보이스 작성',  en:'Invoice Write',    es:'Crear Factura' },
   // Filter chips
   fAll:         { ko:'전체',     en:'All',         es:'Todas' },
   fPending:     { ko:'대기',     en:'Pending',     es:'Pendiente' },
@@ -3008,32 +2383,7 @@ function t(key, vars) {
   return s;
 }
 // Category Korean → i18n key map; falls back to original if unknown
-const CAT_I18N = {
-  '온도 체크':'cat_temp',          'Temperature':'cat_temp',          'Temperatura':'cat_temp',
-  '유통기한':'cat_exp',            'Expiration':'cat_exp',            'Caducidad':'cat_exp',
-  '진열':'cat_disp',               '진열/보충':'cat_disp',              'Display':'cat_disp',          'Exhibición':'cat_disp',
-  '청소':'cat_clean',              'Cleaning':'cat_clean',            'Limpieza':'cat_clean',
-  '현금':'cat_cash',               '현금/카운트':'cat_cash',            'Cash':'cat_cash',             'Efectivo':'cat_cash',
-  '캐셔':'cat_cashier',            'Cashier':'cat_cashier',           'Cajero':'cat_cashier',
-  '기타':'cat_other',              'Other':'cat_other',               'Otros':'cat_other',
-  // 추가 카테고리 (2026-05-17 — EN/ES 모드에서 한국어 노출 fix)
-  '가격표생성':'cat_price_tag',     'Price':'cat_price_tag',           'Price Tag':'cat_price_tag',    'Etiqueta de Precio':'cat_price_tag',
-  '냉동':'cat_frozen',              'Frozen':'cat_frozen',             'Congelado':'cat_frozen',
-  '매니저 지시':'cat_manager',       'Manager Instruction':'cat_manager','Instrucción del Gerente':'cat_manager',
-  '배달 박스':'cat_delivery',        'Delivery Box':'cat_delivery',     'Caja de Entrega':'cat_delivery',
-  '정육':'cat_meat',                'Meat':'cat_meat',                 'Carne':'cat_meat',
-  'K-Food':'cat_kfood',             'K푸드':'cat_kfood',
-  '농산물':'cat_produce',           'Produce':'cat_produce',           'Productos':'cat_produce',
-  '해산물':'cat_seafood',           'Seafood':'cat_seafood',           'Mariscos':'cat_seafood',
-  // 2026-05-23 — 매장 매니저들이 추가한 한국어 사용자 카테고리 EN/ES 매핑
-  '냉동고':'cat_freezer_room',      'Freezer Room':'cat_freezer_room',  'Cuarto Frío':'cat_freezer_room',
-  '아이스크림':'cat_icecream',       'Ice Cream':'cat_icecream',         'Helado':'cat_icecream',
-  '배달 박스 정리':'cat_delivery_org','Delivery Box Org':'cat_delivery_org','Org. de Cajas':'cat_delivery_org',
-  '과일 냉장고':'cat_fruit_fridge',   'Fruit Fridge':'cat_fruit_fridge', 'Refri Frutas':'cat_fruit_fridge',
-  '세일존':'cat_sale_zone',          'Sale Zone':'cat_sale_zone',        'Zona de Oferta':'cat_sale_zone',
-  '인보이스 체크':'cat_invoice_check','Invoice Check':'cat_invoice_check','Revisar Factura':'cat_invoice_check',
-  '인보이스 작성':'cat_invoice_write','Invoice Write':'cat_invoice_write','Crear Factura':'cat_invoice_write'
-};
+const CAT_I18N = { '온도 체크':'cat_temp', '유통기한':'cat_exp', '진열':'cat_disp', '진열/보충':'cat_disp', '청소':'cat_clean', '현금':'cat_cash', '현금/카운트':'cat_cash', '캐셔':'cat_cashier', '기타':'cat_other' };
 function localizeCat(name){
   if (!name) return '';
   const k = CAT_I18N[name];
@@ -3140,7 +2490,6 @@ function refreshStaticI18n(){
     else if (oc.includes('sendSeafoodDailyAll')) b.textContent = t('btnSendSeafood');
     else if (oc.includes('sendProduceDailyAll')) b.textContent = t('btnSendProduce');
     else if (oc.includes('sendFrozenDailyAll'))  b.textContent = t('btnSendFrozen');
-    else if (oc.includes('sendTempCheckDailyAll')) b.textContent = t('btnSendTemp');
     else if (oc.includes('resetMgrFilters'))     b.textContent = t('btnReset');
   });
   // Filter selects — swap the first option (전체) text. Other options come
@@ -3152,7 +2501,7 @@ function refreshStaticI18n(){
   const search = document.getElementById('mgrSearch');
   if (search) search.placeholder = t('searchPh');
   // Manager table headers
-  const headers = ['thWho','thName','thStatus','thDone','thProof'];
+  const headers = ['thWho','thName','thDeadline','thStatus','thDone','thProof'];
   document.querySelectorAll('.mgr-table thead th').forEach((th, i) => { if (headers[i]) th.textContent = t(headers[i]); });
   // Report KPIs
   const kpis = ['kpiCompletion','kpiMissed','kpiAvgTime','kpiPeak'];
@@ -3247,11 +2596,6 @@ function refreshStaticI18n(){
       else if (v === '현금')   opt.textContent = t('cat_cash_full');
       else if (v === '캐셔')   opt.textContent = t('cat_cashier_full');
       else if (k)              opt.textContent = t(k);
-      // 🆕 2026-05-23 — 위에서 안 잡힌 옵션은 localizeCat fallback (CAT_I18N 매핑된 한국어 카테고리 자동 EN/ES)
-      else if (v && typeof localizeCat === 'function') {
-        const localized = localizeCat(v);
-        if (localized && localized !== v) opt.textContent = localized;
-      }
     });
   }
   // aNameTpl 자주 쓰는 업무 select — 모든 옵션 다국어 (template name 우선,
@@ -3393,8 +2737,7 @@ const BRANCHES = [
   { id:'HOLLYWOOD',       ko:'할리우드',       en:'Hollywood',       es:'Hollywood' },
   { id:'CORAL_SPRINGS',   ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs' },
   { id:'LASOLAS',         ko:'라스올라스',     en:'Las Olas',        es:'Las Olas' },
-  // 🚧 WEST_PALM 비활성화 — 아직 오픈 안 함. 추후 오픈 시 주석 해제.
-  // { id:'WEST_PALM',       ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+  { id:'WEST_PALM',       ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
 ];
 let me = null;
 let TASKS = []; // current branch + today
@@ -3419,30 +2762,6 @@ function initials(name){ return name.split(/\s+/).map(w=>w[0]||'').join('').slic
 function fmtTime(ts){ if(!ts)return''; const d=new Date(ts); return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}); }
 
 // ================= INIT =================
-// me.role 이 비어있을 때 schedules 데이터에서 자동 회복 — 매니저(Kendell 등)가
-// chat.me 등록 시 role 비워뒀거나, ITP/캐시로 사라진 경우 schedules 의 본인
-// 엔트리에서 회복. 이미 어떤 role 이든 있으면 사용자 의도 존중하고 그대로 둠.
-let __roleRecoveredFor = '';
-async function _recoverMyRoleFromSchedules(){
-  if (!me || !me.name || !me.branch) return;
-  const key = me.name + '|' + me.branch;
-  if (__roleRecoveredFor === key) return;
-  __roleRecoveredFor = key;
-  try {
-    const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-    const data = await fetch(`${FB}/schedules/${me.branch}.json?cb=${Date.now()}`, { cache:'no-store' }).then(r => r.json());
-    if (!data || !Array.isArray(data.employees)) return;
-    const norm = s => String(s||'').toLowerCase().trim().replace(/\s+/g,' ');
-    const found = data.employees.find(e => norm(e && e.name) === norm(me.name));
-    if (found && found.role && found.role !== me.role) {
-      me.role = found.role;
-      try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(_){}
-      console.log('[role-recover] me.role 회복 →', found.role);
-      try { refreshMe(); } catch(_){}
-    }
-  } catch(e){ console.warn('[role-recover]', e); }
-}
-
 function refreshMe(){
   me = loadMe();
   const pill = document.getElementById('mePill');
@@ -3450,10 +2769,6 @@ function refreshMe(){
   const nm = document.getElementById('meName');
   if (!me) { pill.style.background='#fef3c7'; pill.style.color='#92400e'; av.textContent='?'; av.style.background='#92400e'; nm.textContent='이름 등록 →'; return; }
   pill.style.background='#f0fdf4'; pill.style.color='#1a5c3a'; av.textContent=initials(me.name); av.style.background=colorFor(me.name); nm.textContent=me.name;
-  // me.role 비어있으면 schedules 에서 자동 회복 (fire-and-forget)
-  if (me && me.name && me.branch && !String(me.role||'').trim()) {
-    _recoverMyRoleFromSchedules();
-  }
   const showMgr = isManager(me.role) || isOwner();
   document.getElementById('mgrTabBtn').style.display = showMgr ? '' : 'none';
   document.getElementById('repTabBtn').style.display = showMgr ? '' : 'none';
@@ -3492,20 +2807,19 @@ function dashScoreColor(score, total){
   return { bg:'linear-gradient(135deg,#dc2626 0%,#991b1b 100%)', shadow:'0 18px 40px rgba(220,38,38,.30)' };
 }
 function dashStatusText(score, total){
-  // 2026-05-17 사용자 명시: 위협적 라벨('Danger' 등) 제거 — 직원 사기 보호. 격려·중립 톤으로.
   const M = {
-    none:    { ko:'😌 오늘 시작 전',           en:'😌 Day starting',           es:'😌 Día comenzando' },
-    great:   { ko:'✨ 우수',                    en:'✨ Excellent',              es:'✨ Excelente' },
-    good:    { ko:'👍 양호 — 순조롭게 진행',   en:'👍 Good — on track',        es:'👍 Bien — al día' },
-    warn:    { ko:'📋 진행 중 — 따라잡기',     en:'📋 In progress — catch up', es:'📋 En curso — al día' },
-    focus:   { ko:'💪 집중 필요',               en:'💪 Focus needed',           es:'💪 Concentración necesaria' },
+    none:    { ko:'😌 오늘 업무 없음 — 시작 전', en:'😌 No tasks today — yet to start',         es:'😌 Sin tareas hoy — aún por comenzar' },
+    great:   { ko:'✨ 우수 — 거의 완벽',           en:'✨ Excellent — nearly perfect',             es:'✨ Excelente — casi perfecto' },
+    good:    { ko:'👍 양호 — 순조롭게 진행',       en:'👍 Good — progressing well',                es:'👍 Bien — progresando' },
+    warn:    { ko:'⚠️ 주의 — 미완료/지연 있음',    en:'⚠️ Caution — incomplete / delays',          es:'⚠️ Atención — incompletas / retrasos' },
+    danger:  { ko:'🚨 위험 — 즉시 점검 필요',       en:'🚨 Danger — immediate review required',     es:'🚨 Peligro — revisar inmediatamente' },
   };
   const lang = (typeof LANG === 'string' && M.none[LANG]) ? LANG : 'ko';
   if (total === 0) return M.none[lang];
   if (score >= 90) return M.great[lang];
   if (score >= 75) return M.good[lang];
   if (score >= 50) return M.warn[lang];
-  return M.focus[lang];
+  return M.danger[lang];
 }
 // 매니저/오너 — 매장 자유 선택 (전무 B.H.K 등 EXECUTIVE 도 포함)
 let DASH_BRANCH = null;
@@ -3524,346 +2838,7 @@ function dashSetBranch(b){
 }
 window.dashSetBranch = dashSetBranch;
 
-// 🎮 게임화 다국어 라벨
-const GAMIFY_T = {
-  streakLbl:      { ko:'일 연속 매니저 출석', en:'days manager streak',     es:'días consecutivos' },
-  missionTitle:   { ko:'오늘의 미션',         en:"Today's Missions",         es:'Misiones de hoy' },
-  achievementTitle:{ ko:'업적',               en:'Achievements',             es:'Logros' },
-  rankTitle:      { ko:'🏆 매장 점수판',      en:'🏆 Branch Scoreboard',     es:'🏆 Marcador de Sucursales' },
-  rankSub:        { ko:'매장별 오늘 누적 점수 — 1위 매장은 🥇 자동 표시',
-                    en:"Today's cumulative scores — top branch gets 🥇 automatically",
-                    es:'Puntaje acumulado de hoy — la mejor sucursal recibe 🥇' },
-  // Streak tips by milestone
-  streakTip30:    { ko:'🌋 한 달 연속! 진짜 프로!',     en:'🌋 30 days! True pro!',         es:'🌋 30 días! Verdadero pro!' },
-  streakTip14:    { ko:'💥 2주 연속 출석 챔피언!',      en:'💥 2-week streak champion!',    es:'💥 2 semanas seguidas, campeón!' },
-  streakTip7:     { ko:'🔥 1주일 연속! 최고예요!',      en:'🔥 1-week streak! Excellent!',  es:'🔥 1 semana seguida! Excelente!' },
-  streakTipN:     { ko:'🔥 N일 연속 출근 중!',          en:'🔥 N-day streak!',              es:'🔥 N días seguidos!' },
-  streakTip1:     { ko:'✨ 오늘도 좋은 하루! 💪',       en:'✨ Have a great day! 💪',       es:'✨ Que tengas un gran día! 💪' },
-  streakTip2:     { ko:'💪 이틀 연속! 좋아요!',         en:'💪 2 days in a row, nice!',     es:'💪 2 días seguidos, bien!' },
-  // Mission texts
-  missionAssign:  { ko:'오늘 업무 1개 이상 지시하기', en:'Assign at least 1 task today',  es:'Asignar al menos 1 tarea hoy' },
-  missionVerify:  { ko:'완료된 업무 3개 확인',       en:'Verify 3 completed tasks',      es:'Verificar 3 tareas completadas' },
-  missionScore:   { ko:'매장 점수 70% 이상 달성',    en:'Reach 70%+ store score',         es:'Alcanzar 70%+ puntaje de tienda' },
-  // Achievements
-  achFirstTask:   { ko:'첫 업무 지시',        en:'First task assigned',        es:'Primera tarea asignada' },
-  achScore100:    { ko:'매장 100점 달성',     en:'100pt store score',          es:'100pt en tienda' },
-  achStreak7:     { ko:'7일 연속 출근',       en:'7-day streak',               es:'7 días seguidos' },
-  achStreak30:    { ko:'30일 연속 출근',      en:'30-day streak',              es:'30 días seguidos' },
-  achVerify100:   { ko:'보고 100건 확인',     en:'Verified 100 reports',       es:'100 reportes verificados' },
-  achTopBranch:   { ko:'매장 1위 (전광판)',   en:'#1 branch (scoreboard)',     es:'#1 sucursal (marcador)' },
-  achPerfect:     { ko:'완벽한 하루 (100%)',  en:'Perfect day (100%)',         es:'Día perfecto (100%)' },
-  achMission:     { ko:'미션 3개 모두 완료',  en:'Completed all 3 missions',   es:'Completó las 3 misiones' },
-  achEarly:       { ko:'아침 9시 전 입장',    en:'Logged in before 9 AM',      es:'Iniciado antes de las 9 AM' },
-  pts:            { ko:'점',                  en:'pt',                         es:'pt' },
-};
-function gt(key, vars){
-  const obj = GAMIFY_T[key];
-  if (!obj) return key;
-  let s = obj[LANG] || obj.ko || '';
-  if (vars){ for (const k in vars) s = s.replace(new RegExp('\\\\b'+k+'\\\\b','g'), vars[k]); }
-  return s;
-}
-
-// 🎮 게임화 — streak (연속 출석) + 시간대별 동기부여 메시지 렌더 + 전광판 + 미션 + 업적
-function renderGamify(){
-  if (!me || !me.name) return;
-
-  // 🌐 헤더/타이틀 다국어 라벨 적용
-  const _set = (id, txt) => { const el = document.getElementById(id); if (el && txt) el.textContent = txt; };
-  _set('streakLbl',        gt('streakLbl'));
-  _set('missionTitle',     gt('missionTitle'));
-  _set('achievementTitle', gt('achievementTitle'));
-  _set('sbTitle',          gt('rankTitle'));
-  _set('sbFooter',         gt('rankSub'));
-
-  // === Streak ===
-  const todayKey = todayStr();
-  const stKey = 'tasks.streak.' + (me.name || 'anon');
-  let st = { last:'', count:0 };
-  try { st = JSON.parse(localStorage.getItem(stKey) || '{}'); st.count = st.count || 0; st.last = st.last || ''; } catch(e){}
-  if (st.last !== todayKey){
-    const y = new Date(); y.setDate(y.getDate() - 1);
-    const yKey = y.toISOString().slice(0,10);
-    st.count = (st.last === yKey) ? (st.count + 1) : 1;
-    st.last = todayKey;
-    try { localStorage.setItem(stKey, JSON.stringify(st)); } catch(e){}
-  }
-  const nEl = document.getElementById('streakN');
-  const tipEl = document.getElementById('streakTip');
-  const flameEl = document.getElementById('streakFlame');
-  if (nEl) nEl.textContent = st.count;
-  if (flameEl){
-    if (st.count >= 30) flameEl.textContent = '🌋';
-    else if (st.count >= 14) flameEl.textContent = '💥';
-    else if (st.count >= 7) flameEl.textContent = '🔥';
-    else if (st.count >= 3) flameEl.textContent = '🔥';
-    else flameEl.textContent = '✨';
-  }
-  if (tipEl){
-    let tip = '';
-    if (st.count >= 30) tip = gt('streakTip30');
-    else if (st.count >= 14) tip = gt('streakTip14');
-    else if (st.count >= 7) tip = gt('streakTip7');
-    else if (st.count >= 3) tip = gt('streakTipN').replace('N', st.count);
-    else if (st.count === 2) tip = gt('streakTip2');
-    else tip = gt('streakTip1');
-    tipEl.textContent = tip;
-  }
-  // === Motivation message — 시간대별 + 다국어 ===
-  const hour = new Date().getHours();
-  const dayOfWeek = new Date().getDay();
-  const motivEmojiEl = document.getElementById('motivEmoji');
-  const motivMsgEl = document.getElementById('motivMsg');
-  const M = {
-    morning: [
-      { e:'☀️', ko:'아침의 한 시간이 하루를 좌우합니다.', en:'A morning hour decides the day.', es:'Una hora de la mañana define el día.' },
-      { e:'🌅', ko:'오늘 첫 업무 지시로 매장을 깨워보세요.', en:'Wake up the store with the first task today.', es:'Despierta la tienda con la primera tarea de hoy.' },
-      { e:'☕', ko:'커피 한 잔과 함께 오늘 시작!', en:'Start the day with a coffee!', es:'¡Empieza el día con un café!' },
-    ],
-    midmorning: [
-      { e:'🚀', ko:'오전 마감 직전 — 마지막 스퍼트!', en:'Pre-noon push — final sprint!', es:'Antes del mediodía — ¡último esfuerzo!' },
-      { e:'⚡', ko:'직원들이 매니저의 한마디를 기다리고 있어요.', en:'Your team is waiting for your word.', es:'Tu equipo espera tu palabra.' },
-    ],
-    noon: [
-      { e:'🍱', ko:'점심 후 슬슬 진열 점검 갈까요?', en:'After lunch — display check time.', es:'Después del almuerzo — revisar exhibición.' },
-      { e:'💡', ko:'오후의 작은 지시가 매장을 살립니다.', en:'A small afternoon nudge saves the store.', es:'Un pequeño aviso por la tarde salva la tienda.' },
-    ],
-    afternoon: [
-      { e:'🎯', ko:'오후 골든타임! 손님 몰리기 전 정리.', en:'Afternoon golden hour — tidy up before the rush.', es:'Hora dorada — ordenar antes del rush.' },
-      { e:'🏆', ko:'오늘 매장 점수 올려봅시다!', en:"Let's boost today's store score!", es:'¡Subamos el puntaje hoy!' },
-      { e:'🌟', ko:'한 명이 1점 더 받으면 매장 전체가 빛나요.', en:'One more point shines the whole store.', es:'Un punto más ilumina toda la tienda.' },
-    ],
-    evening: [
-      { e:'🌙', ko:'마감 전 마지막 점검 — 내일이 편해집니다.', en:'Last check before close — tomorrow will be easier.', es:'Última revisión — mañana será más fácil.' },
-      { e:'💯', ko:'오늘 하루 수고하셨어요. 마무리 한번 더!', en:'Great job today. One more wrap-up!', es:'Gran trabajo hoy. ¡Un cierre más!' },
-    ],
-    night: [
-      { e:'🌃', ko:'늦은 시간이지만 — 매니저의 정성, 매장이 압니다.', en:'Late hour — but the store feels your care.', es:'Es tarde — pero la tienda siente tu dedicación.' },
-      { e:'🌙', ko:'무리 마세요. 충분히 쉬세요.', en:"Don't push too hard. Get some rest.", es:'No te exijas demasiado. Descansa.' },
-    ],
-    weekday: {
-      1: { e:'🚀', ko:'월요일은 한 주의 시작! 매장 분위기 만들어 봅시다.', en:'Monday — start the week strong!', es:'Lunes — ¡empieza la semana fuerte!' },
-      5: { e:'🎉', ko:'금요일! 주말 손님 맞을 준비 완벽하게.', en:'Friday — get ready for weekend rush!', es:'Viernes — ¡prepárate para el rush del fin!' },
-      0: { e:'☀️', ko:'주말 — 매장에 활기 더하기 좋은 날.', en:'Weekend — perfect day to energize the store.', es:'Fin de semana — día perfecto para energizar.' },
-      6: { e:'☀️', ko:'주말 — 매장에 활기 더하기 좋은 날.', en:'Weekend — perfect day to energize the store.', es:'Fin de semana — día perfecto para energizar.' },
-    },
-    fallback: { e:'✨', ko:'매니저의 한 마디가 매장을 바꿉니다.', en:"A manager's word changes the store.", es:'Una palabra del gerente cambia la tienda.' },
-  };
-  let bucket = M.fallback;
-  let pool = [];
-  if (hour >= 5 && hour < 10) pool = M.morning;
-  else if (hour >= 10 && hour < 12) pool = M.midmorning;
-  else if (hour >= 12 && hour < 14) pool = M.noon;
-  else if (hour >= 14 && hour < 18) pool = M.afternoon;
-  else if (hour >= 18 && hour < 22) pool = M.evening;
-  else pool = M.night;
-  // 요일 보너스 추가
-  if (M.weekday[dayOfWeek] && hour >= 5 && hour < 22) pool = pool.concat([M.weekday[dayOfWeek]]);
-  const pick = pool.length ? pool[Math.floor(Math.random() * pool.length)] : M.fallback;
-  if (motivEmojiEl) motivEmojiEl.textContent = pick.e;
-  if (motivMsgEl) motivMsgEl.textContent = pick[LANG] || pick.ko;
-
-  // 시계 (전광판)
-  const clockEl = document.getElementById('sbClock');
-  if (clockEl){
-    const d = new Date();
-    clockEl.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-  }
-
-  // 전광판 + 미션 + 업적 렌더
-  try { renderScoreboard(); } catch(e){ console.warn('[scoreboard]', e); }
-  try { renderMissions(); } catch(e){ console.warn('[missions]', e); }
-  try { renderAchievements(); } catch(e){ console.warn('[achievements]', e); }
-}
-
-// 🏆 매장 점수 전광판 — 5개 매장 (Miami/Pembroke/Hollywood/Coral/LasOlas) 오늘 점수 비교
-function renderScoreboard(){
-  const rowsEl = document.getElementById('sbRows');
-  if (!rowsEl) return;
-  // 점수 계산 — TASKS 가 매니저 권한이면 5매장 전체 들고 있음 (subscribeTasks 가 자동 처리)
-  const scores = {};
-  for (const br of BRANCHES) scores[br.id] = 0;
-  (TASKS || []).forEach(t => {
-    if (!t.branchId || !(t.branchId in scores)) return;
-    if (!t.completedAt) return;
-    const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
-    scores[t.branchId] += pts;
-  });
-  const ranked = BRANCHES.map(b => ({ id:b.id, name:(b[LANG] || b.ko || b.id), score: scores[b.id] || 0 }))
-    .sort((a,b) => b.score - a.score);
-  const maxScore = Math.max(1, ...ranked.map(r => r.score));
-  // 기존 행과 비교해서 점수 변하면 카운터 애니메이션 + 컨페티 (#1 점수 오를 때)
-  const prevTop = parseInt(rowsEl.dataset.topScore || '0', 10);
-  const newTop = ranked[0]?.score || 0;
-  if (newTop > prevTop && prevTop > 0){
-    try { launchConfetti(); } catch(_){}
-  }
-  rowsEl.dataset.topScore = newTop;
-
-  rowsEl.innerHTML = ranked.map((r, i) => {
-    const rank = i + 1;
-    const cls = 'rank-' + (rank <= 3 ? rank : '4');
-    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
-    const pct = Math.round((r.score / maxScore) * 100);
-    return `<div class="sb-row ${cls}">
-      <div class="sb-rank-badge">${medal}</div>
-      <div class="sb-mid">
-        <div class="sb-name">${escHtml(r.name)}</div>
-        <div class="sb-bar"><div class="sb-bar-fill" style="width:0%" data-target="${pct}"></div></div>
-      </div>
-      <div class="sb-score" data-target="${r.score}">0<span class="sb-pt">${gt('pts').toUpperCase()}</span></div>
-    </div>`;
-  }).join('');
-  // 카운터 + 바 채우기 애니메이션
-  rowsEl.querySelectorAll('.sb-score').forEach(el => {
-    const target = parseInt(el.dataset.target || '0', 10);
-    animateCounter(el, target);
-  });
-  setTimeout(() => {
-    rowsEl.querySelectorAll('.sb-bar-fill').forEach(el => {
-      el.style.width = (el.dataset.target || '0') + '%';
-    });
-  }, 100);
-}
-
-function animateCounter(el, target){
-  const dur = 800;
-  const startTs = performance.now();
-  const ptHtml = '<span class="sb-pt">' + gt('pts').toUpperCase() + '</span>';
-  function tick(now){
-    const t = Math.min(1, (now - startTs) / dur);
-    const eased = 1 - Math.pow(1 - t, 3);   // ease-out cubic
-    const val = Math.round(target * eased);
-    el.innerHTML = val + ptHtml;
-    if (t < 1) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
-
-// 🎉 컨페티 — #1 매장 점수 오를 때 색종이 폭발
-function launchConfetti(){
-  const root = document.body;
-  const colors = ['#fde047','#f59e0b','#dc2626','#22d3ee','#7c3aed','#16a34a','#ec4899'];
-  for (let i = 0; i < 40; i++){
-    const p = document.createElement('div');
-    p.style.cssText = `position:fixed;left:50%;top:50%;width:8px;height:14px;background:${colors[i%colors.length]};border-radius:2px;z-index:9999;pointer-events:none;opacity:1;transition:transform 1.6s cubic-bezier(.2,.6,.4,1),opacity 1.6s ease-out`;
-    document.body.appendChild(p);
-    const angle = (Math.PI * 2) * Math.random();
-    const dist = 200 + Math.random() * 300;
-    const tx = Math.cos(angle) * dist;
-    const ty = Math.sin(angle) * dist + 200;
-    const rot = (Math.random() - 0.5) * 720;
-    requestAnimationFrame(() => {
-      p.style.transform = `translate(${tx}px, ${ty}px) rotate(${rot}deg)`;
-      p.style.opacity = '0';
-    });
-    setTimeout(() => p.remove(), 1700);
-  }
-}
-
-// 🎯 일일 미션 — 매일 리셋, 3개 도전 과제
-function renderMissions(){
-  const listEl = document.getElementById('missionList');
-  const progEl = document.getElementById('missionProgress');
-  if (!listEl) return;
-  // 오늘 미션 진행도 계산
-  const todayKey = todayStr();
-  const myName = me?.name || '';
-  // 미션 1: 오늘 본인이 업무 1개 이상 지시 (TASKS 의 from 또는 createdBy 가 본인)
-  const m1 = (TASKS || []).some(t => (t.from === myName || t.createdBy === myName) && (t.dateKey === todayKey || !t.dateKey));
-  // 미션 2: 오늘 완료된 업무 3개 이상 (전체 매장)
-  const m2 = (TASKS || []).filter(t => t.completedAt).length >= 3;
-  // 미션 3: 매장 점수 70% 이상 — 완료/전체 비율
-  const totalT = (TASKS || []).length;
-  const doneT = (TASKS || []).filter(t => t.completedAt).length;
-  const ratio = totalT > 0 ? (doneT / totalT) : 0;
-  const m3 = ratio >= 0.7;
-
-  const missions = [
-    { id:'assign', done:m1, label:gt('missionAssign'), emoji:'📝' },
-    { id:'verify', done:m2, label:gt('missionVerify'), emoji:'✅' },
-    { id:'score',  done:m3, label:gt('missionScore'),  emoji:'🎯' },
-  ];
-  const doneCnt = missions.filter(m => m.done).length;
-  if (progEl) progEl.textContent = doneCnt + '/3';
-  listEl.innerHTML = missions.map(m => `
-    <div class="mc-item ${m.done?'done':''}">
-      <span class="mc-check">${m.done?'✅':'⬜'}</span>
-      <span>${m.emoji} ${escHtml(m.label)}</span>
-    </div>
-  `).join('');
-  // 3개 다 완료 시 컨페티 + 업적 부여
-  if (doneCnt === 3){
-    const flag = 'tasks.mission3.' + todayKey;
-    if (!localStorage.getItem(flag)){
-      localStorage.setItem(flag, '1');
-      setTimeout(() => { try { launchConfetti(); } catch(_){} }, 200);
-      grantAchievement('mission');
-    }
-  }
-}
-
-// 🏅 업적 — 9개 뱃지 컬렉션
-const ACHIEVEMENTS = [
-  { id:'firstTask',  emoji:'🥇', key:'achFirstTask' },
-  { id:'score100',   emoji:'💯', key:'achScore100' },
-  { id:'streak7',    emoji:'🔥', key:'achStreak7' },
-  { id:'streak30',   emoji:'🌋', key:'achStreak30' },
-  { id:'verify100',  emoji:'📋', key:'achVerify100' },
-  { id:'topBranch',  emoji:'🏆', key:'achTopBranch' },
-  { id:'perfect',    emoji:'⭐', key:'achPerfect' },
-  { id:'mission',    emoji:'🎯', key:'achMission' },
-  { id:'early',      emoji:'🌅', key:'achEarly' },
-];
-function getEarnedAchievements(){
-  try { return JSON.parse(localStorage.getItem('tasks.achievements') || '{}'); } catch(e){ return {}; }
-}
-function grantAchievement(id){
-  const earned = getEarnedAchievements();
-  if (earned[id]) return false;
-  earned[id] = Date.now();
-  localStorage.setItem('tasks.achievements', JSON.stringify(earned));
-  // 토스트 알림
-  try {
-    const ach = ACHIEVEMENTS.find(a => a.id === id);
-    if (ach && typeof showToast === 'function'){
-      showToast(ach.emoji + ' ' + gt(ach.key));
-    }
-  } catch(_){}
-  // 즉시 재렌더
-  setTimeout(() => { try { renderAchievements(); launchConfetti(); } catch(_){} }, 100);
-  return true;
-}
-function renderAchievements(){
-  const gridEl = document.getElementById('achievementGrid');
-  const cntEl  = document.getElementById('achievementCount');
-  if (!gridEl) return;
-  // 자동 부여 체크
-  const stKey = 'tasks.streak.' + (me?.name || 'anon');
-  let st = {}; try { st = JSON.parse(localStorage.getItem(stKey) || '{}'); } catch(e){}
-  if (st.count >= 7) grantAchievement('streak7');
-  if (st.count >= 30) grantAchievement('streak30');
-  const hour = new Date().getHours();
-  if (hour < 9 && hour >= 5) grantAchievement('early');
-  const myName = me?.name || '';
-  if ((TASKS||[]).some(t => t.from === myName || t.createdBy === myName)) grantAchievement('firstTask');
-
-  const earned = getEarnedAchievements();
-  const total = ACHIEVEMENTS.length;
-  const gotten = Object.keys(earned).length;
-  if (cntEl) cntEl.textContent = gotten + ' / ' + total;
-  gridEl.innerHTML = ACHIEVEMENTS.map(a => {
-    const got = !!earned[a.id];
-    return `<div class="ac-badge ${got?'earned':'locked'}">
-      ${a.emoji}
-      <div class="ac-tooltip">${got?'✓ ':''}${escHtml(gt(a.key))}</div>
-    </div>`;
-  }).join('');
-}
-
 function renderDashboard(){
-  // 🎮 게임화 카드 렌더 (streak + 동기부여)
-  try { renderGamify(); } catch(e){ console.warn('[gamify]', e); }
   // 1) 매장 결정: 매니저/오너는 dropdown 으로 선택 가능
   const isMgr = me && (isManager(me.role) || isOwner());
   const myBranch = (me && me.branch && me.branch !== '*') ? me.branch : null;
@@ -3914,9 +2889,14 @@ function renderDashboard(){
     return false;
   }
   function _isDelayed(t){
-    // 🚫 5매장 요구 — 시간 제한 (데드라인 기반 지연 표시) 비활성화. 직원 스트레스 감소.
-    //    데드라인은 '참고용 시간'으로만 카드에 표시되고, 지연 빨강 라벨/알림은 안 뜸.
-    return false;
+    if (_isDone(t)) return false;
+    if (!t.deadline) return false;
+    // deadline 은 "HH:MM" 형식. 오늘 그 시간이 지났는지.
+    const m = String(t.deadline).match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return false;
+    const now = new Date();
+    const dl = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(m[1],10), parseInt(m[2],10));
+    return Date.now() > dl.getTime();
   }
   const total = todayTasks.length;
   const completed = todayTasks.filter(_isDone).length;
@@ -3930,14 +2910,12 @@ function renderDashboard(){
   }
   const reports = todayTasks.filter(t => _isDone(t) && _hasReportPhotos(t)).length;
 
-  // 점수 — 데드라인 의존 완전 제거 (2026-05-17 사용자 명시: 데드라인 없애기).
-  // 단순 완료율 + 시작 50점 베이스. 0개 완료해도 50점 = 직원 사기 보호.
-  // 완료할수록 점수 상승 (50 → 100). 사진 없는 완료는 가벼운 감점.
+  // 점수 계산: 100 시작, 미완료 -5, 지연 -10, 보고 누락(완료했는데 사진 X) -3
+  let score = 100;
+  score -= pending * 5;
+  score -= delayed * 10;
   const completedNoPhoto = todayTasks.filter(t => _isDone(t) && !_hasReportPhotos(t)).length;
-  let score;
-  if (total === 0) score = 100;
-  else score = 50 + Math.round((completed / total) * 50);
-  score -= completedNoPhoto * 2;
+  score -= completedNoPhoto * 3;
   if (score < 0) score = 0;
   if (score > 100) score = 100;
 
@@ -4008,8 +2986,7 @@ function renderDashboard(){
           </div>
           <div class="task-meta">
             <span class="from">👤 ${escHtml(who)}</span>
-            <!-- 🚫 5매장 요구 — 카드에 데드라인 표시 안 함 (시간 제한 기능 제거) -->
-
+            ${dl ? `<span class="deadline">⏰ ${dl}${isDelayed ? ` (${LANG==='en'?'delayed':LANG==='es'?'retrasada':'지연'})` : ''}</span>` : ''}
             ${t.requirePhoto ? `<span class="photo-req">📷 ${LANG==='en'?'Photo required':LANG==='es'?'Foto requerida':'사진 필수'}</span>` : ''}
           </div>
         </div>`;
@@ -4261,7 +3238,15 @@ async function sendMeatDailyAll(){
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
   const branches = [chosenBranch];
   // 정육 담당자 이름 (해당 지점)
-  const targetName = '*';
+  const who = prompt(
+    '🥩 정육 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 정육 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
     const today = todayStr();
@@ -4315,11 +3300,10 @@ async function sendMeatDailyAll(){
       if (w.ok) created++; else { console.warn('[meat-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[meat-daily]', branchId, e); failed++; }
   }
-  const _hdr=LANG==='en'?'🥩 Meat daily report sent — ':LANG==='es'?'🥩 Reporte diario de carne enviado — ':'🥩 정육 일일 발송 완료 — ';
-  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
-  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
-  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
-  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+  alert('🥩 정육 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendMeatDailyAll = sendMeatDailyAll;
 
@@ -4342,7 +3326,15 @@ async function sendKFoodDailyAll(){
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
   const branches = [chosenBranch];
-  const targetName = '*';
+  const who = prompt(
+    '🍙 K-Food 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — K-Food 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
     const today = todayStr();
@@ -4396,11 +3388,10 @@ async function sendKFoodDailyAll(){
       if (w.ok) created++; else { console.warn('[kfood-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[kfood-daily]', branchId, e); failed++; }
   }
-  const _hdr=LANG==='en'?'🍙 K-Food daily report sent — ':LANG==='es'?'🍙 Reporte diario de K-Food enviado — ':'🍙 K-Food 일일 발송 완료 — ';
-  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
-  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
-  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
-  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+  alert('🍙 K-Food 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendKFoodDailyAll = sendKFoodDailyAll;
 
@@ -4421,7 +3412,15 @@ async function sendSeafoodDailyAll(){
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
   const branches = [chosenBranch];
-  const targetName = '*';
+  const who = prompt(
+    '🐟 해산물 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 해산물 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
     const today = todayStr();
@@ -4473,11 +3472,10 @@ async function sendSeafoodDailyAll(){
       if (w.ok) created++; else { console.warn('[seafood-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[seafood-daily]', branchId, e); failed++; }
   }
-  const _hdr=LANG==='en'?'🐟 Seafood daily report sent — ':LANG==='es'?'🐟 Reporte diario de mariscos enviado — ':'🐟 해산물 일일 발송 완료 — ';
-  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
-  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
-  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
-  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+  alert('🐟 해산물 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendSeafoodDailyAll = sendSeafoodDailyAll;
 
@@ -4498,7 +3496,15 @@ async function sendProduceDailyAll(){
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
   const branches = [chosenBranch];
-  const targetName = '*';
+  const who = prompt(
+    '🥬 농산물 일일 작업 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 농산물 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
     const today = todayStr();
@@ -4580,11 +3586,10 @@ async function sendProduceDailyAll(){
       if (w.ok) created++; else { console.warn('[produce-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[produce-daily]', branchId, e); failed++; }
   }
-  const _hdr=LANG==='en'?'🥬 Produce daily report sent — ':LANG==='es'?'🥬 Reporte diario de productos enviado — ':'🥬 농산물 일일 발송 완료 — ';
-  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
-  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
-  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
-  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+  alert('🥬 농산물 일일 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendProduceDailyAll = sendProduceDailyAll;
 
@@ -4605,7 +3610,15 @@ async function sendFrozenDailyAll(){
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
   const branches = [chosenBranch];
-  const targetName = '*';
+  const who = prompt(
+    '🧊 냉동고 전체 진열 보고 발송\n\n' +
+    '지점: ' + branchKo + '\n\n' +
+    '받을 직원 이름:\n' +
+    '비워두면 전체 (* — 냉동 담당자가 본인이 잡음)',
+    ''
+  );
+  if (who === null) return;
+  const targetName = who.trim() || '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
     const today = todayStr();
@@ -4657,127 +3670,12 @@ async function sendFrozenDailyAll(){
       if (w.ok) created++; else { console.warn('[frozen-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[frozen-daily]', branchId, e); failed++; }
   }
-  const _hdr=LANG==='en'?'🧊 Frozen display report sent — ':LANG==='es'?'🧊 Reporte de congeladores enviado — ':'🧊 냉동고 전체 진열 발송 완료 — ';
-  const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
-  const _skip=LANG==='en'?'  Already exists (skipped)\n':LANG==='es'?'  Ya existe (omitido)\n':'  이미 있음 (스킵)\n';
-  const _fail=LANG==='en'?'  Failed\n':LANG==='es'?'  Fallido\n':'  실패\n';
-  alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
+  alert('🧊 냉동고 전체 진열 발송 완료 — ' + branchKo + '\n' +
+        (created ? '  새로 발송됨\n' : '') +
+        (skipped ? '  이미 있음 (스킵)\n' : '') +
+        (failed ? '  실패\n' : ''));
 }
 window.sendFrozenDailyAll = sendFrozenDailyAll;
-
-// 🌡 일일 온도 체크 일괄 발송 — 3개 슬롯 (오전 / 오후 / 마감) 따로 발송.
-// 직원이 한 task 면 잊기 쉬워서 (전무님 요청, 2026-05-23) 각 슬롯 별도 카드로 분리.
-// 슬롯별 task 는 temp.html 에서 해당 슬롯 50/50 완료 시 자동으로 completedAt 채움.
-async function sendTempCheckDailyAll(){
-  if (!me) { alert(LANG==='en'?'Please register your name first.':LANG==='es'?'Registre su nombre primero.':'이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
-  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
-  if (!allowedBranches.length) { alert(LANG==='en'?'No branch info':LANG==='es'?'Sin info de sucursal':'지점 정보 없음'); return; }
-  let chosenBranch;
-  if (allowedBranches.length === 1) {
-    chosenBranch = allowedBranches[0].id;
-  } else {
-    chosenBranch = await pickBranchModal('🌡', LANG==='en'?'Send daily temp check — Which branch?':LANG==='es'?'Enviar revisión diaria de temperatura — ¿Qué sucursal?':'온도 체크 일일 발송 — 어느 지점에 보낼까요?', allowedBranches);
-    if (!chosenBranch) return;
-  }
-  const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
-  const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
-  const targetName = '*';
-  let created = 0, skipped = 0, failed = 0;
-  const today = todayStr();
-  // 3개 슬롯 정의 — temp.html 의 SETTINGS.slot1/2/3 과 일치 (08:00 / 14:00 / 21:00 기본)
-  const SLOTS = [
-    {
-      key: 'morning',
-      taskId: 'auto_temp_daily_morning_all',
-      deadline: '11:00',
-      name: '🌅 온도 체크 — 오전',
-      nameTr: { ko:'🌅 온도 체크 — 오전 (08:00)', en:'🌅 Temperature Check — Morning (08:00)', es:'🌅 Revisión Temp. — Mañana (08:00)' },
-      locationNote: '오전 슬롯 — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
-      locationNoteTr: {
-        ko:'오전 슬롯 (08:00) — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
-        en:'Morning slot (08:00) — enter temperature for every fridge/freezer. Tap the 🌡 button to open the app.',
-        es:'Turno mañana (08:00) — registre la temperatura de cada refrigerador/congelador. Toque 🌡 para abrir la app.',
-      },
-    },
-    {
-      key: 'afternoon',
-      taskId: 'auto_temp_daily_afternoon_all',
-      deadline: '17:00',
-      name: '☀️ 온도 체크 — 오후',
-      nameTr: { ko:'☀️ 온도 체크 — 오후 (14:00)', en:'☀️ Temperature Check — Afternoon (14:00)', es:'☀️ Revisión Temp. — Tarde (14:00)' },
-      locationNote: '오후 슬롯 — 모든 냉장·냉동고 온도 입력.',
-      locationNoteTr: {
-        ko:'오후 슬롯 (14:00) — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
-        en:'Afternoon slot (14:00) — enter temperature for every fridge/freezer. Tap the 🌡 button to open the app.',
-        es:'Turno tarde (14:00) — registre la temperatura de cada refrigerador/congelador. Toque 🌡 para abrir la app.',
-      },
-    },
-    {
-      key: 'closing',
-      taskId: 'auto_temp_daily_closing_all',
-      deadline: '22:00',
-      name: '🌙 온도 체크 — 마감',
-      nameTr: { ko:'🌙 온도 체크 — 마감 (21:00)', en:'🌙 Temperature Check — Closing (21:00)', es:'🌙 Revisión Temp. — Cierre (21:00)' },
-      locationNote: '마감 슬롯 — 모든 냉장·냉동고 온도 입력.',
-      locationNoteTr: {
-        ko:'마감 슬롯 (21:00) — 모든 냉장·냉동고 온도 입력. 카드 🌡 버튼으로 앱 바로 이동.',
-        en:'Closing slot (21:00) — enter temperature for every fridge/freezer. Tap the 🌡 button to open the app.',
-        es:'Turno cierre (21:00) — registre la temperatura de cada refrigerador/congelador. Toque 🌡 para abrir la app.',
-      },
-    },
-  ];
-  let aq = '';
-  try {
-    const u = window.__fb?.auth?.currentUser;
-    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
-  } catch(_){}
-  for (const slot of SLOTS){
-    const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${today}/${slot.taskId}.json` + (aq ? aq : '');
-    try {
-      const r = await fetch(restUrl, { cache:'no-store' });
-      if (r.ok) {
-        const existing = await r.json();
-        if (existing && (existing.autoTempDailySlot === slot.key || existing.autoTempDaily)) { skipped++; continue; }
-      }
-      const payload = {
-        name: slot.name,
-        nameTr: slot.nameTr,
-        deadline: slot.deadline,
-        category: '온도 체크',
-        requirePhoto: false,
-        place: '매장 전체',
-        locationNote: slot.locationNote,
-        locationNoteTr: slot.locationNoteTr,
-        appLink: 'temp.html',
-        appLinkLabel: { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Temp Tracker' },
-        assignedTo: targetName,
-        assignedToId: null,
-        from: me.name + ' (온도 일괄 발송)',
-        fromRole: me.role || 'MANAGER',
-        createdAt: Date.now(),
-        autoTempDaily: true,           // 기존 헬퍼 호환용 — 사진 면제 등
-        autoTempDailySlot: slot.key,   // 🆕 슬롯별 식별자 — temp.html 자동완료가 이걸로 매칭
-        points: 1,
-      };
-      const w = await fetch(restUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (w.ok) created++; else { console.warn('[temp-daily] write fail', chosenBranch, slot.key, w.status); failed++; }
-    } catch(e) { console.warn('[temp-daily]', chosenBranch, slot.key, e); failed++; }
-  }
-  const _hdr=LANG==='en'?'🌡 Temp check sent (3 slots) — ':LANG==='es'?'🌡 Revisión temp. enviada (3 turnos) — ':'🌡 온도 체크 발송 (3 슬롯) — ';
-  const _sent=LANG==='en'?'  Newly sent: ':LANG==='es'?'  Enviado: ':'  새로 발송: ';
-  const _skip=LANG==='en'?'  Already exists: ':LANG==='es'?'  Ya existe: ':'  이미 있음: ';
-  const _fail=LANG==='en'?'  Failed: ':LANG==='es'?'  Fallido: ':'  실패: ';
-  alert(_hdr + branchKo + '\n' +
-    (created?(_sent+created+'\n'):'') +
-    (skipped?(_skip+skipped+'\n'):'') +
-    (failed?(_fail+failed+'\n'):''));
-}
-window.sendTempCheckDailyAll = sendTempCheckDailyAll;
 
 // K-Food '+ 음식 추가' / Seafood '+ 생선 추가' / Produce '+ 농산물 추가' —
 // iOS PWA 에서 prompt() 가 가끔 블록돼서 커스텀 모달 사용. 새 항목을 checklist
@@ -5058,11 +3956,7 @@ async function tickLocation(){
   renderClockIn();
 }
 function renderClockIn(){
-  // 🚫 5매장 요구 — 출근 버튼/카드 기능 완전 제거. 항상 숨김.
   const el = document.getElementById('clockInCard');
-  if (el) el.style.display = 'none';
-  return;
-  // ↓↓↓ 아래는 더 이상 실행 안 되는 옛 코드 — 추후 다른 출근 방식 고려 시 참고용 ↓↓↓
   if (!me || !el) { if(el) el.style.display='none'; return; }
   el.style.display = '';
   const branchGeo = BRANCH_GEO[me.branch];
@@ -5088,32 +3982,29 @@ function renderClockIn(){
     el.innerHTML = `<span class="ic">📡</span><div class="body"><b>${t('geoLoading')}</b><span class="sub">${MY_LOCATION&&MY_LOCATION.error?escHtml(MY_LOCATION.error):t('geoNeedPerm')}</span></div><button class="btn sec" onclick="tickLocation()">${t('retry')}</button>`;
     return;
   }
-  // 4) 🚫 5매장 요구 — 위치 반경 체크 무시. 거리만 참고용으로 표시, 출근 버튼 항상 활성.
+  // 4) Compute distance
   const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
-  el.className = 'clockin-card ready';
-  const headline = d <= radius ? t('arrived') : t('awayFrom', { d: Math.round(d) });
-  const sub = br + ' · ' + t('accuracy', { a: Math.round(MY_LOCATION.acc) });
-  el.innerHTML = `<span class="ic">📍</span>`+
+  const canClock = d <= radius;
+  el.className = 'clockin-card ' + (canClock?'ready':'far');
+  const headline = canClock ? t('arrived') : t('awayFrom', { d: Math.round(d) });
+  const sub = br + ' · ' + t('accuracy', { a: Math.round(MY_LOCATION.acc) }) + (canClock ? '' : t('withinRadius', { r: radius }));
+  el.innerHTML = `<span class="ic">${canClock?'📍':'🚶'}</span>`+
     `<div class="body"><b>${headline}</b><span class="sub">${sub}</span></div>`+
-    `<button class="btn" onclick="clockIn()">${t('clockInBtn')}</button>`;
+    `<button class="btn ${canClock?'':'gray'}" ${canClock?'':'disabled'} onclick="clockIn()">${canClock?t('clockInBtn'):t('waitBtn')}</button>`;
 }
 async function clockIn(){
-  if (!me) return;
-  // 🚫 5매장 요구 — 위치 제한 (geofence 반경 80m 체크) 비활성화. 어디서든 출근 등록 가능.
-  const branchGeo = BRANCH_GEO[me.branch] || {};
-  let d = null;
-  if (MY_LOCATION && MY_LOCATION.lat && branchGeo.lat) {
-    d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
-  }
+  if (!me || !MY_LOCATION || !MY_LOCATION.lat) return;
+  const branchGeo = BRANCH_GEO[me.branch];
+  if (!branchGeo) { alert('매장 좌표 미등록'); return; }
+  const radius = branchGeo.radius || DEFAULT_RADIUS_M;
+  const d = distMeters(MY_LOCATION.lat, MY_LOCATION.lng, branchGeo.lat, branchGeo.lng);
+  if (d > radius) { alert('매장에서 너무 멉니다 ('+Math.round(d)+'m)'); return; }
   const path = ATTEND_BASE+'/'+me.branch+'/'+todayStr()+'/'+slug(me.name);
   await window.__fb.set(window.__fb.ref(window.__fb.db, path), {
     name: me.name, role: me.role || null, clockIn: Date.now(),
-    lat: MY_LOCATION && MY_LOCATION.lat ? MY_LOCATION.lat : null,
-    lng: MY_LOCATION && MY_LOCATION.lng ? MY_LOCATION.lng : null,
-    accuracy: MY_LOCATION && MY_LOCATION.acc ? Math.round(MY_LOCATION.acc) : null,
-    distance: d != null ? Math.round(d) : null
+    lat: MY_LOCATION.lat, lng: MY_LOCATION.lng, accuracy: Math.round(MY_LOCATION.acc), distance: Math.round(d)
   });
-  showToast('✅ 출근 완료', fmtTime(Date.now()) + (d != null ? ' · ' + Math.round(d) + 'm 거리' : ''));
+  showToast('✅ 출근 완료', fmtTime(Date.now()) + ' · ' + Math.round(d) + 'm 거리에서 인증');
 }
 async function registerBranchGeo(){
   if (!me) return;
@@ -5234,16 +4125,8 @@ async function sendTaskChatBackup(toName, taskName, deadline){
     const ts = Date.now();
     const msgId = 'm' + ts + Math.floor(Math.random()*900);
     const _prefix = LANG==='en' ? '📨 New task: ' : LANG==='es' ? '📨 Nueva tarea: ' : '📨 새 업무 지시: ';
-    // 🚫 2026-05-19 전무님 명시: 시간 데드라인 표시 완전 제거 — '오늘 안으로' 안내만.
-    const _today = LANG==='en' ? '\n📅 Complete today' : LANG==='es' ? '\n📅 Completar hoy' : '\n📅 오늘 안으로 완료';
-    // 🆕 2026-05-19: 직원이 카드 제목만 보고 체크리스트 못 찾는 케이스 다수 신고.
-    // 알림 메시지 끝에 사용법 한 줄 추가 — '시작' 버튼 누르면 체크리스트·사진 등장.
-    const _howto = LANG==='en'
-      ? '\n\n📝 Open "My Tasks" → tap ▶ Start → checklist + 3 photos required.'
-      : LANG==='es'
-      ? '\n\n📝 Abrir "Mis Tareas" → tocar ▶ Comenzar → checklist + 3 fotos requeridas.'
-      : '\n\n📝 "내 업무" → ▶ 시작 누르면 체크리스트·사진 등장 (3장 필수).';
-    const text = _prefix + taskName + _today + _howto;
+    const _dl = deadline ? (LANG==='en' ? '\n⏰ Deadline ' : LANG==='es' ? '\n⏰ Fecha límite ' : '\n⏰ 데드라인 ') + deadline : '';
+    const text = _prefix + taskName + _dl;
     const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
     // 방 존재 여부 확인 후 생성/업데이트
     let existing = null;
@@ -5297,8 +4180,8 @@ function detectNewTasks(){
     SEEN_IDS.add(key);
     // New task — decide whom to notify
     if (isAssignedToMe(t)) {
-      // 🚫 2026-05-19 시간 데드라인 표시 제거 — 알림 팝업도 업무명만.
-      fireNotify('📨 새 업무 지시', t.name + (t.from ? '\n— '+t.from : ''), { tag: 'task-'+t.id, onClick: () => switchTab('emp') });
+      const dl = t.deadline ? ' · 데드라인 '+t.deadline : '';
+      fireNotify('📨 새 업무 지시', t.name + dl + (t.from ? '\n— '+t.from : ''), { tag: 'task-'+t.id, onClick: () => switchTab('emp') });
     } else if (showMgr) {
       // Manager sees all assigns (informational, lower noise — only OS toast, no system notif by default)
       showToast('📋 업무 등록', t.name + ' → ' + (t.assignedTo === '*' ? '전체' : (t.assignedTo || t.assignedToRole || '')));
@@ -5313,17 +4196,34 @@ function detectNewTasks(){
 let LAST_DELAYED = new Set();
 let _DELAY_INIT_DONE = false;
 function detectDelays(){
-  // 🚫 5매장 요구 — 지연 토스트/알림 비활성화. computeStatus 도 더 이상 'delayed' 반환 안 하지만
-  //    혹시 모를 케이스 대비 함수 자체 no-op 처리.
-  return;
+  if (!me) return;
+  const showMgr = isManager(me.role) || isOwner();
+  if (!showMgr) return;
+  const nowDelayed = new Set();
+  TASKS.forEach(t => { if (computeStatus(t) === 'delayed' && !t.completedAt) nowDelayed.add(t.branchId+'/'+t.id); });
+  // 첫 실행 — baseline 만 잡고 토스트 발사 안 함
+  if (!_DELAY_INIT_DONE){
+    LAST_DELAYED = nowDelayed;
+    _DELAY_INIT_DONE = true;
+    return;
+  }
+  nowDelayed.forEach(k => {
+    if (!LAST_DELAYED.has(k)) {
+      const t = TASKS.find(x => x.branchId+'/'+x.id === k);
+      if (t) fireNotify('⚠️ 업무 지연 발생', (t.assignedTo || '담당자') + ' — ' + t.name + ' (데드라인 '+(t.deadline||'-')+')', { tag: 'delay-'+t.id, delayed: true, onClick: () => switchTab('mgr') });
+    }
+  });
+  LAST_DELAYED = nowDelayed;
 }
 
 // ================= COMPUTE STATUS =================
 function computeStatus(t){
   if (t.completedAt) return 'completed';
-  // 🚫 5매장 요구 — 시간 제한 (데드라인 기반 'delayed' 분류) 비활성화.
-  //    데드라인 지났어도 그냥 in_progress 또는 pending 으로 분류 → 빨강/지연 알림 안 뜸.
-  if (t.startedAt) return 'in_progress';
+  const now = Date.now();
+  const today = todayStr();
+  const dl = t.deadline ? new Date(today + 'T' + t.deadline + ':00').getTime() : null;
+  if (t.startedAt) return (dl && now > dl) ? 'delayed' : 'in_progress';
+  if (dl && now > dl) return 'delayed';
   return 'pending';
 }
 
@@ -5365,52 +4265,17 @@ function renderEmp(){
   if (total === 0) { list.innerHTML = `<div class="empty">${t('emptyEmp')}</div>`; return; }
   list.innerHTML = my.map(renderTaskCard).join('');
 }
-// 🔧 2026-05-21 전무님 신고: 직원이 업무지시 안 보임 → 시작/완료 못함.
-// 원인 #1: 매니저가 발사한 이름과 직원 me.name 이 대소문자·공백·구두점 차이로 매칭 실패.
-// (예: '*' assigned name='Rosa Monrroy' vs me.name='ROSA MONROY')
-// 해결 #1: 정규화 함수로 양쪽 모두 비교 — trim + 소문자 + 공백/구두점 제거.
-//
-// 🔧 2026-05-23 Darleny (펨브로크) 신고: Karla Duarte 가 본인 업무 안 보임.
-// 원인 #2: 매니저가 짧은 이름으로 발사 (예: 'KARLA') vs 직원이 풀네임으로 가입 (me.name='Karla Duarte').
-// 정규화해도 'karla' !== 'karladuarte' 라 여전히 매칭 실패.
-// 해결 #2: 짧은 쪽 이름 토큰이 긴 쪽 이름 토큰의 부분집합이면 일치로 인정.
-// 'KARLA' {karla} ⊂ 'Karla Duarte' {karla,duarte} → 매칭 OK.
-// 같은 first name 다른 사람 둘이 있는 경우엔 둘 다 볼 수 있지만, 매니저가 더 구체적인 이름으로 발사하면 한쪽만 매칭됨.
-function _normAssignName(s){
-  return String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '').trim();
-}
-function _nameTokens(s){
-  return String(s||'').toLowerCase()
-    .split(/[\s\-_.,/()]+/)
-    .map(t => t.replace(/[^a-z0-9가-힣]+/g, ''))
-    .filter(t => t.length >= 2);
-}
-function _namesMatch(a, b){
-  if (!a || !b) return false;
-  const na = _normAssignName(a);
-  const nb = _normAssignName(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;                                   // 정규화 완전 일치
-  // 토큰 부분집합 매칭: 짧은 쪽 토큰 셋이 긴 쪽 토큰 셋에 모두 포함되면 매칭
-  const ta = _nameTokens(a);
-  const tb = _nameTokens(b);
-  if (!ta.length || !tb.length) return false;
-  const [shortArr, longArr] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-  const longSet = new Set(longArr);
-  for (const tok of shortArr){ if (!longSet.has(tok)) return false; }
-  return true;
-}
 function isAssignedToMe(t){
-  if (!me || !me.name) return false;
-  // 1) assignedToId 매칭 (정규화 + 토큰 부분집합)
-  if (_namesMatch(t.assignedToId, me.name)) return true;
-  // 2) assignedTo 매칭 (정규화 + 토큰 부분집합)
-  if (t.assignedTo && t.assignedTo !== '*' && _namesMatch(t.assignedTo, me.name)) return true;
-  // 3) '*' (전체) — 본인 매장 task 만
+  if (!me) return false;
+  if (t.assignedToId && t.assignedToId === me.name) return true;
+  if (t.assignedTo && t.assignedTo.toLowerCase() === (me.name||'').toLowerCase()) return true;
+  // 🔧 2026-05-15: '*' (전체) 는 본인 매장 task 만 본인 업무로 잡음.
+  // 매니저는 5 지점 모두 subscribe 하므로 그냥 '*'== true 면 같은 카테고리
+  // task 가 5번 중복 표시 (정육 5번, K-Food 5번 …). 다른 매장 진행 상황은
+  // "매니저 뷰" 탭에서 별도 확인.
   if (t.assignedTo === '*') {
     return !t.branchId || !me.branch || t.branchId === me.branch;
   }
-  // 4) role 매칭
   if (t.assignedToRole && me.role && t.assignedToRole.toLowerCase() === me.role.toLowerCase()) return true;
   return false;
 }
@@ -5453,12 +4318,16 @@ function renderTaskCard(t){
     memo:     { ko:'📝 메모', en:'📝 Note', es:'📝 Nota' },
   };
   let actions = '';
-  // 🔓 5매장 요구 (2026-05-17) — claim-lock 제거. 누가 먼저 시작했든 모두 완료 버튼 노출.
-  //    Antonio Zhao 클레임: 작업자가 클릭 못해 포인트 못 받는다는 문제 해결.
-  if (status === 'completed') {
-    actions = `<span class="btn gray">${labels.done[LANG]} ${fmtTime(t.completedAt)}</span>`;
+  // Claim-lock for assignedTo='*' tasks: once one staff member has
+  // started, only they can complete. Others see a 'taken' badge so
+  // two people don't duplicate work on the same item.
+  const isAllTask = t.assignedTo === '*';
+  const claimedByOther = isAllTask && t.startedBy && t.startedBy !== (me?.name||'') && !t.completedAt;
+  if (status === 'completed') actions = `<span class="btn gray">${labels.done[LANG]} ${fmtTime(t.completedAt)}</span>`;
+  else if (claimedByOther) {
+    actions = `<span class="btn gray" title="다른 직원이 먼저 시작했습니다">🔒 ${escHtml(t.startedBy)} 진행 중</span>`;
     if (isOwner() || isManager(me?.role)){
-      actions += ` <button class="btn" style="background:#7c3aed;color:#fff" onclick="forceCompleteTask('${t.id}','${t.branchId}')" title="평가방에 보고 다시 발송">📤 보고 재발송</button>`;
+      actions += ` <button class="btn" style="background:#0891b2;color:#fff" onclick="forceCompleteTask('${t.id}','${t.branchId}')" title="사진 모달 없이 즉시 강제 완료 + 채팅 보고">⚡ 강제 완료</button>`;
     }
   }
   else if (status === 'in_progress' || (t.startedAt && !t.completedAt)) {
@@ -5468,17 +4337,6 @@ function renderTaskCard(t){
     }
   }
   else actions = `<button class="btn warn" onclick="startTask('${t.id}','${t.branchId}')">${labels.start[LANG]}</button> <button class="btn sec" onclick="openDoneModal('${t.id}','${t.branchId}')">${labels.quick[LANG]}</button>`;
-  // 🔗 외부 앱 연결 — task 에 appLink 가 있으면 클릭으로 해당 앱으로 이동.
-  // renderTaskCard 안에서는 파라미터 t 가 task 객체라서 i18n t() 함수가 가려짐 →
-  // 라벨은 인라인 fallback 으로 처리.
-  if (t.appLink) {
-    const linkLblFallback = LANG==='en' ? '🌡 Open Temp Tracker'
-                          : LANG==='es' ? '🌡 Abrir Temp Tracker'
-                          :               '🌡 온도 관리 앱 열기';
-    const linkLbl = t.appLinkLabel ? pickLang(t.appLinkLabel, linkLblFallback) : linkLblFallback;
-    const linkBtn = `<a href="${escHtml(t.appLink)}" class="btn" style="background:#0369a1;color:#fff;text-decoration:none;font-weight:800;margin-right:6px;display:inline-block">${escHtml(linkLbl)}</a>`;
-    actions = linkBtn + actions;
-  }
   const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
   // 📍 매니저 장소 사진 + 지시 내용 — 직원이 어디 무엇 할지 정확히 보이게
   const hasLocPhotos = t.locationPhotos && t.locationPhotos.length;
@@ -5527,8 +4385,7 @@ function renderTaskCard(t){
       ${pointsBadge}
     </div>
     <div class="task-meta">
-      <!-- 🚫 5매장 요구 — 업무 카드에 데드라인 표시 안 함 (시간 제한 기능 제거) -->
-
+      ${t.deadline?`<span class="deadline">⏰ ${labels.deadline[LANG]} ${t.deadline}${(isManager(me?.role)||isOwner())?`<button onclick="event.stopPropagation();event.preventDefault();quickExtendDeadline('${t.id}','${t.branchId}')" title="${LANG==='en'?'Extend deadline':LANG==='es'?'Extender plazo':'시간 연장'}" style="background:#fff;border:1.5px solid #2563eb;color:#1d4ed8;border-radius:6px;padding:1px 6px;margin-left:4px;font-size:.84em;font-weight:800;cursor:pointer;font-family:inherit">⏰+</button>`:''}</span>`:''}
       ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>`:''}
       ${t.vendor?`<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📦 ${escHtml(t.vendor)}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
@@ -6525,31 +5382,41 @@ async function startTask(id, branchId){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
   const t = TASKS.find(x => x.id === id && x.branchId === branchId);
   if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
-  // 🔓 5매장 요구 (2026-05-17) — claim-lock 제거. 누구든 시작/완료 가능 → 직원 불만 해결.
-  //    여러 명이 같은 업무 동시에 시작해도 OK (Firebase 마지막 update 가 startedBy 차지).
+  // Claim lock — for "전체 (assignedTo='*')" tasks only one staff at a
+  // time. First click wins; later clicks see who's already on it so two
+  // people don't waste effort doing the same task. Specific-assignee
+  // tasks skip the lock (the assignee is supposed to start it).
+  if (t.assignedTo === '*' && t.startedBy && t.startedBy !== me.name && !t.completedAt){
+    alert(`이미 [${t.startedBy}]님이 진행 중입니다. 다른 업무를 골라 주세요.`);
+    return;
+  }
   const path = 'tasks/'+branchId+'/'+todayStr()+'/'+id;
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), { startedAt: Date.now(), startedBy: me.name });
 }
 function openDoneModal(id, branchId){
   CURRENT_TASK = TASKS.find(t => t.id === id && t.branchId === branchId);
   if (!CURRENT_TASK) return;
-  // 🔓 5매장 요구 (2026-05-17) — claim-lock 제거. 누구든 완료 모달 진입 가능.
-  //    "이미 X님이 진행 중" 차단 alert 더 이상 안 뜸 → 직원 불만 해결.
-  DONE_PHOTOS = [];
-  // 🚫 2026-05-19 시간 데드라인 표시 제거 — 모달 헤더도 업무명만.
-  document.getElementById('doneTaskInfo').textContent = '✓ ' + CURRENT_TASK.name;
-  // 🆕 체크리스트 박스 채우기 — 모달 안에서 항목 체크 + 사진 가능 (Antonio Zhao 클레임)
-  const clBox = document.getElementById('doneChecklistBox');
-  if (clBox){
-    const clInline = renderChecklistInline(CURRENT_TASK);
-    if (clInline){
-      clBox.innerHTML = clInline;
-      clBox.style.display = '';
-    } else {
-      clBox.innerHTML = '';
-      clBox.style.display = 'none';
+  // Claim-lock guard for assignedTo='*' tasks — even if a stale UI lets
+  // someone tap the report button, refuse the modal so they don't burn
+  // effort on a task already taken by another teammate.
+  // 2026-05-16: 오너/매니저는 우회 — claim-lock 된 업무를 강제 종료할 수 있어야 함
+  // (직원이 시작만 하고 마치지 못한 채 시프트 끝났을 때 매니저가 마무리).
+  const t2 = CURRENT_TASK;
+  const canOverride = isOwner() || isManager(me?.role);
+  if (t2.assignedTo === '*' && t2.startedBy && me && t2.startedBy !== me.name && !t2.completedAt && !canOverride){
+    alert(`이미 [${t2.startedBy}]님이 진행 중입니다.`);
+    CURRENT_TASK = null;
+    return;
+  }
+  // 오너/매니저가 다른 직원 claim 된 업무 종료하는 경우 — 한 번 더 확인
+  if (t2.assignedTo === '*' && t2.startedBy && me && t2.startedBy !== me.name && !t2.completedAt && canOverride){
+    if (!confirm(`[${t2.startedBy}]님이 진행 중인 업무입니다.\n\n오너/매니저 권한으로 강제 종료 + 평가방 보고 보냅니다.\n계속하시겠습니까?`)){
+      CURRENT_TASK = null;
+      return;
     }
   }
+  DONE_PHOTOS = [];
+  document.getElementById('doneTaskInfo').textContent = '✓ ' + CURRENT_TASK.name + (CURRENT_TASK.deadline ? ' · ⏰ '+CURRENT_TASK.deadline : '');
   document.getElementById('donePhotoField').style.display = ''; // 항상 표시 (필수 사진 3장)
   document.getElementById('donePreviews').innerHTML = '';
   document.getElementById('doneMemo').value = '';
@@ -6597,52 +5464,23 @@ function updateDoneSubmitState(){
   const btn = document.getElementById('doneBtn');
   const cnt = document.getElementById('donePhotoCount');
   const hint = document.getElementById('donePhotoHint');
-  const labelMain = document.getElementById('donePhotoLabelMain');
-  const labelReq = document.getElementById('donePhotoLabelReq');
-  // 🆕 2026-05-22 — task.requirePhoto === false 또는 autoTempDaily 면 사진 미요구.
-  //    온도 task 는 temp.html 에서 이미 장비별 사진/기록 충분, 여기서 또 3장 요구 불필요.
-  const photoExempt = CURRENT_TASK && (CURRENT_TASK.requirePhoto === false || CURRENT_TASK.autoTempDaily === true);
-  const need = photoExempt ? 0 : 3;
+  const need = 3;
   const have = DONE_PHOTOS.length;
-  // i18n 문자열
-  const labels = {
-    main:    { ko:'📷 완료 사진', en:'📷 Completion photos', es:'📷 Fotos de finalización' },
-    reqReq:  { ko:'(최소 3장 필수)', en:'(min 3 required)', es:'(mín 3 requeridas)' },
-    reqOpt:  { ko:'(선택)', en:'(optional)', es:'(opcional)' },
-    chipOpt: { ko:'선택', en:'optional', es:'opcional' },
-    hintOpt: { ko:'📷 사진 선택 (이 업무는 필수 아님)', en:'📷 Photos optional (not required for this task)', es:'📷 Fotos opcionales (no requeridas)' },
-    hintOk:  { ko:'✅ 사진 충분 — 제출 가능', en:'✅ Enough photos — ready to submit', es:'✅ Suficientes fotos — listo' },
-    hintNeed:{ ko:(n,h)=>`⚠️ 사진 ${n}장 더 필요 (현재 ${h}장)`, en:(n,h)=>`⚠️ Need ${n} more photo${n>1?'s':''} (have ${h})`, es:(n,h)=>`⚠️ Faltan ${n} (tiene ${h})` },
-    btnOk:   { ko:'✅ 완료 보고', en:'✅ Submit', es:'✅ Enviar' },
-    btnLow:  { ko:(h,n)=>`✅ 사진 부족 (${h}/${n})`, en:(h,n)=>`✅ Need photos (${h}/${n})`, es:(h,n)=>`✅ Faltan fotos (${h}/${n})` },
-  };
-  const pick = (o) => o[LANG] || o.ko;
-  if (labelMain && labelReq) {
-    labelMain.firstChild && (labelMain.firstChild.nodeType===3) && (labelMain.firstChild.nodeValue = '');
-    // 라벨 전체 다시 빌드 — 안전하게 innerHTML 사용
-    labelMain.innerHTML = pick(labels.main) + ' <span id="donePhotoLabelReq" style="' +
-      (need === 0 ? 'color:#6b7280;font-weight:600' : 'color:#dc2626;font-weight:800') +
-      '">' + pick(need === 0 ? labels.reqOpt : labels.reqReq) + '</span>';
-  }
   if (cnt) {
-    if (need === 0) { cnt.textContent = pick(labels.chipOpt); cnt.style.background = '#e0e7ff'; cnt.style.color = '#3730a3'; }
-    else {
-      cnt.textContent = have + ' / ' + need;
-      if (have >= need) { cnt.style.background = '#dcfce7'; cnt.style.color = '#15803d'; }
-      else { cnt.style.background = '#fef3c7'; cnt.style.color = '#92400e'; }
-    }
+    cnt.textContent = have + ' / ' + need;
+    if (have >= need) { cnt.style.background = '#dcfce7'; cnt.style.color = '#15803d'; }
+    else { cnt.style.background = '#fef3c7'; cnt.style.color = '#92400e'; }
   }
   if (hint) {
-    if (need === 0) { hint.textContent = pick(labels.hintOpt); hint.style.color = '#6b7280'; }
-    else if (have >= need) { hint.textContent = pick(labels.hintOk); hint.style.color = '#15803d'; }
-    else { hint.textContent = pick(labels.hintNeed)(need - have, have); hint.style.color = '#92400e'; }
+    if (have >= need) { hint.textContent = '✅ 사진 충분 — 제출 가능'; hint.style.color = '#15803d'; }
+    else { hint.textContent = '⚠️ 사진 ' + (need - have) + '장 더 필요 (현재 ' + have + '장)'; hint.style.color = '#92400e'; }
   }
   if (btn) {
     if (have >= need) {
-      btn.disabled = false; btn.textContent = pick(labels.btnOk);
+      btn.disabled = false; btn.textContent = '✅ 완료 보고';
       btn.style.opacity = ''; btn.style.cursor = '';
     } else {
-      btn.disabled = true; btn.textContent = pick(labels.btnLow)(have, need);
+      btn.disabled = true; btn.textContent = '✅ 사진 부족 (' + have + '/' + need + ')';
       btn.style.opacity = '.5'; btn.style.cursor = 'not-allowed';
     }
   }
@@ -6804,56 +5642,15 @@ window.forceCompleteTask = async function(taskId, branchId){
   const t = (typeof TASKS !== 'undefined' ? TASKS : []).find(x => x.id === taskId && x.branchId === branchId);
   if (!t){ alert('❌ 업무 없음 — id=' + taskId + ' / branch=' + branchId); return; }
   if (!isOwner() && !isManager(me?.role)){ alert('❌ 오너/매니저 권한 필요 — 현재 role: ' + (me?.role||'?')); return; }
-  const alreadyDone = !!t.completedAt;
-  // 🆕 2026-05-19 — 30분 쿨다운. Luis Perez 가 같은 해산물 보고를 5번 연속 강제
-  // 완료해 평가방 도배된 사례 (1개 task 3pt 였지만 채팅에 5번 보임). 같은 업무
-  // 보고 재발사는 30분에 1번만 허용. 오너는 예외 (긴급 보고 재발사 가능).
-  const COOLDOWN_MIN = 30;
-  if (alreadyDone && t.lastReportAt && !isOwner()) {
-    const elapsedMin = Math.floor((Date.now() - t.lastReportAt) / 60000);
-    if (elapsedMin < COOLDOWN_MIN) {
-      const remainMin = COOLDOWN_MIN - elapsedMin;
-      const lastTimeStr = new Date(t.lastReportAt).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
-      const _msg = LANG==='en'
-        ? '⏳ Report resend cooldown active\n\n' +
-          'Same task report can fire only once every ' + COOLDOWN_MIN + ' minutes.\n' +
-          '(Prevents chat-room spam)\n\n' +
-          'Last report: ' + lastTimeStr + '\n' +
-          'Time remaining: ' + remainMin + ' min'
-        : LANG==='es'
-        ? '⏳ Tiempo de espera de reenvío activo\n\n' +
-          'El mismo reporte de tarea solo puede enviarse una vez cada ' + COOLDOWN_MIN + ' minutos.\n' +
-          '(Previene spam en el chat)\n\n' +
-          'Último reporte: ' + lastTimeStr + '\n' +
-          'Tiempo restante: ' + remainMin + ' min'
-        : '⏳ 보고 재발송 쿨다운 중\n\n' +
-          '같은 업무 보고는 ' + COOLDOWN_MIN + '분에 1회만 발사 가능합니다.\n' +
-          '(채팅방 도배 방지 — 5/19 Luis Perez 사례 후 도입)\n\n' +
-          '이전 보고: ' + lastTimeStr + '\n' +
-          '남은 시간: ' + remainMin + '분';
-      alert(_msg);
-      return;
-    }
-  }
-  const defaultCredit = t.completedBy || t.startedBy || me.name;
-  // 담당자 이름 직접 입력 가능 — 작업한 직원이 task.completedBy 와 다를 수 있음
-  // (예: 정육 일일 보고 각 항목을 여러 직원이 분담)
-  const credit = prompt('📝 채팅 발송 담당자 이름 (수정 가능):', defaultCredit);
-  if (credit === null) return;   // 사용자 취소
-  if (!credit.trim()){ alert('담당자 이름 비울 수 없음'); return; }
-  const reportCountNow = (t.reportCount || 0);
-  const confirmMsg = alreadyDone
-    ? `📤 보고 재발송\n\n업무: ${t.name}\n매장: ${t.branchId}\n담당: ${credit}\n\n이미 완료된 업무 — 평가방에만 보고 다시 보냅니다.\n이전 발사 횟수: ${reportCountNow}회\n\n진행하시겠습니까?`
-    : `⚡ 강제 완료\n\n업무: ${t.name}\n매장: ${t.branchId}\n크레딧: ${credit}${credit !== me.name ? ' (원래 진행자)' : ''}\n\n사진은 이미 첨부된 것 그대로 사용.\n평가방에 보고도 자동 발송.\n\n진행하시겠습니까?`;
-  if (!confirm(confirmMsg)) return;
+  if (t.completedAt){ alert('이미 완료된 업무'); return; }
+  const credit = t.startedBy || me.name;
+  if (!confirm(`⚡ 강제 완료\n\n업무: ${t.name}\n매장: ${t.branchId}\n크레딧: ${credit}${credit !== me.name ? ' (원래 진행자)' : ''}\n\n사진은 이미 첨부된 것 그대로 사용.\n평가방에 보고도 자동 발송.\n\n진행하시겠습니까?`)) return;
   try {
-    if (!alreadyDone){
-      const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
-      const upd = { completedAt: Date.now(), completedBy: credit, forceCompletedBy: me.name, forceCompletedAt: Date.now() };
-      if (!t.startedAt) upd.startedAt = Date.now();
-      await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
-      Object.assign(t, upd);
-    }
+    const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
+    const upd = { completedAt: Date.now(), completedBy: credit, forceCompletedBy: me.name, forceCompletedAt: Date.now() };
+    if (!t.startedAt) upd.startedAt = Date.now();
+    await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+    Object.assign(t, upd);
     // 강제 완료는 noAutoChat 플래그 무시 — 매니저가 명시적으로 보고 발송 의도.
     // 2026-05-16: 정육 일일 보고가 noAutoChat:true 로 막혀 있어 채팅 안 가던 버그.
     const allTaskPhotos = [...(t.photos||[])];
@@ -6865,28 +5662,14 @@ window.forceCompleteTask = async function(taskId, branchId){
         })
       : [];
     const chatPhotos = Array.from(new Set([...allTaskPhotos, ...allClPhotos]));
-    // 🆕 2026-05-23 — 강제 종료 메모 자동 첨부 제거. 평가방에 노이즈 됨 ("매니저가
-    // ... 강제 종료" 라인이 보고마다 따라붙어 거슬렸음). 누가 강제 처리했는지는
-    // task.forceCompletedBy 필드에 그대로 저장되니 audit 가능, 평가방 노출만 끈다.
+    const memoText = `(${me.name} 매니저가 ${credit} 의 업무를 강제 종료)`;
     let chatOk = false;
     try {
-      await postCompletionToChat(t, chatPhotos, null, { senderOverride: credit, senderBranch: t.branchId });
+      await postCompletionToChat(t, chatPhotos, memoText, { senderOverride: credit, senderBranch: t.branchId });
       chatOk = true;
     }
     catch(e){
       console.error('[force→chat] failed', e);
-    }
-    // 🆕 쿨다운 + 카운트 기록 — 채팅 발송 성공한 경우만. 다음 호출 시 30분 cooldown 적용.
-    if (chatOk) {
-      try {
-        const updReport = {
-          lastReportAt: Date.now(),
-          lastReportBy: me.name,
-          reportCount: (t.reportCount || 0) + 1
-        };
-        await window.__fb.update(window.__fb.ref(window.__fb.db, 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id), updReport);
-        Object.assign(t, updReport);
-      } catch(e) { console.warn('[force→cooldown record] failed', e); }
     }
     alert(chatOk ? '✅ 완료 처리 + 평가방 보고 발송 완료 (' + credit + ' 이름으로)' : '⚠️ 완료 처리됨 / 채팅 발송 실패 — F12 콘솔 확인');
     if (typeof render === 'function') render();
@@ -6898,13 +5681,9 @@ window.forceCompleteTask = async function(taskId, branchId){
 };
 async function finishTask(){
   if (!CURRENT_TASK) return;
-  // 🆕 2026-05-22 — requirePhoto:false 또는 autoTempDaily task 는 사진 미요구.
-  const photoExempt = (CURRENT_TASK.requirePhoto === false) || (CURRENT_TASK.autoTempDaily === true);
-  if (!photoExempt && DONE_PHOTOS.length < 3) {
-    const msg = LANG==='en' ? '📷 Need at least 3 photos to submit.\nNow: '
-              : LANG==='es' ? '📷 Se requieren al menos 3 fotos.\nAhora: '
-              :               '📷 사진 최소 3장 첨부해야 보고가 인정됩니다.\n현재: ';
-    alert(msg + DONE_PHOTOS.length + ' / 3');
+  // 사진 3장 이상 강제 (인정 안 됨)
+  if (DONE_PHOTOS.length < 3) {
+    alert('📷 사진 최소 3장 첨부해야 보고가 인정됩니다.\n현재: ' + DONE_PHOTOS.length + ' / 3');
     return;
   }
   const btn = document.getElementById('doneBtn');
@@ -6960,21 +5739,6 @@ async function finishTask(){
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
     const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: memoText, memoTr: memoTr };
     if (!CURRENT_TASK.startedAt) upd.startedAt = Date.now();
-    // 🆕 2026-05-20 — 1시간 이내 완료는 무조건 1점 다운그레이드.
-    // 매니저가 3점 남발해도 실제 작업 시간이 짧으면 점수 자동 조정.
-    // (이전 시작 시각 기준 — startedAt 없으면 즉시 startedAt 만들어 위에 저장됨)
-    const _startedAt = CURRENT_TASK.startedAt || upd.startedAt || Date.now();
-    const _durationMin = Math.floor((Date.now() - _startedAt) / 60000);
-    const _origPoints = (typeof CURRENT_TASK.points === 'number' && CURRENT_TASK.points >= 1 && CURRENT_TASK.points <= 5) ? CURRENT_TASK.points : 1;
-    if (_durationMin < 60 && _origPoints > 1) {
-      upd.points = 1;
-      upd.originalPoints = _origPoints;
-      upd.pointsAutoAdjusted = '1시간 이내 완료 → 1점 자동 조정';
-      upd.workDurationMin = _durationMin;
-      console.info('[points-auto-adjust] task=' + CURRENT_TASK.id + ' duration=' + _durationMin + 'min · ' + _origPoints + 'pt → 1pt');
-    } else {
-      upd.workDurationMin = _durationMin;   // 통계용 (1시간 이상이면 그대로 점수 유지)
-    }
     await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
     // Cross-post the completion into the matching chat room. Failures
     // here are non-fatal — the task itself was already saved above.
@@ -7028,7 +5792,6 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     'Sushi':      'sushi',
     'K-Food':     'kfood_eval',
     'Produce':    'produce',
-    '온도 체크':  'temp_eval',
   };
   const targetRoom = ROOM_BY_CATEGORY[task.category] || 'grocery_eval';
   // Look up branch label for a friendly header line
@@ -7039,51 +5802,27 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       if (b) branchLbl = b[LANG] || b.ko || task.branchId;
     }
   } catch(_){}
-  // 🆕 2026-05-23 — 다국어 메시지 빌더. viewer LANG 에 맞춰 채팅에 표시되도록
-  // ko/en/es 세 가지 텍스트를 모두 빌드해 textTr 에 담는다. text 필드는 기존 호환을
-  // 위해 sender LANG (또는 ko fallback) 으로 유지.
-  const COMPLETION_I18N = {
-    ko: {
-      doneHead: '✅ 업무 완료',
-      branch: '🏢', assignee: '담당',
-      place: '📍 장소', instruct: '📝 지시',
-      doneList: '📋 완료 작업', undoneList: '⏸ 미완료 항목',
-      addReport: '📝 추가 보고',
-      noName: '(이름 없음)',
-      forceMemo: (mgr, who) => `(${mgr} 매니저가 ${who} 의 업무를 강제 종료)`,
-    },
-    en: {
-      doneHead: '✅ Task complete',
-      branch: '🏢', assignee: 'Assignee',
-      place: '📍 Place', instruct: '📝 Instructions',
-      doneList: '📋 Completed', undoneList: '⏸ Pending items',
-      addReport: '📝 Additional report',
-      noName: '(no name)',
-      forceMemo: (mgr, who) => `(Manager ${mgr} force-ended ${who}'s task)`,
-    },
-    es: {
-      doneHead: '✅ Tarea completa',
-      branch: '🏢', assignee: 'Encargado',
-      place: '📍 Lugar', instruct: '📝 Instrucciones',
-      doneList: '📋 Completadas', undoneList: '⏸ Pendientes',
-      addReport: '📝 Reporte adicional',
-      noName: '(sin nombre)',
-      forceMemo: (mgr, who) => `(El gerente ${mgr} terminó la tarea de ${who})`,
-    },
-  };
-  // memoText 가 한국어 force-end 패턴이면 매니저/대상자 추출해 lang 별로 재포맷.
-  // 외부에서 들어온 자유 메모는 그대로 통과.
-  function _parseForceMemo(txt){
-    if (!txt) return null;
-    const re = /^\((.+?)\s*매니저가\s*(.+?)\s*의 업무를 강제 종료\)\s*$/;
-    const m = String(txt).match(re);
-    return m ? { mgr: m[1].trim(), who: m[2].trim() } : null;
-  }
-  const _forceMemoParts = _parseForceMemo(memoText);
-  // 체크리스트 항목 사전 가공 — 사진 개수/엔트리/메모는 언어 무관이므로 1회만 계산.
+  const taskName = task.name || '(이름 없음)';
+  const lines = [
+    `✅ 업무 완료 — ${taskName}`,
+    `🏢 ${branchLbl} · 담당: ${senderName}`,
+  ];
+  if (task.place) lines.push(`📍 장소: ${task.place}`);
+  if (task.deadline) lines.push(`⏰ 데드라인: ${task.deadline}`);
+  if (task.locationNote) lines.push(`📝 지시: ${task.locationNote}`);
+  // 🐂🐖🐔🥬 체크리스트 항목별 entries / memo / 사진 (작업한 종류·수량) 포함.
+  // 메모만 보내면 작업한 품목·수량이 빠져 평가방에서 진짜 중요한 정보가 사라짐.
+  // 2026-05-16: "작업 내용 다 안 나옴" 사건 후 보강 —
+  //   · 체크된 항목은 무조건 표시 (memo 비어도 ✓ 만이라도)
+  //   · 항목별 사진 개수 같이 표시 (📷×N)
+  //   · 미완료 항목은 따로 ⏸ 섹션으로 분리 → 작업 여부 한눈에 파악
   const cl = Array.isArray(task.checklist) ? task.checklist : [];
-  const __clPrep = cl.map(item => {
-    if (!item) return null;
+  const doneBlocks = [];
+  const undoneBlocks = [];
+  cl.forEach(item => {
+    if (!item) return;
+    const nm = item.name || '';
+    // 항목별 사진 개수 — entries 의 photos 또는 item.photos / item.photo
     let photoCnt = 0;
     if (Array.isArray(item.photos)) photoCnt += item.photos.length;
     else if (item.photo) photoCnt += 1;
@@ -7093,102 +5832,46 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       if (Array.isArray(e.photos)) photoCnt += e.photos.length;
       else if (e.photo) photoCnt += 1;
     });
-    const memoLines = entries.map(e => String(e.text||'').trim()).filter(Boolean);
-    if (item.memo) memoLines.push(String(item.memo).trim());
-    return { item, photoCnt, memoLines };
-  }).filter(Boolean);
-  // 언어별 텍스트 빌더 — 입력 lang 으로 모든 라벨/이름을 재해석.
-  function _buildLines(lang){
-    const T = COMPLETION_I18N[lang] || COMPLETION_I18N.ko;
-    // 지점 라벨 — 언어별 재조회
-    let bLbl = task.branchId || '';
-    try {
-      if (typeof BRANCHES !== 'undefined') {
-        const b = BRANCHES.find(x => x.id === task.branchId);
-        if (b) bLbl = b[lang] || b.ko || task.branchId;
-      }
-    } catch(_){}
-    // 업무명 — nameTr 가 있으면 lang 별로
-    const nmRaw = (task.nameTr && (task.nameTr[lang] || task.nameTr.ko)) || task.name || T.noName;
-    const out = [
-      `${T.doneHead} — ${nmRaw}`,
-      `${T.branch} ${bLbl} · ${T.assignee}: ${senderName}`,
-    ];
-    if (task.place) out.push(`${T.place}: ${task.place}`);
-    if (task.locationNote) out.push(`${T.instruct}: ${task.locationNote}`);
-    const done = [], undone = [];
-    __clPrep.forEach(({ item, photoCnt, memoLines }) => {
-      const nm = (item.nameTr && (item.nameTr[lang] || item.nameTr.ko)) || item.name || '';
-      const photoSfx = photoCnt > 0 ? ' 📷×' + photoCnt : '';
-      if (item.done) {
-        if (memoLines.length) {
-          done.push('· ' + nm + ': ' + memoLines[0] + photoSfx);
-          for (let i = 1; i < memoLines.length; i++) done.push('   · ' + memoLines[i]);
-        } else {
-          done.push('· ' + nm + ' ✓' + photoSfx);
-        }
+    const photoSfx = photoCnt > 0 ? ' 📷×' + photoCnt : '';
+    // 텍스트 정보 수집 — entries[].text + item.memo
+    const lines2 = entries.map(e => String(e.text||'').trim()).filter(Boolean);
+    if (item.memo) lines2.push(String(item.memo).trim());
+    if (item.done) {
+      if (lines2.length) {
+        // 첫 줄은 항목명 + 첫 메모, 추가 entries 는 들여쓰기
+        doneBlocks.push('· ' + nm + ': ' + lines2[0] + photoSfx);
+        for (let i = 1; i < lines2.length; i++) doneBlocks.push('   · ' + lines2[i]);
       } else {
-        if (memoLines.length || photoCnt > 0) {
-          undone.push('· ⏸ ' + nm + (memoLines.length ? ': ' + memoLines[0] : '') + photoSfx);
-        } else {
-          undone.push('· ⏸ ' + nm);
-        }
+        doneBlocks.push('· ' + nm + ' ✓' + photoSfx);
       }
-    });
-    if (done.length) {
-      out.push('');
-      out.push(`${T.doneList} (` + done.filter(l => !l.startsWith('   ')).length + '/' + __clPrep.length + '):');
-      done.forEach(l => out.push(l));
-    }
-    if (undone.length) {
-      out.push('');
-      out.push(`${T.undoneList}:`);
-      undone.forEach(l => out.push(l));
-    }
-    if (memoText) {
-      out.push('');
-      const memoForLang = _forceMemoParts
-        ? T.forceMemo(_forceMemoParts.mgr, _forceMemoParts.who)
-        : memoText;
-      out.push(`${T.addReport}: ${memoForLang}`);
-    }
-    return out;
-  }
-  const taskName = task.name || '(이름 없음)';
-  const lines = _buildLines(LANG || 'ko');
-  // 🌡 온도 체크 task — 오늘 매장 온도 측정 결과 자동 요약 첨부 (autoTempDaily).
-  // temp/{BRANCH}/equipment + temp/{BRANCH}/checks/{today} 를 읽어와서
-  // 측정/위험/미측정 요약을 메시지에 붙임.
-  let __tempSummaryLines = null;
-  if (task.autoTempDaily) {
-    try {
-      __tempSummaryLines = await __buildTempSummaryLines(task.branchId);
-      if (__tempSummaryLines && __tempSummaryLines.length) {
-        lines.push('');
-        __tempSummaryLines.forEach(l => lines.push(l));
+    } else {
+      // 체크 안 됐어도 메모/사진 있으면 "진행 중" 으로 표시 (정보 보존)
+      if (lines2.length || photoCnt > 0) {
+        undoneBlocks.push('· ⏸ ' + nm + (lines2.length ? ': ' + lines2[0] : '') + photoSfx);
+      } else {
+        undoneBlocks.push('· ⏸ ' + nm);
       }
-    } catch(e) { console.warn('[postCompletionToChat] temp summary fetch failed', e); }
-  }
-  const text = lines.join('\n');
-  // 🆕 2026-05-23 — 3개 언어 텍스트를 모두 빌드해 textTr 에 저장.
-  // chat.html 에서 viewer LANG 에 맞는 것을 우선 사용. 온도 요약 라인은
-  // 언어 무관 표 형식이라 그대로 모든 lang 에 같이 붙임.
-  const textTr = {};
-  ['ko','en','es'].forEach(lng => {
-    const ls = _buildLines(lng);
-    if (__tempSummaryLines && __tempSummaryLines.length) {
-      ls.push('');
-      __tempSummaryLines.forEach(l => ls.push(l));
     }
-    textTr[lng] = ls.join('\n');
   });
+  if (doneBlocks.length) {
+    lines.push('');
+    lines.push('📋 완료 작업 (' + doneBlocks.filter(l => !l.startsWith('   ')).length + '/' + cl.length + '):');
+    doneBlocks.forEach(l => lines.push(l));
+  }
+  if (undoneBlocks.length) {
+    lines.push('');
+    lines.push('⏸ 미완료 항목:');
+    undoneBlocks.forEach(l => lines.push(l));
+  }
+  if (memoText) { lines.push(''); lines.push(`📝 추가 보고: ${memoText}`); }
+  const text = lines.join('\n');
   const msg = {
     sender: senderName,
     senderBranch,
     senderRole: opts.senderRole || me.role || '',
     isManager: opts.senderOverride ? false : !!me.isManager,
     color: opts.senderColor || me.color || '#1a5c3a',
-    text, textTr, ts,
+    text, ts,
     photos: Array.isArray(photoUrls) ? photoUrls.slice(0, 20) : [],
     meta: {
       kind: 'task_complete',
@@ -7202,37 +5885,17 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
       ...(opts.senderOverride ? { forceCompletedBy: me.name } : {}),
     }
   };
-  // 📤 2026-05-16: km-chat-queue 로 통일 — RTDB 직접 fetch 대신 큐를 거침.
-  // 큐는 IndexedDB 에 메시지 영구 보관 → 발송 실패 (토큰 만료 / 네트워크) 시
-  // 다음 페이지 로드 / 5분마다 / 토큰 갱신 시 자동 재시도. silent fail 불가능.
-  if (window.kmChatQueue && typeof window.kmChatQueue.send === 'function'){
-    const result = await window.kmChatQueue.send({
-      room: targetRoom,
-      msgId,
-      msg,
-      roomPatch: { lastMsg: '✅ ' + ((task.nameTr && (task.nameTr[LANG] || task.nameTr.ko)) || taskName).slice(0, 30), lastTs: ts, lastSender: senderName }
-    });
-    if (!result.ok){
-      // 즉시 발송 실패 — 큐에 저장됨. 우상단 뱃지에 표시되며 자동 재시도.
-      // throw 안 하고 경고만 — task 자체는 완료 처리, 채팅은 자동 복구.
-      console.warn('[postCompletionToChat] queued for retry —', result.error);
-    }
-    // 🌡 온도 task 완료 → 일일 매니저 보고 (managers) 방에도 별도 발송.
-    if (task.autoTempDaily && __tempSummaryLines && __tempSummaryLines.length) {
-      try { await __postTempSummaryToManagers(task, branchLbl, senderName, ts, __tempSummaryLines); }
-      catch(e) { console.warn('[temp→managers] post failed', e); }
-    }
-    return;
-  }
-  // Fallback — km-chat-queue 미로드 시 (옛 클라이언트). forceRefresh + status 체크.
+  // Auth token (chat write rules typically need auth!=null)
+  // 2026-05-16: 401 사건 — 1시간 작업 후 토큰 만료. forceRefresh 로 새 토큰 강제 발급.
   let authQ = '';
   try {
     const u = window.__fb?.auth?.currentUser;
     if (u) {
-      const tok = await u.getIdToken(true);
+      const tok = await u.getIdToken(true);   // ← forceRefresh = true
       if (tok) authQ = '?auth=' + encodeURIComponent(tok);
     }
   } catch(e){ console.warn('[postCompletionToChat] token refresh failed', e); }
+  // Write the message into the routed room (정육 → meat_evalution_room, etc.)
   const r1 = await fetch(`${FB_DB_URL}/chat/messages/${targetRoom}/${msgId}.json${authQ}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -7242,126 +5905,11 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
     const errText = await r1.text().catch(()=>'');
     throw new Error('채팅 메시지 저장 실패 HTTP ' + r1.status + ' : ' + errText.slice(0,120));
   }
+  // Bump the room preview so other branches see an unread badge
   fetch(`${FB_DB_URL}/chat/rooms/${targetRoom}.json${authQ}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lastMsg: '✅ ' + taskName.slice(0, 30), lastTs: ts, lastSender: senderName })
-  }).catch(()=>{});
-  // 🌡 fallback path 에서도 온도 task 면 매니저 룸 발송
-  if (task.autoTempDaily && __tempSummaryLines && __tempSummaryLines.length) {
-    try { await __postTempSummaryToManagers(task, branchLbl, senderName, ts, __tempSummaryLines); }
-    catch(e) { console.warn('[temp→managers] post failed', e); }
-  }
-}
-
-// 🌡 헬퍼: temp/{branch}/equipment + checks/{today} 읽어와서 사람 읽기 좋은 요약 라인 배열로 빌드.
-// daily-report.html 의 loadTempData() 와 같은 데이터 셰이프 사용.
-async function __buildTempSummaryLines(branchId){
-  if (!branchId) return null;
-  const today = todayStr();
-  let aq = '';
-  try {
-    const u = window.__fb?.auth?.currentUser;
-    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
-  } catch(_){}
-  const eqUrl = `${FB_DB_URL}/temp/${encodeURIComponent(branchId)}/equipment.json` + aq;
-  const chUrl = `${FB_DB_URL}/temp/${encodeURIComponent(branchId)}/checks/${today}.json` + aq;
-  const [eqR, chR] = await Promise.all([
-    fetch(eqUrl, { cache:'no-store' }),
-    fetch(chUrl, { cache:'no-store' }),
-  ]);
-  if (!eqR.ok) return null;
-  const eqObj = (await eqR.json()) || {};
-  const chObj = chR.ok ? ((await chR.json()) || {}) : {};
-  const eqEntries = Object.entries(eqObj).map(([id, eq]) => Object.assign({ id }, eq));
-  if (!eqEntries.length) return null;
-  // 장비별 최신 측정값 (해당 매장 오늘 checks 객체 안에서 eqId 매칭)
-  const latestByEq = {};
-  Object.values(chObj).forEach(c => {
-    if (!c || !c.eqId) return;
-    const cur = latestByEq[c.eqId];
-    if (!cur || (c.ts||0) > (cur.ts||0)) latestByEq[c.eqId] = c;
-  });
-  let checked = 0, normal = 0, warn = 0, danger = 0;
-  const issues = [];
-  eqEntries.forEach(eq => {
-    const last = latestByEq[eq.id];
-    if (!last) return;
-    checked++;
-    if (last.status === 'danger') { danger++; issues.push({ eq, last }); }
-    else if (last.status === 'warn') { warn++; issues.push({ eq, last }); }
-    else normal++;
-  });
-  const lines = [];
-  lines.push(`🌡 온도 체크 요약 (${checked}/${eqEntries.length} 측정 · 정상 ${normal} · ⚠️ ${warn} · 🚨 ${danger})`);
-  if (issues.length){
-    issues.slice(0, 10).forEach(i => {
-      const icon = i.last.status === 'danger' ? '🚨' : '⚠️';
-      const range = (i.eq.min != null && i.eq.max != null) ? ` (목표 ${i.eq.min}~${i.eq.max}°F)` : '';
-      const note = i.last.note ? ` · ${i.last.note}` : '';
-      lines.push(`   ${icon} ${i.eq.name || i.eq.qr || '?'} = ${i.last.temp}°F${range}${note}`);
-    });
-    if (issues.length > 10) lines.push(`   …외 ${issues.length - 10}건`);
-  } else if (checked === eqEntries.length) {
-    lines.push('   ✅ 모든 장비 정상 범위');
-  } else {
-    lines.push(`   ⏳ ${eqEntries.length - checked}개 장비 미측정`);
-  }
-  return lines;
-}
-
-// 🌡 헬퍼: 온도 task 완료 시 일일 매니저 보고 (managers) 방에 별도 메시지 발송.
-// kmChatQueue 우선, 미로드 시 REST fallback.
-// 🛡️ 2026-05-25 전무님 지시: 0/N 측정 (미측정) 보고는 매니저 룸에 발송하지 않음.
-// 직원이 temp.html 에서 실제 측정 후 "발송" 버튼 누르면 그때만 보고 전송.
-async function __postTempSummaryToManagers(task, branchLbl, senderName, baseTs, tempLines){
-  // 미측정 여부 체크 — 첫 줄에 "0/N 측정" 패턴 있으면 발송 차단
-  const firstLine = (tempLines && tempLines[0]) || '';
-  if (/\b0\/\d+\s*측정\b/.test(firstLine)) {
-    console.info('[temp→managers] skip — 0개 측정 (자동 발송 차단)');
-    return;
-  }
-  const ts = baseTs + 1; // 매인 메시지와 분리되도록 +1ms
-  const msgId = 'm' + ts + Math.floor(Math.random()*900);
-  const today = todayStr();
-  const text = [
-    `🌡 일일 온도 보고 — ${branchLbl}`,
-    `📅 ${today} · 담당: ${senderName}`,
-    '',
-    ...tempLines,
-    '',
-    `📌 출처: ${task.name || '온도 체크'} (자동 발송)`,
-  ].join('\n');
-  const msg = {
-    sender: senderName,
-    senderBranch: task.branchId || (me && me.branch) || '',
-    senderRole: (me && me.role) || 'STAFF',
-    isManager: !!(me && me.isManager),
-    color: (me && me.color) || '#0e7490',
-    text, ts,
-    photos: [],
-    meta: { kind:'temp_daily_summary', taskId: task.id, branch: task.branchId, completedBy: senderName, completedAt: ts }
-  };
-  if (window.kmChatQueue && typeof window.kmChatQueue.send === 'function'){
-    return window.kmChatQueue.send({
-      room: 'managers',
-      msgId,
-      msg,
-      roomPatch: { lastMsg: '🌡 일일 온도 보고 — ' + branchLbl, lastTs: ts, lastSender: senderName }
-    });
-  }
-  // Fallback
-  let aq = '';
-  try {
-    const u = window.__fb?.auth?.currentUser;
-    if (u) { const tok = await u.getIdToken(true); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
-  } catch(_){}
-  await fetch(`${FB_DB_URL}/chat/messages/managers/${msgId}.json${aq}`, {
-    method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
-  });
-  fetch(`${FB_DB_URL}/chat/rooms/managers.json${aq}`, {
-    method:'PATCH', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ lastMsg: '🌡 일일 온도 보고 — ' + branchLbl, lastTs: ts, lastSender: senderName })
   }).catch(()=>{});
 }
 
@@ -7379,46 +5927,16 @@ function populateMgrFilters(){
     if (t.assignedTo && t.assignedTo !== '*') persons.add(t.assignedTo);
     if (t.category) cats.add(t.category);
   });
-  // 매장 schedules 직원도 포함 — task 없는 매니저(Kendell, Antonio, Choi 등)도 필터 선택 가능
-  // (2026-05-17 fix: 이전엔 task assignee 만 표시 → 매니저급 누락)
-  const branchEmps = window.__ASSIGNEE_FILTER_EMPLOYEES || [];
-  branchEmps.forEach(nm => { if (nm) persons.add(nm); });
   const pSel = document.getElementById('mgrPersonFilter');
   if (pSel) {
     const cur = pSel.value;
     pSel.innerHTML = `<option value="">${t('filterPersonAll')}</option>` + Array.from(persons).sort().map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
     if (cur && Array.from(persons).includes(cur)) pSel.value = cur;
   }
-  // 매장 직원 캐시 — 매장 바뀔 때마다 갱신 (fire-and-forget)
-  if (!window.__ASSIGNEE_FILTER_LOADING) {
-    window.__ASSIGNEE_FILTER_LOADING = true;
-    const branch = (typeof MGR_BRANCH === 'string' && MGR_BRANCH) || (me && me.branch) || '';
-    if (branch) {
-      const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-      fetch(FB + '/schedules/' + branch + '/employees.json?cb=' + Date.now(), { cache:'no-store' })
-        .then(function(r){ return r.json(); })
-        .then(function(d){
-          if (!d) { window.__ASSIGNEE_FILTER_LOADING = false; return; }
-          const arr = Array.isArray(d) ? d : Object.values(d);
-          const names = arr.map(function(e){ return e && e.name; }).filter(Boolean);
-          if (JSON.stringify(names) !== JSON.stringify(window.__ASSIGNEE_FILTER_EMPLOYEES || [])) {
-            window.__ASSIGNEE_FILTER_EMPLOYEES = names;
-            window.__ASSIGNEE_FILTER_LOADING = false;
-            populateMgrFilters(); // 새 직원 반영해 다시 그리기
-          } else {
-            window.__ASSIGNEE_FILTER_LOADING = false;
-          }
-        })
-        .catch(function(){ window.__ASSIGNEE_FILTER_LOADING = false; });
-    } else {
-      window.__ASSIGNEE_FILTER_LOADING = false;
-    }
-  }
   const cSel = document.getElementById('mgrCatFilter');
   if (cSel) {
     const cur = cSel.value;
-    // value 는 원본 카테고리(매칭용), label 은 현재 언어로 localizeCat
-    cSel.innerHTML = `<option value="">${t('filterCatAll')}</option>` + Array.from(cats).sort().map(c => `<option value="${escHtml(c)}">${escHtml(typeof localizeCat==='function'?localizeCat(c):c)}</option>`).join('');
+    cSel.innerHTML = `<option value="">${t('filterCatAll')}</option>` + Array.from(cats).sort().map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
     if (cur && Array.from(cats).includes(cur)) cSel.value = cur;
   }
 }
@@ -7531,11 +6049,6 @@ function renderMgr(){
   let rows = TASKS.slice();
   if (activeBranch) rows = rows.filter(t => t.branchId === activeBranch);
   rows.forEach(t => t._status = computeStatus(t));
-  // 🆕 2026-05-20 — 도면 히트맵 갱신 (필터링 전 매장 내 전체 task 기준).
-  //    필터를 따라가지 않고 그 매장의 전체 진행 상황을 한눈에 보여줌.
-  try { updateMgrFloorPlan(activeBranch, rows); } catch(e) { console.warn('[fp] update fail', e); }
-  // 🆕 2026-05-21 — 캐셔/보바 시프트 타임라인 갱신
-  try { renderShiftSchedule(activeBranch, rows); } catch(e) { console.warn('[shift] render fail', e); }
   if (MGR_FILTER !== 'all') rows = rows.filter(t => t._status === MGR_FILTER);
   if (MGR_PERSON) rows = rows.filter(t => t.assignedTo === MGR_PERSON);
   if (MGR_CAT)    rows = rows.filter(t => t.category === MGR_CAT);
@@ -7560,22 +6073,8 @@ function renderMgr(){
     if (t.name && !t.nameTr) backfillTranslate(t);
     const dispName = pickLang(t.nameTr, t.name);
     const dispMemo = t.memo ? pickLang(t.memoTr, t.memo) : '';
-    // 🔍 실제 수행자 표시 — 완료된 업무는 completedBy, 진행 중이면 startedBy, 그 외 assignee
-    const assignedTo = t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : '전체');
-    const actualDoer = t.completedBy || t.startedBy || null;
-    const showDoer = !!(actualDoer && actualDoer !== assignedTo);
-    const who = actualDoer || assignedTo;
+    const who = t.assignedTo || (t.assignedToRole ? '['+t.assignedToRole+']' : '전체');
     const av = `<span class="av" style="background:${colorFor(who)}">${initials(who)}</span>`;
-    // 상태별 라벨 — 누가 했는지 명확히
-    const doerLabel = t.completedAt
-      ? `<span style="font-size:.85em;font-weight:700">${escHtml(who)}</span><span style="font-size:.7em;color:#15803d;font-weight:700;margin-left:4px">✅ ${LANG==='en'?'done':LANG==='es'?'hecho':'완료'}</span>`
-      : t.startedBy
-        ? `<span style="font-size:.85em;font-weight:600">${escHtml(who)}</span><span style="font-size:.7em;color:#f59e0b;font-weight:700;margin-left:4px">⏳ ${LANG==='en'?'doing':LANG==='es'?'haciendo':'진행'}</span>`
-        : `<span style="font-size:.85em">${escHtml(who)}</span>`;
-    // assigned vs actual 다르면 "→" 표시로 누구한테 지시 → 실제로 누가 했는지 둘 다 보임
-    const assigneeSub = showDoer
-      ? `<div style="font-size:.66em;color:#9ca3af;margin-top:2px">← ${escHtml(assignedTo)} ${LANG==='en'?'assigned':LANG==='es'?'asignado':'지시'}</div>`
-      : '';
     const branch = isOwner() && t.branchId ? ` <span style="font-size:.72em;color:#9ca3af">(${escHtml(localizeBranch(t.branchId))})</span>` : '';
     const stLabel = stLabels[t._status][LANG];
     const memo = dispMemo ? `<div style="font-size:.74em;color:#6b7280;margin-top:3px">📝 ${escHtml(dispMemo)}</div>` : '';
@@ -7607,15 +6106,14 @@ function renderMgr(){
     // Per-item details (collapsed by default; toggled by clicking the row)
     const detailRows = clTotal
       ? `<tr class="cl-detail" data-task="${t.id}-${t.branchId}" style="display:none"><td colspan="6" style="background:#fafafa;padding:10px 14px">
-        <div style="font-size:.78em;color:#374151;font-weight:700;margin-bottom:6px">📋 ${LANG==='en'?'Per-item progress':LANG==='es'?'Progreso por ítem':'항목별 진행'}</div>
+        <div style="font-size:.78em;color:#374151;font-weight:700;margin-bottom:6px">📋 항목별 진행</div>
         ${cl.map((c) => {
           const stage = c.stageLabel || '';
           const time = c.stageRange || c.stageTime || '';
           const photoCount = (Array.isArray(c.photos) ? c.photos.length : (c.photo ? 1 : 0));
-          const dispItem = pickLang(c.nameTr, c.name);
           return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.85em;${c.done?'opacity:.7':''}">
             <span style="flex:0 0 18px;text-align:center">${c.done ? '✅' : '☐'}</span>
-            <span style="flex:1;${c.done?'text-decoration:line-through':''}">${escHtml(dispItem||'')}${stage?` <span style="color:#1e40af;font-size:.85em">· ${escHtml(stage)}${time?' '+escHtml(time):''}</span>`:''}</span>
+            <span style="flex:1;${c.done?'text-decoration:line-through':''}">${escHtml(c.name||'')}${stage?` <span style="color:#1e40af;font-size:.85em">· ${escHtml(stage)}${time?' '+escHtml(time):''}</span>`:''}</span>
             ${c.done && c.doneBy ? `<span style="font-size:.74em;color:#6b7280">${escHtml(c.doneBy)}${c.doneAt?' · '+fmtTime(c.doneAt):''}</span>` : ''}
             ${photoCount ? `<span style="font-size:.74em;color:#1a5c3a;font-weight:700">📷 ${photoCount}</span>` : ''}
           </div>`;
@@ -7637,577 +6135,15 @@ function renderMgr(){
     const tpBd = tpts >= 3 ? '#86efac' : tpts === 2 ? '#93c5fd' : '#cbd5e1';
     const pointsPill = `<span style="display:inline-block;background:${tpBg};color:${tpFg};border:1px solid ${tpBd};border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:800;margin-left:4px;vertical-align:middle" title="완료 시 +${tpts}점">${'⭐'.repeat(tpts)} ${tpts}점</span>`;
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
-      <td>${av}${doerLabel}${branch}${assigneeSub}</td>
+      <td>${av}<span style="font-size:.85em">${escHtml(who)}</span>${branch}</td>
       <td><div style="font-weight:600;display:flex;align-items:center;gap:4px;flex-wrap:wrap">${adminBtn}<span>${escHtml(dispName)}</span>${placePill}${pointsPill}</div>${memo}${clBadge}</td>
+      <td><span style="font-size:.85em;${t._status==='delayed'?'color:#dc2626;font-weight:700':''}">${t.deadline||'-'}</span></td>
       <td><span class="status ${t._status}">${stLabel}</span></td>
       <td><span style="font-size:.85em">${t.completedAt ? fmtTime(t.completedAt) : (t.startedAt ? startLabel[LANG]+fmtTime(t.startedAt) : '-')}</span></td>
       <td>${photos || '<span style="color:#d1d5db">-</span>'}${delBtn}</td>
     </tr>${detailRows}`;
   }).join('');
 }
-// 🆕 2026-05-20 — Zone Detail Modal (Smart Zone Map Phase 1).
-// 매니저 뷰 도면에서 zone 클릭 시 호출. 재고 상태 + 메모 입력 + 오늘 그 zone task 표시.
-let __zdCurrent = null;   // { zone, branch }
-async function openZoneDetail(zone, branch){
-  if (!zone || !branch) return;
-  __zdCurrent = { zone, branch };
-  const ov = document.getElementById('zoneDetailOv');
-  if (!ov) return;
-  // 제목
-  const branchLbl = (BRANCHES.find(b => b.id === branch) || {});
-  const branchName = branchLbl[LANG] || branchLbl.ko || branch;
-  const zoneLabel = (function(){
-    const parts = [];
-    if (zone.num) parts.push(String(zone.num));
-    if (zone.label) parts.push(zone.label.replace(/<br>/g, ' ').trim());
-    return parts.join(' · ') || ('Zone #' + zone.id);
-  })();
-  document.getElementById('zdTitle').textContent = zoneLabel;
-  document.getElementById('zdBranch').textContent = '🏪 ' + branchName + (zone.sub ? ' · ' + zone.sub.replace(/<br>|\n/g,' ') : '');
-  // 다국어 라벨
-  const lbls = {
-    status: { ko:'재고 상태', en:'Stock Status', es:'Estado de Stock' },
-    memo:   { ko:'상세 메모 (선택)', en:'Detail Note (optional)', es:'Nota detallada (opcional)' },
-    tasks:  { ko:'오늘 이 영역 업무', en:"Today's Tasks Here", es:'Tareas de Hoy Aquí' },
-    cancel: { ko:'취소', en:'Cancel', es:'Cancelar' },
-    save:   { ko:'💾 저장', en:'💾 Save', es:'💾 Guardar' },
-    ok:     { ko:'정상', en:'OK', es:'OK' },
-    low:    { ko:'부족', en:'Low', es:'Bajo' },
-    out:    { ko:'품절', en:'Out', es:'Sin stock' },
-  };
-  document.getElementById('zdStatusLbl').textContent = lbls.status[LANG] || lbls.status.ko;
-  document.getElementById('zdMemoLbl').textContent = lbls.memo[LANG] || lbls.memo.ko;
-  document.getElementById('zdTasksLbl').textContent = lbls.tasks[LANG] || lbls.tasks.ko;
-  document.getElementById('zdCancelBtn').textContent = lbls.cancel[LANG] || lbls.cancel.ko;
-  document.getElementById('zdSaveBtn').textContent = lbls.save[LANG] || lbls.save.ko;
-  document.getElementById('zdOk').textContent = lbls.ok[LANG] || lbls.ok.ko;
-  document.getElementById('zdLow').textContent = lbls.low[LANG] || lbls.low.ko;
-  document.getElementById('zdOut').textContent = lbls.out[LANG] || lbls.out.ko;
-  // 폼 초기화
-  document.getElementById('zdMemo').value = '';
-  setZdStatus('ok');   // 기본
-  document.getElementById('zdLastInfo').style.display = 'none';
-  // 이 zone 관련 오늘 task 들 표시
-  const branchTasks = (typeof TASKS !== 'undefined' ? TASKS : []).filter(tt => tt.branchId === branch);
-  const zoneTasks = branchTasks.filter(tt => window.KMFloorPlan.inferZoneId(tt, [zone]) === zone.id);
-  const taskListEl = document.getElementById('zdTasksList');
-  if (zoneTasks.length === 0) {
-    taskListEl.innerHTML = '<div style="padding:14px;text-align:center;color:#9ca3af;font-size:.84em">' +
-      (LANG==='en'?'No tasks for this zone today':LANG==='es'?'Sin tareas para esta zona hoy':'오늘 이 영역에 배정된 업무 없음') + '</div>';
-  } else {
-    taskListEl.innerHTML = zoneTasks.map(tt => {
-      const st = tt.completedAt ? '✅' : tt.startedAt ? '⏳' : '⬜';
-      const who = tt.completedBy || tt.startedBy || tt.assignedTo || '?';
-      const nm = pickLang ? pickLang(tt.nameTr, tt.name) : (tt.name || '');
-      return '<div style="padding:8px 11px;border-bottom:1px solid #f3f4f6;font-size:.84em;line-height:1.4">' +
-        st + ' <b>' + escHtml(nm) + '</b>' +
-        '<div style="font-size:.78em;color:#6b7280;margin-top:2px">' + escHtml(who) + '</div>' +
-        '</div>';
-    }).join('');
-  }
-  // 기존 상태 로드
-  ov.classList.add('show');
-  try {
-    const cur = await window.KMFloorPlan.loadZoneStateFull(branch, zone.id);
-    if (cur && cur.status) {
-      setZdStatus(cur.status);
-      if (cur.memo) document.getElementById('zdMemo').value = cur.memo;
-      if (cur.updatedBy) {
-        const dt = cur.updatedAt ? new Date(cur.updatedAt).toLocaleString([], {month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
-        const info = document.getElementById('zdLastInfo');
-        info.textContent = '✏️ ' + cur.updatedBy + (dt ? ' · ' + dt : '');
-        info.style.display = '';
-      }
-    }
-  } catch(_){}
-}
-window.openZoneDetail = openZoneDetail;
-
-let __zdStatus = 'ok';
-function setZdStatus(st){
-  __zdStatus = st;
-  const colors = { ok: ['#15803d','#dcfce7','#22c55e'], low: ['#92400e','#fef3c7','#f59e0b'], out: ['#7f1d1d','#fee2e2','#dc2626'] };
-  document.querySelectorAll('.zd-status-btn').forEach(btn => {
-    const s = btn.dataset.status;
-    if (s === st) {
-      const c = colors[s];
-      btn.style.borderColor = c[2];
-      btn.style.background = c[1];
-      btn.style.color = c[0];
-      btn.style.fontWeight = '900';
-    } else {
-      btn.style.borderColor = '#e5e7eb';
-      btn.style.background = '#f9fafb';
-      btn.style.color = '#6b7280';
-      btn.style.fontWeight = '700';
-    }
-  });
-}
-window.setZdStatus = setZdStatus;
-// 상태 버튼 클릭
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest && e.target.closest('.zd-status-btn');
-  if (btn && btn.dataset.status) setZdStatus(btn.dataset.status);
-});
-
-async function saveZoneDetail(){
-  if (!__zdCurrent) return;
-  const { zone, branch } = __zdCurrent;
-  const memo = document.getElementById('zdMemo').value.trim();
-  const saveBtn = document.getElementById('zdSaveBtn');
-  saveBtn.disabled = true;
-  saveBtn.textContent = '⏳';
-  try {
-    const res = await window.KMFloorPlan.saveZoneState(branch, zone.id, {
-      status: __zdStatus,
-      memo,
-      updatedBy: (me && me.name) || '?'
-    });
-    if (res.ok) {
-      // 모달 닫고 도면 재렌더
-      closeOv('zoneDetailOv');
-      // 캐시 무효화 후 재렌더
-      try { if (typeof renderMgr === 'function') renderMgr(); } catch(_){}
-      if (typeof showToast === 'function') {
-        const stLbl = __zdStatus === 'out' ? '🔴' : __zdStatus === 'low' ? '🟡' : '🟢';
-        showToast(stLbl + ' Zone 업데이트 완료', zone.label || zone.num || '');
-      }
-    } else {
-      alert((LANG==='en'?'Save failed: ':LANG==='es'?'Error al guardar: ':'저장 실패: ') + (res.status || res.error || '?'));
-    }
-  } catch(e) {
-    alert('error: ' + (e.message || e));
-  } finally {
-    saveBtn.disabled = false;
-    saveBtn.textContent = LANG==='en'?'💾 Save':LANG==='es'?'💾 Guardar':'💾 저장';
-  }
-}
-window.saveZoneDetail = saveZoneDetail;
-
-// 🆕 2026-05-20 — Zone picker (업무 지시 모달에서 도면 클릭으로 위치 지정).
-// 현재 매장(getAssignTargetBranch) 도면을 로드해 보여주고, 클릭한 zone 의
-// label/num 을 aDisplayPlace 또는 custom input 에 자동 채움 + task.zoneId 저장.
-let __pickedZoneId = null;
-async function openZonePicker(){
-  const overlay = document.getElementById('zonePickerOv');
-  const canvas  = document.getElementById('zonePickerCanvas');
-  const statusEl = document.getElementById('zonePickerStatus');
-  if (!overlay || !canvas || !window.KMFloorPlan) {
-    alert(LANG==='en'?'Floor plan not loaded':LANG==='es'?'Plano no cargado':'도면 라이브러리 로드 실패');
-    return;
-  }
-  const branch = (typeof getAssignTargetBranch === 'function') ? getAssignTargetBranch() : ((me && me.branch) || '');
-  if (!branch) { alert(LANG==='en'?'Pick a branch first':LANG==='es'?'Seleccione sucursal':'먼저 매장을 선택하세요'); return; }
-  overlay.classList.add('show');
-  canvas.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">⏳ ' +
-    (LANG==='en'?'Loading floor plan…':LANG==='es'?'Cargando plano…':'도면 로딩 중…') + '</div>';
-  statusEl.textContent = '';
-  try {
-    const fp = await window.KMFloorPlan.load(branch);
-    const zones = fp.zones || [];
-    if (!zones.length) {
-      canvas.innerHTML = '<div style="padding:30px;text-align:center;color:#9ca3af;font-size:.92em">⚠ ' +
-        (LANG==='en'?'No floor plan for this branch yet — open floorplan/ to draw'
-         : LANG==='es'?'Sin plano dibujado para esta sucursal'
-         : '이 매장 도면이 아직 비어있음 — floorplan/ 에서 그려주세요') + '</div>';
-      return;
-    }
-    window.KMFloorPlan.render(canvas, zones, {
-      mode: 'pick',
-      onPick: (zone) => pickZone(zone, branch),
-    });
-    statusEl.textContent = (LANG==='en' ? `${zones.length} zones · click to pick`
-                          : LANG==='es' ? `${zones.length} zonas · clic para elegir`
-                          : `${zones.length}개 zone · 클릭해서 선택`);
-  } catch(e) {
-    canvas.innerHTML = '<div style="padding:20px;text-align:center;color:#dc2626;font-size:.85em">❌ ' + (e.message || e) + '</div>';
-  }
-}
-window.openZonePicker = openZonePicker;
-
-function pickZone(zone, branch){
-  if (!zone) return;
-  // zone 라벨 만들기 — num + label 조합 (예: "5,6 · Korean Ramen")
-  const labelText = (function(){
-    const parts = [];
-    if (zone.num && /^[\d]/.test(String(zone.num))) parts.push(String(zone.num).replace(/,/g,'/') + (LANG==='en'?' Aisle':LANG==='es'?' Pasillo':' 통로'));
-    else if (zone.num) parts.push(String(zone.num));
-    if (zone.label) parts.push(zone.label.replace(/<br>/g, ' ').trim());
-    if (zone.sub) parts.push('(' + zone.sub.replace(/<br>|\n/g, ' ').trim() + ')');
-    return parts.join(' · ');
-  })();
-  // aDisplayPlace select 에 해당 옵션이 있으면 선택, 없으면 custom input 채움
-  const sel = document.getElementById('aDisplayPlace');
-  const custom = document.getElementById('aDisplayPlaceCustom');
-  // 옵션 매치 시도
-  let matched = false;
-  if (sel) {
-    for (const opt of sel.options) {
-      if (opt.value && labelText.includes(opt.value)) {
-        sel.value = opt.value;
-        matched = true;
-        break;
-      }
-    }
-  }
-  if (!matched && sel && custom) {
-    // custom 모드로 전환
-    sel.value = '__custom__';
-    custom.value = labelText;
-    custom.style.display = '';
-    // onDisplayPlaceChange 호출해 UI 동기화
-    try { onDisplayPlaceChange(); } catch(_){}
-  }
-  __pickedZoneId = zone.id;
-  closeOv('zonePickerOv');
-  if (typeof showToast === 'function') {
-    showToast('📍 ' + (LANG==='en'?'Zone selected':LANG==='es'?'Zona seleccionada':'Zone 선택됨'), labelText);
-  }
-}
-window.pickZone = pickZone;
-
-// 🆕 2026-05-21 — 캐셔/보바 시프트 타임라인 카드. Manager View 상단에 표시.
-// TASKS 에서 category 가 '캐셔' 또는 'BOBA' 인 stage task 들을 시간순으로 묶어
-// 매장 게시판 인쇄용으로도 깔끔하게 보여줌.
-function renderShiftSchedule(activeBranch, tasks){
-  const body = document.getElementById('mgrShiftBody');
-  const statusEl = document.getElementById('mgrShiftStatus');
-  const titleEl = document.getElementById('mgrShiftTitle');
-  if (!body || !activeBranch) return;
-  // 매장 라벨
-  const branchLbl = (BRANCHES.find(b => b.id === activeBranch) || {});
-  const branchName = branchLbl[LANG] || branchLbl.ko || activeBranch;
-  if (titleEl) {
-    titleEl.textContent = (LANG==='en' ? '🛒 Today Cashier / BOBA — '
-                        : LANG==='es' ? '🛒 Hoy Cajero / BOBA — '
-                        : '🛒 오늘 캐셔 / 보바 시프트 — ') + branchName;
-  }
-  // 캐셔 / BOBA 카테고리 task 필터링 + 단계 정보 있는 것만
-  const shiftTasks = (tasks || []).filter(tt =>
-    (tt.category === '캐셔' || tt.category === 'BOBA') &&
-    (tt.stageFrom || tt.stageLabel)
-  );
-  if (shiftTasks.length === 0) {
-    body.innerHTML = '<div style="padding:18px;text-align:center;color:#9ca3af;font-size:.86em">' +
-      (LANG==='en' ? 'No cashier or BOBA shifts assigned today.'
-       : LANG==='es' ? 'Sin turnos de cajero o BOBA asignados hoy.'
-       : '오늘 캐셔/보바 시프트 미배정.') +
-      '<br><span style="font-size:.78em">' +
-      (LANG==='en' ? 'Create with "+ New Task" → category "캐셔" or "BOBA"'
-       : LANG==='es' ? 'Crear con "+ Nueva Tarea" → categoría "캐셔" o "BOBA"'
-       : '"+ 새 지시" → 카테고리 "캐셔" 또는 "BOBA" 선택') +
-      '</span></div>';
-    if (statusEl) statusEl.textContent = '';
-    return;
-  }
-  // 카테고리별 + 시간순 정렬
-  const byCat = { '캐셔': [], 'BOBA': [] };
-  shiftTasks.forEach(tt => {
-    const cat = tt.category;
-    if (!byCat[cat]) byCat[cat] = [];
-    byCat[cat].push(tt);
-  });
-  Object.values(byCat).forEach(arr => arr.sort((a,b) => (a.stageFrom||'99').localeCompare(b.stageFrom||'99')));
-  // 카테고리별 카드 HTML
-  const catEmoji = { '캐셔':'🛒', 'BOBA':'🧋' };
-  let html = '';
-  ['캐셔','BOBA'].forEach(cat => {
-    const arr = byCat[cat];
-    if (!arr || arr.length === 0) return;
-    const catName = LANG==='en' ? (cat === '캐셔' ? 'Cashier' : 'BOBA')
-                  : LANG==='es' ? (cat === '캐셔' ? 'Cajero' : 'BOBA')
-                  : cat;
-    html += '<div class="shift-cat" style="margin-bottom:12px">';
-    html += '<div style="font-weight:800;font-size:.96em;color:#1a5c3a;margin-bottom:6px">' +
-      catEmoji[cat] + ' ' + escHtml(catName) + ' <span style="font-weight:500;color:#9ca3af;font-size:.84em">(' + arr.length + ')</span></div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">';
-    arr.forEach(tt => {
-      // 🆕 2026-05-21 — 저장된 한국어 stageLabel 을 STAGES_BY_CAT 에서 찾아 LANG 에 맞춰 변환.
-      // 기존 task 는 stageLabel 이 한국어("① 오프닝") 로 박혀있어 EN/ES 모드에서도 그대로 나오던 버그.
-      const _stages = stagesFor(tt.category) || [];
-      const _found = _stages.find(s => s.label === tt.stageLabel);
-      const stage = _found ? stageLabel(_found) : (tt.stageLabel || '?');
-      const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
-      const assignee = tt.assignedTo === '*' ? '(전체)' : (tt.assignedTo || tt.assignedToId || '?');
-      const doer = tt.completedBy || tt.startedBy || '';
-      const showDoer = doer && doer !== assignee;
-      let statusBadge, statusBg, statusFg;
-      if (tt.completedAt) {
-        statusBadge = LANG==='en' ? '✅ Done' : LANG==='es' ? '✅ Hecho' : '✅ 완료';
-        statusBg = '#dcfce7'; statusFg = '#15803d';
-      } else if (tt.startedAt) {
-        statusBadge = LANG==='en' ? '⏳ Doing' : LANG==='es' ? '⏳ En curso' : '⏳ 진행';
-        statusBg = '#fef3c7'; statusFg = '#92400e';
-      } else {
-        statusBadge = LANG==='en' ? '⬜ Pending' : LANG==='es' ? '⬜ Pendiente' : '⬜ 대기';
-        statusBg = '#f1f5f9'; statusFg = '#475569';
-      }
-      const cl = Array.isArray(tt.checklist) ? tt.checklist : [];
-      const clDone = cl.filter(c => c && c.done).length;
-      const clBadge = cl.length ? ' · ' + clDone + '/' + cl.length : '';
-      const editBtn = (isManager(me?.role) || isOwner())
-        ? '<button onclick="editShiftStage(\'' + tt.id + '\',\'' + tt.branchId + '\');event.stopPropagation()" style="background:transparent;border:0;color:#1a5c3a;cursor:pointer;font-size:.86em;padding:0 4px;font-weight:700" title="시프트 편집">✏</button>'
-        : '';
-      html += '<div class="shift-card" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:9px 11px;background:#fafafa">' +
-        '<div style="display:flex;justify-content:space-between;align-items:start;gap:6px;margin-bottom:4px">' +
-          '<div style="font-weight:800;font-size:.88em;color:#0f172a;display:flex;align-items:center;gap:4px">' + editBtn + '<span>' + escHtml(stage) + '</span></div>' +
-          '<span style="background:' + statusBg + ';color:' + statusFg + ';border-radius:10px;padding:2px 7px;font-size:.7em;font-weight:700;white-space:nowrap">' + statusBadge + '</span>' +
-        '</div>' +
-        '<div style="font-family:\'SF Mono\',Consolas,monospace;font-size:.82em;color:#1a5c3a;font-weight:700;margin-bottom:3px">⏰ ' + escHtml(range) + '</div>' +
-        '<div style="font-size:.86em;color:#374151;font-weight:600">👤 ' + escHtml(assignee) +
-          (showDoer ? ' <span style="color:#9ca3af;font-size:.84em">(실제: ' + escHtml(doer) + ')</span>' : '') + '</div>' +
-        (clBadge ? '<div style="font-size:.74em;color:#6b7280;margin-top:3px">📋' + clBadge + '</div>' : '') +
-      '</div>';
-    });
-    html += '</div></div>';
-  });
-  body.innerHTML = html;
-  if (statusEl) {
-    const total = shiftTasks.length;
-    const done = shiftTasks.filter(tt => tt.completedAt).length;
-    const prog = shiftTasks.filter(tt => tt.startedAt && !tt.completedAt).length;
-    statusEl.textContent = (LANG==='en' ? `${total} stages · ${done} done · ${prog} in progress`
-                           : LANG==='es' ? `${total} etapas · ${done} hechas · ${prog} en curso`
-                           : `전체 ${total}단계 · 완료 ${done} · 진행 ${prog}`);
-  }
-}
-window.renderShiftSchedule = renderShiftSchedule;
-
-// 🆕 2026-05-21 — 시프트 시간 / 담당자 편집. 매니저+ 만.
-// 시간 변경 시 task.stageFrom / stageTo / deadline / 체크리스트의 stageFrom·stageTo·stageRange 모두 갱신.
-async function editShiftStage(taskId, branchId){
-  if (!isManager(me?.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
-  const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
-  if (!t) { alert('업무 없음'); return; }
-  const curFrom = t.stageFrom || '08:00';
-  const curTo = t.stageTo || '12:00';
-  const curAssignee = t.assignedTo || '';
-  // prompt 3개로 받음 (간단)
-  const titleLbl = LANG==='en' ? 'Edit Shift — ' : LANG==='es' ? 'Editar Turno — ' : '시프트 편집 — ';
-  const fromLbl = LANG==='en' ? 'Start time (HH:MM)' : LANG==='es' ? 'Hora inicio (HH:MM)' : '시작 시간 (HH:MM)';
-  const toLbl = LANG==='en' ? 'End time (HH:MM)' : LANG==='es' ? 'Fin time (HH:MM)' : '종료 시간 (HH:MM)';
-  const assigneeLbl = LANG==='en' ? 'Assignee (empty=keep, * = all)' : LANG==='es' ? 'Asignado (vacío=mantener, * = todos)' : '담당자 (빈칸=유지, * = 전체)';
-  const stageNm = t.stageLabel || '?';
-  const newFrom = prompt(titleLbl + stageNm + '\n\n' + fromLbl + ':', curFrom);
-  if (newFrom === null) return;
-  if (!/^\d{1,2}:\d{2}$/.test(newFrom.trim())) { alert('Invalid format. Use HH:MM (e.g., 08:00)'); return; }
-  const newTo = prompt(toLbl + ':', curTo);
-  if (newTo === null) return;
-  if (!/^\d{1,2}:\d{2}$/.test(newTo.trim())) { alert('Invalid format. Use HH:MM'); return; }
-  const newAssignee = prompt(assigneeLbl + ':\n\n' + (LANG==='en'?'Current':LANG==='es'?'Actual':'현재') + ': ' + (curAssignee || '?'), curAssignee);
-  if (newAssignee === null) return;
-  const stageFrom = newFrom.trim();
-  const stageTo = newTo.trim();
-  const stageRange = stageFrom + ' ~ ' + stageTo;
-  // 체크리스트의 각 항목에도 stageFrom/stageTo/stageRange 갱신
-  const updatedChecklist = Array.isArray(t.checklist)
-    ? t.checklist.map(c => Object.assign({}, c, { stageFrom, stageTo, stageRange }))
-    : t.checklist;
-  const upd = {
-    stageFrom, stageTo,
-    deadline: stageTo,   // deadline 은 stageTo 와 동기화
-    checklist: updatedChecklist,
-    editedBy: me.name,
-    editedAt: Date.now(),
-  };
-  if (newAssignee.trim() && newAssignee.trim() !== curAssignee) {
-    upd.assignedTo = newAssignee.trim();
-    upd.assignedToId = newAssignee.trim() === '*' ? null : newAssignee.trim();
-    upd.reassignedBy = me.name;
-    upd.reassignedAt = Date.now();
-  }
-  try {
-    const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
-    Object.assign(t, upd);
-    showToast(LANG==='en'?'✏️ Shift updated':LANG==='es'?'✏️ Turno actualizado':'✏️ 시프트 갱신 완료',
-              stageNm + ' · ' + stageRange);
-    if (typeof renderMgr === 'function') renderMgr();
-  } catch(e) {
-    alert('Update failed: ' + (e.message || e));
-  }
-}
-window.editShiftStage = editShiftStage;
-
-// 🆕 2026-05-21 — 매장 게시판 부착용 인쇄 페이지. 현재 LANG (KO/EN/ES) 따라 다국어.
-function printShiftSchedule(){
-  const activeBranch = MGR_BRANCH || (me && me.branch) || '';
-  // 인쇄 문구 다국어
-  const i18n = {
-    needBranch: { ko:'매장 선택 필요', en:'Please select a branch', es:'Seleccione una sucursal' },
-    noShifts:   { ko:'오늘 시프트가 없습니다.', en:'No shifts assigned today.', es:'Sin turnos hoy.' },
-    popup:      { ko:'팝업이 차단됐습니다. 브라우저에서 팝업 허용 후 다시 시도하세요.', en:'Pop-up blocked. Allow pop-ups in your browser.', es:'Pop-up bloqueado. Permita pop-ups en el navegador.' },
-    title:      { ko:'오늘 시프트 — ', en:"Today's Shifts — ", es:'Turnos de Hoy — ' },
-    todayShifts:{ ko:'🛒 오늘 시프트 — ', en:"🛒 Today's Shifts — ", es:'🛒 Turnos de Hoy — ' },
-    catCashier: { ko:'캐셔', en:'Cashier', es:'Cajero' },
-    catBoba:    { ko:'BOBA', en:'BOBA', es:'BOBA' },
-    thStage:    { ko:'단계', en:'Stage', es:'Etapa' },
-    thTime:     { ko:'시간', en:'Time', es:'Hora' },
-    thWho:      { ko:'담당자', en:'Assignee', es:'Asignado' },
-    thStatus:   { ko:'상태', en:'Status', es:'Estado' },
-    stDone:     { ko:'✅ 완료', en:'✅ Done', es:'✅ Hecho' },
-    stProg:     { ko:'⏳ 진행 중', en:'⏳ In progress', es:'⏳ En curso' },
-    stPend:     { ko:'⬜ 대기', en:'⬜ Pending', es:'⬜ Pendiente' },
-    allBranch:  { ko:'(전체)', en:'(All)', es:'(Todos)' },
-    printedAt:  { ko:'출력: ', en:'Printed: ', es:'Impreso: ' },
-  };
-  const tt2 = (k) => (i18n[k] && (i18n[k][LANG] || i18n[k].en || i18n[k].ko)) || k;
-  if (!activeBranch) { alert(tt2('needBranch')); return; }
-  let rows = TASKS.slice().filter(tt => tt.branchId === activeBranch);
-  const shifts = rows.filter(tt => (tt.category === '캐셔' || tt.category === 'BOBA') && (tt.stageFrom || tt.stageLabel));
-  if (shifts.length === 0) { alert(tt2('noShifts')); return; }
-  // 매장 이름 — 현재 언어 기준
-  const branchObj = BRANCHES.find(b => b.id === activeBranch) || {};
-  const branchName = branchObj[LANG] || branchObj.ko || activeBranch;
-  // category 별로 묶기
-  const byCat = { '캐셔': [], 'BOBA': [] };
-  shifts.forEach(tt => { if (!byCat[tt.category]) byCat[tt.category] = []; byCat[tt.category].push(tt); });
-  Object.values(byCat).forEach(arr => arr.sort((a,b) => (a.stageFrom||'99').localeCompare(b.stageFrom||'99')));
-  // 날짜 locale 도 LANG 따라
-  const dateLocale = LANG==='en' ? 'en-US' : LANG==='es' ? 'es-ES' : 'ko-KR';
-  const todayDate = new Date().toLocaleDateString(dateLocale, { year:'numeric', month:'long', day:'numeric', weekday:'long' });
-  // 스테이지 라벨 다국어 픽업 — stageLabel(stageObj) 우선, 없으면 task 의 stageLabelTr 또는 그대로
-  function stageDisplay(tt){
-    // task.stageLabel 은 저장 시 한국어로 들어가있음. STAGES_BY_CAT 에서 매칭 시도.
-    const cat = tt.category;
-    const stages = stagesFor(cat) || [];
-    const found = stages.find(s => s.label === tt.stageLabel);
-    if (found) return stageLabel(found);
-    return tt.stageLabel || '?';
-  }
-  let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + tt2('title') + branchName + '</title><style>' +
-    '*{margin:0;padding:0;box-sizing:border-box;font-family:"Pretendard","Malgun Gothic",Arial,sans-serif}' +
-    'body{padding:30px;color:#0f172a;background:#fff}' +
-    'h1{font-size:28pt;color:#1a5c3a;margin-bottom:6px;border-bottom:3px solid #1a5c3a;padding-bottom:8px}' +
-    '.sub{font-size:13pt;color:#475569;margin-bottom:24px}' +
-    'h2{font-size:20pt;color:#1a5c3a;margin:20px 0 10px;padding:6px 12px;background:#dcfce7;border-radius:8px}' +
-    'table{width:100%;border-collapse:collapse;margin-bottom:14px}' +
-    'th,td{border:2px solid #1a5c3a;padding:14px 10px;text-align:center;font-size:14pt}' +
-    'th{background:#1a5c3a;color:#fff;font-weight:800}' +
-    'td.stage{font-weight:800;font-size:15pt}' +
-    'td.time{font-family:Consolas,monospace;font-weight:700;color:#0369a1;font-size:16pt}' +
-    'td.who{font-weight:800;font-size:16pt;background:#fef9c3}' +
-    'td.status{font-size:13pt}' +
-    '.footer{margin-top:30px;font-size:11pt;color:#94a3b8;text-align:right}' +
-    '@media print { body { padding:15px } h1{font-size:22pt} }' +
-    '</style></head><body>' +
-    '<h1>' + tt2('todayShifts') + escHtml(branchName) + '</h1>' +
-    '<div class="sub">' + escHtml(todayDate) + '</div>';
-  ['캐셔','BOBA'].forEach(cat => {
-    const arr = byCat[cat];
-    if (!arr || arr.length === 0) return;
-    const emoji = cat === '캐셔' ? '🛒' : '🧋';
-    const catLbl = cat === '캐셔' ? tt2('catCashier') : tt2('catBoba');
-    html += '<h2>' + emoji + ' ' + escHtml(catLbl) + '</h2>';
-    html += '<table><thead><tr><th>' + tt2('thStage') + '</th><th>' + tt2('thTime') + '</th><th>' + tt2('thWho') + '</th><th>' + tt2('thStatus') + '</th></tr></thead><tbody>';
-    arr.forEach(tt => {
-      const stage = stageDisplay(tt);
-      const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
-      const assignee = tt.assignedTo === '*' ? tt2('allBranch') : (tt.assignedTo || '?');
-      const doer = tt.completedBy || tt.startedBy || '';
-      const status = tt.completedAt ? tt2('stDone')
-                   : tt.startedAt ? tt2('stProg')
-                   : tt2('stPend');
-      const whoDisp = (doer && doer !== assignee) ? assignee + ' → ' + doer : assignee;
-      html += '<tr>' +
-        '<td class="stage">' + escHtml(stage) + '</td>' +
-        '<td class="time">' + escHtml(range) + '</td>' +
-        '<td class="who">' + escHtml(whoDisp) + '</td>' +
-        '<td class="status">' + escHtml(status) + '</td>' +
-        '</tr>';
-    });
-    html += '</tbody></table>';
-  });
-  html += '<div class="footer">' + tt2('printedAt') + new Date().toLocaleString(dateLocale) + ' · KIMCHI MART</div>';
-  html += '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<' + '/script>';
-  html += '</body></html>';
-  const w = window.open('', '_blank', 'width=900,height=700');
-  if (!w) { alert(tt2('popup')); return; }
-  w.document.write(html);
-  w.document.close();
-}
-window.printShiftSchedule = printShiftSchedule;
-
-// 🆕 2026-05-20 — Manager View 매장 도면 히트맵 갱신.
-// activeBranch: 현재 보고 있는 매장 (MGR_BRANCH or me.branch)
-// tasks: 그 매장의 task 전체 (필터 적용 전, 매장 단위)
-let __mgrFpCache = { branch: null, zones: null };
-async function updateMgrFloorPlan(activeBranch, tasks){
-  const wrap = document.getElementById('mgrFloorPlanWrap');
-  const container = document.getElementById('mgrFloorPlan');
-  const statusEl = document.getElementById('mgrFpStatus');
-  const titleEl = document.getElementById('mgrFpTitle');
-  if (!wrap || !container || !window.KMFloorPlan) return;
-  if (!activeBranch) { wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
-  // 매장 라벨 갱신
-  const branchLbl = (BRANCHES.find(b => b.id === activeBranch) || {});
-  const branchName = branchLbl[LANG] || branchLbl.ko || activeBranch;
-  if (titleEl) {
-    titleEl.textContent = (LANG==='en' ? '🗺 Store Floor Plan — '
-                        : LANG==='es' ? '🗺 Plano de Tienda — '
-                        : '🗺 매장 도면 — ') + branchName +
-                        (LANG==='en' ? ' · Today' : LANG==='es' ? ' · Hoy' : ' · 오늘');
-  }
-  // 매장 zone 데이터 로드 (캐시)
-  let zones;
-  if (__mgrFpCache.branch === activeBranch && __mgrFpCache.zones) {
-    zones = __mgrFpCache.zones;
-  } else {
-    try {
-      const fp = await window.KMFloorPlan.load(activeBranch);
-      zones = fp.zones || [];
-      __mgrFpCache = { branch: activeBranch, zones };
-    } catch(e) {
-      container.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">' +
-        (LANG==='en' ? '⚠ Floor plan not available for this branch'
-         : LANG==='es' ? '⚠ Plano no disponible para esta sucursal'
-         : '⚠ 이 매장의 도면이 아직 등록되지 않았습니다') + '</div>';
-      if (statusEl) statusEl.textContent = '';
-      return;
-    }
-  }
-  if (!zones || zones.length === 0) {
-    container.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;font-size:.85em">' +
-      (LANG==='en' ? '⚠ No zones drawn for this branch yet — open floorplan/ editor to draw'
-       : LANG==='es' ? '⚠ Esta sucursal no tiene zonas dibujadas aún'
-       : '⚠ 이 매장 도면이 비어있음 — floorplan/ 에디터에서 그려주세요') + '</div>';
-    if (statusEl) statusEl.textContent = '';
-    return;
-  }
-  // task → zone 상태 매핑
-  const states = window.KMFloorPlan.buildZoneStates(tasks || [], zones);
-  // 🆕 재고 상태 로드 (Firebase zoneState)
-  let inventory = {};
-  try { inventory = await window.KMFloorPlan.loadZoneStates(activeBranch); } catch(_) {}
-  // 통계
-  let nDone = 0, nProg = 0, nPend = 0;
-  Object.values(states).forEach(s => { if (s==='done') nDone++; else if (s==='progress') nProg++; else if (s==='pending') nPend++; });
-  const nMapped = Object.keys(states).length;
-  let nOut = 0, nLow = 0;
-  Object.values(inventory).forEach(s => { if (s==='out') nOut++; else if (s==='low') nLow++; });
-  // 렌더 — inventory 색상 우선, task state 보조. click → 상세 모달.
-  window.KMFloorPlan.render(container, zones, {
-    mode: 'view',
-    states,
-    inventory,
-    onZoneClick: (zone) => openZoneDetail(zone, activeBranch),
-  });
-  if (statusEl) {
-    const totalTasks = (tasks || []).length;
-    const invLine = (nOut || nLow)
-      ? (LANG==='en' ? ` · 🔴 Out: ${nOut} · 🟡 Low: ${nLow}`
-         : LANG==='es' ? ` · 🔴 Sin: ${nOut} · 🟡 Bajo: ${nLow}`
-         : ` · 🔴 품절: ${nOut} · 🟡 부족: ${nLow}`)
-      : '';
-    statusEl.textContent =
-      ((LANG==='en' ? `Mapped ${nMapped} zones · ${nDone} done · ${nProg} in progress · ${nPend} pending (of ${totalTasks} tasks)`
-        : LANG==='es' ? `Mapeadas ${nMapped} zonas · ${nDone} hechas · ${nProg} en curso · ${nPend} pendientes (de ${totalTasks} tareas)`
-        : `매핑된 ${nMapped} 영역 · 완료 ${nDone} · 진행 ${nProg} · 대기 ${nPend} (전체 ${totalTasks} 업무)`)) + invLine;
-  }
-}
-window.updateMgrFloorPlan = updateMgrFloorPlan;
-
 async function deleteTask(taskId, branchId, name, ev){
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   const msg = (LANG==='en') ? `Delete task "${name}"?\nThis cannot be undone.`
@@ -8241,7 +6177,6 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     '6: 📨 채팅방 다시 보내기 (사진 누락 보정)',
     '7: ⭐ 포인트 변경 (1·2·3점)',
     '8: 📝 업무명·메모 편집',
-    '9: 📷 사진 추가 (이미 완료된 업무에 사진 보충)',
     '0: 닫기'
   ];
   const choice = prompt(
@@ -8259,117 +6194,7 @@ async function adminTaskMenu(taskId, branchId, name, ev){
     if (choice.trim() === '6') return adminRepostToChat(t);
     if (choice.trim() === '7') return adminChangePoints(t);
     if (choice.trim() === '8') return adminEditNameMemo(t);
-    if (choice.trim() === '9') return adminAddPhotos(t);
   } catch(e) { alert('보정 실패: ' + (e.message || e)); }
-}
-
-// 9) 사진 추가 — 이미 완료된 업무에 사진 보충. 직원이 사진 없이 완료했거나
-// 폰 카메라 문제로 못 올린 경우 매니저가 갤러리에서 골라 추가. photos 배열에
-// append (덮어쓰지 않음) — 기존 사진 + 새 사진 모두 보존. photosAddedBy/At
-// 으로 누가 보정했는지 흔적 남김. completedAt/completedBy 는 건드리지 않아
-// 활동 순위 점수에 영향 없음.
-async function adminAddPhotos(t){
-  // 임시 file input — 모달 만들지 않고 가볍게.
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.multiple = true;
-  input.style.display = 'none';
-  document.body.appendChild(input);
-  const files = await new Promise((resolve) => {
-    let resolved = false;
-    input.addEventListener('change', () => {
-      if (resolved) return;
-      resolved = true;
-      resolve(Array.from(input.files || []));
-    });
-    // 사용자가 취소하면 change 안 옴 → focus 복귀로 감지
-    const onFocus = () => {
-      setTimeout(() => {
-        if (resolved) return;
-        if (!input.files || !input.files.length) {
-          resolved = true;
-          resolve([]);
-        }
-      }, 400);
-      window.removeEventListener('focus', onFocus);
-    };
-    window.addEventListener('focus', onFocus);
-    input.click();
-  });
-  input.remove();
-  if (!files.length) return;
-  // 압축 + 업로드 — uploadLocPhotos 와 동일한 패턴
-  const compressed = await Promise.all(files.map(f => compressImage(f, 1024, 0.78)));
-  const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
-  const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
-  let authHeader = {};
-  try {
-    const auth = window.__fb && window.__fb.auth;
-    const u = auth && auth.currentUser;
-    if (u) {
-      const tok = await u.getIdToken();
-      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
-    }
-  } catch(_){}
-  const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(fr.result);
-    fr.onerror = reject;
-    fr.readAsDataURL(blob);
-  });
-  const baseIdx = (Array.isArray(t.photos) ? t.photos.length : 0);
-  const uploadOne = async (file, i) => {
-    const slot = baseIdx + i;
-    const path = 'tasks-done/' + t.branchId + '/' + t.id + '/admin-' + Date.now() + '-' + slot + '.jpg';
-    const url = FB_STORAGE_URL + '?name=' + encodeURIComponent(path) + '&uploadType=media';
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'image/jpeg' }, authHeader),
-          body: file
-        });
-        if (r.ok) {
-          const meta = await r.json();
-          return FB_STORAGE_URL + '/' + encodeURIComponent(meta.name) + '?alt=media&token=' + (meta.downloadTokens || '');
-        }
-        if (r.status === 404) break;
-        await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
-      } catch(_) {
-        await new Promise(rs => setTimeout(rs, 350 * (attempt+1)));
-      }
-    }
-    // base64 fallback — Storage 실패 시 RTDB 에 직접 박음 (작지만 보존)
-    try {
-      const small = await compressImage(file, 720, 0.55);
-      return await blobToDataUrl(small);
-    } catch(_) { return null; }
-  };
-  const btn = document.activeElement;
-  const oldText = btn && btn.textContent;
-  try {
-    if (btn && oldText !== undefined) btn.textContent = '📷 사진 업로드 중…';
-    const urls = (await Promise.all(compressed.map((f, i) => uploadOne(f, i)))).filter(u => u);
-    if (!urls.length) {
-      alert('❌ 사진 업로드 실패 — 다시 시도해 주세요.');
-      return;
-    }
-    const existing = Array.isArray(t.photos) ? t.photos : [];
-    const merged = existing.concat(urls);
-    const path = 'tasks/' + t.branchId + '/' + todayStr() + '/' + t.id;
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
-      photos: merged,
-      photosAddedBy: me.name + ' (보정)',
-      photosAddedAt: Date.now()
-    });
-    Object.assign(t, { photos: merged });
-    alert('📷 사진 ' + urls.length + '장 추가됨.\n총 ' + merged.length + '장.\n\n채팅방 재발송하려면 메뉴 6번 사용.');
-    // 카드 다시 그리기 — 사진 카운트 즉시 반영
-    try { if (typeof renderAll === 'function') renderAll(); } catch(_){}
-  } finally {
-    if (btn && oldText !== undefined) btn.textContent = oldText;
-  }
 }
 // 업무명 + 메모 인라인 편집 — prompt 로 빠르게. RTDB PATCH 후 채팅 알림은
 // 사용자가 별도로 #6(채팅방 다시 보내기) 선택 가능.
@@ -8577,61 +6402,36 @@ async function adminReassign(t){
 // 3) 데드라인 변경
 async function adminChangeDeadline(t){
   const cur = t.deadline || '18:00';
-  // 빠른 연장 프리셋 + 커스텀 시간/분 단위 입력 지원
+  // 빠른 연장 프리셋 — 직원 사진 마무리 / 점심 후 마감 등 자주 쓰는 패턴
   const choice = prompt(
     '⏰ 데드라인 변경 / 연장\n\n' +
     '현재: ' + cur + '\n\n' +
-    '⚡ 빠른 연장:\n' +
+    '빠른 연장:\n' +
     '  1 = +30분\n' +
     '  2 = +1시간\n' +
     '  3 = +2시간\n' +
     '  4 = +3시간\n' +
     '  5 = 18:00 (오늘 종료)\n' +
-    '  6 = 21:00 (마감 시간)\n\n' +
-    '✏️ 커스텀:\n' +
-    '  14:30   → 시간 직접 (HH:MM)\n' +
-    '  +45     → 현재에 45분 추가\n' +
-    '  +1:30   → 현재에 1시간 30분 추가\n' +
-    '  90분    → 90분 추가\n',
+    '  H:MM 직접 입력 (예: 14:30)\n',
     '2'
   );
   if (choice == null) return;
   const v = String(choice).trim();
   let newDl = null;
-  // 현재 데드라인에 분 추가 helper
+  // 프리셋 처리 — 현재 데드라인에 분 추가
   const addMin = (mins) => {
     const [hh, mm] = cur.split(':').map(n => parseInt(n,10) || 0);
     const total = (hh*60 + mm + mins) % (24*60);
     const h = Math.floor(total/60), m = total%60;
     return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
   };
-  // HH:MM 직접 입력 → 그 시각으로 (검증 추가)
-  const setAbsoluteHHMM = (hhmm) => {
-    const [hh, mm] = hhmm.split(':').map(n => parseInt(n,10));
-    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
-    return String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
-  };
   if (v === '1') newDl = addMin(30);
   else if (v === '2') newDl = addMin(60);
   else if (v === '3') newDl = addMin(120);
   else if (v === '4') newDl = addMin(180);
   else if (v === '5') newDl = '18:00';
-  else if (v === '6') newDl = '21:00';
-  // +1:30 형식 — 시·분 추가
-  else if (/^\+(\d{1,2}):(\d{1,2})$/.test(v)) {
-    const m = v.match(/^\+(\d{1,2}):(\d{1,2})$/);
-    const mins = parseInt(m[1],10)*60 + parseInt(m[2],10);
-    if (mins > 0 && mins <= 24*60) newDl = addMin(mins);
-  }
-  // +45 또는 90분 형식 — 분 단위 추가
-  else if (/^\+(\d+)$/.test(v) || /^(\d+)\s*분$/.test(v)) {
-    const m = v.match(/^\+(\d+)$/) || v.match(/^(\d+)\s*분$/);
-    const mins = parseInt(m[1],10);
-    if (mins > 0 && mins <= 24*60) newDl = addMin(mins);
-  }
-  // HH:MM 직접 입력
-  else if (/^\d{1,2}:\d{2}$/.test(v)) newDl = setAbsoluteHHMM(v);
-  if (!newDl) { alert('형식 오류 — 1~6, HH:MM, +N, +H:MM, N분 중 하나 입력'); return; }
+  else if (/^\d{1,2}:\d{2}$/.test(v)) newDl = v;
+  else { alert('형식 오류 — 1~5 또는 H:MM 입력'); return; }
   const path = 'tasks/'+t.branchId+'/'+todayStr()+'/'+t.id;
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), {
     deadline: newDl,
@@ -8796,37 +6596,6 @@ function renderReport(){
 // ================= ASSIGN =================
 // 💎 업무 강도 (1/2/3 포인트) — 라디오 시각 갱신 + 값 저장.
 // 점수: 약한 업무=1점 (기본), 보통=2점, 강한 업무=3점.
-//
-// 🆕 2026-05-20 옵션 A — 표준 점수 사전. 매장별 3점 남발 방지.
-// 자주 쓰는 업무 이름이 매치되면 점수 고정 + radio 잠금. 매니저가 못 바꿈.
-// 순서 중요 — 위에서 아래로 match 검사, 첫 일치 적용. 정규화 후 비교 (소문자 + 공백/특수문자 제거).
-const STANDARD_POINTS_RULES = [
-  // 3점 — 매장 전체 일일 보고 (시간 많이 소요)
-  { match: /정육.*일일.*보고|meat.*daily|carnicer/i,                pts: 3, label: '정육 일일 보고' },
-  { match: /k.?food.*일일|kfood.*daily|k.food.*production/i,        pts: 3, label: 'K-Food 일일 보고' },
-  { match: /해산물.*일일|seafood.*daily|mariscos.*daily/i,          pts: 3, label: '해산물 일일 보고' },
-  { match: /농산물.*일일|produce.*daily|verduras.*daily|frutas/i,   pts: 3, label: '농산물 일일 보고' },
-  // 2점 — 보통 강도
-  { match: /냉동고.*전체|freezer.*full|congelador.*completo/i,      pts: 2, label: '냉동고 전체 진열' },
-  { match: /오프닝.*캐셔|opening.*cashier|cajero.*apertura/i,       pts: 2, label: '오프닝 캐셔' },
-  { match: /evaluation.*report|평가.*보고|reporte.*evaluacion/i,    pts: 2, label: '평가 보고' },
-  { match: /sale.?zone|세일.?존/i,                                  pts: 2, label: 'Sale Zone' },
-  // 1점 — 단순/일상 업무 (가장 흔히 남발되는 영역)
-  { match: /진열.*체크|진열.*리스트|display.*check|exhibici.*revis/i, pts: 1, label: '진열 체크리스트' },
-  { match: /진열.*보충|보충.*진열|restock|reabastec/i,              pts: 1, label: '진열 보충' },
-  { match: /청소|매대.*정리|cleaning|limpieza|clean.*organize/i,    pts: 1, label: '청소·정리' },
-  { match: /open.?cooler|쿨러|cooler.*display/i,                    pts: 1, label: 'Cooler 진열' },
-];
-function matchStandardPoints(name){
-  const norm = String(name||'').trim();
-  if (norm.length < 3) return null;
-  for (const r of STANDARD_POINTS_RULES) {
-    if (r.match.test(norm)) return r;
-  }
-  return null;
-}
-window.matchStandardPoints = matchStandardPoints;
-let __pointsLocked = false;   // 표준 점수 적용 중 = 라디오 클릭 무시
 function setAssignPoints(pts){
   const radios = document.querySelectorAll('#aPointsRadios .pt-radio');
   radios.forEach(r => {
@@ -8838,77 +6607,19 @@ function setAssignPoints(pts){
       r.style.background = '#dcfce7';
       r.style.color = '#1a5c3a';
       r.style.fontWeight = '700';
-      r.style.opacity = '1';
     } else {
       r.style.border = '2px solid #e5e7eb';
       r.style.background = '#fff';
       r.style.color = '#6b7280';
       r.style.fontWeight = '600';
-      r.style.opacity = __pointsLocked ? '0.35' : '1';
     }
-    r.style.cursor = __pointsLocked ? 'not-allowed' : 'pointer';
   });
 }
 window.setAssignPoints = setAssignPoints;
-// 표준 점수 적용 + 잠금 표시. name 변경 시 호출.
-function applyStandardPointsIfMatch(name){
-  const rule = matchStandardPoints(name);
-  let banner = document.getElementById('aPointsLockBanner');
-  if (!banner) {
-    banner = document.createElement('div');
-    banner.id = 'aPointsLockBanner';
-    banner.style.cssText = 'margin-top:6px;padding:6px 10px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:.78em;color:#92400e;font-weight:600;display:none';
-    const radios = document.getElementById('aPointsRadios');
-    if (radios && radios.parentNode) radios.parentNode.insertBefore(banner, radios.nextSibling);
-  }
-  if (rule) {
-    __pointsLocked = true;
-    setAssignPoints(rule.pts);
-    const _bannerText = LANG==='en'
-      ? '🔒 Standard points applied — "' + rule.label + '" is fixed at ' + rule.pts + 'pt (cross-branch fairness).'
-      : LANG==='es'
-      ? '🔒 Puntos estándar aplicados — "' + rule.label + '" fijo en ' + rule.pts + 'pt (equidad entre sucursales).'
-      : '🔒 표준 점수 적용 — "' + rule.label + '" 은 ' + rule.pts + '점 고정 (매장 간 공정성 보장).';
-    banner.textContent = _bannerText;
-    banner.style.display = '';
-  } else {
-    __pointsLocked = false;
-    banner.style.display = 'none';
-    // 잠금 해제 — 시각만 다시 칠해 opacity 정상화
-    setAssignPoints(getAssignPoints());
-  }
-}
-window.applyStandardPointsIfMatch = applyStandardPointsIfMatch;
-// aName input 변화 시 자동 검사 (직접 입력 케이스)
-document.addEventListener('input', (e) => {
-  if (e.target && e.target.id === 'aName') {
-    applyStandardPointsIfMatch(e.target.value);
-  }
-});
-// task-pick 체크박스 변화 시도 (템플릿 선택 케이스)
-document.addEventListener('change', (e) => {
-  if (e.target && e.target.classList && e.target.classList.contains('task-pick')) {
-    // 체크된 항목들 이름 합쳐서 검사
-    const picked = Array.from(document.querySelectorAll('.task-pick:checked')).map(cb => cb.dataset.name||'');
-    const composite = picked.length === 1 ? picked[0] : picked.join(' ');
-    applyStandardPointsIfMatch(composite);
-  }
-});
 // 라디오 클릭 시 값 갱신 — innerHTML 가 한 번만 들어가니 onclick 핸들러 위임
 document.addEventListener('click', (e) => {
   const lbl = e.target.closest && e.target.closest('#aPointsRadios .pt-radio');
-  if (!lbl || !lbl.dataset.pts) return;
-  // 표준 점수 적용 중이면 클릭 무시 + 짧은 흔들기 효과
-  if (__pointsLocked) {
-    const banner = document.getElementById('aPointsLockBanner');
-    if (banner) {
-      banner.style.transform = 'translateX(-4px)';
-      setTimeout(() => banner.style.transform = 'translateX(4px)', 80);
-      setTimeout(() => banner.style.transform = '', 160);
-    }
-    return;
-  }
-  setAssignPoints(parseInt(lbl.dataset.pts, 10) || 1);
+  if (lbl && lbl.dataset.pts) setAssignPoints(parseInt(lbl.dataset.pts, 10) || 1);
 });
 function getAssignPoints(){
   const r = document.querySelector('input[name="aPointsR"]:checked');
@@ -8918,12 +6629,7 @@ function getAssignPoints(){
 window.getAssignPoints = getAssignPoints;
 
 async function openAssignModal(){
-  if (!me || !(isManager(me.role) || isOwner())) {
-    alert(LANG==='en' ? '⛔ Only Supervisors and Managers can issue task assignments.'
-        : LANG==='es' ? '⛔ Solo Supervisores y Gerentes pueden asignar tareas.'
-        :               '⛔ 업무지시는 슈퍼바이저 / 매니저만 가능합니다.');
-    return;
-  }
+  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저만 사용 가능합니다.'); return; }
   // 매니저 장소 사진 + 지시 내용 초기화
   LOC_PHOTOS = []; LOC_PHOTO_URLS = []; window.LOC_NOTE = null; renderLocPreviews();
   const _locNote = document.getElementById('aLocNote'); if (_locNote) _locNote.value = '';
@@ -8932,7 +6638,7 @@ async function openAssignModal(){
   document.getElementById('aName').value = '';
   await populateTaskTemplates();
   const tpl = document.getElementById('aNameTpl'); if (tpl) tpl.value = '';
-  document.getElementById('aDeadline').value = '';   // 🚫 시간 제한 제거 — 데드라인 자동 채우기 안 함
+  document.getElementById('aDeadline').value = '11:00';
   document.getElementById('aCat').value = '온도 체크';
   document.getElementById('aPhoto').checked = true;
   // 포인트 라디오 초기값 — 1점 (약한 업무)
@@ -8981,22 +6687,6 @@ async function onAssignBranchChange(){
 }
 window.onAssignBranchChange = onAssignBranchChange;
 
-// 역할 표시 순서 — 사용자 명시 (2026-05-17):
-// 맨 위 = 일반 직원/부서, 아래로 갈수록 상위 직급.
-// 일반 부서 → VICE SUPERVISOR → SUPERVISOR → SENIOR SUPERVISOR → ASSISTANT MANAGER → MANAGER → OWNER.
-// includes 매칭 — 'HR MANAGER' 같은 변형도 MANAGER 그룹으로 분류.
-function _roleRank(role){
-  const u = String(role||'').toUpperCase().trim();
-  // 더 구체적인 패턴 먼저 체크 (ASSISTANT MANAGER 가 MANAGER 보다 우선)
-  if (/OWNER|BOSS|오너|사장|대표|DUEÑO|DUENO|PROPIETARIO/.test(u)) return 100;
-  if (/ASSISTANT MANAGER|ASST MANAGER|ASST\. MANAGER|부매니저|GERENTE ASISTENTE/.test(u)) return 80;
-  if (/MANAGER|GERENTE|매니저|점장/.test(u)) return 90; // ASSISTANT MANAGER 는 위에서 이미 잡힘
-  if (/SENIOR SUPERVISOR|SR SUPERVISOR|SR\. SUPERVISOR|시니어 슈퍼바이저|SUPERVISOR SENIOR/.test(u)) return 70;
-  if (/VICE SUPERVISOR|VICE-SUPERVISOR|SUB SUPERVISOR/.test(u)) return 50;
-  if (/SUPERVISOR/.test(u)) return 60; // VICE/SENIOR 은 위에서 이미 잡힘
-  return 0; // 일반 부서/직원 = 맨 위
-}
-
 async function loadAssignEmployees(branchId){
   const sel = document.getElementById('aTo');
   const selectLbl = LANG==='en' ? '— Select employee —' : LANG==='es' ? '— Selecciona empleado —' : '— 직원 선택 —';
@@ -9005,36 +6695,9 @@ async function loadAssignEmployees(branchId){
   try {
     const data = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' }).then(r => r.json());
     if (data && data.employees) {
-      // Miguel Perez / Mai Garcia 영구 SENIOR SUPERVISOR — UI + Firebase 영구 정정.
-      let _srSupChanged = false;
-      data.employees.forEach(e => {
-        const nm = String(e && e.name || '').toLowerCase().trim();
-        if (((/\bmiguel\b/.test(nm) && /\bperez\b/.test(nm)) ||
-             (/\bmai\b/.test(nm)    && /\bgarcia\b/.test(nm))) &&
-            e.role !== 'SENIOR SUPERVISOR') {
-          e.role = 'SENIOR SUPERVISOR';
-          _srSupChanged = true;
-        }
-      });
-      // Firebase 에도 영구 반영 — 다른 페이지/기기에도 자동 동기화 (best-effort, 실패 OK)
-      if (_srSupChanged) {
-        fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`, {
-          method: 'PUT',
-          body: JSON.stringify(data.employees),
-          headers: { 'Content-Type': 'application/json' }
-        }).then(() => console.log('[force-sr-sup] Firebase 정정 완료:', branchId))
-          .catch(e => console.warn('[force-sr-sup] Firebase PUT 실패 — UI 만 정정', e));
-      }
       const grouped = {};
       data.employees.forEach(e => { (grouped[e.role||'기타'] = grouped[e.role||'기타'] || []).push(e); });
-      // 역할 우선순위로 정렬 — 같은 priority 그룹 내에서는 알파벳 순.
-      const sortedRoles = Object.keys(grouped).sort((a,b) => {
-        const pa = _roleRank(a), pb = _roleRank(b);
-        if (pa !== pb) return pa - pb;
-        return a.localeCompare(b);
-      });
-      sortedRoles.forEach(role => {
-        const list = grouped[role];
+      Object.entries(grouped).forEach(([role, list]) => {
         sel.innerHTML += `<optgroup label="${escHtml(role)}">` + list.map(e => `<option value="${escHtml(e.name)}">${escHtml(e.name)}</option>`).join('') + '</optgroup>';
       });
     }
@@ -9158,16 +6821,7 @@ async function sendAssign(){
       name = pickedItems.length === 1 ? pickedItems[0].name : (pickedItems[0].cat + ' 체크리스트');
     }
   }
-  // 🆕 2026-05-23 — 업무명 강제 검증 alert 완전 제거.
-  // 매니저가 모달 안에 보이는 두 입력칸 ("📌 Add to '카테고리'" 인라인 추가칸 +
-  // "또는 직접 입력" 메인 칸) 을 헷갈려서 어디에 써도 알러트로 막혀 답답해 했음.
-  // → 이름이 비면 인라인 추가칸(inlineNewTplName) → 템플릿 모달(tplNewName) 순서로
-  // 자동으로 줍고, 그것도 비면 '업무' 기본값으로 그냥 보낸다. 발사 자체는 절대 막지 않음.
-  if (!name && !STAGE_MODE_CATS.includes(cat)) {
-    const inlineFallback = (document.getElementById('inlineNewTplName')?.value || '').trim();
-    const tplFallback = (document.getElementById('tplNewName')?.value || '').trim();
-    name = inlineFallback || tplFallback || '업무';
-  }
+  if (!name && !STAGE_MODE_CATS.includes(cat)) { alert('업무명 직접 입력 또는 위에서 1개 이상 체크하세요'); return; }
   if (!to && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
   // 장소가 선택돼 있으면 카테고리 무관하게 업무명 앞에 [장소] prefix 를 붙이고
   // task.place 필드로도 저장해 카드·매니저 뷰·채팅 자동 공유에서 같은
@@ -9185,102 +6839,6 @@ async function sendAssign(){
       saveCustomPlace(place);
     }
   } catch(_){}
-  // 🆕 2026-05-20 옵션 A — 표준 점수 강제 적용 (서버사이드 백업). 프론트에서 잠금이
-  // 우회되거나 옛 코드라도 발사 시 표준 점수로 다시 덮어씀. 매장 간 공정성 100% 보장.
-  const _stdRule = (typeof matchStandardPoints === 'function') ? matchStandardPoints(name) : null;
-  if (_stdRule) {
-    setAssignPoints(_stdRule.pts);
-  }
-  // 🆕 2026-05-20 — 3점 부여 시 사유 입력 강제 (옵션 B). 매장별 3점 남발 방지.
-  // 사유 메모를 강제하면 매니저가 "왜 3점인지" 적어야 하므로 자정 효과 + 본사 audit 가능.
-  // 표준 점수가 3점인 경우는 사유 입력 면제 (시스템이 보장한 점수).
-  const _assignPts = getAssignPoints();
-  // 표준 점수 사전이 3점으로 지정한 업무 (일일 보고 등) 는 메모 면제 — 시스템이 보장한 점수.
-  const _stdIs3pt = _stdRule && _stdRule.pts === 3;
-  if (_assignPts === 3 && !_stdIs3pt && !STAGE_MODE_CATS.includes(cat) && !QUICK_MODE) {
-    const reasonNote = note && note.length >= 5;
-    if (!reasonNote) {
-      const _msg = LANG==='en'
-        ? '⚠️ Reason required for 3 stars (⭐⭐⭐ Hard task)\n\n' +
-          'Type at least 5 characters in the "📝 Note" field explaining why 3pt.\n' +
-          'e.g., "New display setup — took 4 hours"\n' +
-          'e.g., "Meat new product trim + display"\n\n' +
-          'HQ audits point assignment reasons.\n' +
-          'For routine tasks, choose 1pt or 2pt.'
-        : LANG==='es'
-        ? '⚠️ Razón requerida para 3 estrellas (⭐⭐⭐ Tarea difícil)\n\n' +
-          'Escribe al menos 5 caracteres en el campo "📝 Nota" explicando por qué 3pt.\n' +
-          'ej., "Nueva configuración de exhibición — tomó 4 horas"\n' +
-          'ej., "Carne nuevo producto recorte + exhibición"\n\n' +
-          'La oficina central audita las razones de asignación de puntos.\n' +
-          'Para tareas rutinarias, elija 1pt o 2pt.'
-        : '⚠️ 3점(⭐⭐⭐ 강한 업무) 부여 시 사유 입력 필수\n\n' +
-          '"📝 추가 지시 / 메모" 칸에 왜 3점인지 5글자 이상 적어주세요.\n' +
-          '예) "신규 매대 전체 진열 — 4시간 소요"\n' +
-          '예) "정육 신상품 손질 + 진열"\n\n' +
-          '본사에서 점수 부여 사유를 audit 하기 위함입니다.\n' +
-          '단순 업무라면 1점/2점 선택하세요.';
-      alert(_msg);
-      const sendBtnPts = document.querySelector('#assignOv .btn:not(.sec)');
-      if (sendBtnPts) { sendBtnPts.disabled = false; sendBtnPts.textContent = '📨 보내기'; }
-      const noteEl = document.getElementById('aNote');
-      if (noteEl) noteEl.focus();
-      return;
-    }
-  }
-  // 🆕 2026-05-20 — 중복 업무 발사 경고. Las Olas 사례 (5/20): 같은 '오프닝 캐셔
-  // 체크리스트' 가 4분 간격으로 2번 발사되어 두 직원이 모두 완료 → 점수 6pt
-  // (정상은 3pt) 부풀림. STAGE 모드는 단계별 task 자체가 다른 이름이라 스킵.
-  if (!STAGE_MODE_CATS.includes(cat)) {
-    const targetBranchDup = getAssignTargetBranch();
-    const normName = (s) => String(s||'').trim().toLowerCase().replace(/\s+/g, ' ');
-    const dupKey = normName(name);
-    const todayDups = (typeof TASKS !== 'undefined' ? TASKS : []).filter(tt =>
-      tt && tt.branchId === targetBranchDup && normName(tt.name) === dupKey
-    );
-    if (todayDups.length > 0) {
-      const _allLbl = LANG==='en' ? 'All' : LANG==='es' ? 'Todos' : '전체';
-      const _doneLbl = LANG==='en' ? '✅ Done' : LANG==='es' ? '✅ Hecho' : '✅ 완료';
-      const _progLbl = LANG==='en' ? '⏳ In progress' : LANG==='es' ? '⏳ En curso' : '⏳ 진행';
-      const _byLbl = LANG==='en' ? 'Assignee' : LANG==='es' ? 'Asignado' : '담당';
-      const recent = todayDups.slice(0, 3).map(tt => {
-        const who = tt.assignedTo === '*' ? _allLbl : (tt.assignedTo || '?');
-        const state = tt.completedAt ? _doneLbl + ' (' + (tt.completedBy||'?') + ')' : _progLbl;
-        return '  • ' + _byLbl + ': ' + who + ' — ' + state;
-      }).join('\n');
-      const confirmMsg = LANG==='en'
-        ? '⚠️ Same task already sent today\n\n' +
-          'Task: ' + name + '\n' +
-          'Branch: ' + targetBranchDup + '\n' +
-          'Already sent: ' + todayDups.length + ' time(s)\n' +
-          recent + '\n\n' +
-          'Repeating the same task causes duplicate point credits.\n' +
-          'To change assignee → use ⚙ "Change assignee" on the existing task.\n\n' +
-          'Send anyway?'
-        : LANG==='es'
-        ? '⚠️ La misma tarea ya fue enviada hoy\n\n' +
-          'Tarea: ' + name + '\n' +
-          'Sucursal: ' + targetBranchDup + '\n' +
-          'Ya enviada: ' + todayDups.length + ' vez(es)\n' +
-          recent + '\n\n' +
-          'Repetir la misma tarea causa créditos de puntos duplicados.\n' +
-          'Para cambiar el asignado → use ⚙ "Cambiar asignado" en la tarea existente.\n\n' +
-          '¿Enviar de todos modos?'
-        : '⚠️ 같은 업무가 오늘 이미 발사됨\n\n' +
-          '업무: ' + name + '\n' +
-          '매장: ' + targetBranchDup + '\n' +
-          '기존 발사: ' + todayDups.length + '건\n' +
-          recent + '\n\n' +
-          '같은 업무를 반복 발사하면 점수가 중복 적립됩니다.\n' +
-          '담당자 변경이 목적이면 → 이미 발사된 업무에서 ⚙ "담당자 변경" 사용하세요.\n\n' +
-          '그래도 발사하시겠어요?';
-      if (!confirm(confirmMsg)) {
-        const sendBtnDup = document.querySelector('#assignOv .btn:not(.sec)');
-        if (sendBtnDup) { sendBtnDup.disabled = false; sendBtnDup.textContent = '📨 보내기'; }
-        return;
-      }
-    }
-  }
   const sendBtn = document.querySelector('#assignOv .btn:not(.sec)');
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '번역 중…'; }
   // Translate name + note into ko/en/es so any employee sees it in their language
@@ -9378,11 +6936,7 @@ async function sendAssign(){
     // 📦 벤더 (Ordering Products 카테고리에서 선택했을 때만) — task 카드에
     // 그 벤더 이름이 노출되어 직원이 어느 거래처 주문서를 작성할지 명확.
     vendor: (document.getElementById('aVendor')?.value || null) || null,
-    // 🆕 2026-05-20 zone picker 로 선택한 도면 zone ID — Manager View 히트맵에
-    // 정확한 위치 매핑됨 (텍스트 fuzzy match 불필요).
-    zoneId: (typeof __pickedZoneId === 'number' ? __pickedZoneId : null),
   });
-  __pickedZoneId = null;  // 다음 발사를 위해 초기화
   // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
   sendTaskChatBackup(to, name, deadline);
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
@@ -9457,24 +7011,6 @@ function renderAllNow(){
   renderClockIn();
   if (document.getElementById('page-rep').classList.contains('active')) renderReport();
   if (document.getElementById('page-home') && document.getElementById('page-home').classList.contains('active')) renderDashboard();
-  // 🏆 전광판 자동 업데이트 — 1분마다 점수 다시 계산 (이미 호출됐으면 setInterval 중복 안 함)
-  if (!window.__SB_TIMER){
-    window.__SB_TIMER = setInterval(() => {
-      try {
-        const homeActive = document.getElementById('page-home') && document.getElementById('page-home').classList.contains('active');
-        if (homeActive) {
-          renderScoreboard();
-          renderMissions();
-          // 시계만 별도 업데이트
-          const clockEl = document.getElementById('sbClock');
-          if (clockEl){
-            const d = new Date();
-            clockEl.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-          }
-        }
-      } catch(e){}
-    }, 60 * 1000);
-  }
   // 입력 중이던 텍스트 (RTDB 저장 전) 가 innerHTML 재구성에 휩쓸려 사라지지
   // 않게 메모리 백업으로 즉시 복원.
   if (typeof restorePendingInputs === 'function') restorePendingInputs();
