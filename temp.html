@@ -986,14 +986,39 @@ function renderCheckList(){
     </div>`;
   }).join('');
 }
+function _activeSlotKey(){
+  // KPI 와 동일 로직 — 현재 활성 슬롯 결정
+  const today = todayKey();
+  const todayChecks = CHECKS[today] || {};
+  const slots = slotsForToday();
+  let activeKey = currentSlotKey();
+  if (!activeKey){
+    for (let i = slots.length - 1; i >= 0; i--){
+      const sk = slots[i].key;
+      if (todayChecks[sk] && Object.keys(todayChecks[sk]).length > 0){ activeKey = sk; break; }
+    }
+    if (!activeKey && slots.length) activeKey = slots[0].key;
+  }
+  return activeKey;
+}
+function _activeSlotLabel(){
+  const k = _activeSlotKey();
+  const s = slotsForToday().find(x => x.key === k);
+  return s ? t(s.labelKey) : '';
+}
 function renderAlerts(){
   const list = $('alertList');
   const items = [];
+  // 활성 슬롯 기준 미체크·위험·주의 (KPI 와 동기화)
+  const today = todayKey();
+  const slotKey = _activeSlotKey();
+  const slotLbl = _activeSlotLabel();
+  const slotChecks = (CHECKS[today] && CHECKS[today][slotKey]) || {};
   EQUIPMENT.forEach(eq => {
-    const last = lastCheckFor(eq.id);
-    if (!last) items.push({ eq, kind:'missing' });
-    else if (last.status === 'danger') items.push({ eq, kind:'danger', last });
-    else if (last.status === 'warn') items.push({ eq, kind:'warn', last });
+    const c = slotChecks[eq.id];
+    if (!c) items.push({ eq, kind:'missing', slotLbl });
+    else if (c.status === 'danger') items.push({ eq, kind:'danger', last:c, slotLbl });
+    else if (c.status === 'warn') items.push({ eq, kind:'warn', last:c, slotLbl });
   });
   // Also list missed slots
   const slots = slotsForToday();
@@ -1024,18 +1049,28 @@ function renderAlerts(){
     const eq = it.eq;
     const last = it.last;
     const cls = it.kind === 'missing' ? 'missing' : it.kind;
+    // QR ID 에서 숫자 추출 — 장비 번호 (예: TEMP-EQ005 → 5)
+    const _qrNum = (q) => { const m = (q||'').match(/(\d+)/); return m ? String(parseInt(m[1],10)) : '?'; };
+    const numBadge = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:36px;height:36px;padding:0 9px;background:${it.kind==='missing'?'#dc2626':it.kind==='danger'?'#dc2626':'#f59e0b'};color:#fff;border-radius:8px;font-size:1.1em;font-weight:900;margin-right:8px">#${_qrNum(eq.qr)}</span>`;
+    const slotTag = it.slotLbl ? `<span style="display:inline-block;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:.72em;font-weight:700;margin-right:4px">⏰ ${it.slotLbl}</span>` : '';
+    const missingMsg = it.kind === 'missing'
+      ? `<span style="color:#dc2626;font-weight:700;font-size:.82em">❌ ${it.slotLbl} ${LANG==='ko'?'슬롯 측정 안 됨':LANG==='en'?'slot not measured':'sin medir'}</span>`
+      : '';
     return `<div class="eq-card ${cls}">
+      ${numBadge}
       ${eqIcon(eq)}
       <div class="info">
-        <div class="nm">${escHtml(eq.name||'?')}</div>
+        <div class="nm">#${_qrNum(eq.qr)} · ${escHtml(eq.name||'?')}</div>
         <div class="meta">
+          ${slotTag}
           <span style="font-size:.72em">${escHtml(eq.location||'')}</span>
           ${last ? `<span class="last-temp ${last.status}">${last.temp}°F</span>` : ''}
           ${last ? `<span style="font-size:.72em;color:#9ca3af">${escHtml(last.by||'')} · ${fmtTime(last.ts)}</span>` : ''}
+          ${missingMsg}
         </div>
       </div>
       <div class="actions" style="display:flex;gap:4px;align-items:center">
-        <button onclick="openInputForEq('${eq.id}')">${LANG==='ko'?'재체크':LANG==='en'?'Recheck':'Re-rev.'}</button>
+        <button onclick="openInputForEq('${eq.id}')" style="background:#dc2626;color:#fff;border-color:#dc2626;font-weight:800">${LANG==='ko'?'📝 입력':LANG==='en'?'📝 Enter':'📝 Ingresar'}</button>
         ${isManagerOrAbove() ? `<button onclick="event.stopPropagation();editEq('${eq.id}')" title="${LANG==='en'?'Edit equipment':LANG==='es'?'Editar equipo':'장비 수정'}" style="background:#dbeafe;border:1.5px solid #2563eb;color:#1d4ed8;border-radius:6px;padding:5px 9px;font-size:.95em;font-weight:800;cursor:pointer">✏</button>` : ''}
       </div>
     </div>`;
