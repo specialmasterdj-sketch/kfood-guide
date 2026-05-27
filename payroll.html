@@ -579,6 +579,40 @@ const EDITOR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','
   'ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','부매니저','GERENTE ASISTENTE',
   // EXECUTIVE / 전무 / VP — B.H.K 가 편집 권한 없어서 cash 화면 "🔒 읽기 전용" 상태
   'EXECUTIVE','전무','VICE PRESIDENT','VP'];
+
+// 🔒 2026-05-27 전무님 지시: URL 직접 접근 차단. 권한 없으면 페이지 자체를 가림.
+// auth-gate.js 가 비로그인은 이미 차단. 여기서 추가로 ROLE 체크 — 직원·일반 사용자 차단.
+// 동기 IIFE 로 처리 — 데이터 fetch 가 시작되기 전 차단 (네트워크 노출 방지).
+(function _payrollAccessGate(){
+  let me = null;
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
+  // 비로그인 상태면 auth-gate.js 가 처리하니 여기선 통과 (loadReport 까지는 가지만 곧 redirect 됨)
+  if (!me || !me.role) return;
+  const r = String(me.role).toUpperCase();
+  const VIEWER_ROLES = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER',
+    'BOSS','오너','사장','대표','전무','매니저','점장','부매니저',
+    'VICE PRESIDENT','VP','GERENTE','GERENTE ASISTENTE','DUEÑO','DUENO','PROPIETARIO'];
+  const allowed = VIEWER_ROLES.some(t => r.indexOf(t.toUpperCase()) >= 0);
+  if (allowed) return;  // 매니저 이상 — 통과
+
+  // 권한 없음 → 페이지 전체 교체 + 스크립트 중단
+  document.documentElement.innerHTML =
+    '<head><meta charset="UTF-8"><title>접근 권한 없음</title></head>' +
+    '<body style="margin:0;font-family:system-ui,sans-serif;background:#1f2937;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center">' +
+    '<div style="max-width:480px">' +
+    '<div style="font-size:72px;margin-bottom:16px">🔒</div>' +
+    '<h1 style="font-size:24px;font-weight:800;margin-bottom:12px">접근 권한이 없습니다</h1>' +
+    '<p style="color:#9ca3af;line-height:1.6;margin-bottom:24px">' +
+    '이 페이지는 매니저 / 점장 / 오너 / 전무 전용입니다.<br>' +
+    '본인 권한이 OWNER · MANAGER · ASSISTANT MANAGER · EXECUTIVE 인지 확인하세요.<br>' +
+    '권한 변경 필요시 매니저에게 문의.' +
+    '</p>' +
+    '<p style="color:#9ca3af;font-size:13px;margin-bottom:24px">현재 역할: ' + (me.role || '없음') + ' · ' + (me.name || '익명') + '</p>' +
+    '<a href="./hub.html" style="display:inline-block;background:#1a5c3a;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:700">← 홈으로 돌아가기</a>' +
+    '</div></body>';
+  // 스크립트 즉시 중단 (이후 코드 실행 안 됨 → fetch 안 일어남)
+  throw new Error('payroll: access denied');
+})();
 function _meIdentity(){ try{ return JSON.parse(localStorage.getItem('chat.me') || 'null'); }catch(_){ return null; } }
 function _normName(s){ return String(s||'').toLowerCase().replace(/\([^)]*\)/g,'').replace(/[\s.\-_]/g,''); }
 function findMyRole(){
