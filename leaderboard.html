@@ -157,9 +157,9 @@ const T = {
   legChatPhoto: { ko:'사진 첨부',                               en:'Photo attached',                            es:'Foto adjunta' },
   legReply:     { ko:'댓글',                                    en:'Reply',                                     es:'Respuesta' },
   legReaction:  { ko:'좋아요(이모지 반응)',                     en:'Reaction (emoji)',                          es:'Reacción (emoji)' },
-  legChatCap:   { ko:'⚠️ 채팅 점수는 1인당 1일 최대 10pt 까지만 인정 (스팸 방지).',
-                  en:'⚠️ Chat-related points capped at 10pt per person per day (anti-spam).',
-                  es:'⚠️ Puntos de chat limitados a 10pt por persona por día (anti-spam).' },
+  legChatCap:   { ko:'⚠️ 채팅 점수(메시지·사진·댓글)는 1인당 1일 최대 10pt. 👍 좋아요 받은 점수는 캡 없음 (0.2pt/개, 모든 이모지 동일).',
+                  en:'⚠️ Chat points (msg·photo·reply) capped at 10pt/day per person. 👍 received likes are uncapped (0.2pt each, all emojis equal).',
+                  es:'⚠️ Puntos de chat (msj·foto·resp) limitados a 10pt/día por persona. 👍 likes recibidos sin límite (0.2pt c/u, todos emojis iguales).' },
 };
 let LANG = 'en';
 try {
@@ -521,19 +521,22 @@ function computeScores(agg){
              :                         9999;   // 'all' = 사실상 무제한
   const chatCap = CHAT_DAILY_CAP * days;
   Object.values(agg).forEach(r => {
-    // 채팅 관련 점수 별도 계산 → cap 적용
+    // 채팅 관련 점수 (메시지·사진·댓글) → cap 적용
+    // 2026-05-27 전무님 지시: reaction (받은 좋아요) 은 캡에서 제외 — 받는 사람이
+    // 직접 조작 못 함 (남이 줘야 받음) → 어뷰징 위험 낮음 → 무제한 누적 OK.
     const chatRaw = r.chatMsg     * SCORE.chatMessage
                   + r.chatPhoto   * SCORE.chatPhoto
-                  + r.reaction    * SCORE.reaction
                   + r.reply       * SCORE.reply;
     const chatCapped = Math.min(chatRaw, chatCap);
+    const reactionScore = r.reaction * SCORE.reaction;  // 캡 없음
     // 💎 task 점수는 taskPoints (매니저가 부여한 1·2·3 합) 그대로 사용
     r.score =
       r.expiryAdd     * SCORE.expiryAdd
     + r.expiryCheck   * SCORE.expiryCheck
     + r.expiryDiscard * SCORE.expiryDiscard
     + r.taskPoints    // 그대로 합산 (1·2·3 점)
-    + chatCapped;     // 채팅 cap 적용된 점수
+    + chatCapped      // 채팅 cap 적용된 점수
+    + reactionScore;  // 좋아요 받은 점수 (캡 없음, 0.2/개)
     r.score = Math.round(r.score * 10) / 10;
     // 디버깅용 — 채팅이 cap 으로 깎였는지 표시 (UI 배지에 활용 가능)
     r.chatCapped = (chatRaw > chatCap);
