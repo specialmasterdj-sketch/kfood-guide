@@ -1243,6 +1243,14 @@ const STRICT_OWNER_EMAILS = [
 const STRICT_OWNER_NAMES = ['DJ', 'B.H.K', 'BHK', 'SUN KIM'];
 const DM_OWNER_WHITELIST = ['DJ','BHK','HKIM','STEVEHONG','KWANGHONOH','SUNKIM'];
 function _canDmOwner(senderName){ return DM_OWNER_WHITELIST.includes(_normName(senderName)); }
+// 임원 보호 명단(EXECUTIVE_NAMES / STRICT_OWNER_NAMES) 안에 있어도
+// 전 직원이 DM 보낼 수 있게 개방된 예외 인원. 회계/총무 직접 문의 가능.
+// 임원 권한(삭제 버튼, 페이롤, PIN 등)은 그대로 유지됨.
+const DM_OPEN_EXEC_NAMES = ['SUN KIM','SUNKIM'];
+function _isDmOpenExec(name){
+  const n = String(name||'').replace(/\s+/g,'').toUpperCase();
+  return DM_OPEN_EXEC_NAMES.some(x => x.replace(/\s+/g,'').toUpperCase() === n);
+}
 function _normName(s){ return String(s||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
 // DJ 오너 전용 체크 — 모든 메시지 편집 같은 최상위 권한 (B.H.K 전무 제외).
 // isStrictOwner 보다 더 엄격: 이메일 정확 매칭 + 이름 'DJ' 정확 매칭만.
@@ -1847,7 +1855,7 @@ window.openDmPicker = async function(){
       const isTarget_owner = /OWNER|BOSS|오너|사장|대표|DUE.O|PROPIETARIO/i.test(tr);
       const isTarget_exec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === (x.name||'').replace(/\s+/g,'').toUpperCase());
       const isTarget_strict = STRICT_OWNER_NAMES.map(_normName).includes(_normName(x.name));
-      if ((isTarget_owner || isTarget_exec || isTarget_strict) && !iCanDmOwner) return false;
+      if ((isTarget_owner || isTarget_exec || isTarget_strict) && !iCanDmOwner && !_isDmOpenExec(x.name)) return false;
       return true;
     });
     // 중복 제거
@@ -1867,8 +1875,9 @@ window.startDmFromPicker = function(){
   const otherName = (inp?.value || sel?.value || '').trim();
   if (!otherName) { alert('상대를 선택하거나 이름을 입력하세요'); return; }
   if (normName(otherName) === normName(me?.name || '')) { alert('본인과는 1:1 시작 불가'); return; }
-  // OWNER/EXECUTIVE 에게 DM: DM_OWNER_WHITELIST 명단만 허용
-  if (!_canDmOwner(me?.name)) {
+  // OWNER/EXECUTIVE 에게 DM: DM_OWNER_WHITELIST 명단만 허용.
+  // 단, DM_OPEN_EXEC_NAMES(예: Sun Kim) 는 전 직원이 보낼 수 있음.
+  if (!_canDmOwner(me?.name) && !_isDmOpenExec(otherName)) {
     const otherUpper = (otherName||'').replace(/\s+/g,'').toUpperCase();
     const isTargetExec = EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherUpper);
     const isTargetStrict = STRICT_OWNER_NAMES.map(_normName).includes(_normName(otherName));
@@ -4056,7 +4065,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const _canDm = _canDmOwner(_me.name);
       const _isProtected = STRICT_OWNER_NAMES.map(_normName).includes(_normName(otherName))
         || EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === otherName.replace(/\s+/g,'').toUpperCase());
-      if (_isProtected && !_canDm) {
+      if (_isProtected && !_canDm && !_isDmOpenExec(otherName)) {
         setTimeout(() => {
           alert(({ko:'지정된 인원만 이 분에게 메시지를 보낼 수 있습니다.',en:'Only authorized personnel can send DMs to this person.',es:'Solo personal autorizado puede enviar mensajes a esta persona.'})[LANG]||'Restricted');
         }, 800);
