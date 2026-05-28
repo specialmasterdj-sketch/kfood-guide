@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_28_translate_fix';   // 번역 500자 ERROR 화면 차단
+    var BUST = 'chat_2026_05_28_translate_2000';   // 번역 청크 분할 — 2000자까지
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2221,25 +2221,71 @@ async function applyAutoTranslate(){
   }
 }
 const __TRANSLATE_CACHE = new Map();   // key: `${from}|${to}|${text}` → 번역 결과
+
+// 줄바꿈·문장 경계 기준으로 maxLen 이하 청크로 분할.
+// 한 줄이 maxLen 초과면 문장(.!?。！？) → 그래도 길면 강제 잘림.
+function _splitForTranslation(text, maxLen){
+  const lines = String(text||'').split('\n');
+  const chunks = [];
+  let buf = '';
+  const flush = () => { if (buf) { chunks.push(buf); buf = ''; } };
+  for (const ln of lines) {
+    if (ln.length > maxLen) {
+      flush();
+      const sentences = ln.split(/(?<=[.!?。！？])\s+/);
+      let sbuf = '';
+      for (const s of sentences) {
+        if ((sbuf + ' ' + s).trim().length > maxLen && sbuf) { chunks.push(sbuf); sbuf = s; }
+        else { sbuf = sbuf ? (sbuf + ' ' + s) : s; }
+        while (sbuf.length > maxLen) { chunks.push(sbuf.slice(0, maxLen)); sbuf = sbuf.slice(maxLen); }
+      }
+      if (sbuf) chunks.push(sbuf);
+      continue;
+    }
+    const next = buf ? (buf + '\n' + ln) : ln;
+    if (next.length > maxLen) { flush(); buf = ln; }
+    else buf = next;
+  }
+  flush();
+  return chunks;
+}
+
+async function _translateChunk(text, from, to){
+  const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text)
+            + '&langpair=' + from + '|' + to;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  if (d?.responseStatus && String(d.responseStatus) !== '200') return '';
+  const out = (d && d.responseData && d.responseData.translatedText) || '';
+  if (!out || /LIMIT EXCEEDED|MAX ALLOWED|INVALID|NOT VALID|MYMEMORY WARNING/i.test(out)) return '';
+  return out;
+}
+
 async function fetchTranslation(text, from, to){
-  // 🚫 2026-05-28: MyMemory 무료 API 는 단일 query 500자 제한.
-  // 긴 메시지는 번역 시도 안 함 — 이전엔 "QUERY LENGTH LIMIT EXCEEDED" 에러가
-  // 그대로 메시지 본문으로 화면에 표시되는 버그 발생.
-  if (!text || text.length > 480) return '';
+  // 🌐 2026-05-28: MyMemory 무료 API 단일 query 500자 제한을 청크 분할로 우회.
+  // 전체 메시지 2000자까지 허용 (= 약 4-5개 청크). 청크 하나라도 실패하면 전체 skip.
+  if (!text) return '';
+  if (text.length > 2000) return '';
   const k = from + '|' + to + '|' + text;
   if (__TRANSLATE_CACHE.has(k)) return __TRANSLATE_CACHE.get(k);
   try {
-    const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text)
-              + '&langpair=' + from + '|' + to;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    // 🛡️ API 응답이 에러여도 200 OK 로 오면서 translatedText 에 에러 문자열을 넣음.
-    // responseStatus 검사 + 에러 패턴 reject 로 화면 오염 방지.
-    if (d?.responseStatus && String(d.responseStatus) !== '200') return '';
-    const out = (d && d.responseData && d.responseData.translatedText) || '';
-    if (!out || /LIMIT EXCEEDED|MAX ALLOWED|INVALID|NOT VALID|ERROR/i.test(out)) return '';
-    __TRANSLATE_CACHE.set(k, out);
+    // 짧은 메시지 — 단일 호출
+    if (text.length <= 480) {
+      const out = await _translateChunk(text, from, to);
+      if (out) __TRANSLATE_CACHE.set(k, out);
+      return out;
+    }
+    // 긴 메시지 — 청크 분할 후 순차 번역 (병렬 호출은 무료 API rate-limit 우려)
+    const chunks = _splitForTranslation(text, 450);
+    const translated = [];
+    for (const c of chunks) {
+      const t = await _translateChunk(c, from, to);
+      if (!t) return '';   // 일부만 번역돼서 어색하게 표시하지 말고 전체 skip
+      translated.push(t);
+    }
+    const out = translated.join('\n');
+    if (out) __TRANSLATE_CACHE.set(k, out);
     return out;
   } catch (e) {
     console.warn('[translate] failed', e);
