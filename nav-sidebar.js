@@ -489,7 +489,11 @@
       try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
       if (!me) { setBadge('chat', 0); return; }
 
-      // 방 목록
+      // 🚀 PERF (2026-05-28): 방 목록 1회 fetch 만으로 unread 방 개수 계산.
+      // 이전: 모든 방 마다 /chat/messages/{id}.json shallow fetch (100+ requests).
+      // 현재: /chat/rooms.json 한 번 + 각 방의 lastTs 비교.
+      // 정확한 메시지 개수 대신 안 읽은 방 개수 표시. chat.html line 1548 등에서
+      // 메시지 보낼 때 lastTs 자동 PATCH 되므로 신뢰 가능.
       const rRes = await fetch(FB_DB + '/chat/rooms.json?t=' + Date.now(), { cache: 'no-store' });
       if (!rRes.ok) return;
       const rooms = await rRes.json() || {};
@@ -512,29 +516,16 @@
       const exec = isExecName(me);
       const mgr  = isManagerLevel(me);
 
-      // 각 방 메시지 shallow GET → ts 추출 → lastVisit 이후 카운트
-      const counts = await Promise.all(ids.map(async id => {
+      let unreadRooms = 0;
+      for (const id of ids) {
         const r = rooms[id] || {};
-        // 본인이 못 보는 방은 제외
-        if (r.executiveOnly && !exec) return 0;
-        if (r.managersOnly && !mgr) return 0;
+        if (r.executiveOnly && !exec) continue;
+        if (r.managersOnly && !mgr) continue;
         const last = lv[id] || 0;
-        try {
-          const res = await fetch(FB_DB + '/chat/messages/' + id + '.json?shallow=true');
-          if (!res.ok) return 0;
-          const obj = await res.json();
-          if (!obj) return 0;
-          let count = 0;
-          for (const k of Object.keys(obj)) {
-            if (!k || k[0] !== 'm') continue;
-            const ts = parseInt(k.slice(1, 14), 10);
-            if (isFinite(ts) && ts > last) count++;
-          }
-          return count;
-        } catch(e) { return 0; }
-      }));
-      const total = counts.reduce((a,b) => a + b, 0);
-      setBadge('chat', total);
+        const roomLastTs = r.lastTs || 0;
+        if (roomLastTs > last) unreadRooms++;
+      }
+      setBadge('chat', unreadRooms);
     } catch(e){}
   }
   function startChatPolling(){
