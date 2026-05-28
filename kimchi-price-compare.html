@@ -1440,24 +1440,47 @@ function printResults(){
 
 function exportXlsx(){
   if(!S.results.length){toast('비교 결과 없음');return;}
-  const rows=S.results.filter(r=>r.status==='up'||r.status==='down'||r.status==='same').map(r=>({
-    '상태':{'up':'⬆️ 인상','down':'⬇️ 인하','same':'동일'}[r.status],
-    '벤더코드(ItemCode)':r.invVendorCode||r.vendorCode||'',
-    '상품명(POS)':r.name,
-    '상품명(인보이스)':r.invName||'',
-    '바코드':r.barcode||'',
-    'POS 현재가':r.posPrice!=null?r.posPrice:'',
-    '인보이스 EA Price':r.invEA!=null?r.invEA:'',
-    '변동액($)':r.diff!=null?+r.diff.toFixed(2):'',
-    '변동률(%)':r.pct!=null?+r.pct.toFixed(1):'',
-    '인보이스 박스가격':r.invCase!=null&&r.invCase>0?r.invCase:'',
-    '매칭방식':r.via||''
-  }));
-  const ws=XLSX.utils.json_to_sheet(rows);
-  ws['!cols']=[{wch:36},{wch:12},{wch:16},{wch:11},{wch:14},{wch:12},{wch:10},{wch:11},{wch:10},{wch:10}];
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'가격비교');
-  XLSX.writeFile(wb,`김치마트_가격비교_${new Date().toISOString().slice(0,10)}.xlsx`);
-  toast('📥 결과 엑셀 저장 완료!');
+  // 2026-05-28 전무님 요청: 미매칭(신규 가능) 도 함께 저장 — 신규 상품 누락 방지
+  const rowOf = (r) => {
+    const isInvSide = r.status === 'unmatched' && r.invEA > 0 && !(r.posPrice > 0);
+    const isPosSide = r.status === 'unmatched' && r.posPrice > 0 && !(r.invEA > 0);
+    return {
+      '상태': r.status==='unmatched'
+                ? (isInvSide ? '🆕 신규 가능 (POS 미등록)' : isPosSide ? '❓ POS 만 있음 (이번 인보이스 없음)' : '❓ 미매칭')
+                : {'up':'⬆️ 인상','down':'⬇️ 인하','same':'동일','review':'⚠️ 확인필요'}[r.status] || r.status,
+      '벤더코드(ItemCode)': r.invVendorCode||r.vendorCode||'',
+      '상품명(POS)': r.name || '',
+      '상품명(인보이스)': r.invName || '',
+      '바코드': r.barcode || r.invBC || '',
+      'POS 현재가': r.posPrice!=null && r.posPrice > 0 ? r.posPrice : '',
+      '인보이스 EA Price': r.invEA!=null && r.invEA > 0 ? r.invEA : '',
+      '변동액($)': r.diff!=null && r.status!=='unmatched' ? +r.diff.toFixed(2) : '',
+      '변동률(%)': r.pct!=null && r.status!=='unmatched' ? +r.pct.toFixed(1) : '',
+      '인보이스 박스가격': r.invCase!=null && r.invCase>0 ? r.invCase : '',
+      '매칭방식': r.via || (r.status==='unmatched' ? '매칭 안됨' : '')
+    };
+  };
+  // 정렬: 가격변동(인상→인하) → 동일 → 미매칭 → 확인필요
+  const order = { up:1, down:2, same:3, unmatched:4, review:5 };
+  const all = S.results
+    .filter(r => r.status==='up' || r.status==='down' || r.status==='same' || r.status==='unmatched' || r.status==='review')
+    .sort((a,b) => (order[a.status]||9) - (order[b.status]||9));
+  const rows = all.map(rowOf);
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:28},{wch:13},{wch:38},{wch:38},{wch:15},{wch:12},{wch:14},{wch:11},{wch:11},{wch:14},{wch:14}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '가격비교');
+
+  // 미매칭만 따로 별도 시트 — 신규 상품 등록 작업 편하게
+  const unmatchedRows = all.filter(r => r.status === 'unmatched').map(rowOf);
+  if (unmatchedRows.length){
+    const wsU = XLSX.utils.json_to_sheet(unmatchedRows);
+    wsU['!cols'] = [{wch:28},{wch:13},{wch:38},{wch:38},{wch:15},{wch:12},{wch:14},{wch:11},{wch:11},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, wsU, '미매칭 (신규 가능)');
+  }
+  XLSX.writeFile(wb, `김치마트_가격비교_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast(`📥 엑셀 저장: 전체 ${rows.length}건 (미매칭 ${unmatchedRows.length}건 별도 시트)`);
 }
 
 /* ===================== HELPERS ===================== */
