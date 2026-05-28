@@ -26,6 +26,7 @@ setPersistence(auth, indexedDBLocalPersistence)
 const BOOTSTRAP_ADMINS = {
   'specialmasterdj@gmail.com': { role: 'OWNER',     branch: '*', name: 'DJ' },
   'byhoki64@gmail.com':        { role: 'EXECUTIVE', branch: '*', name: 'B.H.K' },
+  'kdaisy81@yahoo.com':        { role: 'OWNER',     branch: '*', name: 'Sun Kim' },
 };
 function bootstrapFor(email){
   if (!email) return null;
