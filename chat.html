@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_28_unread_perf';   // unread 메시지 fetch 100+ → 0
+    var BUST = 'chat_2026_05_28_translate_fix';   // 번역 500자 ERROR 화면 차단
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2222,6 +2222,10 @@ async function applyAutoTranslate(){
 }
 const __TRANSLATE_CACHE = new Map();   // key: `${from}|${to}|${text}` → 번역 결과
 async function fetchTranslation(text, from, to){
+  // 🚫 2026-05-28: MyMemory 무료 API 는 단일 query 500자 제한.
+  // 긴 메시지는 번역 시도 안 함 — 이전엔 "QUERY LENGTH LIMIT EXCEEDED" 에러가
+  // 그대로 메시지 본문으로 화면에 표시되는 버그 발생.
+  if (!text || text.length > 480) return '';
   const k = from + '|' + to + '|' + text;
   if (__TRANSLATE_CACHE.has(k)) return __TRANSLATE_CACHE.get(k);
   try {
@@ -2230,8 +2234,12 @@ async function fetchTranslation(text, from, to){
     const r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
+    // 🛡️ API 응답이 에러여도 200 OK 로 오면서 translatedText 에 에러 문자열을 넣음.
+    // responseStatus 검사 + 에러 패턴 reject 로 화면 오염 방지.
+    if (d?.responseStatus && String(d.responseStatus) !== '200') return '';
     const out = (d && d.responseData && d.responseData.translatedText) || '';
-    if (out) __TRANSLATE_CACHE.set(k, out);
+    if (!out || /LIMIT EXCEEDED|MAX ALLOWED|INVALID|NOT VALID|ERROR/i.test(out)) return '';
+    __TRANSLATE_CACHE.set(k, out);
     return out;
   } catch (e) {
     console.warn('[translate] failed', e);
