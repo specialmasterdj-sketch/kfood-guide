@@ -33,17 +33,37 @@ let __authReadyResolve;
 const __authReady = new Promise(res => { __authReadyResolve = res; });
 let __authResolved = false;
 
+// 🚀 PERF (2026-05-28): 토큰 메모리 캐시 — 매 fetch 마다 SDK 호출 안 함.
+// Firebase ID 토큰 유효시간 1시간 — 50분까지 캐시 사용 후 갱신.
+// 페이지 새로 로드되면 캐시 사라지지만 SDK 의 currentUser 가 즉시 토큰 발급.
+let __tokenCache = null;
+let __tokenCacheExp = 0;
+function __cacheToken(t){ __tokenCache = t; __tokenCacheExp = Date.now() + 50*60*1000; }
+
 async function getIdToken() {
+  // 1. 메모리 캐시 — 즉시 반환 (가장 빠른 path)
+  if (__tokenCache && Date.now() < __tokenCacheExp) return __tokenCache;
+  // 2. SDK currentUser 가 이미 있으면 즉시 토큰 발급 (대기 안 함)
+  try {
+    const u = auth.currentUser;
+    if (u && !u.isAnonymous) {
+      const t = await u.getIdToken();
+      if (t) { __cacheToken(t); return t; }
+    }
+  } catch(_){}
+  // 3. currentUser 없음 → onAuthStateChanged 짧게 대기 (1초)
+  // 페이지 첫 진입 시 IndexedDB 토큰 복원 대기. 1초 안에 안 풀리면 토큰 없이 진행.
   try {
     if (!__authResolved) await Promise.race([
       __authReady,
-      new Promise(res => setTimeout(res, 3000))   // 3s safety net
+      new Promise(res => setTimeout(res, 1000))
     ]);
-    const u = auth.currentUser;
-    if (u && !u.isAnonymous) return await u.getIdToken();
+    const u2 = auth.currentUser;
+    if (u2 && !u2.isAnonymous) {
+      const t = await u2.getIdToken();
+      if (t) { __cacheToken(t); return t; }
+    }
   } catch (e) {}
-  // 🔒 인증 안 된 사용자에게는 토큰 없음 — RTDB rules 가 거부.
-  // 익명 fallback 제거 (2026-05-28 보안 강화).
   return null;
 }
 window.__getAuthToken = getIdToken;
@@ -72,12 +92,16 @@ window.fetch = async function (input, init) {
 // has been restored from IndexedDB (auth state isn't ready synchronously).
 // Also flips the __authReady gate so any fetch that started early
 // can stop waiting and use the now-known auth state.
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
   __authResolved = true;
   if (__authReadyResolve) { __authReadyResolve(); __authReadyResolve = null; }
+  // 🚀 PERF: 토큰 즉시 prewarm — 다음 fetch 들이 캐시 사용 → 첫 fetch도 즉시 응답
+  if (user && !user.isAnonymous) {
+    try { const t = await user.getIdToken(); if (t) __cacheToken(t); } catch(_){}
+  } else {
+    __tokenCache = null; __tokenCacheExp = 0;
+  }
   // 🔒 SECURITY (2026-05-28): 익명 sign-in 자동 호출 모두 제거.
-  // 미로그인 사용자가 auth-gate 페이지에 도달하면 auth-gate.js 가 auth.html 로 redirect.
-  // 익명 토큰 자동 발급 금지 → 외부 침입 경로 차단.
   try { window.dispatchEvent(new Event('fb-auth-ready')); } catch (_) {}
 });
 
@@ -100,8 +124,9 @@ async function _revive(why){
   try {
     const u = auth.currentUser;
     if (u && !u.isAnonymous) {
-      // 토큰 강제 갱신 — 만료 임박해도 OK
-      try { await u.getIdToken(true); } catch (e) { console.warn('[fb-auth] token refresh failed', e); }
+      // 토큰 강제 갱신 — 만료 임박해도 OK + 캐시 갱신
+      try { const t = await u.getIdToken(true); if (t) __cacheToken(t); }
+      catch (e) { console.warn('[fb-auth] token refresh failed', e); }
     }
     // 🔒 SECURITY (2026-05-28): currentUser 없으면 익명 fallback 안 함.
     // 토큰 만료된 사용자는 auth-gate 가 다음 fetch 401 감지 후 auth.html 로 redirect.
