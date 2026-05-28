@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'apps_2026_05_27_no_payroll';   // 급여 사이드바 메뉴 제거
+    var BUST = 'apps_2026_05_28_unread_perf';   // chat unread fetch 100+ → 0
     var KEY = 'kmtools_bust_apps';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1312,22 +1312,18 @@ document.addEventListener('DOMContentLoaded', function(){
       var lvChanged = false, now = Date.now();
       roomIds.forEach(function(id){ if (lv[id] === undefined) { lv[id] = now; lvChanged = true; } });
       if (lvChanged) { try { localStorage.setItem('chat.lastVisit', JSON.stringify(lv)); } catch(e){} }
-      var counts = await Promise.all(roomIds.map(async function(id){
+      // 🚀 PERF (2026-05-28): chat/rooms 1회 fetch 후 lastTs 비교만으로 unread 방 카운트.
+      // 이전: 각 방마다 chat/messages/<id>.json shallow fetch (100+ requests).
+      // 이제: 0 추가 fetch. badge 는 정확한 메시지 개수 대신 안 읽은 방 개수.
+      var unreadRoomCount = 0;
+      roomIds.forEach(function(id){
         var r = rooms[id] || {};
         var last = lv[id] || 0;
-        if (r.lastTs && r.lastTs <= last) return 0;
-        try {
-          var msgRes = await fetch(FB + '/chat/messages/' + id + '.json?shallow=true');
-          var obj = await msgRes.json();
-          if (!obj) return 0;
-          var n = 0;
-          for (var k in obj) { if (tsFromMsgId(k) > last) n++; }
-          return n;
-        } catch(e){ return 0; }
-      }));
-      var total = counts.reduce(function(s,n){ return s + n; }, 0);
-      setBadge('chat-unread-badge', total);
-      setStat('stat-chat', total);
+        var roomLastTs = r.lastTs || 0;
+        if (roomLastTs > last) unreadRoomCount++;
+      });
+      setBadge('chat-unread-badge', unreadRoomCount);
+      setStat('stat-chat', unreadRoomCount);
     } catch(e){ console.warn('[apps] chat unread fetch failed', e); setStat('stat-chat', '—'); }
   }
 

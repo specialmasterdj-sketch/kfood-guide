@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_27_no_payroll_v2';   // 급여 방 강제 숨김 (매니저도)
+    var BUST = 'chat_2026_05_28_unread_perf';   // unread 메시지 fetch 100+ → 0
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3952,28 +3952,19 @@ async function refreshUnreadCounts(){
     if (lvChanged) {
       try { localStorage.setItem('chat.lastVisit', JSON.stringify(lv)); } catch(e){}
     }
-    // 각 방의 메시지 키 shallow GET → ts 추출 → lastVisit 이후 카운트
+    // 🚀 PERF (2026-05-28): lastTs 비교만으로 unread 여부 판단 — 메시지 fetch 안 함.
+    // 이전: 각 방 마다 chat/messages/<id>.json?shallow=true (100+ requests / 갱신).
+    // 이제: 0 requests. 정확한 메시지 개수 대신 "안 읽은 방=1+" 표시.
+    // 사용자가 방을 열면 onValue 가 실제 메시지 로드 → 정확한 표시.
     const ids = Object.keys(ROOMS);
-    await Promise.all(ids.map(async id => {
+    ids.forEach(id => {
       const r = ROOMS[id];
       if (!r) return;
-      const last = lv[id] || 0;
-      // 활성 방은 항상 0
       if (id === ACTIVE_ROOM) { r.unread = 0; return; }
-      // 방의 lastTs 가 last 이전이면 0 (빠른 패스)
-      if (r.lastTs && r.lastTs <= last) { r.unread = 0; return; }
-      try {
-        const res = await fetch(`${FB_DB_URL}/chat/messages/${id}.json?shallow=true`);
-        const obj = await res.json();
-        if (!obj) { r.unread = 0; return; }
-        let count = 0;
-        for (const k of Object.keys(obj)) {
-          const ts = tsFromMsgId(k);
-          if (ts > last) count++;
-        }
-        r.unread = count;
-      } catch(e) { r.unread = 0; }
-    }));
+      const last = lv[id] || 0;
+      const roomLastTs = r.lastTs || 0;
+      r.unread = roomLastTs > last ? 1 : 0;
+    });
     renderRooms();
   } finally {
     __unreadFetching = false;
