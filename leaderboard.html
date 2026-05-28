@@ -174,9 +174,9 @@ const T = {
   legChatPhoto: { ko:'사진 첨부',                               en:'Photo attached',                            es:'Foto adjunta' },
   legReply:     { ko:'댓글',                                    en:'Reply',                                     es:'Respuesta' },
   legReaction:  { ko:'좋아요(이모지 반응)',                     en:'Reaction (emoji)',                          es:'Reacción (emoji)' },
-  legChatCap:   { ko:'⚠️ 채팅 점수(메시지·사진·댓글)는 1인당 1일 최대 10pt. 👍 좋아요 받은 점수는 캡 없음 (0.2pt/개, 모든 이모지 동일).',
-                  en:'⚠️ Chat points (msg·photo·reply) capped at 10pt/day per person. 👍 received likes are uncapped (0.2pt each, all emojis equal).',
-                  es:'⚠️ Puntos de chat (msj·foto·resp) limitados a 10pt/día por persona. 👍 likes recibidos sin límite (0.2pt c/u, todos emojis iguales).' },
+  legChatCap:   { ko:'⚠️ 채팅 점수(메시지·사진·댓글)는 1인당 1일 최대 10pt. 👍 좋아요는 캡 없음 — 받은 0.2pt + 누른 0.05pt (모든 이모지 동일).',
+                  en:'⚠️ Chat points (msg·photo·reply) capped at 10pt/day per person. 👍 likes uncapped — received 0.2pt + given 0.05pt (all emojis equal).',
+                  es:'⚠️ Puntos de chat (msj·foto·resp) limitados a 10pt/día. 👍 likes sin límite — recibidos 0.2pt + dados 0.05pt (todos emojis iguales).' },
 };
 let LANG = 'en';
 try {
@@ -253,7 +253,8 @@ const SCORE = {
   taskComplete: 1.0,   // 업무 지시 완료 (사진 보고 포함)
   chatMessage:  0.3,   // 채팅 메시지 — 1.0 → 0.3 (옵션 A)
   chatPhoto:    0.1,   // 메시지 안 사진 — 0.2 → 0.1 (옵션 A)
-  reaction:     0.2,   // 👍 좋아요(이모지) 1개당
+  reaction:     0.2,   // 👍 받은 좋아요 (메시지 작성자) — 큰 보상
+  reactionGiven:0.05,  // 👍 누른 좋아요 (응원자) — 2026-05-28 옵션 B: 적극 응원도 인정
   reply:        0.2,   // 💬 댓글 1개당
 };
 // 사진 남발 방지 — 한 번에 100장 올려도 점수는 최대 20장까지만 인정.
@@ -378,7 +379,7 @@ function isExcludedSender(name, branch){
 //   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, chatMsg:0, chatPhoto:0, reaction:0, reply:0, score:0 });
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, chatMsg:0, chatPhoto:0, reaction:0, reactionGiven:0, reply:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -496,9 +497,10 @@ async function fetchChat(agg, since){
           const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
           if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
 
-          // 👍 Reactions on this message — credit the message AUTHOR (m.sender)
-          // not the reactor. 2026-05-27 전무님 지시: 좋아요 받은 사람이 포인트.
-          // 자기 메시지에 자기가 좋아요 누르는 self-react 는 점수 카운트 제외 (어뷰징 방지).
+          // 👍 Reactions — 2026-05-28 옵션 B (전무님 지시):
+          //   - 받은 사람(메시지 작성자): +1 reaction (0.2pt) — 큰 보상
+          //   - 누른 사람(reactor): +1 reactionGiven (0.05pt) — 응원자도 인정
+          //   - self-react (자기 메시지에 자기 좋아요) 는 양쪽 다 카운트 제외 (어뷰징 방지)
           if (m.reactions && typeof m.reactions === 'object' && m.sender){
             for (const emoji of Object.keys(m.reactions)) {
               const usersMap = m.reactions[emoji];
@@ -506,7 +508,10 @@ async function fetchChat(agg, since){
               for (const [, displayName] of Object.entries(usersMap)) {
                 if (!displayName) continue;
                 if (displayName === m.sender) continue;  // self-react 제외
+                // 받은 사람 (메시지 작성자)
                 bumpAgg(agg, m.sender, m.senderBranch || '', 'reaction', 1, m.color);
+                // 누른 사람 (응원자) — 적은 점수
+                bumpAgg(agg, displayName, '', 'reactionGiven', 1);
               }
             }
           }
@@ -545,7 +550,8 @@ function computeScores(agg){
                   + r.chatPhoto   * SCORE.chatPhoto
                   + r.reply       * SCORE.reply;
     const chatCapped = Math.min(chatRaw, chatCap);
-    const reactionScore = r.reaction * SCORE.reaction;  // 캡 없음
+    const reactionScore = r.reaction * SCORE.reaction;           // 받은 좋아요 (캡 없음, 0.2/개)
+    const reactionGivenScore = (r.reactionGiven||0) * SCORE.reactionGiven;  // 누른 좋아요 (캡 없음, 0.05/개)
     // 💎 task 점수는 taskPoints (매니저가 부여한 1·2·3 합) 그대로 사용
     r.score =
       r.expiryAdd     * SCORE.expiryAdd
@@ -553,7 +559,8 @@ function computeScores(agg){
     + r.expiryDiscard * SCORE.expiryDiscard
     + r.taskPoints    // 그대로 합산 (1·2·3 점)
     + chatCapped      // 채팅 cap 적용된 점수
-    + reactionScore;  // 좋아요 받은 점수 (캡 없음, 0.2/개)
+    + reactionScore   // 받은 좋아요 점수 (캡 없음, 0.2/개)
+    + reactionGivenScore;  // 누른 좋아요 점수 (캡 없음, 0.05/개) — 옵션 B
     r.score = Math.round(r.score * 10) / 10;
     // 디버깅용 — 채팅이 cap 으로 깎였는지 표시 (UI 배지에 활용 가능)
     r.chatCapped = (chatRaw > chatCap);
