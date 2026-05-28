@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_28_translate_2000';   // 번역 청크 분할 — 2000자까지
+    var BUST = 'chat_2026_05_28_translate_parallel';   // 병렬 청크 + 이메일 등록 — 10k 까지
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2250,9 +2250,14 @@ function _splitForTranslation(text, maxLen){
   return chunks;
 }
 
+// 🔑 MyMemory 무료 한도 늘림 — 이메일 등록 시 일일 한도 1k → 10k words (~50k chars).
+// 회사 Firebase 오너 이메일 사용. 추가 비용 없음, 단순 식별용.
+const TRANSLATE_API_EMAIL = 'info@miamikimchi.com';
+
 async function _translateChunk(text, from, to){
   const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text)
-            + '&langpair=' + from + '|' + to;
+            + '&langpair=' + from + '|' + to
+            + '&de=' + encodeURIComponent(TRANSLATE_API_EMAIL);
   const r = await fetch(url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
@@ -2263,28 +2268,27 @@ async function _translateChunk(text, from, to){
 }
 
 async function fetchTranslation(text, from, to){
-  // 🌐 2026-05-28: MyMemory 무료 API 단일 query 500자 제한을 청크 분할로 우회.
-  // 전체 메시지 2000자까지 허용 (= 약 4-5개 청크). 청크 하나라도 실패하면 전체 skip.
+  // 🌐 2026-05-28: 길이 제한 사실상 제거 + 병렬 청크 번역.
+  // 짧은 메시지: 단일 호출. 긴 메시지: 480자 미만 청크 분할 → Promise.all 병렬 → 즉시 합침.
+  // 사용자 요청: "한 번에 한 번 클릭으로 다 올라갈 수 있게".
   if (!text) return '';
-  if (text.length > 2000) return '';
+  // 극단적 메시지(10000자+)만 skip — MyMemory 일일 한도 보호 + UX 의미 없음
+  if (text.length > 10000) return '';
   const k = from + '|' + to + '|' + text;
   if (__TRANSLATE_CACHE.has(k)) return __TRANSLATE_CACHE.get(k);
   try {
-    // 짧은 메시지 — 단일 호출
+    // 480자 이하 — 단일 호출
     if (text.length <= 480) {
       const out = await _translateChunk(text, from, to);
       if (out) __TRANSLATE_CACHE.set(k, out);
       return out;
     }
-    // 긴 메시지 — 청크 분할 후 순차 번역 (병렬 호출은 무료 API rate-limit 우려)
+    // 긴 메시지 — 청크 분할 후 병렬 번역. 모두 완료 시 한 번에 합쳐 화면 표시.
     const chunks = _splitForTranslation(text, 450);
-    const translated = [];
-    for (const c of chunks) {
-      const t = await _translateChunk(c, from, to);
-      if (!t) return '';   // 일부만 번역돼서 어색하게 표시하지 말고 전체 skip
-      translated.push(t);
-    }
-    const out = translated.join('\n');
+    const results = await Promise.all(chunks.map(c => _translateChunk(c, from, to)));
+    // 청크 하나라도 실패하면 전체 skip — 어색한 부분 번역 방지
+    if (results.some(t => !t)) return '';
+    const out = results.join('\n');
     if (out) __TRANSLATE_CACHE.set(k, out);
     return out;
   } catch (e) {
