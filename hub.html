@@ -7,7 +7,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'hub_2026_05_27_no_payroll';
+    var BUST = 'hub_2026_05_27_dir_terminate';
     var KEY = 'kmtools_bust_hub';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -800,7 +800,23 @@ function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','
 
 // ============== 직원 디렉토리 ==============
 let _dirData = [];
+let _dirUsersByName = {}; // normalizedName -> { uid, status } — users 노드 매칭
 const DIR_BRANCHES = ['LASOLAS','MIAMI','HOLLYWOOD','PEMBROKE_PINES','CORAL_SPRINGS'];
+function _dirNormName(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]/g,''); }
+// 사장 가족 화이트리스트 — role 이 MANAGER 로 되어 있어도 OWNER 권한
+// (BHK 는 디렉토리상 MANAGER 로 보이지만 실제로는 공동 사장)
+const _DIR_OWNER_NAMES = ['dj','bhk','byhk','byhoki'];
+const _DIR_OWNER_EMAILS = ['specialmasterdj@gmail.com','byhoki64@gmail.com'];
+function _dirIsOwner(){
+  const m = getMe();
+  if (!m) return false;
+  if (m.role === 'OWNER' || m.role === 'EXECUTIVE') return true;
+  const n = _dirNormName(m.name||'');
+  if (_DIR_OWNER_NAMES.includes(n)) return true;
+  const em = String(m.email||'').toLowerCase();
+  if (_DIR_OWNER_EMAILS.includes(em)) return true;
+  return false;
+}
 function _dirGlobalLbl(){ return LANG==='en' ? 'HQ / Executive' : LANG==='es' ? 'Sede / Ejecutivo' : '본사 / Executive'; }
 const DIR_BRANCH_LABELS = {get _GLOBAL(){return _dirGlobalLbl();},LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
 const DIR_ROLE_SEQ = [['OWNER',0],['ASSISTANT MANAGER',2],['ASSISTANT_MANAGER',2],['SENIOR SUPERVISOR',3],['VICE SUPERVISOR',5],['VICE_SUPERVISOR',5],['MANAGER',1],['SUPERVISOR',4]];
@@ -862,6 +878,27 @@ async function loadDirectory(){
       });
     }
   } catch(e){}
+  // users 노드 매칭 — 차단/복구 시 uid 필요. OWNER 만 의미 있음.
+  _dirUsersByName = {};
+  if (_dirIsOwner()) {
+    try {
+      const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+      const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
+      const uRes = await fetch(fb+'/users.json' + authQ, { cache:'no-store' });
+      if (uRes.ok) {
+        const users = (await uRes.json()) || {};
+        Object.entries(users).forEach(([uid, u]) => {
+          if (!u || !u.name) return;
+          const n = _dirNormName(u.name);
+          if (!n) return;
+          // 동명이인 — 매장 매칭이 더 정확하면 덮어쓰기, 아니면 첫 등록 유지
+          if (!_dirUsersByName[n] || u.status === 'approved') {
+            _dirUsersByName[n] = { uid, status: u.status||'', email: u.email||'', branch: u.branch||'' };
+          }
+        });
+      }
+    } catch(e){ console.warn('[dir] users load failed', e); }
+  }
   _dirData.sort((a,b) => {
     const bai = a.branch==='_GLOBAL'?-1:DIR_BRANCHES.indexOf(a.branch);
     const bbi = b.branch==='_GLOBAL'?-1:DIR_BRANCHES.indexOf(b.branch);
@@ -887,6 +924,8 @@ function filterDirectory(){
   const roleColors = {MANAGER:'#1a5c3a',OWNER:'#1a5c3a','ASSISTANT MANAGER':'#2563eb','ASSISTANT_MANAGER':'#2563eb','SENIOR SUPERVISOR':'#7c3aed',SUPERVISOR:'#d97706','VICE SUPERVISOR':'#d97706','VICE_SUPERVISOR':'#d97706'};
   function roleBadgeColor(r){ const u=String(r||'').toUpperCase(); for(const [k,c] of Object.entries(roleColors)) if(u.includes(k)) return c; return '#6b7280'; }
   function initials(n){ const p=String(n||'').trim().split(/\s+/); return p.length>=2 ? (p[0][0]+p[p.length-1][0]).toUpperCase() : (p[0]||'?').slice(0,2).toUpperCase(); }
+  const ownerMode = _dirIsOwner();
+  const meName = _dirNormName((getMe()||{}).name||'');
   for (const e of list) {
     if (e.branch !== curBr) {
       curBr = e.branch;
@@ -896,19 +935,146 @@ function filterDirectory(){
     const ini = initials(e.name);
     const roleLabel = e.dept || e.role || '';
     const dn = encodeURIComponent(e.name);
+    const empNorm = _dirNormName(e.name);
+    // OWNER 전용 차단 버튼 — 본인은 차단 못함, DJ/BHK 같은 사장 계정도 보호
+    const isSelf = empNorm === meName;
+    const isProtected = ['dj','bhk','byhk','byhoki'].includes(empNorm);
+    let termBtn = '';
+    if (ownerMode && !isSelf && !isProtected) {
+      const userInfo = _dirUsersByName[empNorm];
+      const alreadyBlocked = userInfo && userInfo.status === 'blocked';
+      if (alreadyBlocked) {
+        termBtn = `<button onclick="event.stopPropagation();dirUnblockEmployee('${encodeURIComponent(e.name)}','${e.branch}')" title="차단 해제 / Unblock" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:8px;padding:6px 10px;font-size:.82em;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">↺</button>`;
+      } else {
+        termBtn = `<button onclick="event.stopPropagation();dirTerminateEmployee('${encodeURIComponent(e.name)}','${e.branch}')" title="퇴사 처리 / Terminate" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;font-size:.82em;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">🚫</button>`;
+      }
+    }
+    const blockedStyle = (_dirUsersByName[empNorm] && _dirUsersByName[empNorm].status === 'blocked') ? 'opacity:.5;text-decoration:line-through' : '';
     html += `<div onclick="location.href='./chat.html?dm='+this.dataset.dn" data-dn="${dn}" style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #f3f4f6;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#f0fdf4'" onmouseout="this.style.background=''">
-      <div style="width:38px;height:38px;border-radius:50%;background:${rc}20;color:${rc};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.82em;flex-shrink:0">${ini}</div>
-      <div style="flex:1;min-width:0">
+      <div style="width:38px;height:38px;border-radius:50%;background:${rc}20;color:${rc};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.82em;flex-shrink:0;${blockedStyle}">${ini}</div>
+      <div style="flex:1;min-width:0;${blockedStyle}">
         <div style="font-weight:700;font-size:.92em;color:#1f2937">${escHtml(e.name)}</div>
         <div style="font-size:.78em;color:#6b7280;margin-top:1px">${escHtml(roleLabel)}</div>
       </div>
       <div style="font-size:.72em;color:#9ca3af;font-weight:600">${DIR_BRANCH_LABELS[e.branch]||e.branch}</div>
+      ${termBtn}
       <div style="font-size:1.05em;flex-shrink:0;opacity:.45">💬</div>
     </div>`;
   }
   if (!html) html = '<div style="padding:30px;text-align:center;color:#9ca3af;font-size:.9em">검색 결과 없음</div>';
   document.getElementById('dirList').innerHTML = html;
 }
+
+// ============== 직원 퇴사 처리 (OWNER 전용) ==============
+// 동시 처리: 1) users/<uid>.status='blocked' — 로그인 차단
+//          2) schedules/<branch>/employees 배열에서 이름 제거 — 스케줄/디렉토리에서 사라짐
+//          3) schedules/_global/owners 도 있다면 제거
+async function _dirAuthQuery(){
+  try {
+    const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+    return tok ? '?auth=' + encodeURIComponent(tok) : '';
+  } catch(_){ return ''; }
+}
+window.dirTerminateEmployee = async function(encName, branch){
+  if (!_dirIsOwner()) { alert('오너만 처리할 수 있습니다 / Owner only'); return; }
+  const name = decodeURIComponent(encName);
+  const brLabel = DIR_BRANCH_LABELS[branch] || branch;
+  const msg = (LANG==='en'
+      ? `Terminate ${name} (${brLabel})?\n\n• Login will be blocked immediately\n• Removed from schedule & directory\n• Can be restored later from Approvals page`
+      : LANG==='es'
+      ? `¿Dar de baja a ${name} (${brLabel})?\n\n• El acceso se bloqueará al instante\n• Se eliminará del horario y directorio\n• Se puede restaurar desde Aprobaciones`
+      : `${name} (${brLabel}) 퇴사 처리 하시겠습니까?\n\n• 로그인 즉시 차단\n• 스케줄·디렉토리에서 제거\n• 나중에 "Approvals" 페이지에서 복구 가능`);
+  if (!confirm(msg)) return;
+  const fb = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  const norm = _dirNormName(name);
+  const errors = [];
+  // 1) users 차단
+  const userInfo = _dirUsersByName[norm];
+  if (userInfo && userInfo.uid) {
+    try {
+      const q = await _dirAuthQuery();
+      const r = await fetch(`${fb}/users/${userInfo.uid}.json${q}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ status:'blocked', blockedAt: Date.now(), blockedBy: (getMe()||{}).name || 'owner' })
+      });
+      if (!r.ok) errors.push('users PATCH ' + r.status);
+      else _dirUsersByName[norm].status = 'blocked';
+    } catch(e){ errors.push('users: ' + e.message); }
+  }
+  // 2) employees 배열에서 제거 (해당 매장)
+  if (branch && branch !== '_GLOBAL') {
+    try {
+      const q = await _dirAuthQuery();
+      const gRes = await fetch(`${fb}/schedules/${branch}/employees.json${q}`, { cache:'no-store' });
+      if (gRes.ok) {
+        const cur = await gRes.json();
+        if (Array.isArray(cur)) {
+          const filtered = cur.filter(e => !e || !e.name || _dirNormName(e.name) !== norm);
+          if (filtered.length !== cur.length) {
+            const pRes = await fetch(`${fb}/schedules/${branch}/employees.json${q}`, {
+              method:'PUT', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify(filtered)
+            });
+            if (!pRes.ok) errors.push('employees PUT ' + pRes.status);
+          }
+        }
+      }
+    } catch(e){ errors.push('employees: ' + e.message); }
+  }
+  // 3) owners 배열에서 제거 (_GLOBAL 등록자만)
+  if (branch === '_GLOBAL') {
+    try {
+      const q = await _dirAuthQuery();
+      const oRes = await fetch(`${fb}/schedules/_global/owners.json${q}`, { cache:'no-store' });
+      if (oRes.ok) {
+        const cur = await oRes.json();
+        if (Array.isArray(cur)) {
+          const filtered = cur.filter(o => !o || !o.name || _dirNormName(o.name.replace(/\([^)]*\)/g,'')) !== norm);
+          if (filtered.length !== cur.length) {
+            const pRes = await fetch(`${fb}/schedules/_global/owners.json${q}`, {
+              method:'PUT', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify(filtered)
+            });
+            if (!pRes.ok) errors.push('owners PUT ' + pRes.status);
+          }
+        }
+      }
+    } catch(e){ errors.push('owners: ' + e.message); }
+  }
+  if (errors.length) {
+    alert((LANG==='en'?'Some steps failed:\n':LANG==='es'?'Algunos pasos fallaron:\n':'일부 단계 실패:\n') + errors.join('\n'));
+  } else {
+    alert((LANG==='en'?'✅ Terminated. App access revoked.':LANG==='es'?'✅ Dado de baja. Acceso revocado.':'✅ 퇴사 처리 완료. 앱 접근 차단됨.'));
+  }
+  // 캐시 무효화 후 재로드
+  try { localStorage.removeItem('shifts.' + branch); localStorage.removeItem('shifts.global'); } catch(_){}
+  await loadDirectory();
+};
+
+window.dirUnblockEmployee = async function(encName, branch){
+  if (!_dirIsOwner()) { alert('오너만 처리할 수 있습니다 / Owner only'); return; }
+  const name = decodeURIComponent(encName);
+  const msg = (LANG==='en' ? `Restore ${name}? Login will be allowed (pending approval).`
+             : LANG==='es' ? `¿Restaurar a ${name}? Acceso permitido (pendiente).`
+             : `${name} 차단을 풀까요? 다시 로그인 가능 (pending).`);
+  if (!confirm(msg)) return;
+  const fb = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  const norm = _dirNormName(name);
+  const userInfo = _dirUsersByName[norm];
+  if (!userInfo || !userInfo.uid) { alert('해당 사용자 uid 못 찾음 / User not found'); return; }
+  try {
+    const q = await _dirAuthQuery();
+    const r = await fetch(`${fb}/users/${userInfo.uid}.json${q}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ status:'pending', blockedAt:null, blockedBy:null })
+    });
+    if (!r.ok) { alert('실패 / Failed: ' + r.status); return; }
+    _dirUsersByName[norm].status = 'pending';
+    alert(LANG==='en'?'✅ Restored. Awaiting re-approval.':LANG==='es'?'✅ Restaurado. Pendiente de aprobación.':'✅ 복구됨. 재승인 대기.');
+    await loadDirectory();
+  } catch(e){ alert('Error: ' + e.message); }
+};
+
 document.addEventListener('DOMContentLoaded', loadDirectory);
 
 // ============== CLOCK IN / OUT ==============

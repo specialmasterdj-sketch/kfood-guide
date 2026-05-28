@@ -247,7 +247,14 @@ function watchProfile(user){
     } else if (profile.status === 'pending') {
       showOverlay({ kind:'pending', user, profile });
     } else if (profile.status === 'blocked') {
+      // 🔒 SECURITY (2026-05-28): 차단 시 즉시 토큰 무효화 + localStorage 제거.
+      // 토큰을 살려두면 콘솔에서 chat.me 조작으로 우회 가능. signOut → 토큰 만료
+      // → RTDB rules 가 모든 요청 거부. 차단 화면 3초 보여주고 강제 redirect.
       showOverlay({ kind:'blocked', user, profile });
+      try { localStorage.removeItem('chat.me'); } catch(_){}
+      try { sessionStorage.clear(); } catch(_){}
+      try { await signOut(auth); } catch(_){}
+      setTimeout(() => { try { location.replace('./auth.html?blocked=1'); } catch(_){} }, 3500);
     }
   });
 }
