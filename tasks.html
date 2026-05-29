@@ -3617,11 +3617,19 @@ function renderTeamRank(){
   const listEl   = document.getElementById('teamRankList');
   const emptyEl  = document.getElementById('teamRankEmpty');
   if (!podiumEl || !listEl) return;
-  // 🌐 i18n 라벨 동기화
+  // 🌐 i18n 라벨 동기화 — 매니저는 "전 매장 통합" 부제 표시
   try {
     const _setTxt = (id, txt) => { const el = document.getElementById(id); if (el && txt) el.textContent = txt; };
+    const isMgrPre = (typeof me !== 'undefined' && me) && ((typeof isManager === 'function' && isManager(me.role)) || (typeof isOwner === 'function' && isOwner()));
     _setTxt('teamRankTitle',    gt('teamRankTitle'));
-    _setTxt('teamRankSub',      gt('teamRankSub'));
+    if (isMgrPre) {
+      const subAll = LANG==='en' ? 'All branches combined — completed × points'
+                   : LANG==='es' ? 'Todas las sucursales — completadas × puntos'
+                   :               '전 매장 통합 — 완료 × 점수';
+      _setTxt('teamRankSub', subAll);
+    } else {
+      _setTxt('teamRankSub', gt('teamRankSub'));
+    }
     _setTxt('teamRankLink',     gt('teamRankLink'));
     _setTxt('teamRankEmptyMsg', gt('teamRankEmpty'));
   } catch(e){}
@@ -3633,10 +3641,11 @@ function renderTeamRank(){
   // 1) 완료된 업무만 집계
   const me0 = (typeof me === 'object' && me) ? me : null;
   const isMgr = me0 && (typeof isManager === 'function' ? isManager(me0.role) : false) || (typeof isOwner === 'function' && isOwner());
-  // 매니저는 dashboard dropdown 선택 매장 한정
-  const activeBranch = (typeof DASH_BRANCH !== 'undefined' && DASH_BRANCH) ? DASH_BRANCH : (me0 && me0.branch);
+  // 🆕 2026-05-28 — 전무님 요청: 매니저/오너 = **전 매장 통합** 순위 (dropdown 무시).
+  //                  일반 직원은 본인 매장만 유지.
+  const myBranch = me0 && me0.branch;
 
-  const agg = new Map(); // key: normalized name → {name, branch, score, count}
+  const agg = new Map(); // key: normalized name → {name, branch, score, count, branches:Set}
   function _norm(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
   function _branchName(bid){
     const b = (typeof BRANCHES !== 'undefined' ? BRANCHES : []).find(x => x.id === bid);
@@ -3644,20 +3653,28 @@ function renderTeamRank(){
   }
   TASKS.forEach(t => {
     if (!t || !t.completedAt) return;
-    if (activeBranch && t.branchId && t.branchId !== activeBranch && !isMgr) return;
-    // 매니저인 경우에도 dropdown 선택 매장에 집중 (전체 매장은 leaderboard.html 에서)
-    if (isMgr && activeBranch && t.branchId && t.branchId !== activeBranch) return;
+    // 일반 직원만 본인 매장 필터. 매니저/오너는 모든 매장 합산.
+    if (!isMgr && myBranch && t.branchId && t.branchId !== myBranch) return;
     const who = t.completedBy || t.assignedTo || t.assigneeName || '';
     if (!who || who === '*') return;
     const k = _norm(who);
     if (!k) return;
     const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
-    const cur = agg.get(k) || { name: who, branch: _branchName(t.branchId), score: 0, count: 0 };
+    const cur = agg.get(k) || { name: who, branch: _branchName(t.branchId), score: 0, count: 0, branches: new Set() };
     cur.score += pts;
     cur.count += 1;
+    if (t.branchId) cur.branches.add(t.branchId);
+    // 가장 많이 일한 매장 라벨 유지 (단일 매장이면 그 매장, 여러 매장이면 첫 매장 + N)
+    if (!cur.branch && t.branchId) cur.branch = _branchName(t.branchId);
     agg.set(k, cur);
   });
-  const rows = Array.from(agg.values()).sort((a,b) => b.score - a.score || b.count - a.count);
+  const rows = Array.from(agg.values()).map(r => {
+    // 매니저 통합 뷰에서 한 직원이 여러 매장 일했으면 표시 보강
+    if (r.branches && r.branches.size > 1) {
+      r.branch = _branchName([...r.branches][0]) + ' +' + (r.branches.size - 1);
+    }
+    return r;
+  }).sort((a,b) => b.score - a.score || b.count - a.count);
 
   if (!rows.length){
     podiumEl.innerHTML = ''; listEl.innerHTML = '';
@@ -3685,8 +3702,9 @@ function renderTeamRank(){
       </div>`;
   }).join('');
 
-  // 3) 4~10위 리스트
-  const rest = rows.slice(3, 10);
+  // 3) 4위 이하 리스트 — 매니저 전 매장 통합이면 top15 까지, 일반 직원은 top10
+  const LIMIT = isMgr ? 15 : 10;
+  const rest = rows.slice(3, LIMIT);
   listEl.innerHTML = rest.map((r, idx) => {
     const rank = idx + 4;
     const meHit = me0 && _norm(me0.name) === _norm(r.name);
@@ -3701,8 +3719,8 @@ function renderTeamRank(){
       </div>`;
   }).join('');
 
-  // 4) 내가 top10 밖이면 본인 행 추가
-  if (me0 && me0.name && !rows.slice(0,10).some(r => _norm(r.name) === _norm(me0.name))) {
+  // 4) 내가 top N 밖이면 본인 행 추가
+  if (me0 && me0.name && !rows.slice(0,LIMIT).some(r => _norm(r.name) === _norm(me0.name))) {
     const myIdx = rows.findIndex(r => _norm(r.name) === _norm(me0.name));
     if (myIdx >= 0) {
       const r = rows[myIdx];
