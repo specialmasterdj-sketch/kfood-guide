@@ -216,10 +216,10 @@ async function main() {
 
   console.log(`\n[daily-tasks] 전체 완료 — 신규 ${totalCreated} · 스킵 ${totalSkipped} · 실패 ${totalFailed} (지점 ${BRANCHES_TO_RUN.length}개)`);
 
-  // 📬 매일 발화 확인용 chat 알림 — '김치마트 앱 랩' 방에 결과 한 줄.
-  // 이게 매일 아침 안 오면 = cron 안 돌았다는 뜻 → 즉시 인지 가능.
-  // 단, skip 만 일어났으면 (이미 발송됨) 알림 안 보냄 — 채팅방 도배 방지.
-  if (totalCreated > 0 || totalFailed > 0) {
+  // 🚫 2026-05-28 사장님 지시: "AUTO 일일 발송" chat 알림 완전 차단.
+  // task 생성 자체는 계속 — cron 실패 여부는 GitHub Actions 로그로 확인.
+  // 직원 채팅방 도배 방지 위해 AUTO 메시지 완전 제거.
+  if (false && (totalCreated > 0 || totalFailed > 0)) {
     try {
       const room = 'kimchi_mart_app_lab';
       const status = totalFailed > 0 ? '⚠️' : '✅';
