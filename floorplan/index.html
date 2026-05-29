@@ -2086,23 +2086,42 @@ async function initLoad() {
   if (chosen){
     Object.assign(stores, chosen.stores);
     if (chosen.currentStore) currentStore = chosen.currentStore;
-    if (stores[currentStore]) loadZones(JSON.parse(JSON.stringify(stores[currentStore])));
-    else loadBaseTemplate();
-    setActiveTab();
-    showToast('✓ Loaded from ' + source);
-    return;
+  }
+  setActiveTab();
+
+  // 🛡️ 2026-05-29 사장님 명시: 현재 매장의 zones 가 비어있으면 (사용자 PWA 의 빈
+  // localStorage 가 RTDB 를 덮어쓴 케이스 등) 무조건 floorplan-data.json 에서 fallback.
+  // 다른 매장 데이터(이미 작업 중인 매장) 는 덮어쓰지 않고 현재 매장만 채움.
+  function _zonesOf(sd){ return sd ? (Array.isArray(sd) ? sd : (sd.zones || [])) : []; }
+  let needFallback = _zonesOf(stores[currentStore]).length === 0;
+  if (needFallback){
+    try {
+      const resp = await fetch('floorplan-data.json?t=' + Date.now(), { cache:'no-store' });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.stores) {
+          // 현재 매장이 비어있는 케이스만 bundled 로 채움 — 다른 매장 작업본 안전.
+          if (_zonesOf(data.stores[currentStore]).length > 0) {
+            stores[currentStore] = data.stores[currentStore];
+            source = (source ? source + ' + ' : '') + 'bundled fallback (current store empty)';
+          }
+          // chosen 자체가 null 이었던 경우 — 모든 매장을 bundled 로
+          if (!chosen) {
+            Object.assign(stores, data.stores);
+            if (data.currentStore && !savedStore) currentStore = data.currentStore;
+            source = 'floorplan-data.json';
+          }
+        }
+      }
+    } catch (_) {}
   }
 
-  // 3) Fallback: floorplan-data.json bundled file
-  try {
-    const resp = await fetch('floorplan-data.json?t=' + Date.now());
-    if (resp.ok) {
-      const data = await resp.json();
-      initFromData(data);
-      showToast('✓ Loaded from floorplan-data.json');
-      return;
-    }
-  } catch (_) {}
+  if (stores[currentStore] && _zonesOf(stores[currentStore]).length > 0) {
+    loadZones(JSON.parse(JSON.stringify(stores[currentStore])));
+    setActiveTab();
+    showToast('✓ Loaded from ' + (source || 'unknown'));
+    return;
+  }
 
   // 4) Final fallback: base template
   loadBaseTemplate();
