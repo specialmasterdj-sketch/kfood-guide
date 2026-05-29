@@ -346,7 +346,12 @@ img{max-width:100%}
     </div>
     <div class="field">
       <label id="ipTempLbl">🌡 측정 온도 (°F)</label>
-      <input type="number" id="ipTemp" step="0.1" placeholder="예: 3.5" oninput="updateJudge()">
+      <div style="display:flex;gap:8px;align-items:stretch">
+        <button type="button" id="ipTempSignBtn" onclick="toggleTempSign()" title="영하/영상 전환"
+                style="min-width:64px;border:2px solid #0369a1;background:#e0f2fe;color:#0369a1;border-radius:10px;font-size:1.05em;font-weight:800;cursor:pointer;padding:0 10px;line-height:1.1">± <span id="ipTempSignLbl" style="font-size:.78em;display:block">영하</span></button>
+        <input type="text" inputmode="decimal" id="ipTemp" pattern="-?[0-9]*\.?[0-9]*" autocomplete="off" placeholder="예: -5 또는 3.5" oninput="onTempInput()" style="flex:1">
+      </div>
+      <div id="ipTempHint" style="font-size:.72em;color:#9ca3af;margin-top:4px">삼성폰 키보드에 마이너스(−)가 없으면 왼쪽 ± 버튼으로 영하 입력</div>
     </div>
     <div class="field">
       <label id="ipPhotoLbl">📷 사진 (온도계 + 내부)</label>
@@ -545,6 +550,8 @@ const I18N = {
   judgeWarn:{ko:'🟡 경고',en:'🟡 Warning',es:'🟡 Atención'},
   judgeDanger:{ko:'🔴 위험',en:'🔴 Danger',es:'🔴 Peligro'},
   ipTempLbl:{ko:'🌡 측정 온도 (°F)',en:'🌡 Temperature (°F)',es:'🌡 Temperatura (°F)'},
+  ipTempHint:{ko:'삼성폰 키보드에 마이너스(−)가 없으면 왼쪽 ± 버튼으로 영하 입력',en:'If your keyboard has no minus (−) key, tap the ± button to enter below-zero',es:'Si tu teclado no tiene (−), pulsa el botón ± para temperatura bajo cero'},
+  ipTempPh:{ko:'예: -5 또는 3.5',en:'e.g. -5 or 3.5',es:'ej: -5 o 3.5'},
   ipPhotoLbl:{ko:'📷 사진 (온도계 + 내부)',en:'📷 Photo (thermometer + interior)',es:'📷 Foto'},
   ipNoteLbl:{ko:'📝 메모 (선택)',en:'📝 Note (optional)',es:'📝 Nota'},
   ipRange:{ko:'기준 {min}~{max}°F',en:'Range {min}~{max}°F',es:'Rango {min}~{max}°F'},
@@ -657,7 +664,7 @@ function applyLang(){
   ['kpiDangerLbl','kpiMissingLbl','kpiOkLbl','btnScan','btnScanSub','btnList','btnListSub','btnAlertNav','btnAlertNavSub',
    'navHome','navCheck','navAlerts','navReport','navMore',
    'moreAssignTitle','moreAssignSub','moreEqTitle','moreEqSub','moreQrTitle','moreQrSub','moreSetTitle','moreSetSub','moreAppsTitle','moreAppsSub',
-   'ipTempLbl','ipPhotoLbl','ipNoteLbl','newEqTitle','newEqHint','neQrLbl','neNameLbl','neTypeLbl','neLocLbl','neMinLbl','neMaxLbl',
+   'ipTempLbl','ipTempHint','ipPhotoLbl','ipNoteLbl','newEqTitle','newEqHint','neQrLbl','neNameLbl','neTypeLbl','neLocLbl','neMinLbl','neMaxLbl',
    'assignTitle','assignHint','aDateLbl','aPersonLbl',
    'settingsTitle','lblSlot1','lblSlot2','lblSlot3','lblWindow',
    'qrTitle','qrStartLbl','qrStartHint','qrCntLbl','qrPrefixLbl','eqMgrTitle','lblAddEqScan','lblAddEqManual'
@@ -670,6 +677,9 @@ function applyLang(){
   $('repTabMonth').textContent = LANG==='ko'?'월간':LANG==='en'?'Month':'Mes';
   ['ipCancel','neCancel','aCancel','setCancel','qrCancel','eqMgrClose'].forEach(id => { const el=$(id); if (el) el.textContent = id==='eqMgrClose' ? t('close') : t('cancel'); });
   ['ipSave','neSave','aSave','setSave'].forEach(id => { const el=$(id); if (el) el.textContent = t('save'); });
+  // 🆕 온도 입력 placeholder + ± 버튼 라벨 i18n 갱신
+  try { const tp=$('ipTemp'); if (tp) tp.placeholder = t('ipTempPh'); } catch(e){}
+  try { if (typeof _refreshTempSignBtn === 'function') _refreshTempSignBtn(); } catch(e){}
   $('qrPrint').textContent = t('print');
   // 🆕 2026-05-23 — 장비 분류 드롭다운 옵션 i18n (전무님: 영어 기본 요청).
   // TYPE_DEFAULTS 의 labelKo / labelEn / labelEs 에서 라벨 가져옴.
@@ -1262,6 +1272,14 @@ function openInputModal(eq){
   $('ipJudge').className = 'judge';
   $('ipPhotoPrev').innerHTML = '📷';
   $('ipPhotoPrev').style.background = '#f9fafb';
+  // 🆕 영하 허용 장비(freezer/ice cream)일 때 ± 버튼·힌트 강조
+  try {
+    const allowsNeg = (Number(eq.min) < 0);
+    const hint = $('ipTempHint'), btn = $('ipTempSignBtn');
+    if (hint) hint.style.display = allowsNeg ? 'block' : 'none';
+    if (btn) btn.style.display = allowsNeg ? 'inline-flex' : 'none';
+  } catch(e){}
+  try { _refreshTempSignBtn(); } catch(e){}
   $('inputOv').classList.add('show');
   setTimeout(() => $('ipTemp').focus(), 100);
 }
@@ -1276,6 +1294,51 @@ function updateJudge(){
   $('ipJudge').className = 'judge ' + (k==='unknown'?'':k);
 }
 window.updateJudge = updateJudge;
+// 🆕 2026-05-28 — 삼성 갤럭시 숫자 키패드에 마이너스(−) 키가 없어 영하 온도 입력 불가 문제 (ANTONIO ZHAO 보고).
+// type="number" → type="text" + inputmode="decimal" 로 변경 + ± 토글 버튼 제공.
+function _sanitizeTempInput(s){
+  // 허용: 선두 -, 숫자, 소수점. 그 외 제거. - 는 맨 앞 1개만.
+  s = String(s||'').replace(/[^\d.\-]/g,'');
+  let neg = s.startsWith('-');
+  s = s.replace(/-/g,'');
+  // 소수점 1개만
+  const i = s.indexOf('.');
+  if (i >= 0) s = s.slice(0, i+1) + s.slice(i+1).replace(/\./g,'');
+  return (neg ? '-' : '') + s;
+}
+function onTempInput(){
+  const el = $('ipTemp');
+  const cleaned = _sanitizeTempInput(el.value);
+  if (cleaned !== el.value) el.value = cleaned;
+  _refreshTempSignBtn();
+  updateJudge();
+}
+window.onTempInput = onTempInput;
+function toggleTempSign(){
+  const el = $('ipTemp');
+  let v = (el.value || '').trim();
+  if (v.startsWith('-')) v = v.slice(1);
+  else v = '-' + v;
+  el.value = v;
+  _refreshTempSignBtn();
+  updateJudge();
+  // 포커스 유지 — 모바일에서 키패드 안 닫히게
+  try { el.focus(); } catch(e){}
+}
+window.toggleTempSign = toggleTempSign;
+function _refreshTempSignBtn(){
+  const el = $('ipTemp'); const btn = $('ipTempSignBtn'); const lbl = $('ipTempSignLbl');
+  if (!btn || !lbl) return;
+  const neg = (el && el.value || '').trim().startsWith('-');
+  if (neg) {
+    btn.style.background = '#fef2f2'; btn.style.borderColor = '#dc2626'; btn.style.color = '#dc2626';
+    lbl.textContent = LANG==='en' ? 'BELOW 0' : LANG==='es' ? 'BAJO 0' : '영하';
+  } else {
+    btn.style.background = '#e0f2fe'; btn.style.borderColor = '#0369a1'; btn.style.color = '#0369a1';
+    lbl.textContent = LANG==='en' ? 'tap for −' : LANG==='es' ? 'pulsa −' : '영하';
+  }
+}
+window._refreshTempSignBtn = _refreshTempSignBtn;
 async function compressImg(file, maxSide=1024, quality=0.8){
   if (!file || !file.type.startsWith('image/')) return file;
   try {
