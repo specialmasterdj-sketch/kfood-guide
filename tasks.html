@@ -3483,6 +3483,42 @@ async function _recoverMyRoleFromSchedules(){
   } catch(e){ console.warn('[role-recover]', e); }
 }
 
+// 🔧 2026-05-30 전 매장 직원 신고: Tasks 앱에서 "내 업무 없음" 만 보임.
+// 원인: me.branch 가 비어있으면 subscribeTasks 의 branchesToWatch 가 빈 배열이 되어
+//   (`[me.branch].filter(Boolean)`) 아무 지점도 구독하지 않음 → TASKS 영원히 [] →
+//   이름은 떠도 업무가 0개. 직원이 chat.html 에서 매장 없이 이름만 등록했거나
+//   바로가기/링크로 직접 들어와 branch 가 안 잡힌 경우 전원 발생.
+// 해결: 전 지점 schedules 를 이름으로 스캔해 본인 매장을 복구하고 재구독.
+let __branchRecoverTried = false;
+async function _recoverMyBranchFromSchedules(){
+  if (!me || !me.name) return;
+  if (me.branch && String(me.branch).trim()) return;   // 이미 branch 있으면 스킵
+  if (isOwner()) return;                                // 오너는 전 지점 구독이라 불필요
+  if (__branchRecoverTried) return;
+  __branchRecoverTried = true;
+  try {
+    const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+    const ids = (typeof BRANCHES !== 'undefined' && Array.isArray(BRANCHES)) ? BRANCHES.map(b => b.id) : [];
+    for (const bId of ids){
+      let data;
+      try { data = await fetch(`${FB}/schedules/${bId}.json?cb=${Date.now()}`, { cache:'no-store' }).then(r => r.json()); }
+      catch(_){ continue; }
+      if (!data || !Array.isArray(data.employees)) continue;
+      const found = data.employees.find(e => e && _namesMatch(e.name, me.name));
+      if (found){
+        me.branch = bId;
+        if (found.role && !String(me.role||'').trim()) me.role = found.role;
+        try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(_){}
+        console.log('[branch-recover] me.branch 회복 →', bId, '(', me.name, ')');
+        try { refreshMe(); } catch(_){}
+        try { subscribeTasks(); } catch(_){}
+        return;
+      }
+    }
+    console.warn('[branch-recover] 스케줄에서 본인 매장 못 찾음:', me.name, '— 매니저가 schedules 에 등록 필요');
+  } catch(e){ console.warn('[branch-recover]', e); }
+}
+
 function refreshMe(){
   me = loadMe();
   const pill = document.getElementById('mePill');
@@ -5178,6 +5214,15 @@ function subscribeTasks(){
       });
     });
   } else {
+    // 🔧 2026-05-30 — me.branch 가 비어있으면 'tasks//날짜' 빈 경로를 구독해
+    //    영원히 빈 결과 → 이름은 떠도 "내 업무 없음". 구독 대신 매장 복구 시도.
+    //    복구 성공 시 _recoverMyBranchFromSchedules 가 subscribeTasks() 재실행.
+    if (!me.branch || !String(me.branch).trim()) {
+      TASKS = [];
+      renderAll();
+      _recoverMyBranchFromSchedules();
+      return;
+    }
     const r = window.__fb.ref(window.__fb.db, 'tasks/'+me.branch+'/'+todayStr());
     unsub = window.__fb.onValue(r, snap => {
       const v = snap.val() || {};
