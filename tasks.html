@@ -3519,8 +3519,33 @@ async function _recoverMyBranchFromSchedules(){
   } catch(e){ console.warn('[branch-recover]', e); }
 }
 
+// 🔧 2026-05-30 — me.branch 가 정식 BRANCHES id 가 아닌 경우(예: 'Las Olas',
+//   'lasolas', 'las olas' 처럼 표시명/소문자로 저장됨) → 'tasks/Las Olas/날짜' 같은
+//   잘못된 경로를 구독/기록해 읽기·쓰기 경로가 어긋나며 직원 화면이 항상 empty.
+//   저장값을 정식 id(LASOLAS 등)로 교정. id·다국어 매장명 모두 대소문자/공백 무시.
+function _canonBranchId(b){
+  if (!b) return '';
+  const s = String(b).trim();
+  if (!s) return '';
+  if (typeof BRANCHES === 'undefined' || !Array.isArray(BRANCHES)) return '';
+  let hit = BRANCHES.find(x => x.id === s);
+  if (hit) return hit.id;
+  const norm = v => String(v||'').toLowerCase().replace(/\s+/g,'');
+  const low = norm(s);
+  hit = BRANCHES.find(x => norm(x.id) === low || ['ko','en','es'].some(L => norm(x[L]) === low));
+  return hit ? hit.id : '';
+}
 function refreshMe(){
   me = loadMe();
+  // me.branch 표시명/대소문자 → 정식 id 교정 (읽기·쓰기 경로 일치 보장)
+  if (me && me.branch){
+    const _canon = _canonBranchId(me.branch);
+    if (_canon && _canon !== me.branch){
+      me.branch = _canon;
+      try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(_){}
+      console.log('[branch-canon] me.branch 교정 →', _canon);
+    }
+  }
   const pill = document.getElementById('mePill');
   const av = document.getElementById('meAv');
   const nm = document.getElementById('meName');
@@ -5214,23 +5239,40 @@ function subscribeTasks(){
       });
     });
   } else {
-    // 🔧 2026-05-30 — me.branch 가 비어있으면 'tasks//날짜' 빈 경로를 구독해
-    //    영원히 빈 결과 → 이름은 떠도 "내 업무 없음". 구독 대신 매장 복구 시도.
-    //    복구 성공 시 _recoverMyBranchFromSchedules 가 subscribeTasks() 재실행.
-    if (!me.branch || !String(me.branch).trim()) {
-      TASKS = [];
-      renderAll();
-      _recoverMyBranchFromSchedules();
-      return;
+    // 🔧 2026-05-30 — 직원 매장 해석.
+    //  1) me.branch 를 정식 id 로 교정 (표시명/대소문자 저장 대응).
+    //  2) 교정 성공 → 그 매장만 구독.
+    //  3) 끝내 식별 불가(빈 값 등) → 전 지점 구독 fallback 으로 최소한 본인 업무
+    //     (이름 매칭 + '*') 는 보이게 하고, 백그라운드로 스케줄에서 매장 복구 시도.
+    const canon = _canonBranchId(me.branch);
+    if (canon && canon !== me.branch){
+      me.branch = canon;
+      try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(_){}
     }
-    const r = window.__fb.ref(window.__fb.db, 'tasks/'+me.branch+'/'+todayStr());
-    unsub = window.__fb.onValue(r, snap => {
-      const v = snap.val() || {};
-      TASKS = Object.entries(v).map(([id, t]) => Object.assign({id, branchId:me.branch}, t));
-      detectNewTasks();
-      renderAll();
-      autoMigrateProduceTasks(TASKS);
-    });
+    if (canon){
+      const r = window.__fb.ref(window.__fb.db, 'tasks/'+canon+'/'+todayStr());
+      unsub = window.__fb.onValue(r, snap => {
+        const v = snap.val() || {};
+        TASKS = Object.entries(v).map(([id, t]) => Object.assign({id, branchId:canon}, t));
+        detectNewTasks();
+        renderAll();
+        autoMigrateProduceTasks(TASKS);
+      });
+    } else {
+      // 매장 미상 → 전 지점 구독 (직원이 절대 빈 화면으로 막히지 않게).
+      // renderEmp 의 isAssignedToMe 가 이름 매칭 + '*' 로 본인 업무만 추려냄.
+      TASKS = [];
+      BRANCHES.forEach(b => {
+        const r = window.__fb.ref(window.__fb.db, 'tasks/'+b.id+'/'+todayStr());
+        window.__fb.onValue(r, snap => {
+          const v = snap.val() || {};
+          TASKS = TASKS.filter(t => t.branchId !== b.id);
+          Object.entries(v).forEach(([id, t]) => TASKS.push(Object.assign({id, branchId:b.id}, t)));
+          renderAll();
+        });
+      });
+      _recoverMyBranchFromSchedules();
+    }
   }
 }
 
