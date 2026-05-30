@@ -283,9 +283,24 @@ async function loadEmployees(){
   try { const tok = window.__getAuthToken && await window.__getAuthToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } catch(_){}
   try {
     const r = await fetch(`${FB_DB}/schedules/${CUR_BRANCH}.json${aq}&_t=${Date.now()}`.replace('?&','?'), {cache:'no-store'});
+    if (!r.ok) { console.warn('[bathroom] employees fetch HTTP', r.status); EMPLOYEES = []; return; }
     const d = await r.json() || {};
-    EMPLOYEES = Array.isArray(d.employees) ? d.employees.filter(e => e && e.name).map(e => e.name).sort() : [];
-  } catch(_){ EMPLOYEES = []; }
+    // 🆕 2026-05-28 — Firebase RTDB 는 sparse array 를 object 로 반환할 수 있어 Array.isArray() 만으론 비어 보임.
+    // employees 를 array / object / null 모두 받아서 정규화.
+    const raw = d.employees;
+    const list = Array.isArray(raw)
+      ? raw
+      : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+    EMPLOYEES = list
+      .filter(e => e && e.name && !e.archived && e.status !== 'inactive' && e.status !== 'archived' && !e.inactive)
+      .map(e => e.name)
+      .filter((v, i, a) => a.indexOf(v) === i)  // dedupe
+      .sort((a, b) => a.localeCompare(b, 'ko'));
+    console.log('[bathroom] loaded', EMPLOYEES.length, 'employees for', CUR_BRANCH);
+  } catch(e){
+    console.warn('[bathroom] loadEmployees failed', e);
+    EMPLOYEES = [];
+  }
 }
 
 async function loadSchedule(){
@@ -388,9 +403,20 @@ function openDay(dk){
   const dowKr = ['일','월','화','수','목','금','토'][new Date(y, m-1, d).getDay()];
   id('dayTitle').textContent = `${y}년 ${m}월 ${d}일 (${dowKr})`;
   id('dayMeta').textContent = (BRANCHES.find(b=>b.id===CUR_BRANCH)||{}).ko + ' 매장';
-  // 직원 셀렉트 채우기
+  // 직원 셀렉트 채우기 — EMPLOYEES 비어 있으면 로드 재시도
   const sel = id('addEmp');
-  sel.innerHTML = '<option value="">— 직원 선택 —</option>' + EMPLOYEES.map(n => `<option value="${n}">${n}</option>`).join('');
+  if (!EMPLOYEES.length) {
+    sel.innerHTML = '<option value="">— 직원 로드 중… —</option>';
+    loadEmployees().then(() => {
+      if (EMPLOYEES.length) {
+        sel.innerHTML = '<option value="">— 직원 선택 —</option>' + EMPLOYEES.map(n => `<option value="${n}">${n}</option>`).join('');
+      } else {
+        sel.innerHTML = '<option value="">— 직원 없음 (스케줄에서 먼저 추가) —</option>';
+      }
+    });
+  } else {
+    sel.innerHTML = '<option value="">— 직원 선택 —</option>' + EMPLOYEES.map(n => `<option value="${n}">${n}</option>`).join('');
+  }
   id('addTime').value = '';
   renderDayList();
   id('dayOv').classList.add('show');
@@ -456,7 +482,12 @@ function openAddBatch(){
   const lastDay = new Date(y, m, 0).getDate();
   id('batchStart').value = dateKey(y, m, 1);
   id('batchEnd').value = dateKey(y, m, lastDay);
-  id('batchEmps').innerHTML = EMPLOYEES.map(n => `<option value="${n}">${n}</option>`).join('');
+  const fillEmps = () => {
+    id('batchEmps').innerHTML = EMPLOYEES.length
+      ? EMPLOYEES.map(n => `<option value="${n}">${n}</option>`).join('')
+      : '<option disabled>직원 없음 (스케줄에서 먼저 추가)</option>';
+  };
+  if (!EMPLOYEES.length) loadEmployees().then(fillEmps); else fillEmps();
   id('batchTime').value = '';
   document.querySelectorAll('#batchDows input').forEach(cb => cb.checked = false);
   id('batchOv').classList.add('show');
