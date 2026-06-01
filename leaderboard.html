@@ -112,6 +112,7 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;
     <button data-r="today">오늘</button>
     <button data-r="week" class="active">이번 주</button>
     <button data-r="month">이번 달</button>
+    <button data-r="lastmonth">지난 달</button>
     <button data-r="all">전체</button>
   </div>
 
@@ -150,10 +151,12 @@ const T = {
   tabToday:     { ko:'오늘',                                    en:'Today',                                     es:'Hoy' },
   tabWeek:      { ko:'이번 주',                                 en:'This Week',                                 es:'Esta Semana' },
   tabMonth:     { ko:'이번 달',                                 en:'This Month',                                es:'Este Mes' },
+  tabLastMonth: { ko:'지난 달',                                 en:'Last Month',                                es:'Mes Pasado' },
   tabAll:       { ko:'전체',                                    en:'All Time',                                  es:'Histórico' },
   rangeTodayLbl:{ ko:'오늘',                                    en:'Today',                                     es:'Hoy' },
   rangeWeekLbl: { ko:'이번 주',                                 en:'This Week',                                 es:'Esta Semana' },
   rangeMonthLbl:{ ko:'이번 달',                                 en:'This Month',                                es:'Este Mes' },
+  rangeLastMonthLbl:{ ko:'지난 달',                             en:'Last Month',                                es:'Mes Pasado' },
   rangeAllLbl:  { ko:'전체 누적',                               en:'All-Time',                                  es:'Histórico' },
   loading:      { ko:'데이터 모으는 중…',                       en:'Collecting data…',                          es:'Recopilando datos…' },
   noData:       { ko:'데이터 없음 — 위 기간/지점을 바꿔보세요', en:'No data — try a different period or branch', es:'Sin datos — pruebe otro período o sucursal' },
@@ -205,7 +208,7 @@ function applyStaticI18n(){
   // 탭 버튼 라벨
   const tabBar = document.getElementById('tabBar');
   if (tabBar) {
-    const map = { today: t('tabToday'), week: t('tabWeek'), month: t('tabMonth'), all: t('tabAll') };
+    const map = { today: t('tabToday'), week: t('tabWeek'), month: t('tabMonth'), lastmonth: t('tabLastMonth'), all: t('tabAll') };
     tabBar.querySelectorAll('button[data-r]').forEach(btn => {
       const r = btn.getAttribute('data-r');
       if (map[r]) btn.textContent = map[r];
@@ -281,7 +284,20 @@ function rangeStart(){
     const m = new Date(t.getFullYear(), t.getMonth(), 1);
     return m.getTime();
   }
+  if (CUR_RANGE === 'lastmonth') {
+    // 지난 달 1일 0시 — 상금 정산용. 끝(상한)은 rangeEnd() 가 이번 달 1일로 막음.
+    const m = new Date(t.getFullYear(), t.getMonth() - 1, 1);
+    return m.getTime();
+  }
   return 0;
+}
+// 윈도우 끝(상한, exclusive). 'lastmonth' 만 상한이 있고 나머지는 '지금까지'(=무한대).
+function rangeEnd(){
+  if (CUR_RANGE === 'lastmonth') {
+    const t = new Date(); t.setHours(0,0,0,0);
+    return new Date(t.getFullYear(), t.getMonth(), 1).getTime();   // 이번 달 1일 0시
+  }
+  return Infinity;
 }
 
 // ============== Auth helper for REST ==============
@@ -403,7 +419,7 @@ function colorFor(name){
   return palette[h % palette.length];
 }
 
-async function fetchExpiry(agg, since){
+async function fetchExpiry(agg, since, until){
   const aq = await authParam();
   const branches = (CUR_BRANCH === 'ALL') ? BRANCHES.map(b => b.id) : [CUR_BRANCH];
   await Promise.all(branches.map(async (br) => {
@@ -415,11 +431,11 @@ async function fetchExpiry(agg, since){
       Object.values(d).forEach(p => {
         if (!p || typeof p !== 'object') return;
         // Add event — 사진 첨부 시에만 점수 인정 (사진 1장당 0.3)
-        if ((p.addedAt || 0) >= since && p.addedBy && p.photo) {
+        if ((p.addedAt || 0) >= since && (p.addedAt || 0) < until && p.addedBy && p.photo) {
           bumpAgg(agg, p.addedBy, br, 'expiryAdd', 1);
         }
         // Check event (separate from add — counts re-checks)
-        if ((p.lastCheckedAt || 0) >= since && p.lastCheckedBy
+        if ((p.lastCheckedAt || 0) >= since && (p.lastCheckedAt || 0) < until && p.lastCheckedBy
             && (p.lastCheckedAt !== p.addedAt)) {
           bumpAgg(agg, p.lastCheckedBy, br, 'expiryCheck', 1);
         }
@@ -427,7 +443,7 @@ async function fetchExpiry(agg, since){
         // any record currently 'discarded' added/checked in window
         if (p.status === 'discarded') {
           const ts = p.discardedAt || p.lastCheckedAt || p.addedAt || 0;
-          if (ts >= since) bumpAgg(agg, p.lastCheckedBy || p.addedBy, br, 'expiryDiscard', 1);
+          if (ts >= since && ts < until) bumpAgg(agg, p.lastCheckedBy || p.addedBy, br, 'expiryDiscard', 1);
         }
       });
     } catch(e) { console.warn('[lb] expiry', br, e); }
@@ -437,7 +453,7 @@ async function fetchExpiry(agg, since){
 // Tasks live at /tasks/{branch}/{YYYY-MM-DD}/{taskId}. Each completed
 // task awards +1.0 to t.completedBy. We walk every branch's full
 // year-bucket tree so any task completed in the time window counts.
-async function fetchTasks(agg, since){
+async function fetchTasks(agg, since, until){
   const aq = await authParam();
   const branches = (CUR_BRANCH === 'ALL') ? BRANCHES.map(b => b.id) : [CUR_BRANCH];
   await Promise.all(branches.map(async (br) => {
@@ -452,7 +468,7 @@ async function fetchTasks(agg, since){
         Object.values(dayBucket).forEach(t => {
           if (!t || typeof t !== 'object') return;
           if (!t.completedAt || !t.completedBy) return;
-          if (t.completedAt < since) return;
+          if (t.completedAt < since || t.completedAt >= until) return;
           // taskComplete = 완료 건수 (배지용), taskPoints = 매니저가 부여한
           // 1·2·3 점 합 (실제 score 계산용). points 필드 없는 레거시 task 는
           // 기본 1점 처리해 호환성 유지.
@@ -465,7 +481,7 @@ async function fetchTasks(agg, since){
   }));
 }
 
-async function fetchChat(agg, since){
+async function fetchChat(agg, since, until){
   const aq = await authParam();
   // First grab the rooms list — cheaper than guessing IDs.
   let rooms = {};
@@ -487,7 +503,7 @@ async function fetchChat(agg, since){
         // Note: we DON'T filter the whole message out by ts here — we
         // need to evaluate replies (each has its own ts) even if the
         // parent thread is old. Main-message scoring still gates on ts.
-        const inWindow = ts >= since;
+        const inWindow = ts >= since && ts < until;
         const branchOk = (CUR_BRANCH === 'ALL') || !m.senderBranch || (m.senderBranch === CUR_BRANCH);
 
         if (inWindow && branchOk && m.sender) {
@@ -525,7 +541,7 @@ async function fetchChat(agg, since){
           for (const r of Object.values(m.replies)) {
             if (!r || typeof r !== 'object') continue;
             const rts = r.ts || 0;
-            if (rts < since) continue;
+            if (rts < since || rts >= until) continue;
             if (CUR_BRANCH !== 'ALL' && r.senderBranch && r.senderBranch !== CUR_BRANCH) continue;
             if (!r.sender) continue;
             bumpAgg(agg, r.sender, r.senderBranch || '', 'reply', 1);
@@ -541,6 +557,7 @@ function computeScores(agg){
   const days = CUR_RANGE === 'today' ? 1
              : CUR_RANGE === 'week'  ? 7
              : CUR_RANGE === 'month' ? 30
+             : CUR_RANGE === 'lastmonth' ? 31
              :                         9999;   // 'all' = 사실상 무제한
   const chatCap = CHAT_DAILY_CAP * days;
   Object.values(agg).forEach(r => {
@@ -668,6 +685,7 @@ function renderLegend(){
 async function loadAll(){
   document.getElementById('content').innerHTML = `<div class="loading"><div class="ic">⏳</div>${escHtml(t('loading'))}</div>`;
   const since = rangeStart();
+  const until = rangeEnd();
   const agg = {};
   // Wait for auth before pulling /users (rules likely require auth!=null)
   await new Promise(res => {
@@ -680,7 +698,7 @@ async function loadAll(){
     }, 150);
   });
   await loadUsers();
-  await Promise.all([fetchExpiry(agg, since), fetchChat(agg, since), fetchTasks(agg, since)]);
+  await Promise.all([fetchExpiry(agg, since, until), fetchChat(agg, since, until), fetchTasks(agg, since, until)]);
   computeScores(agg);
   // Filter to anyone with score > 0
   const rows = Object.values(agg).filter(r => r.score > 0).sort((a,b) => b.score - a.score);
@@ -690,6 +708,7 @@ async function loadAll(){
   const rangeLbl = CUR_RANGE === 'today' ? t('rangeTodayLbl')
                  : CUR_RANGE === 'week'  ? t('rangeWeekLbl')
                  : CUR_RANGE === 'month' ? t('rangeMonthLbl')
+                 : CUR_RANGE === 'lastmonth' ? t('rangeLastMonthLbl')
                  :                          t('rangeAllLbl');
   const totalPts = rows.reduce((s,r) => s + r.score, 0).toFixed(1);
   document.getElementById('subText').textContent =
@@ -707,7 +726,7 @@ window.loadAll = loadAll;
 
 // 🖨 프린트 — 현재 범위·지점 표시 후 인쇄 다이얼로그 호출
 function printLeaderboard(){
-  const rangeLabel = { today:'오늘', week:'이번 주', month:'이번 달', all:'전체' }[CUR_RANGE] || CUR_RANGE;
+  const rangeLabel = { today:'오늘', week:'이번 주', month:'이번 달', lastmonth:'지난 달', all:'전체' }[CUR_RANGE] || CUR_RANGE;
   const branchSel = document.getElementById('branchSel');
   const branchLabel = branchSel && branchSel.selectedOptions[0] ? branchSel.selectedOptions[0].textContent.trim() : 'ALL';
   const dateStr = new Date().toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric'});
