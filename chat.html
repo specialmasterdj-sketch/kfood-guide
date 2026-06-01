@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_31c_base64_photo_fix';   // 방 안 열림: base64 사진 n² 폭발 차단 — 전 직원 강제 새로고침
+    var BUST = 'chat_2026_05_31d_base64_out_of_html';   // 방 안 열림: base64 사진을 HTML 에서 완전히 분리 — 전 직원 강제 새로고침
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2491,10 +2491,27 @@ async function _translateNeedCards(){
   }
 }
 
+// 🔧 2026-05-31 — 거대 base64 사진을 HTML 문자열에 안 넣고, 렌더 후 JS 로 .src
+//   채우기 위한 임시 맵. 매 렌더마다 초기화. (누적 문자열 폭발 원천 차단)
+let HUGE_PHOTO_MAP = {};
+let HUGE_PHOTO_SEQ = 0;
+function applyHugePhotos(cont){
+  try {
+    cont.querySelectorAll('img.huge-ph[data-huge]').forEach(img => {
+      const k = img.getAttribute('data-huge');
+      if (k && HUGE_PHOTO_MAP[k]) {
+        img.src = HUGE_PHOTO_MAP[k];
+        img.style.cursor = 'pointer';
+        img.onclick = () => { try { openLightbox([HUGE_PHOTO_MAP[k]], 0); } catch(_){} };
+      }
+    });
+  } catch(_){}
+}
 function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
   var prevScrollTop = cont.scrollTop;
+  HUGE_PHOTO_MAP = {}; HUGE_PHOTO_SEQ = 0;   // 매 렌더 초기화
   if (ACTIVE_ROOM === 'expired') {
     renderExpiredCards();
     return;
@@ -2545,12 +2562,21 @@ function renderMessages(){
           const n = m.photos.length;
           const cls = n > 6 ? 'scroll' : 'n' + n;
           // 🔧 2026-05-31 — 사진이 정상 URL 이 아니라 거대한 base64(data:) 로 저장된
-          //   메시지가 있으면, JSON.stringify(photos) 를 onclick 마다 반복 삽입하면서
-          //   렌더 문자열이 제곱으로 폭발(Invalid string length) → 방 전체가 안 열림.
-          //   base64 는 onclick(lightbox) 에 넣지 않고 src 로만 표시.
+          //   메시지가 있으면, 그 데이터를 HTML 문자열(src/onclick)에 넣는 순간 누적
+          //   문자열이 폭발(Invalid string length) → 방 전체가 안 열림.
+          //   해결: base64 는 HTML 에 절대 넣지 않고 placeholder 만 렌더한 뒤,
+          //   innerHTML 적용 후 JS 로 .src 를 채움(HUGE_PHOTO_MAP). 누적 폭발 원천 차단.
           const hasHuge = m.photos.some(u => typeof u === 'string' && u.length > 5000);
           if (hasHuge) {
-            return `<div class="photo-grid ${cls}">${m.photos.map(u => `<img src="${u}" loading="lazy">`).join('')}</div>${n > 6 ? '<div style="font-size:.74em;color:#9ca3af;margin-top:2px">📷 '+n+'장 · 좌우로 넘기기</div>' : ''}`;
+            const imgs = m.photos.map((u,i) => {
+              if (typeof u === 'string' && u.length > 5000) {
+                const key = 'hp_' + (HUGE_PHOTO_SEQ++);
+                HUGE_PHOTO_MAP[key] = u;
+                return `<img class="huge-ph" data-huge="${key}" loading="lazy">`;
+              }
+              return `<img src="${u}" loading="lazy">`;
+            }).join('');
+            return `<div class="photo-grid ${cls}">${imgs}</div>${n > 6 ? '<div style="font-size:.74em;color:#9ca3af;margin-top:2px">📷 '+n+'장 · 좌우로 넘기기</div>' : ''}`;
           }
           const all = JSON.stringify(m.photos).replace(/"/g,'&quot;');
           return `<div class="photo-grid ${cls}">${m.photos.map((u,i) => `<img src="${u}" loading="lazy" onclick="openLightbox(${all}, ${i})">`).join('')}</div>${n > 6 ? '<div style="font-size:.74em;color:#9ca3af;margin-top:2px">📷 '+n+'장 · 좌우로 넘기기</div>' : ''}`;
@@ -2619,6 +2645,7 @@ function renderMessages(){
     </div>`;
   }
   cont.innerHTML = html;
+  applyHugePhotos(cont);   // 🔧 base64 거대 사진 .src 채우기 (HTML 폭발 방지)
   // 답글에 첨부됐으나 아직 안 보낸 사진 미리보기 복구 (다른 메시지 동기화로 재렌더링 시)
   Object.keys(REPLY_ATTACH).forEach(pid => {
     if (REPLY_ATTACH[pid] && REPLY_ATTACH[pid].length) renderReplyPreviews(pid);
@@ -3326,10 +3353,19 @@ function renderReplies(m){
       const replyPhotosHtml = (r.photos && r.photos.length) ? (() => {
         const n = r.photos.length;
         const cls = n>=7 ? 'scroll' : 'n'+Math.min(n,6);
-        // 🔧 2026-05-31 — base64(data:) 거대 사진은 onclick(lightbox) 에 넣지 않고 src 로만 (문자열 폭발 방지)
+        // 🔧 2026-05-31 — base64(data:) 거대 사진은 HTML 에 안 넣고 placeholder 만,
+        //   렌더 후 applyHugePhotos 가 .src 채움 (누적 문자열 폭발 방지)
         const hasHuge = r.photos.some(u => typeof u === 'string' && u.length > 5000);
         if (hasHuge) {
-          return `<div class="photo-grid reply-photos ${cls}">${r.photos.map(u => `<img src="${u}" loading="lazy">`).join('')}</div>`;
+          const imgs = r.photos.map(u => {
+            if (typeof u === 'string' && u.length > 5000) {
+              const key = 'hp_' + (HUGE_PHOTO_SEQ++);
+              HUGE_PHOTO_MAP[key] = u;
+              return `<img class="huge-ph" data-huge="${key}" loading="lazy">`;
+            }
+            return `<img src="${u}" loading="lazy">`;
+          }).join('');
+          return `<div class="photo-grid reply-photos ${cls}">${imgs}</div>`;
         }
         const all = JSON.stringify(r.photos).replace(/"/g,'&quot;');
         return `<div class="photo-grid reply-photos ${cls}">${r.photos.map((u,i) => `<img src="${u}" loading="lazy" onclick="openLightbox(${all}, ${i})">`).join('')}</div>`;
@@ -3340,7 +3376,7 @@ function renderReplies(m){
           ${delBtn}
           ${replyEditBtn}
           <div class="who-sm">${escapeHtml(r.sender||'?')}${escapeHtml(branchTxt)}${rdBadge}</div>
-          ${r.text ? `<div class="text">${linkifyText(r.text)}${replyEditedBadge}</div>` : ''}
+          ${r.text ? `<div class="text">${linkifyText(typeof r.text==='string'&&r.text.length>20000?r.text.slice(0,20000)+' …':r.text)}${replyEditedBadge}</div>` : ''}
           ${replyPhotosHtml}
           <div class="ts-sm">${t}</div>
         </div>
