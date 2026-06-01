@@ -2496,9 +2496,28 @@ function renderMessages(){
     cont.innerHTML = `<div class="empty-chat">${emptyMsg[LANG] || emptyMsg.ko}</div>`;
     return;
   }
+  // 🔧 2026-05-31 — 누적 HTML 문자열이 JS 한계(약 512MB)를 넘겨 RangeError(Invalid
+  //   string length)로 방 전체가 안 열리던 버그. 메시지/인라인 이미지가 많이 쌓인
+  //   방(grocery_eval 등)에서 직원 전원 발생. 최근 RENDER_CAP 개만 그려 폭발 방지.
+  //   (데이터는 그대로 보존 — 화면 표시만 제한.)
+  const RENDER_CAP = 400;
+  let _renderList = MSGS;
+  let _trimmedOlder = 0;
+  if (MSGS.length > RENDER_CAP) {
+    _trimmedOlder = MSGS.length - RENDER_CAP;
+    _renderList = MSGS.slice(-RENDER_CAP);   // 오름차순 정렬이라 뒤쪽이 최신
+  }
   let html = '';
+  if (_trimmedOlder > 0) {
+    const olderMsg = {
+      ko: `⬆ 이전 메시지 ${_trimmedOlder}개는 생략됨 (최근 ${RENDER_CAP}개만 표시)`,
+      en: `⬆ ${_trimmedOlder} older messages hidden (showing latest ${RENDER_CAP})`,
+      es: `⬆ ${_trimmedOlder} mensajes antiguos ocultos (mostrando ${RENDER_CAP})`,
+    };
+    html += `<div class="day-divider">${olderMsg[LANG] || olderMsg.ko}</div>`;
+  }
   let lastDay = '';
-  for (const m of MSGS) {
+  for (const m of _renderList) {
     const d = new Date(m.ts || 0);
     const dayKey = d.toLocaleDateString();
     if (dayKey !== lastDay) {
@@ -2552,9 +2571,14 @@ function renderMessages(){
     //   2) localizeTaskCompleteText (옛 task_complete: 라벨만 LANG 으로 치환)
     //   3) localizePayrollMessage (payroll 룸 메시지)
     //   4) raw m.text
-    const localizedText = (m.textTr && (m.textTr[LANG] || m.textTr.ko))
+    let localizedText = (m.textTr && (m.textTr[LANG] || m.textTr.ko))
                        || localizeTaskCompleteText(m)
                        || localizePayrollMessage(m);
+    // 🔧 2026-05-31 — 단일 메시지에 비정상적으로 거대한 문자열(붙여넣은 base64 등)이
+    //   들어가면 렌더 문자열이 폭발(Invalid string length). 안전 상한으로 잘라 표시.
+    if (typeof localizedText === 'string' && localizedText.length > 20000) {
+      localizedText = localizedText.slice(0, 20000) + ' …';
+    }
     const translateBtn = needsTranslate(localizedText)
       ? `<button class="translate-btn" onclick="translateMessage('${m.id}', this)" title="${({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate')}">🌐 ${({ko:'번역',en:'Translate',es:'Traducir'}[LANG]||'Translate')}</button>`
       : '';
