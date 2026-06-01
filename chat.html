@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_31_rangeerror_fix';   // 방 안 열리던 RangeError(Invalid string length) 수정 — 전 직원 강제 새로고침
+    var BUST = 'chat_2026_05_31b_recent_msgs';   // 방 안 열림: RangeError 수정 + 최근 400개만 로드 — 전 직원 강제 새로고침
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2051,16 +2051,28 @@ function openRoom(id){
 // ============ MESSAGES ============
 function subscribeMessages(roomId){
   if (__unsubMsgs) { try { __unsubMsgs(); } catch(e){} __unsubMsgs = null; }
+  // 🔧 2026-05-31 — 방 메시지를 통째로 받던 것을 '최근 N개'로 제한.
+  //   메시지/사진이 많이 쌓인 방(grocery_eval 등)에서 전체 다운로드가
+  //   너무 커 폰이 받다 멈추거나 RangeError 로 방이 안 열리던 문제 해결.
+  const MSG_FETCH_LIMIT = 400;
   if (!window.__fb) {
-    // REST fallback for one-shot
-    fetch(`${FB_DB_URL}/chat/messages/${roomId}.json`).then(r => r.json()).then(d => {
-      MSGS = msgsFromObj(d);
-      renderMessages();
-    });
+    // REST fallback — limitToLast 쿼리로 최근 것만
+    fetch(`${FB_DB_URL}/chat/messages/${roomId}.json?orderBy="$key"&limitToLast=${MSG_FETCH_LIMIT}`)
+      .then(r => r.json())
+      .then(d => { MSGS = msgsFromObj(d); renderMessages(); })
+      .catch(() => {
+        // 쿼리 실패 시 전체 fallback (인덱스 규칙 없을 때)
+        fetch(`${FB_DB_URL}/chat/messages/${roomId}.json`).then(r => r.json()).then(d => {
+          MSGS = msgsFromObj(d); renderMessages();
+        }).catch(()=>{});
+      });
     return;
   }
-  const { db, ref, onValue } = window.__fb;
-  __unsubMsgs = onValue(ref(db, 'chat/messages/' + roomId), snap => {
+  const { db, ref, onValue, query, limitToLast } = window.__fb;
+  const baseRef = ref(db, 'chat/messages/' + roomId);
+  // query/limitToLast 가 있으면 최근 N개만 구독, 없으면(옛 캐시) 전체 구독 fallback
+  const target = (query && limitToLast) ? query(baseRef, limitToLast(MSG_FETCH_LIMIT)) : baseRef;
+  __unsubMsgs = onValue(target, snap => {
     MSGS = msgsFromObj(snap.val());
     renderMessages();
   });
