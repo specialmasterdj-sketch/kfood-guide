@@ -1015,6 +1015,30 @@ if (SETTINGS.early == null) SETTINGS.early = 10;
 
 function $(id){ return document.getElementById(id); }
 function escHtml(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// 🔧 2026-06-01 — 썸네일 헬퍼. Firebase Storage 미활성 동안 사진이 거대한 base64(data:)
+//   로 RTDB 에 저장돼, 폐기/임박 리스트에 한꺼번에 그리면 HTML 문자열이 폭발하거나
+//   폰이 못 그려 "사진이 안 보임". 거대 base64 는 HTML 에 직접 넣지 않고 placeholder 만
+//   렌더한 뒤 applyDeferredThumbs() 가 .src 를 채움. 일반 URL 사진은 그대로 표시.
+const __THUMB_MAP = {};
+let __THUMB_SEQ = 0;
+function thumbHtml(photo, initials){
+  if (!photo) return escHtml(initials || '');
+  if (typeof photo === 'string' && photo.length > 5000) {   // 거대 base64 → 지연 로드
+    const k = 'eth_' + (__THUMB_SEQ++);
+    __THUMB_MAP[k] = photo;
+    return `<img data-thumb="${k}" loading="lazy" decoding="async" alt="">`;
+  }
+  return `<img src="${photo}" loading="lazy" decoding="async" alt="">`;
+}
+function applyDeferredThumbs(root){
+  try {
+    (root || document).querySelectorAll('img[data-thumb]').forEach(img => {
+      const k = img.getAttribute('data-thumb');
+      if (k && __THUMB_MAP[k] && !img.src) img.src = __THUMB_MAP[k];
+      img.removeAttribute('data-thumb');
+    });
+  } catch(_){}
+}
 function todayKey(){ const d=new Date(); return d.toISOString().slice(0,10); }
 function fmtDate(d){
   const localeMap = { ko:'ko-KR', en:'en-US', es:'es-ES' };
@@ -2117,13 +2141,14 @@ function renderRecentRow(){
     const cls = d <= 0 ? 'danger' : (d <= SETTINGS.warn ? 'warn' : (d <= SETTINGS.early ? 'early' : ''));
     const lbl = ddayLabel(d);
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const inner = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : escHtml(initials);
+    const inner = thumbHtml(p.photo, initials);
     return `<div class="ph-tile ${cls}" onclick="openProductDetail('${p.id}')">
       <div class="img">${inner}</div>
       <div class="dd">${lbl}</div>
       <div class="nm">${escHtml(p.name||'').slice(0,12)}</div>
     </div>`;
   }).join('');
+  applyDeferredThumbs(scroll);
   // Show the bulk-share button only when THIS user (chat.me name) has at
   // least one of-today entry — no button = nothing to share, less clutter.
   // The label embeds the user's first name so it's visually obvious whose
@@ -2372,7 +2397,7 @@ function renderCheckList(){
     const lbl = ddayLabel(d);
     const cls = kind==='d0'?'danger':(kind==='d1'||kind==='d3'?'warn':(kind==='early'?'early':'normal'));
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const thumbContent = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : initials;
+    const thumbContent = thumbHtml(p.photo, initials);
     const activeNorm = p.status==='active'?'active':'';
     const activeWarn = p.status==='discounted'?'active':'';
     const activeDanger = p.status==='discarded'?'active':'';
@@ -2395,6 +2420,7 @@ function renderCheckList(){
       </div>
     </div>`;
   }).join('');
+  applyDeferredThumbs(list);
 }
 function setCheckFilter(f){ CHECK_FILTER = f; renderCheckList(); }
 window.setCheckFilter = setCheckFilter;
@@ -2437,7 +2463,7 @@ function renderAlertList(){
     const cls = kind==='d0'?'danger':(kind==='early'?'early':'warn');
     const lossOne = (p.cost || p.price || 0) * (p.qty||1);
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const thumbContent = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : initials;
+    const thumbContent = thumbHtml(p.photo, initials);
     return `<div class="item ${cls}">
       <div class="thumb" onclick="openProductDetail('${p.id}')">${thumbContent}</div>
       <div class="info">
@@ -2454,6 +2480,7 @@ function renderAlertList(){
       </div>
     </div>`;
   }).join('');
+  applyDeferredThumbs(list);
 }
 function setListFilter(f){ LIST_FILTER = f; renderAlertList(); }
 window.setListFilter = setListFilter;
@@ -2683,7 +2710,7 @@ function renderReceive(){
     const lbl = ddayLabel(d);
     const cls = kind==='d0'?'danger':(kind==='d1'||kind==='d3'?'warn':(kind==='early'?'early':'normal'));
     const initials = (p.name||'').slice(0,2).toUpperCase();
-    const thumbContent = p.photo ? `<img src="${p.photo}" loading="lazy" decoding="async" alt="">` : initials;
+    const thumbContent = thumbHtml(p.photo, initials);
     const ts = new Date(p.receivedAt || p.addedAt);
     const timeStr = ts.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     return `<div class="item ${cls}">
@@ -2703,6 +2730,7 @@ function renderReceive(){
       </div>
     </div>`;
   }).join('');
+  applyDeferredThumbs(list);
 }
 
 // ============== Page nav ==============
