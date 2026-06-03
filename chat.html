@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_05_31d_base64_out_of_html';   // 방 안 열림: base64 사진을 HTML 에서 완전히 분리 — 전 직원 강제 새로고침
+    var BUST = 'chat_2026_06_03_huge_photo_lazy_io';   // base64 사진 lazy load (IntersectionObserver) — 육류평가방 사진 안 보임 해결 + 직원이름 로스터 선택
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -179,6 +179,22 @@ a{color:inherit;text-decoration:none}
 .photo-grid.scroll img{width:104px;height:104px;flex-shrink:0;border-radius:6px;scroll-snap-align:start}
 .photo-grid img{width:100%;height:120px;object-fit:cover;cursor:pointer;background:#e5e7eb;display:block}
 .photo-grid.n1 img{height:auto;max-height:300px}
+/* 🔧 2026-06-03 — base64 사진 lazy load 동안 보이는 placeholder 스타일.
+   기존엔 그냥 회색 빈 박스라 "사진이 깨졌나?" 헷갈렸음. 카메라 아이콘 + shimmer
+   애니메이션으로 "로딩 중" 상태가 시각적으로 명확. src 채워지면 자동 사라짐. */
+.photo-grid img.huge-ph:not([src]),
+.photo-grid img.huge-ph[src=""]{
+  background:
+    linear-gradient(135deg, transparent 0 40%, rgba(255,255,255,.55) 50%, transparent 60% 100%) 0/200% 100% no-repeat,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'><path d='M9 3l-1.8 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'/></svg>") center/28px no-repeat,
+    #e5e7eb;
+  animation: huge-ph-shimmer 1.4s linear infinite;
+  cursor: default;
+}
+@keyframes huge-ph-shimmer{
+  0%{background-position:200% 0, center, 0 0}
+  100%{background-position:-200% 0, center, 0 0}
+}
 
 .day-divider{align-self:center;background:#e5e7eb;color:#374151;border-radius:12px;padding:3px 12px;font-size:.74em;margin:6px 0}
 
@@ -1152,7 +1168,18 @@ function renderMeNames(){
 }
 function renderMeNamesList(employees, branchId){
   const sel = document.getElementById('meName_select');
-  sel.innerHTML = '<option value="">— 직접 입력 —</option>' +
+  // 🔧 2026-06-02 전무님 지시: 스케줄에 직원이 등록돼 있으면 직접 입력 금지.
+  //   직접 입력으로 오타·중복 이름이 생겨 사진/마감보고 업로드 실패 + 답글이
+  //   엉뚱한 방에 가던 문제 (Yonsu/Coral, SUYOUNG/Hollywood 신고) 근본 차단.
+  //   목록에서만 선택. 스케줄이 비었을 때(신규 매장)만 직접 입력 허용.
+  const hasRoster = Array.isArray(employees) && employees.length > 0;
+  const customRow = document.getElementById('meCustom')?.closest('.field-row');
+  if (customRow) customRow.style.display = hasRoster ? 'none' : '';
+  if (hasRoster) { const c = document.getElementById('meCustom'); if (c) c.value = ''; }
+  const firstOpt = hasRoster
+    ? '<option value="">— 이름을 선택하세요 —</option>'
+    : '<option value="">— 직접 입력 —</option>';
+  sel.innerHTML = firstOpt +
     employees.map(e => `<option value="${e.name}" data-role="${e.role||''}" ${me?.name===e.name?'selected':''}>${e.name} (${e.role||''})${isManagerRole(e.role)?' 👔':''}</option>`).join('');
   sel.onchange = () => {
     if (sel.value) document.getElementById('meCustom').value = sel.value;
@@ -1565,9 +1592,18 @@ async function saveMe(){
   const sel = document.getElementById('meName_select');
   const fromSel = sel.value;
   const selRole = sel.options[sel.selectedIndex]?.dataset.role || '';
-  const fromCustom = document.getElementById('meCustom').value.trim();
+  // 🔧 2026-06-02 — 스케줄에 직원이 있으면 직접입력칸이 숨겨짐(customRow display:none).
+  //   그 경우 직접입력값은 무시하고 반드시 드롭다운 선택을 사용 → 오타·중복 이름 차단.
+  const customRow = document.getElementById('meCustom')?.closest('.field-row');
+  const customHidden = customRow && customRow.style.display === 'none';
+  const fromCustom = customHidden ? '' : document.getElementById('meCustom').value.trim();
   const name = fromCustom || fromSel;
-  if (!name) { alert('이름을 입력하거나 선택하세요'); return; }
+  if (!name) {
+    const m = customHidden
+      ? {ko:'목록에서 본인 이름을 선택하세요.', en:'Please select your name from the list.', es:'Selecciona tu nombre de la lista.'}
+      : {ko:'이름을 입력하거나 선택하세요', en:'Enter or select your name', es:'Ingresa o selecciona tu nombre'};
+    alert(m[LANG] || m.ko); return;
+  }
   const BLOCKED_NAMES = TITLE_BLOCKED_NAMES;
   if (BLOCKED_NAMES.includes(name.toLowerCase().trim())) {
     const msg = {ko:'❌ "'+name+'"은 사용할 수 없습니다. 본인 실제 이름을 입력해주세요.\n예: Cristopher Lopez, 김철수',
@@ -2495,16 +2531,49 @@ async function _translateNeedCards(){
 //   채우기 위한 임시 맵. 매 렌더마다 초기화. (누적 문자열 폭발 원천 차단)
 let HUGE_PHOTO_MAP = {};
 let HUGE_PHOTO_SEQ = 0;
+// 🔧 2026-06-03 — IntersectionObserver 로 진짜 lazy load.
+//   기존 applyHugePhotos 는 한 번에 모든 .src 를 채워서, 사진 20장 같은 메시지에서
+//   폰이 base64 디코딩 메모리 못 버티고 빈 placeholder 만 보이는 현상 (육류평가방 미르나 신고).
+//   화면에 보일 때만 .src 채우면 한 번에 2~3장만 메모리에 → 폰이 정상 렌더.
+//
+//   🛡 Race condition 차단: HUGE_PHOTO_MAP 은 매 렌더마다 {} 로 리셋되므로,
+//   옵저버 콜백이 비동기로 늦게 발화할 때 stale 맵을 읽으면 데이터를 못 찾음
+//   (placeholder 영원히 남음). 해결: img 요소에 데이터를 직접 .__hugeSrc 로 박아둠
+//   → 맵 리셋이나 새 렌더 도중이어도 옵저버 콜백은 노드 자체에서 데이터 읽음.
+let __hugePhotoObserver = null;
+function __hugeLoad(img){
+  const src = img.__hugeSrc;
+  if (src && !img.src) {
+    img.src = src;
+    img.style.cursor = 'pointer';
+    img.onclick = () => { try { openLightbox([src], 0); } catch(_){} };
+  }
+}
 function applyHugePhotos(cont){
   try {
-    cont.querySelectorAll('img.huge-ph[data-huge]').forEach(img => {
+    // 1단계: placeholder 요소들에 데이터를 직접 attach (맵 → 노드 property).
+    //   이로써 옵저버 콜백 시점에 글로벌 맵 상태와 무관해짐.
+    cont.querySelectorAll('img.huge-ph[data-huge]:not([src])').forEach(img => {
       const k = img.getAttribute('data-huge');
-      if (k && HUGE_PHOTO_MAP[k]) {
-        img.src = HUGE_PHOTO_MAP[k];
-        img.style.cursor = 'pointer';
-        img.onclick = () => { try { openLightbox([HUGE_PHOTO_MAP[k]], 0); } catch(_){} };
-      }
+      if (k && HUGE_PHOTO_MAP[k] && !img.__hugeSrc) img.__hugeSrc = HUGE_PHOTO_MAP[k];
     });
+    const targets = cont.querySelectorAll('img.huge-ph[data-huge]:not([src])');
+    if (!targets.length) return;
+    if (typeof IntersectionObserver === 'function') {
+      // 이전 옵저버는 disconnect — 죽은 DOM 노드 GC 잘 되게.
+      if (__hugePhotoObserver) { try { __hugePhotoObserver.disconnect(); } catch(_){} }
+      __hugePhotoObserver = new IntersectionObserver((entries) => {
+        for (const ent of entries) {
+          if (!ent.isIntersecting) continue;
+          __hugeLoad(ent.target);
+          try { __hugePhotoObserver.unobserve(ent.target); } catch(_){}
+        }
+      }, { root: cont, rootMargin: '300px 0px' });   // 위아래 300px 미리 로드
+      targets.forEach(img => __hugePhotoObserver.observe(img));
+    } else {
+      // IntersectionObserver 미지원 fallback: 기존처럼 즉시 모두 로드.
+      targets.forEach(__hugeLoad);
+    }
   } catch(_){}
 }
 function renderMessages(){
