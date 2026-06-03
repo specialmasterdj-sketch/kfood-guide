@@ -1022,19 +1022,23 @@ function escHtml(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
 const __THUMB_MAP = {};
 let __THUMB_SEQ = 0;
 function thumbHtml(photo, initials){
-  if (!photo) return escHtml(initials || '');
-  if (typeof photo === 'string' && photo.length > 5000) {   // 거대 base64 → 지연 로드
+  if (!photo || typeof photo !== 'string' || !photo.trim()) return escHtml(initials || '');
+  // data: (base64) 는 길이 무관 항상 지연 로드. http(s) URL 만 src 에 직접.
+  if (photo.startsWith('data:')) {
     const k = 'eth_' + (__THUMB_SEQ++);
     __THUMB_MAP[k] = photo;
     return `<img data-thumb="${k}" loading="lazy" decoding="async" alt="">`;
   }
-  return `<img src="${photo}" loading="lazy" decoding="async" alt="">`;
+  if (/^https?:\/\//.test(photo)) {
+    return `<img src="${photo}" loading="lazy" decoding="async" alt="">`;
+  }
+  return escHtml(initials || '');
 }
 function applyDeferredThumbs(root){
   try {
     (root || document).querySelectorAll('img[data-thumb]').forEach(img => {
       const k = img.getAttribute('data-thumb');
-      if (k && __THUMB_MAP[k] && !img.src) img.src = __THUMB_MAP[k];
+      if (k && __THUMB_MAP[k]) img.src = __THUMB_MAP[k];
       img.removeAttribute('data-thumb');
     });
   } catch(_){}
