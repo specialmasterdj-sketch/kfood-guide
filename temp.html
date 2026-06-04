@@ -6,6 +6,31 @@
 <title>김치마트 — 온도 관리</title>
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#1a5c3a">
+<script>
+  // 🔄 BUST 마커 + 폴링 — 직원 폰까지 자동 업데이트 (캐시로 옛 버전 보던 문제 방지)
+  (function(){
+    var BUST = 'temp_2026_06_04_fb_send_fix';
+    var KEY = 'kmtools_bust_temp';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+    function pollBust(){
+      fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.text(); })
+        .then(function(t){ var m = t.match(/var BUST = '([^']+)'/); if (m && m[1] !== BUST) location.reload(); })
+        .catch(function(){});
+    }
+    setInterval(pollBust, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') pollBust(); });
+    window.addEventListener('focus', pollBust);
+  })();
+</script>
 <script type="module" src="./fb-auth-fetch.js?v=1"></script>
 <script type="module" src="./auth-gate.js?v=4"></script>
 <script src="./me-persist.js?v=1"></script>
@@ -1854,6 +1879,7 @@ async function sendTempReportToRooms(){
   const btn = document.getElementById('btnSendReport');
   if (btn) btn.disabled = true;
 
+  const FB = FB_DB_URL;   // 🔧 2026-06-04 — FB 미정의로 발송 실패하던 버그 (마이애미 온도보고 안 감)
   const text = __buildTempReportText(summary);
   const ts = Date.now();
   const baseMsg = {
