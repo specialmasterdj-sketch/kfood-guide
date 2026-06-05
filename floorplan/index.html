@@ -2119,6 +2119,10 @@ async function initLoad() {
     } catch (_) {}
   }
 
+  // 🔧 2026-06-04 Auto-heal: 15,16 진열대 자동 복구 (사장님 요청 — 사라진 상태 신고)
+  // 브라우저당 1회만 실행, westpalm/lasolas 양쪽 모두 점검 후 Firebase 까지 동기화.
+  await ensureExpectedAisles_v20260604();
+
   if (stores[currentStore] && _zonesOf(stores[currentStore]).length > 0) {
     loadZones(JSON.parse(JSON.stringify(stores[currentStore])));
     setActiveTab();
@@ -2129,6 +2133,53 @@ async function initLoad() {
   // 4) Final fallback: base template
   loadBaseTemplate();
   setActiveTab();
+}
+
+// 🔧 2026-06-04 Auto-heal helper — 사장님이 화면에 15,16 안 보인다고 신고.
+// localStorage / Firebase 양쪽에서 15,16 누락 케이스 자동 복구.
+async function ensureExpectedAisles_v20260604() {
+  const FLAG = 'heal-1516-applied-2026-06-04';
+  if (localStorage.getItem(FLAG)) return false;
+
+  const SPEC = {
+    westpalm: { x:430, y:220, w:68, h:202, color:'#B8860B', ftype:'half-aisle-top' },
+    lasolas:  { x:430, y:220, w:68, h:202, color:'#B8860B', ftype:'half-aisle-top' }
+  };
+
+  const healed = [];
+  for (const [storeName, spec] of Object.entries(SPEC)) {
+    const zones = stores[storeName];
+    if (!Array.isArray(zones)) continue;
+    const has = zones.some(z => String(z.num).replace(/\s/g,'') === '15,16');
+    if (has) continue;
+    zones.push({
+      id: nextId++, type:'aisle', ftype: spec.ftype,
+      x: spec.x, y: spec.y, w: spec.w, h: spec.h, rot: 0,
+      num: '15,16', label: '', sub: '', color: spec.color
+    });
+    healed.push(storeName);
+  }
+
+  if (!healed.length) { localStorage.setItem(FLAG, '1'); return false; }
+
+  const ts = Date.now();
+  localStorage.setItem('kimchi-floorplans', JSON.stringify(stores));
+  localStorage.setItem('kimchi-floorplans-savedAt', String(ts));
+  localStorage.setItem(FLAG, '1');
+
+  if (window.KM && window.KM.safeSave) {
+    try {
+      await window.KM.authReady;
+      await window.KM.safeSave('floorplan/shared', { stores, currentStore, savedAt: ts });
+      console.log('[heal-1516] Firebase 동기화 완료: ' + healed.join(', '));
+    } catch (e) {
+      console.warn('[heal-1516] Firebase 저장 실패:', e);
+    }
+  }
+
+  console.log('[heal-1516] 복구된 매장: ' + healed.join(', '));
+  setTimeout(() => showToast('🔧 15,16번 진열대 복구됨: ' + healed.join(', ')), 600);
+  return true;
 }
 
 // Wait briefly for km-firebase.js (module script) to set up window.KM, then init
