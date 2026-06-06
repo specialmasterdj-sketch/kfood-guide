@@ -55,6 +55,33 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;
 .app-desc{font-size:.8em;color:#888;margin-top:4px}
 .app-badge{background:#e8f5e9;color:#2e7d32;padding:4px 10px;border-radius:8px;font-size:.7em;font-weight:600}
 .empty-note{text-align:center;color:#999;font-size:.85em;padding:30px 10px;border:1.5px dashed #ccc;border-radius:12px;margin-top:10px}
+
+/* Active branch banner (sticky under header) */
+.branch-banner{background:#fff;border-bottom:3px solid #1b5e20;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:90;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.branch-banner .label{font-size:.78em;color:#666;letter-spacing:.3px;text-transform:uppercase;font-weight:700}
+.branch-banner .name{font-size:1.35em;font-weight:800;color:#1b5e20;margin-top:2px}
+.branch-banner .name .en{font-size:.65em;color:#888;font-weight:600;display:block;margin-top:1px}
+.branch-banner button{background:#1b5e20;color:#fff;border:none;border-radius:10px;padding:9px 16px;font-size:.85em;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.branch-banner button:hover{background:#2e7d32}
+.branch-banner.unset{background:#fff3cd;border-bottom-color:#c8352a}
+.branch-banner.unset .name{color:#c8352a}
+
+/* Branch picker modal */
+.bp-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:none;align-items:center;justify-content:center;padding:20px}
+.bp-overlay.show{display:flex}
+.bp-modal{background:#fff;border-radius:18px;max-width:480px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.bp-head{background:linear-gradient(135deg,#2e7d32,#1b5e20);color:#fff;padding:22px 20px;border-radius:18px 18px 0 0;text-align:center}
+.bp-head h2{font-size:1.25em;margin-bottom:4px}
+.bp-head p{font-size:.85em;opacity:.9}
+.bp-body{padding:18px}
+.bp-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+.bp-btn{background:#f7f7f7;border:2px solid #e0e0e0;border-radius:12px;padding:16px 10px;cursor:pointer;font-family:inherit;text-align:center;transition:.15s}
+.bp-btn:hover{background:#e8f5e9;border-color:#2e7d32}
+.bp-btn.current{background:#fff3e0;border-color:#c8352a}
+.bp-btn .kr{font-size:1.05em;font-weight:700;color:#222}
+.bp-btn.current .kr{color:#c8352a}
+.bp-btn .en{font-size:.72em;color:#888;margin-top:3px;font-weight:600}
+.bp-foot{font-size:.78em;color:#999;text-align:center;padding:0 8px}
 </style>
   <link rel="stylesheet" href="./km-design.css?v=3">
 </head>
@@ -68,6 +95,29 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;
 <button onclick="setLang('es')" style="background:rgba(255,255,255,.2);color:#fff;border:1.5px solid rgba(255,255,255,.5);border-radius:8px;padding:3px 12px;font-size:.8em;font-weight:700;cursor:pointer">ES</button>
 <button onclick="setLang('ko')" style="background:rgba(255,255,255,.2);color:#fff;border:1.5px solid rgba(255,255,255,.5);border-radius:8px;padding:3px 12px;font-size:.8em;font-weight:700;cursor:pointer">KO</button>
 </div>
+</div>
+
+<!-- Active branch banner: every order below routes to THIS branch's cart only -->
+<div class="branch-banner" id="branch-banner">
+  <div>
+    <div class="label" data-t="banner_label">📍 현재 오더 지점</div>
+    <div class="name" id="branch-banner-name">—</div>
+  </div>
+  <button onclick="openBranchPicker()" data-t="banner_change">지점 변경</button>
+</div>
+
+<!-- Branch picker modal — forced open every visit so each session starts with explicit choice -->
+<div class="bp-overlay" id="bp-overlay" onclick="if(event.target===this)closeBranchPicker()">
+  <div class="bp-modal">
+    <div class="bp-head">
+      <h2 data-t="bp_title">📍 지점을 선택하세요</h2>
+      <p data-t="bp_subtitle">선택한 지점의 카트로만 주문이 저장됩니다.</p>
+    </div>
+    <div class="bp-body">
+      <div class="bp-grid" id="bp-grid"></div>
+      <div class="bp-foot" data-t="bp_foot">⚠️ 다른 지점 카트가 섞이지 않도록 매번 정확히 확인하세요.</div>
+    </div>
+  </div>
 </div>
 
 <div class="apps">
@@ -202,6 +252,10 @@ function renderGenericVendors(){
       <span class="app-badge">ORDER</span>
     </a>`;
   }).join('');
+  // Newly-injected cards need the same ?branch=... decoration as the static
+  // ones above — otherwise clicking them would jump to whatever km_branch the
+  // device was left on.
+  if (typeof decorateVendorLinks === 'function') decorateVendorLinks();
 }
 // Wait a tick so the products.js global is defined before we render.
 if (typeof VENDORS !== 'undefined') renderGenericVendors();
@@ -209,6 +263,103 @@ else window.addEventListener('load', renderGenericVendors);
 </script>
 
 <script>
+// ========== Branch picker (forces per-session selection) ==========
+// Every vendor link on this hub gets ?branch=<ID> appended so the downstream
+// app loads the right cart even if the device's km_branch was set by someone
+// else. The hub modal is shown on every load — "Hub 열림마다 명시적 선택".
+const BRANCHES = [
+  { id:'MIAMI',          ko:'마이애미',        en:'Miami',          es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD',      ko:'할리우드',        en:'Hollywood',      es:'Hollywood' },
+  { id:'CORAL_SPRINGS',  ko:'코럴 스프링스',   en:'Coral Springs',  es:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스올라스',      en:'LASOLAS',        es:'LASOLAS' },
+  { id:'WEST_PALM',      ko:'웨스트 팜 비치',  en:'West Palm Beach',es:'West Palm Beach' }
+];
+const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
+let CURRENT_BRANCH = '';
+try { CURRENT_BRANCH = localStorage.getItem('km_branch') || ''; } catch(e){}
+
+function getLang(){
+  try { return localStorage.getItem('kimchi_lang') || 'en'; } catch(e){ return 'en'; }
+}
+function branchLabel(id, lang){
+  const b = BRANCH_BY_ID[id]; if (!b) return '';
+  return (lang === 'en' || lang === 'es') ? b.en : b.ko;
+}
+function updateBranchBanner(){
+  const banner = document.getElementById('branch-banner');
+  const nameEl = document.getElementById('branch-banner-name');
+  if (!banner || !nameEl) return;
+  const lang = getLang();
+  const tr = T[lang] || T.ko;
+  if (!CURRENT_BRANCH){
+    banner.classList.add('unset');
+    nameEl.innerHTML = tr.banner_unset + '<span class="en">' + tr.banner_unset_sub + '</span>';
+  } else {
+    banner.classList.remove('unset');
+    const b = BRANCH_BY_ID[CURRENT_BRANCH];
+    if (!b){ nameEl.textContent = CURRENT_BRANCH; return; }
+    const main = (lang === 'en' || lang === 'es') ? b.en : b.ko;
+    const sub  = (lang === 'en' || lang === 'es') ? b.ko : b.en;
+    nameEl.innerHTML = main + '<span class="en">' + sub + '</span>';
+  }
+}
+function renderBranchGrid(){
+  const grid = document.getElementById('bp-grid');
+  if (!grid) return;
+  const lang = getLang();
+  grid.innerHTML = BRANCHES.map(b => {
+    const cur = b.id === CURRENT_BRANCH ? ' current' : '';
+    const main = (lang === 'en' || lang === 'es') ? b.en : b.ko;
+    const sub  = (lang === 'en' || lang === 'es') ? b.ko : b.en;
+    return '<button class="bp-btn' + cur + '" onclick="pickBranch(\'' + b.id + '\')">' +
+             '<div class="kr">' + main + '</div>' +
+             '<div class="en">' + sub + '</div>' +
+           '</button>';
+  }).join('');
+}
+function openBranchPicker(){
+  renderBranchGrid();
+  const ov = document.getElementById('bp-overlay');
+  if (ov) ov.classList.add('show');
+}
+function closeBranchPicker(){
+  // Only allow close if a branch is set — empty selection blocks vendor links.
+  if (!CURRENT_BRANCH) return;
+  const ov = document.getElementById('bp-overlay');
+  if (ov) ov.classList.remove('show');
+}
+function pickBranch(id){
+  if (!BRANCH_BY_ID[id]) return;
+  CURRENT_BRANCH = id;
+  try { localStorage.setItem('km_branch', id); } catch(e){}
+  updateBranchBanner();
+  decorateVendorLinks();
+  closeBranchPicker();
+}
+// Append ?branch=<ID> to every vendor app link so the downstream app knows
+// exactly which cart to load — independent of whatever km_branch was on the
+// device. Also intercept clicks when no branch picked yet.
+function decorateVendorLinks(){
+  document.querySelectorAll('a.app-card').forEach(a => {
+    let base = a.getAttribute('data-base-href');
+    if (!base){
+      base = a.getAttribute('href') || '';
+      a.setAttribute('data-base-href', base);
+    }
+    if (!CURRENT_BRANCH){
+      a.removeAttribute('href');
+      a.style.cursor = 'pointer';
+      a.onclick = (e) => { e.preventDefault(); openBranchPicker(); };
+    } else {
+      const sep = base.includes('?') ? '&' : '?';
+      a.setAttribute('href', base + sep + 'branch=' + encodeURIComponent(CURRENT_BRANCH));
+      a.onclick = null;
+    }
+  });
+}
+
+// ========== Language ==========
 const T = {
   ko: { back: '← 앱 목록', title: '🏪 벤더 오더 센타', subtitle: '공급사별 주문 앱 모음',
         pick: '원하는 공급사를 선택해서 주문을 시작하세요.',
@@ -217,7 +368,14 @@ const T = {
         st_name: 'Seoul Trading 오더', st_desc: '서울 트레이딩 카다록 · 2,483 제품',
         rb_name: 'RHEE BROS 오더', rb_desc: '리브라더스 2025 카다록 · 2,183 제품 (사진 포함)',
         nd_name: 'Namdaemun 오더', nd_desc: '남대문 농산물 · 야채 110 제품 (고기/제조사 추가 예정)',
-        more: '추가 벤더 앱은 여기에 계속 쌓입니다.' },
+        more: '추가 벤더 앱은 여기에 계속 쌓입니다.',
+        banner_label: '📍 현재 오더 지점',
+        banner_change: '지점 변경',
+        banner_unset: '⚠️ 지점 미선택',
+        banner_unset_sub: '벤더를 클릭하려면 먼저 지점을 선택하세요',
+        bp_title: '📍 지점을 선택하세요',
+        bp_subtitle: '선택한 지점의 카트로만 주문이 저장됩니다.',
+        bp_foot: '⚠️ 다른 지점 카트가 섞이지 않도록 매번 정확히 확인하세요.' },
   en: { back: '← Apps', title: '🏪 Vendor Order Center', subtitle: 'Per-supplier order apps',
         pick: 'Pick a supplier to start an order.',
         wg_name: 'Wang Global Order', wg_desc: 'Hanmi + CJ combined catalog · 1,997 products (with photos)',
@@ -225,7 +383,14 @@ const T = {
         st_name: 'Seoul Trading Order', st_desc: 'Seoul Trading catalog · 2,483 products',
         rb_name: 'RHEE BROS Order', rb_desc: 'RHEE BROS 2025 catalog · 2,183 products (with photos)',
         nd_name: 'Namdaemun Order', nd_desc: 'Namdaemun produce · 110 vegetables (meat/brands coming soon)',
-        more: 'More vendor apps will be added here.' },
+        more: 'More vendor apps will be added here.',
+        banner_label: '📍 Active branch',
+        banner_change: 'Change',
+        banner_unset: '⚠️ No branch selected',
+        banner_unset_sub: 'Pick your branch before opening any vendor',
+        bp_title: '📍 Select your branch',
+        bp_subtitle: 'Orders save to this branch’s cart only.',
+        bp_foot: '⚠️ Confirm every time so carts don’t mix between branches.' },
   es: { back: '← Apps', title: '🏪 Centro de Pedidos', subtitle: 'Apps de pedido por proveedor',
         pick: 'Elija un proveedor para iniciar un pedido.',
         wg_name: 'Pedido Wang Global', wg_desc: 'Catálogo combinado Hanmi + CJ · 1,997 productos (con fotos)',
@@ -233,7 +398,14 @@ const T = {
         st_name: 'Pedido Seoul Trading', st_desc: 'Catálogo de Seoul Trading · 2,483 productos',
         rb_name: 'Pedido RHEE BROS', rb_desc: 'Catálogo RHEE BROS 2025 · 2,183 productos (con fotos)',
         nd_name: 'Pedido Namdaemun', nd_desc: 'Productos Namdaemun · 110 verduras (carne/marcas próximamente)',
-        more: 'Se agregarán más apps de proveedores aquí.' }
+        more: 'Se agregarán más apps de proveedores aquí.',
+        banner_label: '📍 Sucursal activa',
+        banner_change: 'Cambiar',
+        banner_unset: '⚠️ Sin sucursal',
+        banner_unset_sub: 'Elija una sucursal antes de abrir un proveedor',
+        bp_title: '📍 Seleccione su sucursal',
+        bp_subtitle: 'Los pedidos se guardan solo en el carrito de esta sucursal.',
+        bp_foot: '⚠️ Confirme cada vez para que los carritos no se mezclen entre sucursales.' }
 };
 function setLang(l){
   try { localStorage.setItem('kimchi_lang', l); } catch(e){}
@@ -243,8 +415,20 @@ function setLang(l){
     if (tr[key]) el.textContent = tr[key];
   });
   document.documentElement.lang = l;
+  updateBranchBanner();
+  renderBranchGrid();
 }
+
+// Init: language first, then branch banner, then force-open picker every visit.
 try { setLang(localStorage.getItem('kimchi_lang') || 'en'); } catch(e){ setLang('en'); }
+window.addEventListener('DOMContentLoaded', () => {
+  updateBranchBanner();
+  decorateVendorLinks();
+  // Force explicit pick every session — even if km_branch was set previously.
+  openBranchPicker();
+});
+// Refresh vendor links once the generic-vendor section is dynamically rendered.
+window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
 </script>
 
 </body>
