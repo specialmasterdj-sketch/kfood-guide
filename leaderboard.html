@@ -96,6 +96,13 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;
 .bonus-track .b-group.top1 .b-grp-sub{color:#b91c1c}
 .bonus-track .b-row .b-amt.cash{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
 .bonus-track .b-row .b-cash-tag{display:inline-block;background:#dc2626;color:#fff;font-size:.62em;font-weight:900;padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle;letter-spacing:.04em}
+/* ⚠️ BETA / 확정 전 표시 */
+.bonus-track .beta-tag{display:inline-block;background:#dc2626;color:#fff;font-size:.5em;font-weight:900;padding:3px 7px;border-radius:4px;margin-left:8px;vertical-align:middle;letter-spacing:.08em;animation:beta-pulse 2s ease-in-out infinite}
+@keyframes beta-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(.96)}}
+.bonus-track .beta-banner{background:#fef3c7;border:2px dashed #f59e0b;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:.78em;color:#92400e;font-weight:700;text-align:center;line-height:1.4}
+.bonus-track .beta-banner .ic{font-size:1.1em;margin-right:4px}
+/* 차순위 표시 (Top 1 중복 → 지점 MVP 차순위 배지) */
+.bonus-track .b-row .b-runner-tag{display:inline-block;background:#7c3aed;color:#fff;font-size:.6em;font-weight:800;padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle;letter-spacing:.04em}
 .loading{padding:40px;text-align:center;color:#6b7280}
 .loading .ic{font-size:2em;animation:spin 1.4s linear infinite}
 @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
@@ -240,6 +247,14 @@ const T = {
                   en:'※ Bonus track shows on "Last Month" tab only (payouts settle after month-end).',
                   es:'※ El bono solo aparece en la pestaña "Mes Pasado" (se liquida al cierre del mes).' },
   bonusGiftCard:{ ko:'기프트카드',                             en:'gift card',                                es:'tarjeta regalo' },
+  bonusBetaTag: { ko:'확정 전',                                en:'DRAFT',                                    es:'BORRADOR' },
+  bonusBetaBanner:{ ko:'⚠️ 시뮬레이션 미리보기 — 사장님 결재 전 시안입니다. 금액·인원·산출 기준은 결재 후 확정됩니다.',
+                  en:'⚠️ Preview only — pending owner approval. Amounts, recipients, and criteria subject to change.',
+                  es:'⚠️ Vista previa — pendiente de aprobación del dueño. Montos y reglas pueden cambiar.' },
+  bonusRunnerUpTag:{ ko:'차순위',                              en:'RUNNER-UP',                                es:'SUBCAMPEÓN' },
+  bonusRunnerUpNote:{ ko:(name)=>`Top 1(${name}) 중복 → 차순위 자동 승계`,
+                  en:(name)=>`Top 1 (${name}) overlap → auto-roll to runner-up`,
+                  es:(name)=>`Top 1 (${name}) duplicado → pasa al subcampeón` },
 };
 let LANG = 'en';
 try {
@@ -912,26 +927,44 @@ function renderBonusTrack(allRows){
 
   // 0) 전체 1등 — 종합 점수 최상위 직원 (현금 보너스)
   const top1 = allRows[0] || null;
+  const top1Name = top1 ? top1.name : null;
   const top1Row = (() => {
     if (!top1) return `<div class="b-row empty"><div class="b-ic">🏆</div><div class="b-name">${escHtml(t('bonusNoWinner'))}</div><div class="b-amt cash">$${BONUS.top1Cash}<span class="b-cash-tag">${escHtml(t('bonusCashTag'))}</span></div></div>`;
     const brLbl = top1.branch ? branchLabel(top1.branch) : '';
     return `<div class="b-row"><div class="b-ic">🏆</div><div class="b-name">${escHtml(top1.name)}<span class="b-meta">${brLbl?'🏢 '+escHtml(brLbl)+' · ':''}${top1.score}${t('pt')}</span></div><div class="b-amt cash">$${BONUS.top1Cash}<span class="b-cash-tag">${escHtml(t('bonusCashTag'))}</span></div></div>`;
   })();
 
-  // 1) 지점별 이달의 직원 — allRows 에서 지점별 1등 추출
-  const byBranch = {};
+  // 1) 지점별 이달의 직원 — 지점별 1등.
+  // 🆕 2026-06-06 사장님 지시: Top 1 이 자기 지점 1등도 겸하면 그 지점 MVP 는
+  //   차순위(2등)에게 자동 승계. 예: Mirna 가 전체 Top 1 + Hollywood 1등 →
+  //   Hollywood MVP 는 Shreya 가 받음 ($250 현금 + $150 기프트카드 중복 방지).
+  const byBranchRanked = {};  // branchId → 점수 내림차순 직원 배열
   for (const r of allRows) {
     if (!r.branch) continue;
-    if (!byBranch[r.branch] || byBranch[r.branch].score < r.score) byBranch[r.branch] = r;
+    if (!byBranchRanked[r.branch]) byBranchRanked[r.branch] = [];
+    byBranchRanked[r.branch].push(r);
   }
+  // 각 지점 배열은 이미 allRows 점수 내림차순 정렬을 따라가지만 안전하게 한 번 더.
+  Object.values(byBranchRanked).forEach(arr => arr.sort((a,b) => b.score - a.score));
   const branchRows = BRANCHES
-    .filter(b => b.id !== 'WEST_PALM' || byBranch[b.id])   // West Palm 아직 오픈 전이라 활동 있을 때만
+    .filter(b => b.id !== 'WEST_PALM' || (byBranchRanked[b.id] && byBranchRanked[b.id].length))
     .map(b => {
-      const mvp = byBranch[b.id];
+      const arr = byBranchRanked[b.id] || [];
       const lbl = b[LANG] || b.ko;
-      if (!mvp) return `<div class="b-row empty"><div class="b-ic">🏢</div><div class="b-name">${escHtml(lbl)}<span class="b-meta">${escHtml(t('bonusNoWinner'))}</span></div><div class="b-amt">$${BONUS.branchMVP}</div></div>`;
-      return `<div class="b-row"><div class="b-ic">🏢</div><div class="b-name">${escHtml(mvp.name)}<span class="b-meta">${escHtml(lbl)} · ${mvp.score}${t('pt')}</span></div><div class="b-amt">$${BONUS.branchMVP}</div></div>`;
+      if (!arr.length) return `<div class="b-row empty"><div class="b-ic">🏢</div><div class="b-name">${escHtml(lbl)}<span class="b-meta">${escHtml(t('bonusNoWinner'))}</span></div><div class="b-amt">$${BONUS.branchMVP}</div></div>`;
+      // 차순위 승계 로직 — 1등이 top1Name 과 같으면 2등 선택
+      let mvp = arr[0];
+      let isRunnerUp = false;
+      if (top1Name && mvp.name === top1Name && arr.length >= 2) {
+        mvp = arr[1];
+        isRunnerUp = true;
+      }
+      const runnerTag = isRunnerUp ? `<span class="b-runner-tag">${escHtml(t('bonusRunnerUpTag'))}</span>` : '';
+      const noteLine = isRunnerUp ? `<br><span style="color:#7c3aed;font-size:.92em">↳ ${escHtml(t('bonusRunnerUpNote', top1Name))}</span>` : '';
+      return `<div class="b-row"><div class="b-ic">🏢</div><div class="b-name">${escHtml(mvp.name)}${runnerTag}<span class="b-meta">${escHtml(lbl)} · ${mvp.score}${t('pt')}${noteLine}</span></div><div class="b-amt">$${BONUS.branchMVP}</div></div>`;
     }).join('');
+  // West Palm 활동 여부 (총 풀 계산용)
+  const branchCountKey = BRANCHES.filter(b => b.id !== 'WEST_PALM' || (byBranchRanked[b.id] && byBranchRanked[b.id].length)).length;
 
   // 2) 분야별 인기 직원 — 좋아요 + 답글 합산 1등
   const deptRows = DEPT_ROOMS.map(d => {
@@ -959,13 +992,13 @@ function renderBonusTrack(allRows){
     return `<div class="b-row"><div class="b-ic">👔</div><div class="b-name">${escHtml(w.name)}<span class="b-meta">${brLbl?'🏢 '+escHtml(brLbl)+' · ':''}📋 업무지시 ${w.tasks} · 💬 피드백 ${w.fb}</span></div><div class="b-amt">$${BONUS.mgrLeader}</div></div>`;
   })();
 
-  // 총 풀 계산: BRANCHES.length 가 6 이지만 West Palm 활동 없으면 5개로 카운트
-  const branchCount = BRANCHES.filter(b => b.id !== 'WEST_PALM' || byBranch[b.id]).length;
-  const totalPool = BONUS.top1Cash + (branchCount * BONUS.branchMVP) + (DEPT_ROOMS.length * BONUS.deptPopular) + BONUS.mgrLeader;
+  // 총 풀 계산: West Palm 활동 없으면 5개 지점으로 카운트
+  const totalPool = BONUS.top1Cash + (branchCountKey * BONUS.branchMVP) + (DEPT_ROOMS.length * BONUS.deptPopular) + BONUS.mgrLeader;
 
   return `<div class="bonus-track">
-    <h3>${escHtml(t('bonusHd'))}</h3>
+    <h3>${escHtml(t('bonusHd'))} <span class="beta-tag">${escHtml(t('bonusBetaTag'))}</span></h3>
     <div class="b-sub">${escHtml(t('bonusSub', totalPool.toLocaleString()))}</div>
+    <div class="beta-banner"><span class="ic">🚧</span>${escHtml(t('bonusBetaBanner'))}</div>
     <div class="b-group top1">
       <div class="b-grp-hd">${escHtml(t('bonusTop1Hd'))}</div>
       <div class="b-grp-sub">${escHtml(t('bonusTop1Sub', BONUS.top1Cash))}</div>
