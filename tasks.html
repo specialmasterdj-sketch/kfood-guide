@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_05_30_branchfix';   // isAssignedToMe 정규화 매칭 — 직원 업무 안 보이는 문제 해결
+    var BUST = 'tasks_2026_06_07_dash_staff';   // 대시보드 전 직원 공개(점수판·순위) + 매니저 액션 숨김
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1027,8 +1027,8 @@ button{font-family:inherit;cursor:pointer}
       </a>
     </div>
 
-    <!-- 4 액션 버튼 그리드 -->
-    <div class="dash-actions">
+    <!-- 4 액션 버튼 그리드 — 매니저 전용 (renderDashboard 에서 일반 직원은 숨김) -->
+    <div class="dash-actions" id="dashActions">
       <a class="dash-action act-assign" onclick="dashAction('assign')">
         <div class="ic-wrap">➕</div>
         <div>
@@ -3584,7 +3584,10 @@ function refreshMe(){
   document.getElementById('mgrTabBtn').style.display = showMgr ? '' : 'none';
   document.getElementById('repTabBtn').style.display = showMgr ? '' : 'none';
   const homeBtn = document.getElementById('homeTabBtn');
-  if (homeBtn) homeBtn.style.display = showMgr ? '' : 'none';
+  // 🏆 대시보드 탭은 전 직원 공개 — LIVE 매장 점수판·활동 순위는 모든 직원
+  // 동기부여용이라 보여줘야 함. 매니저 전용 액션(업무 지시/보고 확인)은
+  // renderDashboard 에서 따로 숨김.
+  if (homeBtn) homeBtn.style.display = '';
   // 매니저는 default 진입 = 대시보드 (한 번만)
   if (showMgr && CUR_TAB === 'emp' && !window.__dashFirstShown) {
     window.__dashFirstShown = true;
@@ -4171,6 +4174,9 @@ function renderDashboard(){
   try { renderScoreboard(); } catch(e){ console.warn('[scoreboard]', e); }
   // 1) 매장 결정: 매니저/오너는 dropdown 으로 선택 가능
   const isMgr = me && (isManager(me.role) || isOwner());
+  // 매니저 전용 액션 버튼(업무 지시 / 보고 확인) — 일반 직원에겐 숨김.
+  const _dashActions = document.getElementById('dashActions');
+  if (_dashActions) _dashActions.style.display = isMgr ? '' : 'none';
   const myBranch = (me && me.branch && me.branch !== '*') ? me.branch : null;
   // dropdown 초기화 — DASH_BRANCH > localStorage > myBranch > 첫 매장
   if (!DASH_BRANCH) {
@@ -4323,6 +4329,9 @@ function renderDashboard(){
   }
 }
 function dashGoStat(kind){
+  // 통계 카드는 일반 직원에겐 보기 전용 — 매니저 뷰가 없으므로 탭하면 아무 일도
+  // 안 하게 한다 (매니저 뷰로 빠지지 않도록).
+  if (!(me && (isManager(me.role) || isOwner()))) return;
   // pending/delayed → 매니저 뷰로 + 필터 자동 적용
   switchTab('mgr');
   if (typeof setMgrFilter === 'function') {
@@ -4337,6 +4346,8 @@ function dashGoStat(kind){
   }
 }
 function dashAction(kind){
+  // 매니저 전용 — 일반 직원이 어떻게든 호출해도 막는다 (방어).
+  if (!(me && (isManager(me.role) || isOwner()))) return;
   if (kind === 'assign') {
     if (typeof openAssignModal === 'function') openAssignModal();
   } else if (kind === 'reports') {
