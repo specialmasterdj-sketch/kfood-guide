@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Top 500 일괄 ⭐ — 김치마트</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#1a5c3a">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;padding:14px;color:#0f172a;font-size:14px;min-height:100vh}
+.wrap{max-width:760px;margin:0 auto}
+.topbar{background:linear-gradient(135deg,#1a5c3a,#2e7d32);color:#fff;padding:18px 22px;border-radius:14px;margin-bottom:14px}
+.topbar h1{font-size:1.3em;font-weight:900;margin-bottom:4px}
+.topbar .sub{font-size:.85em;opacity:.9}
+.card{background:#fff;border-radius:12px;padding:16px 18px;margin-bottom:12px;border:1px solid #e5e7eb}
+.card h3{font-size:1em;font-weight:800;color:#1a5c3a;margin-bottom:8px}
+.warn{background:#fff8e1;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:8px;margin-bottom:12px;font-size:.88em;line-height:1.55;color:#5d4037}
+.warn b{color:#92400e}
+.summary{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:8px}
+.summary .v{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px}
+.summary .v .k{font-size:.74em;color:#6b7280;font-weight:600}
+.summary .v .n{font-size:1.05em;font-weight:800;color:#1a5c3a;margin-top:2px}
+.btn{background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:11px 22px;font-weight:800;cursor:pointer;font-family:inherit;font-size:.95em}
+.btn:hover{opacity:.92}
+.btn:disabled{background:#9ca3af;cursor:not-allowed}
+.btn.run{background:#dc2626;font-size:1.04em}
+.btn.run:hover{background:#b91c1c}
+.btn.ghost{background:#fff;color:#1a5c3a;border:1px solid #1a5c3a}
+.progress-wrap{margin-top:10px}
+.bar{height:14px;background:#e5e7eb;border-radius:7px;overflow:hidden}
+.bar-fill{height:100%;background:linear-gradient(90deg,#1a5c3a,#16a34a);transition:width .3s;width:0%}
+.progress-stat{display:flex;justify-content:space-between;font-size:.82em;color:#374151;margin-top:6px;font-weight:600}
+.progress-stat .ok{color:#15803d}
+.progress-stat .err{color:#dc2626}
+#log{background:#0f172a;color:#a7f3d0;font-family:Consolas,monospace;font-size:.78em;padding:12px;border-radius:8px;max-height:280px;overflow-y:auto;line-height:1.5;white-space:pre-wrap;margin-top:10px}
+#log .line.err{color:#fca5a5}
+#log .line.ok{color:#86efac}
+#log .line.head{color:#fde68a;font-weight:700}
+.auth-state{font-size:.82em;color:#6b7280;margin-bottom:8px}
+.auth-state .ok{color:#15803d;font-weight:700}
+.auth-state .err{color:#dc2626;font-weight:700}
+.gate-block{background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:12px 16px;color:#991b1b;font-weight:700;margin-bottom:12px}
+.row-act{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="topbar">
+    <h1>⭐ Top 500 일괄 추천</h1>
+    <div class="sub">5개 지점 Top 500 베스트셀러 → Order Center 의 매칭 상품에 일괄 ⭐ 마크</div>
+  </div>
+
+  <div class="warn">
+    <b>⚠️ 주의:</b> 이 페이지는 owner/executive 권한자만 사용하세요.<br>
+    실행하면 <b>1,565개</b> 항목이 <code>recs_global/&lt;vendor&gt;/&lt;id&gt;</code> 에 일괄 등록됩니다 (idempotent — 기존 ⭐ 보존, 같은 항목은 덮어써도 동일).<br>
+    매칭은 name fuzzy match 기반이라 일부 오매칭 가능. 잘못된 항목은 각 vendor 페이지에서 ⭐ 토글로 즉시 제거 가능.
+  </div>
+
+  <div class="card">
+    <h3>📊 등록 예정 항목</h3>
+    <div id="summary" class="summary"><div class="v"><div class="k">로딩 중…</div></div></div>
+    <div style="font-size:.82em;color:#6b7280;margin-top:6px">데이터 source: <code>top500/star_plan_2026-06-07.json</code> · 매칭 기준: name fuzzy (Jaccard ≥ 0.3 + containment ≥ 0.8)</div>
+  </div>
+
+  <div class="card">
+    <h3>🔐 인증 상태</h3>
+    <div id="authState" class="auth-state">확인 중…</div>
+  </div>
+
+  <div class="card">
+    <h3>🚀 실행</h3>
+    <div class="row-act">
+      <button id="btnRun" class="btn run" disabled onclick="runAll()">▶ 일괄 등록 시작</button>
+      <button id="btnDry" class="btn ghost" disabled onclick="runAll(true)">🧪 Dry-run (쓰기 안 함, 시뮬레이션만)</button>
+    </div>
+    <div id="progressWrap" class="progress-wrap" style="display:none">
+      <div class="bar"><div id="barFill" class="bar-fill"></div></div>
+      <div class="progress-stat">
+        <span id="statCur">0 / 0</span>
+        <span><span class="ok" id="statOk">0 성공</span> · <span class="err" id="statErr">0 실패</span></span>
+      </div>
+    </div>
+    <div id="log" style="display:none"></div>
+  </div>
+
+  <div style="text-align:center;margin-top:14px">
+    <button class="btn ghost" onclick="location.href='./hub.html'">← Manager Apps</button>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getDatabase, ref, set, get, child } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const cfg = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+  projectId: "kimchi-mart-order"
+};
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const auth = getAuth(app);
+const db = getDatabase(app);
+window.__t500 = { ref, set, get, child, db, auth };
+
+let PLAN = null;
+let ME = null;
+
+async function loadPlan() {
+  const r = await fetch('./top500/star_plan_2026-06-07.json', { cache:'no-store' });
+  if (!r.ok) throw new Error('plan fetch failed: ' + r.status);
+  PLAN = await r.json();
+  // summary 렌더
+  const grid = document.getElementById('summary');
+  let html = '', total = 0;
+  Object.entries(PLAN).sort((a,b)=>b[1].length-a[1].length).forEach(([k,arr]) => {
+    html += `<div class="v"><div class="k">${k}</div><div class="n">${arr.length.toLocaleString()}</div></div>`;
+    total += arr.length;
+  });
+  html += `<div class="v" style="background:#fef9c3;border-color:#fbbf24"><div class="k">총 합계</div><div class="n" style="color:#92400e">${total.toLocaleString()}</div></div>`;
+  grid.innerHTML = html;
+}
+
+async function checkOwnerRole(user) {
+  if (!user) return null;
+  try {
+    const snap = await get(child(ref(db), 'users/' + user.uid));
+    if (!snap.exists()) return { ok:false, reason:'users/<uid> not found' };
+    const u = snap.val() || {};
+    const role = String(u.role || '').toUpperCase();
+    const status = String(u.status || '');
+    if (status !== 'approved') return { ok:false, reason:`status='${status}' (not approved)` };
+    if (role !== 'OWNER' && role !== 'EXECUTIVE') return { ok:false, reason:`role='${role}' (owner/executive only)` };
+    return { ok:true, role, name:u.name, email:user.email };
+  } catch(e) {
+    return { ok:false, reason: 'check failed: ' + e.message };
+  }
+}
+
+function setAuthBlock(html, ok=false) {
+  const el = document.getElementById('authState');
+  el.innerHTML = html;
+  document.getElementById('btnRun').disabled = !ok;
+  document.getElementById('btnDry').disabled = !ok;
+}
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    setAuthBlock('<span class="err">❌ 로그인 필요</span> — Manager Apps 로그인 후 이 페이지 다시 여세요.');
+    return;
+  }
+  const me = await checkOwnerRole(user);
+  ME = me;
+  if (!me.ok) {
+    setAuthBlock(`<span class="err">❌ 권한 부족</span> — ${me.reason}<br>이 작업은 OWNER / EXECUTIVE 만 실행 가능합니다. uid: <code>${user.uid}</code>`);
+    return;
+  }
+  setAuthBlock(`<span class="ok">✓ 인증됨</span> — ${me.name || me.email} (role: ${me.role})`);
+}, e => {
+  setAuthBlock('<span class="err">❌ Auth 에러:</span> ' + e.message);
+});
+
+await loadPlan();
+
+window.runAll = async function(dryRun = false) {
+  if (!PLAN) { alert('plan 안 됨'); return; }
+  if (!ME?.ok) { alert('권한 없음'); return; }
+  const total = Object.values(PLAN).reduce((s,a)=>s+a.length, 0);
+  const confirmMsg = dryRun
+    ? `Dry-run — ${total.toLocaleString()}개 entry 를 시뮬레이션 (실제 Firebase 쓰기 X). 계속?`
+    : `정말 실행하시겠어요?\n\n${total.toLocaleString()}개 entry 를 recs_global 에 등록합니다.\n사장님이 이미 누른 ⭐ 는 보존됩니다 (idempotent).`;
+  if (!confirm(confirmMsg)) return;
+
+  document.getElementById('btnRun').disabled = true;
+  document.getElementById('btnDry').disabled = true;
+  document.getElementById('progressWrap').style.display = 'block';
+  const logEl = document.getElementById('log');
+  logEl.style.display = 'block';
+  logEl.innerHTML = '';
+  const log = (msg, cls='') => {
+    const d = document.createElement('div');
+    d.className = 'line ' + cls;
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+
+  const ts = Date.now();
+  const by = ME.name || ME.email || 'admin-top500';
+  log(`▶ 실행 시작 — by: ${by} · dryRun=${dryRun}`, 'head');
+
+  let cur = 0, ok = 0, err = 0;
+  const errs = [];
+  const updateStat = () => {
+    document.getElementById('statCur').textContent = `${cur.toLocaleString()} / ${total.toLocaleString()}`;
+    document.getElementById('statOk').textContent = `${ok.toLocaleString()} 성공`;
+    document.getElementById('statErr').textContent = `${err.toLocaleString()} 실패`;
+    document.getElementById('barFill').style.width = (100 * cur / total).toFixed(1) + '%';
+  };
+
+  for (const [vendor, ids] of Object.entries(PLAN)) {
+    log(`▸ ${vendor} — ${ids.length}개 시작…`, 'head');
+    let vOk = 0, vErr = 0;
+    // 병렬 처리 (vendor 안에서 8개씩 batch)
+    const BATCH = 8;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const batch = ids.slice(i, i + BATCH);
+      const results = await Promise.allSettled(batch.map(id => {
+        if (dryRun) return Promise.resolve('dry');
+        return set(ref(db, `recs_global/${vendor}/${id}`), { ts, by, src: 'top500_bulk_2026-06-07' });
+      }));
+      results.forEach((r, idx) => {
+        cur++;
+        if (r.status === 'fulfilled') { ok++; vOk++; }
+        else { err++; vErr++; errs.push({ vendor, id: batch[idx], reason: String(r.reason).slice(0, 200) }); }
+      });
+      updateStat();
+    }
+    log(`  ✓ ${vendor}: ${vOk} 성공, ${vErr} 실패 (누적 ${ok}/${total})`, vErr ? 'err' : 'ok');
+  }
+
+  log('', '');
+  log(`✅ 완료 — ${ok.toLocaleString()} 성공 · ${err.toLocaleString()} 실패 (총 ${total.toLocaleString()})`, 'head');
+  if (errs.length) {
+    log(`\n실패 항목 (처음 10개):`, 'err');
+    errs.slice(0, 10).forEach(e => log(`  ${e.vendor}/${e.id}: ${e.reason}`, 'err'));
+    if (errs.length > 10) log(`  ... 외 ${errs.length - 10}개`, 'err');
+  }
+  if (!dryRun && err === 0) {
+    log('\n💡 Order Center 의 각 vendor 페이지를 열어보시면 노란 ⭐ 마크가 보입니다.', 'head');
+    log('   잘못된 매칭은 vendor 페이지에서 ⭐ 클릭으로 즉시 제거 가능.', 'head');
+  }
+  document.getElementById('btnRun').disabled = false;
+  document.getElementById('btnDry').disabled = false;
+};
+</script>
+</body>
+</html>
