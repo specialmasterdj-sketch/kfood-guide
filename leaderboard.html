@@ -465,9 +465,9 @@ let OWNER_UIDS = new Set();   // populated from /users by role==='OWNER' or 'EXE
 // + 채팅 30건만으로 1등 (31pt) 사례 발견 → 채팅 가중치 1.0 → 0.3 (옵션 A) +
 // 일일 채팅 점수 상한 10pt (옵션 B) 추가.
 const SCORE = {
-  expiryAdd:    0.3,   // 유통기한 등록 — 사진 첨부 시에만 (사진 1장당 0.3)
-  expiryCheck:  0.2,   // 체크 완료
-  expiryDiscard:0.2,   // 폐기 처리 — 체크와 동일 가중치
+  expiryAdd:    0.2,   // 유통기한 등록 — 사진 첨부 시에만 (2026-06-08 전무님: 0.3→0.2)
+  expiryCheck:  0.1,   // 체크 완료 (2026-06-08: 0.2→0.1)
+  expiryDiscard:0.1,   // 폐기 처리 (2026-06-08: 0.2→0.1)
   taskComplete: 1.0,   // 업무 지시 완료 (사진 보고 포함)
   chatMessage:  0.3,   // 채팅 메시지 — 1.0 → 0.3 (옵션 A)
   chatPhoto:    0.1,   // 메시지 안 사진 — 0.2 → 0.1 (옵션 A)
@@ -1016,6 +1016,11 @@ function computeScores(agg){
              : CUR_RANGE === 'lastmonth' ? 31
              :                         9999;   // 'all' = 사실상 무제한
   const chatCap = CHAT_DAILY_CAP * days;
+  // 2026-06-08 전무님: 유통기한 가중치 인하(등록 0.2·체크 0.1·폐기 0.1). 지난달(지급완료)은
+  //   옛 가중치(0.3/0.2/0.2) 유지 — 정산 끝난 순위 소급 변경 방지 (RULE_START_TS 정신과 동일).
+  const _eAdd = (CUR_RANGE === 'lastmonth') ? 0.3 : SCORE.expiryAdd;
+  const _eChk = (CUR_RANGE === 'lastmonth') ? 0.2 : SCORE.expiryCheck;
+  const _eDis = (CUR_RANGE === 'lastmonth') ? 0.2 : SCORE.expiryDiscard;
   Object.values(agg).forEach(r => {
     // 채팅 관련 점수 (메시지·사진·댓글) → cap 적용
     // 2026-05-27 전무님 지시: reaction (받은 좋아요) 은 캡에서 제외 — 받는 사람이
@@ -1044,9 +1049,9 @@ function computeScores(agg){
       giveCapped = (r.taskGiven || 0) * SCORE.taskGiven;
     }
     r.score =
-      r.expiryAdd     * SCORE.expiryAdd
-    + r.expiryCheck   * SCORE.expiryCheck
-    + r.expiryDiscard * SCORE.expiryDiscard
+      r.expiryAdd     * _eAdd
+    + r.expiryCheck   * _eChk
+    + r.expiryDiscard * _eDis
     + taskCapped      // 일별 cap 적용된 task 완료 점수
     + giveCapped      // 일별 cap 적용된 업무 발송 점수
     + chatCapped      // 채팅 cap 적용된 점수
@@ -1276,7 +1281,7 @@ function renderLegend(){
   return `<div class="legend">
     <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:9px 11px;margin-bottom:10px;color:#92400e;font-weight:800;line-height:1.5">${escHtml(t('legBonusAttend'))}</div>
     <b>${escHtml(t('legendHd'))}</b><br>
-    📦 ${escHtml(t('legExpAdd'))} <code>+0.3</code> ${escHtml(t('legExpAddNote'))} · ✅ ${escHtml(t('legExpCheck'))} <code>+0.2</code> · ❌ ${escHtml(t('legExpDisc'))} <code>+0.2</code><br>
+    📦 ${escHtml(t('legExpAdd'))} <code>+0.2</code> ${escHtml(t('legExpAddNote'))} · ✅ ${escHtml(t('legExpCheck'))} <code>+0.1</code> · ❌ ${escHtml(t('legExpDisc'))} <code>+0.1</code><br>
     📋 ${escHtml(t('legTask'))} <code>+1~+3</code> ${escHtml(t('legTaskNote'))} · 📤 ${escHtml(t('legTaskGiven'))} <code>+1</code> ${escHtml(t('legTaskGivenNote'))}<br>
     🎖 ${escHtml(_bt('보너스 (매니저·오너 부여, 이유 기록)','Bonus (manager/owner, with reason)','Bono (gerente/dueño, con motivo)'))} <code>+2~+5</code><br>
     💬 ${escHtml(t('legChatMsg'))} <code>+0.3</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.1</code><br>
