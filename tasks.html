@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_08_assign_perm';   // 🔐 task 발송 권한 재설정 (senior supervisor+ / SUN KIM 임원) — 강제 갱신
+    var BUST = 'tasks_2026_06_08_assign_perm2';   // 🔐 task 발송 권한 + 코럴 Vice 이상 예외 — 강제 갱신
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3597,14 +3597,25 @@ const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이','SUN KIM','S
 function isManager(role){ if(!role)return false; const r=role.toUpperCase(); return MANAGER_TOKENS.some(t=>r.includes(t)); }
 function isOwner(){ if(!me)return false; const nm=(me.name||'').replace(/\s+/g,'').toUpperCase(); if(EXECUTIVE_NAMES.some(n=>n.replace(/\s+/g,'').toUpperCase()===nm)) return true; return /OWNER|BOSS|오너|사장|대표/i.test((me.role||'').toUpperCase()); }
 // 🆕 2026-06-08 사장님 지시: task 발송 권한 재설정.
-//   허용: STORE MANAGER · ASSISTANT MANAGER · SENIOR SUPERVISOR · HR MANAGER (= _roleRank>=70)
+//   기본 허용: STORE MANAGER · ASSISTANT MANAGER · SENIOR SUPERVISOR · HR MANAGER (= _roleRank>=70)
 //         + OWNER / 임원(B.H.K, SUN KIM — EXECUTIVE_NAMES).
-//   제외(기존엔 가능했음): 일반 SUPERVISOR(60) · VICE SUPERVISOR(50) · OFFICE · 일반 직원.
+//   기본 제외: 일반 SUPERVISOR(60) · VICE SUPERVISOR(50) · OFFICE · 일반 직원.
 //   ※ 근태 출근등록 권한(isManager 사용)은 별개라 그대로 둠 — task 발송에만 적용.
+//
+// 🆕 2026-06-08 (2): 인원 부족 지점 예외 — 지점별 최소 직급(rank) override.
+//   CORAL_SPRINGS 는 발송 가능 인원이 거의 1명뿐 → Vice Supervisor(rank>=50) 이상 허용.
+//   다른 지점도 인원 부족하면 여기에 'BRANCH_ID': 최소rank 추가만 하면 됨.
+//   (rank 기준: OWNER 100 / MANAGER 90 / ASST MGR 80 / SENIOR SUP 70 / SUPERVISOR 60 / VICE SUP 50)
+const ASSIGN_RANK_MIN_DEFAULT = 70;
+const ASSIGN_RANK_MIN_BY_BRANCH = { 'CORAL_SPRINGS': 50 };
+function assignRankMin(branch){
+  const v = ASSIGN_RANK_MIN_BY_BRANCH[branch];
+  return (typeof v === 'number') ? v : ASSIGN_RANK_MIN_DEFAULT;
+}
 function canAssignTask(){
   if (!me) return false;
   if (isOwner()) return true;                                  // owner + 임원(B.H.K, SUN KIM)
-  if (typeof _roleRank === 'function') return _roleRank(me.role) >= 70;  // senior supervisor 이상
+  if (typeof _roleRank === 'function') return _roleRank(me.role) >= assignRankMin(me.branch);
   return isManager(me.role);                                   // _roleRank 미정의 시 안전 폴백
 }
 
