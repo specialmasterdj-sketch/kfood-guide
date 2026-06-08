@@ -158,21 +158,50 @@ onAuthStateChanged(auth, async (user) => {
     setAuthBlock(`<span class="err">❌ 권한 부족</span> — ${me.reason}<br>이 작업은 OWNER / EXECUTIVE 만 실행 가능합니다. uid: <code>${user.uid}</code>`);
     return;
   }
-  setAuthBlock(`<span class="ok">✓ 인증됨</span> — ${me.name || me.email} (role: ${me.role})`);
+  setAuthBlock(`<span class="ok">✓ 인증됨</span> — ${me.name || me.email} (role: ${me.role})`, true);
+  // 🆕 2026-06-07: 인증 통과 시 5초 카운트다운 후 자동 실행 (사장님 burden 최소화).
+  //   취소 버튼 누르면 자동 실행 정지. URL 에 ?manual=1 있으면 자동 실행 안 함.
+  const params = new URL(location.href).searchParams;
+  if (!params.has('manual')) {
+    autoStartCountdown();
+  }
 }, e => {
   setAuthBlock('<span class="err">❌ Auth 에러:</span> ' + e.message);
 });
 
+function autoStartCountdown(){
+  if (window.__autoStarted) return;
+  window.__autoStarted = true;
+  let sec = 5;
+  const wrap = document.createElement('div');
+  wrap.id = 'autoStart';
+  wrap.style.cssText = 'background:#fef3c7;border:2px solid #f59e0b;border-radius:12px;padding:16px 20px;margin-bottom:14px;text-align:center;font-weight:800;color:#78350f;font-size:1.05em';
+  wrap.innerHTML = `🚀 인증 완료 — <span id="autoSec">${sec}</span>초 후 자동으로 1,565개 일괄 등록 시작합니다.<br>
+    <button id="autoCancel" style="margin-top:10px;background:#fff;color:#dc2626;border:2px solid #dc2626;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-family:inherit">✕ 취소 — 직접 누를게요</button>
+    <button id="autoNow" style="margin-top:10px;margin-left:8px;background:#dc2626;color:#fff;border:0;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-family:inherit">▶ 지금 바로 시작</button>`;
+  document.querySelector('.topbar').insertAdjacentElement('afterend', wrap);
+  const tick = setInterval(() => {
+    sec--;
+    const el = document.getElementById('autoSec');
+    if (el) el.textContent = sec;
+    if (sec <= 0) { clearInterval(tick); wrap.remove(); window.runAll(false, true); }
+  }, 1000);
+  document.getElementById('autoCancel').onclick = () => { clearInterval(tick); wrap.remove(); };
+  document.getElementById('autoNow').onclick = () => { clearInterval(tick); wrap.remove(); window.runAll(false, true); };
+}
+
 await loadPlan();
 
-window.runAll = async function(dryRun = false) {
+window.runAll = async function(dryRun = false, skipConfirm = false) {
   if (!PLAN) { alert('plan 안 됨'); return; }
   if (!ME?.ok) { alert('권한 없음'); return; }
   const total = Object.values(PLAN).reduce((s,a)=>s+a.length, 0);
-  const confirmMsg = dryRun
-    ? `Dry-run — ${total.toLocaleString()}개 entry 를 시뮬레이션 (실제 Firebase 쓰기 X). 계속?`
-    : `정말 실행하시겠어요?\n\n${total.toLocaleString()}개 entry 를 recs_global 에 등록합니다.\n사장님이 이미 누른 ⭐ 는 보존됩니다 (idempotent).`;
-  if (!confirm(confirmMsg)) return;
+  if (!skipConfirm) {
+    const confirmMsg = dryRun
+      ? `Dry-run — ${total.toLocaleString()}개 entry 를 시뮬레이션 (실제 Firebase 쓰기 X). 계속?`
+      : `정말 실행하시겠어요?\n\n${total.toLocaleString()}개 entry 를 recs_global 에 등록합니다.\n사장님이 이미 누른 ⭐ 는 보존됩니다 (idempotent).`;
+    if (!confirm(confirmMsg)) return;
+  }
 
   document.getElementById('btnRun').disabled = true;
   document.getElementById('btnDry').disabled = true;
