@@ -454,6 +454,27 @@ async function authParam(){
   } catch(_) { return ''; }
 }
 
+// ============== ⚡ 성능: 받는 데이터 범위 한정 (2026-06-08) ==============
+// 폰에서 느린 주원인 = 매번 전 채팅방 전체 메시지 + 전 지점 task 히스토리 통째 다운로드.
+// 선택한 기간(today/week/month)만 받도록 Firebase REST 쿼리로 서버에서 잘라옴.
+function _zk(n){ return String(n).padStart(2,'0'); }
+function _dateKey(d){ return d.getFullYear() + '-' + _zk(d.getMonth()+1) + '-' + _zk(d.getDate()); }
+// task 는 '배정일' 버킷에 저장되는데 점수는 '완료일' 기준 → 배정 후 며칠 뒤 완료되는 걸
+// 놓치지 않게 시작일을 21일 앞당겨서 버킷을 받음 (안전 마진). 'all' 은 한정 안 함.
+function tasksStartKey(){
+  if (CUR_RANGE === 'all') return null;
+  return _dateKey(new Date(rangeStart() - 21*86400000));
+}
+// 채팅방별로 최근 N건만 받음 (push key 는 시간순이라 limitToLast 로 최신만). 'all' 은 무제한.
+const CHAT_LIMIT_BY_RANGE = { today:400, week:1500, month:4000, lastmonth:4000 };
+function chatLimit(){ return CHAT_LIMIT_BY_RANGE[CUR_RANGE] || 0; }
+// FB REST URL 에 쿼리 파라미터 안전하게 덧붙임 (aq 가 '?auth=' 일 수도, '' 일 수도).
+function _fbq(base, aq, extra){
+  let url = base + aq;
+  if (extra) url += (aq ? '&' : '?') + extra;
+  return url;
+}
+
 // ============== Branch dropdown ==============
 function initBranchSel(){
   const sel = document.getElementById('branchSel');
@@ -602,7 +623,10 @@ async function fetchTasks(agg, since, until){
   const branches = (CUR_BRANCH === 'ALL') ? BRANCHES.map(b => b.id) : [CUR_BRANCH];
   await Promise.all(branches.map(async (br) => {
     try {
-      const r = await fetch(`${FB_DB}/tasks/${br}.json${aq}`, { cache:'no-store' });
+      // ⚡ 기간 한정 — 시작 날짜키 이후 버킷만 (orderBy $key, index 불필요). 'all' 은 전체.
+      const _sk = tasksStartKey();
+      const _extra = _sk ? ('orderBy=' + encodeURIComponent('"$key"') + '&startAt=' + encodeURIComponent('"'+_sk+'"')) : '';
+      const r = await fetch(_fbq(`${FB_DB}/tasks/${br}.json`, aq, _extra), { cache:'no-store' });
       if (!r.ok) return;
       const tree = await r.json();
       if (!tree) return;
@@ -660,7 +684,10 @@ async function fetchChat(agg, since, until){
   if (!ids.length) return;
   await Promise.all(ids.map(async (rid) => {
     try {
-      const r = await fetch(`${FB_DB}/chat/messages/${encodeURIComponent(rid)}.json${aq}`, { cache:'no-store' });
+      // ⚡ 기간별 최근 N건만 — push key 시간순이라 limitToLast 로 최신만 받음 (index 불필요).
+      const _lim = chatLimit();
+      const _extra = _lim ? ('orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=' + _lim) : '';
+      const r = await fetch(_fbq(`${FB_DB}/chat/messages/${encodeURIComponent(rid)}.json`, aq, _extra), { cache:'no-store' });
       if (!r.ok) return;
       const d = await r.json();
       if (!d) return;
@@ -1119,8 +1146,39 @@ function renderLegend(){
 }
 
 // ============== Main ==============
+// ⚡ 캐시 (stale-while-revalidate) — 마지막 결과를 localStorage 에 저장.
+// 재방문 시 즉시 보여주고(스피너 없이) 뒤에서 새 데이터로 조용히 갱신. 폰 체감속도 ↑.
+function _lbCacheKey(){ return 'lb_cache_v1_' + CUR_RANGE + '_' + CUR_BRANCH + '_' + LANG; }
+function _lbReadCache(){
+  try { const o = JSON.parse(localStorage.getItem(_lbCacheKey())||'null');
+        return (o && Array.isArray(o.rows)) ? o : null; } catch(_) { return null; }
+}
+function _lbWriteCache(rows){
+  try { localStorage.setItem(_lbCacheKey(), JSON.stringify({ ts: Date.now(), rows })); } catch(_){}
+}
+// rows → 화면. (loadAll 의 렌더 부분을 함수로 분리 — 캐시/실데이터 양쪽에서 재사용.)
+function buildAndRender(rows, updating){
+  const top3 = rows.slice(0, 3);
+  const rest = rows.slice(3, 50);
+  const rangeLbl = CUR_RANGE === 'today' ? t('rangeTodayLbl')
+                 : CUR_RANGE === 'week'  ? t('rangeWeekLbl')
+                 : CUR_RANGE === 'month' ? t('rangeMonthLbl')
+                 : CUR_RANGE === 'lastmonth' ? t('rangeLastMonthLbl')
+                 :                          t('rangeAllLbl');
+  const totalPts = rows.reduce((s,r) => s + r.score, 0).toFixed(1);
+  document.getElementById('subText').textContent =
+    `${rangeLbl} · ${t('statsActive', rows.length)} · ${t('statsTotal', totalPts)}` + (updating ? '  · 🔄' : '');
+  document.getElementById('content').innerHTML =
+    `${renderPodium(top3)}${renderBonusTrack(rows)}${renderStoreRank(rows)}${renderBranchMVPs(rows)}${renderRows(rest)}${renderLegend()}`;
+}
+
+let _lbLoadSeq = 0;
 async function loadAll(){
-  document.getElementById('content').innerHTML = `<div class="loading"><div class="ic">⏳</div>${escHtml(t('loading'))}</div>`;
+  const _seq = ++_lbLoadSeq;   // 탭 빠르게 바꿔도 옛 응답이 새 화면 덮어쓰지 않게
+  // 캐시 있으면 즉시 표시(스피너 생략) + 갱신중 표시. 없으면 기존 로딩 스피너.
+  const _cached = _lbReadCache();
+  if (_cached) buildAndRender(_cached.rows, true);
+  else document.getElementById('content').innerHTML = `<div class="loading"><div class="ic">⏳</div>${escHtml(t('loading'))}</div>`;
   const since = rangeStart();
   const until = rangeEnd();
   const agg = {};
@@ -1147,20 +1205,9 @@ async function loadAll(){
   computeScores(agg);
   // Filter to anyone with score > 0
   const rows = Object.values(agg).filter(r => r.score > 0).sort((a,b) => b.score - a.score);
-  const top3 = rows.slice(0, 3);
-  const rest = rows.slice(3, 50);
-
-  const rangeLbl = CUR_RANGE === 'today' ? t('rangeTodayLbl')
-                 : CUR_RANGE === 'week'  ? t('rangeWeekLbl')
-                 : CUR_RANGE === 'month' ? t('rangeMonthLbl')
-                 : CUR_RANGE === 'lastmonth' ? t('rangeLastMonthLbl')
-                 :                          t('rangeAllLbl');
-  const totalPts = rows.reduce((s,r) => s + r.score, 0).toFixed(1);
-  document.getElementById('subText').textContent =
-    `${rangeLbl} · ${t('statsActive', rows.length)} · ${t('statsTotal', totalPts)}`;
-
-  const html = `${renderPodium(top3)}${renderBonusTrack(rows)}${renderStoreRank(rows)}${renderBranchMVPs(rows)}${renderRows(rest)}${renderLegend()}`;
-  document.getElementById('content').innerHTML = html;
+  if (_seq !== _lbLoadSeq) return;   // 그 사이 더 새 요청(탭 전환 등)이 시작됐으면 이 결과는 폐기
+  _lbWriteCache(rows);               // 다음 방문 즉시표시용 캐시 저장
+  buildAndRender(rows, false);
 }
 
 initBranchSel();
