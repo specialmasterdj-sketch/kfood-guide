@@ -488,6 +488,11 @@ const TASK_DAILY_CAP = 10;
 // 부풀리는 것 방지. 완료된 task 한 건당 발송자 +1pt 이되, 발송자 본인 기준 하루 합이
 // 이 값을 넘으면 컷. (자기 자신에게 준 task 는 제외 — 완료 점수와 중복 방지.)
 const GIVE_DAILY_CAP = 10;
+// 🆕 2026-06-08 (3) 사장님 지시: 새 규칙(일일 캡 + 발송자 포인트)은 '아직 정산 안 된'
+// 2026-06-01 00:00 이후 완료된 업무에만 적용. 그 이전(이미 보너스 지급 끝난 5월 등)은
+// 옛 규칙 그대로 계산 → 지급된 순위가 소급으로 바뀌지 않게 보존.
+// (고정 컷오프라 다음 달에도 일관: 6월은 항상 새 규칙으로 계산됐으므로 변동 없음.)
+const RULE_START_TS = new Date(2026, 5, 1).getTime();   // 2026-06-01 로컬
 
 // 🆕 2026-06-06 사장님 지시: 월별 보너스 트랙 — 지난 달 정산용.
 // 금액은 오너가 직접 결정. 변경 시 이 BONUS 객체만 수정하면 됨.
@@ -576,7 +581,13 @@ function tasksStartKey(){
 // ⚠️ 채팅 사진은 메시지 안에 base64 로 통째 저장 → 옛 메시지까지 받으면 폰에서 수십 MB.
 //    채팅 점수는 어차피 1일 10pt 캡(소액)이라, 최근 일부만 받아도 순위 영향 거의 없음.
 const CHAT_LIMIT_BY_RANGE = { today:150, week:350, month:600, lastmonth:600 };
-function chatLimit(){ return CHAT_LIMIT_BY_RANGE[CUR_RANGE] || 0; }
+// ⚠️ limitToLast 는 '최신' 메시지만 가져옴 → 지난달/전체처럼 과거 윈도우엔 쓰면 안 됨
+// (5월 메시지가 최신이 아니라 누락됨). 현재 기간(today/week/month)에만 한정 적용.
+function chatLimit(){
+  if (CUR_RANGE === 'today' || CUR_RANGE === 'week' || CUR_RANGE === 'month')
+    return CHAT_LIMIT_BY_RANGE[CUR_RANGE] || 0;
+  return 0;   // lastmonth / all = 전체 (과거 메시지 정확히 포착)
+}
 // FB REST URL 에 쿼리 파라미터 안전하게 덧붙임 (aq 가 '?auth=' 일 수도, '' 일 수도).
 function _fbq(base, aq, extra){
   let url = base + aq;
@@ -766,23 +777,26 @@ async function fetchTasks(agg, since, until){
           // 하루치 합이 TASK_DAILY_CAP 넘으면 초과분 컷. bumpAgg 가 제외(OWNER 등)한
           // 직원은 agg 에 없으므로 guard 로 건너뜀.
           const _tk = String(t.completedBy).trim();
-          if (agg[_tk]) {
-            const _td = new Date(t.completedAt);
-            const _tday = _td.getFullYear() + '-' + (_td.getMonth()+1) + '-' + _td.getDate();
-            if (!agg[_tk].taskPointsByDay) agg[_tk].taskPointsByDay = {};
-            agg[_tk].taskPointsByDay[_tday] = (agg[_tk].taskPointsByDay[_tday] || 0) + pts;
-          }
-          // 🆕 2026-06-08 (2) — 업무 발송자(지시한 사람)에게 완료 1건당 +1pt.
-          // 발송자 = from/createdBy/assignedBy. 자기 자신에게 준 task 는 제외(중복 방지).
-          // OWNER/임원 등 제외 대상은 bumpAgg 가 agg 에 안 만들므로 guard 로 건너뜀.
-          const _giver = String(t.from || t.createdBy || t.assignedBy || '').trim();
-          if (_giver && _giver !== _tk) {
-            bumpAgg(agg, _giver, br, 'taskGiven', 1);
-            if (agg[_giver]) {
-              const _gd = new Date(t.completedAt);
-              const _gday = _gd.getFullYear() + '-' + (_gd.getMonth()+1) + '-' + _gd.getDate();
-              if (!agg[_giver].taskGivenByDay) agg[_giver].taskGivenByDay = {};
-              agg[_giver].taskGivenByDay[_gday] = (agg[_giver].taskGivenByDay[_gday] || 0) + 1;
+          // ⏱️ 새 규칙은 컷오프(2026-06-01) 이후 완료분에만. 이전(이미 지급된 5월 등)은
+          //    아래 per-day/발송자 누적을 건너뜀 → computeScores 에서 옛 규칙(무캡·발송자0)으로 처리.
+          if (t.completedAt >= RULE_START_TS) {
+            if (agg[_tk]) {
+              const _td = new Date(t.completedAt);
+              const _tday = _td.getFullYear() + '-' + (_td.getMonth()+1) + '-' + _td.getDate();
+              if (!agg[_tk].taskPointsByDay) agg[_tk].taskPointsByDay = {};
+              agg[_tk].taskPointsByDay[_tday] = (agg[_tk].taskPointsByDay[_tday] || 0) + pts;
+            }
+            // 🆕 업무 발송자(지시한 사람)에게 완료 1건당 +1pt. 발송자 = from/createdBy/assignedBy.
+            //    자기 자신에게 준 task 는 제외(완료 점수와 중복 방지).
+            const _giver = String(t.from || t.createdBy || t.assignedBy || '').trim();
+            if (_giver && _giver !== _tk) {
+              bumpAgg(agg, _giver, br, 'taskGiven', 1);
+              if (agg[_giver]) {
+                const _gd = new Date(t.completedAt);
+                const _gday = _gd.getFullYear() + '-' + (_gd.getMonth()+1) + '-' + _gd.getDate();
+                if (!agg[_giver].taskGivenByDay) agg[_giver].taskGivenByDay = {};
+                agg[_giver].taskGivenByDay[_gday] = (agg[_giver].taskGivenByDay[_gday] || 0) + 1;
+              }
             }
           }
         });
@@ -1009,13 +1023,13 @@ function computeScores(agg){
     const reactionGivenScore = (r.reactionGiven||0) * SCORE.reactionGiven;  // 누른 좋아요 (캡 없음, 0.05/개)
     // 💎 task 점수 — 완료일(day)별로 TASK_DAILY_CAP 적용 후 합산. 하루에 몰아주기/쪼개기
     //    해도 그날치는 cap 까지만. taskPoints(raw) 는 배지 표시용으로 그대로 둠.
-    let taskCapped = 0;
+    // taskPointsByDay 에는 컷오프(2026-06-01) '이후' 완료분만 담겨 있음(fetchTasks 에서 분리).
+    // 이후분 = 일별 캡 적용, 이전분(=raw 전체 - 이후분 합) = 옛 규칙대로 무캡 그대로.
+    let _postRaw = 0, _postCapped = 0;
     const tDays = r.taskPointsByDay ? Object.keys(r.taskPointsByDay) : [];
-    if (tDays.length) {
-      for (const dk of tDays) taskCapped += Math.min(r.taskPointsByDay[dk], TASK_DAILY_CAP);
-    } else {
-      taskCapped = r.taskPoints || 0;   // day 맵 없는 예외 케이스 — 안전하게 raw 사용
-    }
+    for (const dk of tDays) { _postRaw += r.taskPointsByDay[dk]; _postCapped += Math.min(r.taskPointsByDay[dk], TASK_DAILY_CAP); }
+    const _preCutoff = (r.taskPoints || 0) - _postRaw;   // 컷오프 이전 완료분 (무캡)
+    const taskCapped = _preCutoff + _postCapped;
     // 🆕 발송자(업무 지시) 점수 — 완료일별 GIVE_DAILY_CAP 적용. taskGiven 1건당 1pt.
     let giveCapped = 0;
     const gDays = r.taskGivenByDay ? Object.keys(r.taskGivenByDay) : [];
@@ -1267,7 +1281,7 @@ function renderLegend(){
 // ============== Main ==============
 // ⚡ 캐시 (stale-while-revalidate) — 마지막 결과를 localStorage 에 저장.
 // 재방문 시 즉시 보여주고(스피너 없이) 뒤에서 새 데이터로 조용히 갱신. 폰 체감속도 ↑.
-function _lbCacheKey(){ return 'lb_cache_v1_' + CUR_RANGE + '_' + CUR_BRANCH + '_' + LANG; }
+function _lbCacheKey(){ return 'lb_cache_v2_' + CUR_RANGE + '_' + CUR_BRANCH + '_' + LANG; }
 function _lbReadCache(){
   try { const o = JSON.parse(localStorage.getItem(_lbCacheKey())||'null');
         return (o && Array.isArray(o.rows)) ? o : null; } catch(_) { return null; }
