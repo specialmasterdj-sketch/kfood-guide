@@ -240,6 +240,9 @@ const T = {
   legChatCap:   { ko:'⚠️ 채팅 점수(메시지·사진·댓글)는 1인당 1일 최대 10pt. 👍 좋아요는 캡 없음 — 받은 0.2pt + 누른 0.05pt (모든 이모지 동일).',
                   en:'⚠️ Chat points (msg·photo·reply) capped at 10pt/day per person. 👍 likes uncapped — received 0.2pt + given 0.05pt (all emojis equal).',
                   es:'⚠️ Puntos de chat (msj·foto·resp) limitados a 10pt/día. 👍 likes sin límite — recibidos 0.2pt + dados 0.05pt (todos emojis iguales).' },
+  legTaskCap:   { ko:'⚠️ 업무(Task) 점수도 1인당 1일 최대 10pt — 업무 쪼개기·점수 몰아주기 방지 (2026-06-08).',
+                  en:'⚠️ Task points also capped at 10pt/day per person — prevents task-splitting / point farming (2026-06-08).',
+                  es:'⚠️ Puntos de tareas también limitados a 10pt/día por persona — evita dividir tareas / inflar puntos (2026-06-08).' },
   // 🆕 보너스 트랙 (지난 달 정산용)
   bonusHd:      { ko:'💰 이달의 보너스 트랙',                  en:'💰 Monthly Bonus Track',                   es:'💰 Bono Mensual' },
   bonusSub:     { ko:(t)=>`지난 달 정산 — 총 상금 풀 $${t}`,    en:(t)=>`Last month payout — total pool $${t}`, es:(t)=>`Pago del mes pasado — bolsa total $${t}` },
@@ -363,6 +366,11 @@ const MAX_PHOTOS_PER_MSG = 20;
 // 윈도우 길이 비례 (today=10, week=70, month=300, all=거의 무제한).
 // 채팅 메시지 + 사진 + 반응 + 댓글 점수 합쳐 이 cap 이상 안 넘게.
 const CHAT_DAILY_CAP = 10;
+// 🆕 2026-06-08 사장님 지시: Task 농사·쪼개기 방지. 1인당 1일 업무(Task) 점수 최대 10pt.
+// 채팅 cap 과 달리 '완료일(completedAt) 기준 진짜 일별 cap' — 윈도우 길이와 무관하게
+// 어느 하루든 그날 완료한 task 점수 합이 이 값을 넘으면 초과분은 0점 처리.
+// (업무를 잘게 쪼개 한 사람에게 몰아줘도 하루 10pt 이상 못 받게.) 숫자만 바꾸면 튜닝 가능.
+const TASK_DAILY_CAP = 10;
 
 // 🆕 2026-06-06 사장님 지시: 월별 보너스 트랙 — 지난 달 정산용.
 // 금액은 오너가 직접 결정. 변경 시 이 BONUS 객체만 수정하면 됨.
@@ -522,7 +530,7 @@ function isExcludedSender(name, branch){
 //   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, chatMsg:0, chatPhoto:0, reaction:0, reactionGiven:0, reply:0, score:0 });
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, reaction:0, reactionGiven:0, reply:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -601,6 +609,16 @@ async function fetchTasks(agg, since, until){
           bumpAgg(agg, t.completedBy, br, 'taskComplete', 1);
           const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
           bumpAgg(agg, t.completedBy, br, 'taskPoints', pts);
+          // 🆕 Task 일일 상한용 — 완료일(completedAt)별로 점수 누적. computeScores 에서
+          // 하루치 합이 TASK_DAILY_CAP 넘으면 초과분 컷. bumpAgg 가 제외(OWNER 등)한
+          // 직원은 agg 에 없으므로 guard 로 건너뜀.
+          const _tk = String(t.completedBy).trim();
+          if (agg[_tk]) {
+            const _td = new Date(t.completedAt);
+            const _tday = _td.getFullYear() + '-' + (_td.getMonth()+1) + '-' + _td.getDate();
+            if (!agg[_tk].taskPointsByDay) agg[_tk].taskPointsByDay = {};
+            agg[_tk].taskPointsByDay[_tday] = (agg[_tk].taskPointsByDay[_tday] || 0) + pts;
+          }
         });
       });
     } catch(e) { console.warn('[lb] tasks', br, e); }
@@ -820,18 +838,27 @@ function computeScores(agg){
     const chatCapped = Math.min(chatRaw, chatCap);
     const reactionScore = r.reaction * SCORE.reaction;           // 받은 좋아요 (캡 없음, 0.2/개)
     const reactionGivenScore = (r.reactionGiven||0) * SCORE.reactionGiven;  // 누른 좋아요 (캡 없음, 0.05/개)
-    // 💎 task 점수는 taskPoints (매니저가 부여한 1·2·3 합) 그대로 사용
+    // 💎 task 점수 — 완료일(day)별로 TASK_DAILY_CAP 적용 후 합산. 하루에 몰아주기/쪼개기
+    //    해도 그날치는 cap 까지만. taskPoints(raw) 는 배지 표시용으로 그대로 둠.
+    let taskCapped = 0;
+    const tDays = r.taskPointsByDay ? Object.keys(r.taskPointsByDay) : [];
+    if (tDays.length) {
+      for (const dk of tDays) taskCapped += Math.min(r.taskPointsByDay[dk], TASK_DAILY_CAP);
+    } else {
+      taskCapped = r.taskPoints || 0;   // day 맵 없는 예외 케이스 — 안전하게 raw 사용
+    }
     r.score =
       r.expiryAdd     * SCORE.expiryAdd
     + r.expiryCheck   * SCORE.expiryCheck
     + r.expiryDiscard * SCORE.expiryDiscard
-    + r.taskPoints    // 그대로 합산 (1·2·3 점)
+    + taskCapped      // 일별 cap 적용된 task 점수
     + chatCapped      // 채팅 cap 적용된 점수
     + reactionScore   // 받은 좋아요 점수 (캡 없음, 0.2/개)
     + reactionGivenScore;  // 누른 좋아요 점수 (캡 없음, 0.05/개) — 옵션 B
     r.score = Math.round(r.score * 10) / 10;
-    // 디버깅용 — 채팅이 cap 으로 깎였는지 표시 (UI 배지에 활용 가능)
+    // 디버깅용 — cap 으로 깎였는지 표시 (UI 배지에 활용 가능)
     r.chatCapped = (chatRaw > chatCap);
+    r.taskCapped = (taskCapped < (r.taskPoints || 0));
     if (!r.color) r.color = colorFor(r.name);
   });
 }
@@ -1052,7 +1079,8 @@ function renderLegend(){
     📋 ${escHtml(t('legTask'))} <code>+1~+3</code> ${escHtml(t('legTaskNote'))}<br>
     💬 ${escHtml(t('legChatMsg'))} <code>+0.3</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.1</code><br>
     ↩️ ${escHtml(t('legReply'))} <code>+0.2</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.2</code><br>
-    <span style="color:#92400e;font-weight:600;font-size:.95em">${escHtml(t('legChatCap'))}</span>
+    <span style="color:#92400e;font-weight:600;font-size:.95em">${escHtml(t('legChatCap'))}</span><br>
+    <span style="color:#92400e;font-weight:600;font-size:.95em">${escHtml(t('legTaskCap'))}</span>
   </div>`;
 }
 
