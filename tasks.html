@@ -2806,7 +2806,7 @@ function checklistItemsFor(cat){
 
 // ===== TEMPLATE EDITOR MODAL =====
 async function openTplEditor(){
-  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
+  if (!me || !canAssignTask()) { alert('매니저+ 만 가능합니다.'); return; }
   const list = await loadBranchTemplates(me.branch);
   __BRANCH_TPLS = list;
   __HIDDEN_TPLS = await loadHiddenTemplates(me.branch);
@@ -3593,9 +3593,20 @@ let CURRENT_TASK = null;
 let DONE_PHOTOS = [];
 
 const MANAGER_TOKENS = ['MANAGER','SUPERVISOR','OFFICE','OWNER','매니저','점장'];
-const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이'];
+const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이','SUN KIM','SUNKIM','SUN.KIM','선킴','썬킴'];
 function isManager(role){ if(!role)return false; const r=role.toUpperCase(); return MANAGER_TOKENS.some(t=>r.includes(t)); }
 function isOwner(){ if(!me)return false; const nm=(me.name||'').replace(/\s+/g,'').toUpperCase(); if(EXECUTIVE_NAMES.some(n=>n.replace(/\s+/g,'').toUpperCase()===nm)) return true; return /OWNER|BOSS|오너|사장|대표/i.test((me.role||'').toUpperCase()); }
+// 🆕 2026-06-08 사장님 지시: task 발송 권한 재설정.
+//   허용: STORE MANAGER · ASSISTANT MANAGER · SENIOR SUPERVISOR · HR MANAGER (= _roleRank>=70)
+//         + OWNER / 임원(B.H.K, SUN KIM — EXECUTIVE_NAMES).
+//   제외(기존엔 가능했음): 일반 SUPERVISOR(60) · VICE SUPERVISOR(50) · OFFICE · 일반 직원.
+//   ※ 근태 출근등록 권한(isManager 사용)은 별개라 그대로 둠 — task 발송에만 적용.
+function canAssignTask(){
+  if (!me) return false;
+  if (isOwner()) return true;                                  // owner + 임원(B.H.K, SUN KIM)
+  if (typeof _roleRank === 'function') return _roleRank(me.role) >= 70;  // senior supervisor 이상
+  return isManager(me.role);                                   // _roleRank 미정의 시 안전 폴백
+}
 
 function loadMe(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} }
 function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -3703,7 +3714,7 @@ function refreshMe(){
   if (me && me.name && me.branch && !String(me.role||'').trim()) {
     _recoverMyRoleFromSchedules();
   }
-  const showMgr = isManager(me.role) || isOwner();
+  const showMgr = canAssignTask();
   document.getElementById('mgrTabBtn').style.display = showMgr ? '' : 'none';
   document.getElementById('repTabBtn').style.display = showMgr ? '' : 'none';
   const homeBtn = document.getElementById('homeTabBtn');
@@ -4296,8 +4307,8 @@ function renderDashboard(){
   // gamify 빼면서 같이 죽었음 → 여기서 직접 호출.
   try { renderScoreboard(); } catch(e){ console.warn('[scoreboard]', e); }
   // 1) 매장 결정: 매니저/오너는 dropdown 으로 선택 가능
-  const isMgr = me && (isManager(me.role) || isOwner());
-  // 매니저 전용 액션 버튼(업무 지시 / 보고 확인) — 일반 직원에겐 숨김.
+  const isMgr = canAssignTask();   // 🆕 업무 발송 권한자만 — dashboard 액션 버튼 노출 (2026-06-08)
+  // 매니저 전용 액션 버튼(업무 지시 / 보고 확인) — 일반 직원·일반 슈퍼바이저에겐 숨김.
   const _dashActions = document.getElementById('dashActions');
   if (_dashActions) _dashActions.style.display = isMgr ? '' : 'none';
   const myBranch = (me && me.branch && me.branch !== '*') ? me.branch : null;
@@ -4454,7 +4465,7 @@ function renderDashboard(){
 function dashGoStat(kind){
   // 통계 카드는 일반 직원에겐 보기 전용 — 매니저 뷰가 없으므로 탭하면 아무 일도
   // 안 하게 한다 (매니저 뷰로 빠지지 않도록).
-  if (!(me && (isManager(me.role) || isOwner()))) return;
+  if (!(me && canAssignTask())) return;
   // pending/delayed → 매니저 뷰로 + 필터 자동 적용
   switchTab('mgr');
   if (typeof setMgrFilter === 'function') {
@@ -4470,7 +4481,7 @@ function dashGoStat(kind){
 }
 function dashAction(kind){
   // 매니저 전용 — 일반 직원이 어떻게든 호출해도 막는다 (방어).
-  if (!(me && (isManager(me.role) || isOwner()))) return;
+  if (!(me && canAssignTask())) return;
   if (kind === 'assign') {
     if (typeof openAssignModal === 'function') openAssignModal();
   } else if (kind === 'reports') {
@@ -4685,7 +4696,7 @@ function pickBranchModal(emoji, title, allowedBranches){
 // 매니저는 본인 지점만, 오너/전무는 6지점 전체 발송.
 async function sendMeatDailyAll(){
   if (!me) { alert(LANG==='en'?'Please register your name first.':LANG==='es'?'Registre su nombre primero.':'이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
+  if (!canAssignTask()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
   // Branch selection
   const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
   if (!allowedBranches.length) { alert(LANG==='en'?'No branch info':LANG==='es'?'Sin info de sucursal':'지점 정보 없음'); return; }
@@ -4768,7 +4779,7 @@ window.sendMeatDailyAll = sendMeatDailyAll;
 //    → noAutoChat 안 켬
 async function sendKFoodDailyAll(){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  if (!canAssignTask()) { alert('매니저 권한 필요'); return; }
   const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
   if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
   let chosenBranch;
@@ -4847,7 +4858,7 @@ window.sendKFoodDailyAll = sendKFoodDailyAll;
 // 채팅 라우팅 → seafood_evalution_room (postCompletionToChat 가 자동 처리).
 async function sendSeafoodDailyAll(){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  if (!canAssignTask()) { alert('매니저 권한 필요'); return; }
   const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
   if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
   let chosenBranch;
@@ -4924,7 +4935,7 @@ window.sendSeafoodDailyAll = sendSeafoodDailyAll;
 // 채팅 라우팅 → produce 방 (ROOM_BY_CATEGORY 에서 자동 처리).
 async function sendProduceDailyAll(){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  if (!canAssignTask()) { alert('매니저 권한 필요'); return; }
   const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
   if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
   let chosenBranch;
@@ -5031,7 +5042,7 @@ window.sendProduceDailyAll = sendProduceDailyAll;
 // 채팅 라우팅 → grocery_eval (전용 방 없으니 일반 진열 평가방으로). 2점 고정.
 async function sendFrozenDailyAll(){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert('매니저 권한 필요'); return; }
+  if (!canAssignTask()) { alert('매니저 권한 필요'); return; }
   const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
   if (!allowedBranches.length) { alert('지점 정보 없음'); return; }
   let chosenBranch;
@@ -5109,7 +5120,7 @@ window.sendFrozenDailyAll = sendFrozenDailyAll;
 // 슬롯별 task 는 temp.html 에서 해당 슬롯 50/50 완료 시 자동으로 completedAt 채움.
 async function sendTempCheckDailyAll(){
   if (!me) { alert(LANG==='en'?'Please register your name first.':LANG==='es'?'Registre su nombre primero.':'이름 먼저 등록해 주세요.'); return; }
-  if (!isManager(me.role) && !isOwner()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
+  if (!canAssignTask()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
   const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
   if (!allowedBranches.length) { alert(LANG==='en'?'No branch info':LANG==='es'?'Sin info de sucursal':'지점 정보 없음'); return; }
   let chosenBranch;
@@ -8870,7 +8881,7 @@ window.adminTaskMenu = adminTaskMenu;
 
 // 🗑️ 카드 안 빨간 휴지통 버튼 — 매니저+ 만. 직접 RTDB DELETE.
 window.deleteTaskInline = async function(taskId, branchId, displayName){
-  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
+  if (!me || !canAssignTask()) { alert('매니저+ 만 가능합니다.'); return; }
   const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
   if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
   // 진행 흔적 계산해서 사용자에게 보여줌 — 직원이 작업 중인지 명확히 알리기 위해
@@ -8925,7 +8936,7 @@ window.deleteTaskInline = async function(taskId, branchId, displayName){
 
 // ⏰+ 빠른 연장 — task 카드에서 직접 호출. 매니저+ 만 작동.
 window.quickExtendDeadline = async function(taskId, branchId){
-  if (!me || !(isManager(me.role) || isOwner())) { alert('매니저+ 만 가능합니다.'); return; }
+  if (!me || !canAssignTask()) { alert('매니저+ 만 가능합니다.'); return; }
   const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
   if (!t) { alert('업무를 찾을 수 없습니다.'); return; }
   return adminChangeDeadline(t);
@@ -9372,10 +9383,10 @@ function getAssignPoints(){
 window.getAssignPoints = getAssignPoints;
 
 async function openAssignModal(){
-  if (!me || !(isManager(me.role) || isOwner())) {
-    alert(LANG==='en' ? '⛔ Only Supervisors and Managers can issue task assignments.'
-        : LANG==='es' ? '⛔ Solo Supervisores y Gerentes pueden asignar tareas.'
-        :               '⛔ 업무지시는 슈퍼바이저 / 매니저만 가능합니다.');
+  if (!me || !canAssignTask()) {
+    alert(LANG==='en' ? '⛔ Only Senior Supervisors and above (Managers) can issue task assignments.'
+        : LANG==='es' ? '⛔ Solo Supervisores Senior o superiores (Gerentes) pueden asignar tareas.'
+        :               '⛔ 업무지시는 시니어 슈퍼바이저 이상(매니저)만 가능합니다.');
     return;
   }
   // 매니저 장소 사진 + 지시 내용 초기화
