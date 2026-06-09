@@ -302,16 +302,16 @@ async function _maybeRedirect(user){
 
   if (hadPreviousLogin) {
     __waitingForRestore = true;
-    // iOS Safari 의 IndexedDB cold-start 가 8초도 넘어가는 케이스 발생.
-    // (chat.html 에서 escape UI 반복 트리거 — 2026-05-18 BHK 매니저 사례)
-    // 20초로 늘려서 거의 모든 IndexedDB 복원 케이스 커버.
+    // 2026-06-08 사장님 지시 (앱 느려짐 조사): 20초 대기는 happy-path 사용자에게
+    // 너무 길어서 로그인 느낌. iOS Safari IndexedDB cold-start 대부분 3초 이내
+    // 완료 → 5초로 줄임. 그래도 안 되면 로그인 페이지로 (사용자가 재시도 가능).
     const restored = await new Promise(resolve => {
       let done = false;
       const finish = (u) => { if (!done){ done = true; resolve(u); } };
-      const TIMEOUT = setTimeout(() => finish(null), 20000);
+      const TIMEOUT = setTimeout(() => finish(null), 5000);
       const poll = setInterval(() => {
         if (auth.currentUser){ clearInterval(poll); clearTimeout(TIMEOUT); finish(auth.currentUser); }
-      }, 150);
+      }, 120);
     });
     __waitingForRestore = false;
     if (restored){

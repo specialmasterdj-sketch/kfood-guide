@@ -1123,6 +1123,15 @@ function openMeModal(){
   document.getElementById('meAdminLink').style.display = isManagerVerified() ? '' : 'none';
   document.getElementById('meOverlay').classList.add('show');
 }
+// 🔧 2026-06-08 Yonsu 리포트: 로그인 완료 전에 식별 모달이 뜨면 Firebase fetch 가
+//   토큰 없이 401 → 빈 리스트 (OWNER 만 보임). fb-auth-ready 가 발화하면 (로그인
+//   완료 후) 모달이 열려 있는 한 한 번 더 fetch 시도 → 자동으로 직원 리스트 채워짐.
+window.addEventListener('fb-auth-ready', () => {
+  const ov = document.getElementById('meOverlay');
+  if (ov && ov.classList.contains('show')) {
+    try { renderMeNames(); } catch(_){}
+  }
+});
 // 임원 이름 (B.H.K)은 GLOBAL.owners 에 OWNER 권한으로 등록되어도
 // 표시는 '전무'로 — 실제 OWNER 가 아니므로 혼동/실례 방지.
 // (cf. EXECUTIVE_NAMES 정의는 line 955)
@@ -1153,11 +1162,12 @@ function renderMeNames(){
     const g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
     if (g && g.owners) globalOwners = g.owners.map(o => Object.assign({}, o, {role: _ownerRole(o.name)}));
   } catch(e){}
-  // Firebase REST 보강 (employees + global)
+  // Firebase REST 보강 (employees + global) — fetch 후 캐시도 채워서 다음 호출은 즉시.
   if (employees.length === 0) {
     fetch(`${FB_DB_URL}/schedules/${branchId}.json`).then(r => r.json()).then(d => {
       if (d && d.employees) {
         employees = d.employees;
+        try { localStorage.setItem('shifts.' + branchId, JSON.stringify(d)); } catch(e){}
         renderMeNamesList(globalOwners.concat(employees), branchId);
       }
     }).catch(()=>{});
@@ -2115,9 +2125,13 @@ function subscribeMessages(roomId){
   const baseRef = ref(db, 'chat/messages/' + roomId);
   // query/limitToLast 가 있으면 최근 N개만 구독, 없으면(옛 캐시) 전체 구독 fallback
   const target = (query && limitToLast) ? query(baseRef, limitToLast(MSG_FETCH_LIMIT)) : baseRef;
+  // 🆕 2026-06-08 (앱 느려짐 수정): 새 메시지마다 400개 전부 다시 그리던 것을 디바운스.
+  //   여러 명이 동시에 보내면 80ms 동안 합쳐서 한 번만 렌더 → 폰 layout thrashing 감소.
+  let __renderT = null;
   __unsubMsgs = onValue(target, snap => {
     MSGS = msgsFromObj(snap.val());
-    renderMessages();
+    if (__renderT) clearTimeout(__renderT);
+    __renderT = setTimeout(() => { __renderT = null; renderMessages(); }, 80);
   });
 }
 function msgsFromObj(d){
@@ -3161,9 +3175,10 @@ async function uploadPhoto(att, roomId, msgId, idx){
       await new Promise(rs => setTimeout(rs, 500 * (attempt+1)));
     }
   }
-  // Base64 fallback — 한 번만 사용. 사용자에게 알림
+  // Base64 fallback — Storage 완전 실패 시만. 메시지 안에 박힌 base64 가 채팅
+  // 로딩 느려짐의 주범이라 (2026-06-08 조사) 한도를 더 깎아 RTDB 부하 최소화.
   console.warn('[uploadPhoto] Storage 실패, base64 fallback. 마지막 오류:', lastErr);
-  const small = att.file ? await compressImage(att.file, 720, 0.55) : att;
+  const small = att.file ? await compressImage(att.file, 480, 0.45) : att;
   if (!small || !small.dataUrl) throw new Error('사진 처리 실패: ' + lastErr);
   return small.dataUrl;
 }

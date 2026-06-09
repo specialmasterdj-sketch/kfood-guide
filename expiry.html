@@ -1310,8 +1310,28 @@ setTimeout(() => { if (PRODUCTS.length === 0) subscribe(); }, 2000);
 // we read it once per branch and look up by FULL_BARCODE / CODE so scanning
 // a barcode auto-fills name + category + price during 상품 등록.
 const __LOOKUP_CACHE = {};
+// 🆕 2026-06-08 (앱 느려짐 수정): POS 카탈로그 인덱스를 localStorage 에도 캐시.
+//   첫 바코드 스캔 시 5000개 SKU fetch + 인덱싱 → 2~3초 정지하던 문제 해결.
+//   TTL 1시간 — POS 변경 빈도 고려해 합리적 한도. ETag 안 됨 (Firebase REST 미지원).
+const __LB_KEY = (b) => 'expiry_lookup_v1_' + b;
+const __LB_TTL_MS = 60 * 60 * 1000;
+function _lbLoadLocal(branch){
+  try {
+    const o = JSON.parse(localStorage.getItem(__LB_KEY(branch)) || 'null');
+    if (!o || !o.ts || !o.idx) return null;
+    if (Date.now() - o.ts > __LB_TTL_MS) return null;
+    return o.idx;
+  } catch(e) { return null; }
+}
+function _lbSaveLocal(branch, idx){
+  try { localStorage.setItem(__LB_KEY(branch), JSON.stringify({ ts: Date.now(), idx })); }
+  catch(e) { /* quota — 다음 fetch 때 다시 시도, 안 깨짐 */ }
+}
 async function loadBranchLookup(branch){
   if (__LOOKUP_CACHE[branch]) return __LOOKUP_CACHE[branch];
+  // 로컬 캐시 우선 — 1시간 내라면 fetch 안 함 (즉시 반환).
+  const cached = _lbLoadLocal(branch);
+  if (cached) { __LOOKUP_CACHE[branch] = cached; return cached; }
   try {
     const r = await fetch(`${FB_DB_URL}/products/${branch}.json`);
     const d = await r.json();
@@ -1337,6 +1357,7 @@ async function loadBranchLookup(branch){
       });
     });
     __LOOKUP_CACHE[branch] = idx;
+    _lbSaveLocal(branch, idx);
     return idx;
   } catch(e) { __LOOKUP_CACHE[branch] = {}; return {}; }
 }
