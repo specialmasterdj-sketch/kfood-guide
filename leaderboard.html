@@ -458,6 +458,15 @@ window.setLang = function(v){
 // 🆕 2026-05-28: Sun Kim 도 OWNER 추가 (사장님 지시).
 const EXCLUDE_NAMES = new Set(['DJ','dj','specialmasterdj','사장님','Owner','OWNER','B.H.K','b.h.k','BHK','bhk','byhoki64','SUN KIM','Sun Kim','sun kim','SUNKIM','sunkim']);
 const EXCLUDE_EMAILS = new Set(['specialmasterdj@gmail.com','byhoki64@gmail.com','kdaisy81@yahoo.com']);
+// 🚪 2026-06-08 사장님 지시: 그만둔 직원 — 리더보드 전 구간(과거 포함)에서 제외.
+//    이름은 lowercase 로. 5월 이전 활동도 빈 칸 표시되지 않도록 표시 단에서 컷.
+const QUIT_NAMES = new Set([
+  'miguel perez',
+  'josuin bamaca',
+  'david trang',
+  'kamora adams',
+  'aurora tablada',
+]);
 let OWNER_UIDS = new Set();   // populated from /users by role==='OWNER' or 'EXECUTIVE'
 
 // Score weights — manager can tune later if behavior needs balancing.
@@ -584,12 +593,13 @@ function tasksStartKey(){
 // ⚠️ 채팅 사진은 메시지 안에 base64 로 통째 저장 → 옛 메시지까지 받으면 폰에서 수십 MB.
 //    채팅 점수는 어차피 1일 10pt 캡(소액)이라, 최근 일부만 받아도 순위 영향 거의 없음.
 const CHAT_LIMIT_BY_RANGE = { today:150, week:350, month:600, lastmonth:600 };
-// ⚠️ limitToLast 는 '최신' 메시지만 가져옴 → 지난달/전체처럼 과거 윈도우엔 쓰면 안 됨
-// (5월 메시지가 최신이 아니라 누락됨). 현재 기간(today/week/month)에만 한정 적용.
+// 2026-06-08 사장님 지시: 지난달(5월)은 정산 당시 limitToLast=600 으로 보너스 지급됨.
+// 소급 변경 방지를 위해 옛 동작 그대로 복원 (MIRNA #1 등 지급 순위 보존).
+// 'all' 은 옛날에도 무제한이라 그대로. today/week/month 은 현재 윈도우라 최신 N건 OK.
 function chatLimit(){
-  if (CUR_RANGE === 'today' || CUR_RANGE === 'week' || CUR_RANGE === 'month')
+  if (CUR_RANGE === 'today' || CUR_RANGE === 'week' || CUR_RANGE === 'month' || CUR_RANGE === 'lastmonth')
     return CHAT_LIMIT_BY_RANGE[CUR_RANGE] || 0;
-  return 0;   // lastmonth / all = 전체 (과거 메시지 정확히 포착)
+  return 0;   // 'all' = 전체 (과거 메시지 정확히 포착)
 }
 // FB REST URL 에 쿼리 파라미터 안전하게 덧붙임 (aq 가 '?auth=' 일 수도, '' 일 수도).
 function _fbq(base, aq, extra){
@@ -685,6 +695,8 @@ function isExcludedSender(name, branch){
   if (!name) return true;
   const low = String(name).toLowerCase().trim();
   if (EXCLUDE_NAMES.has(low) || EXCLUDE_NAMES.has(name)) return true;
+  // 🚪 그만둔 직원 — 과거 활동 포함 전 구간 제외
+  if (QUIT_NAMES.has(low)) return true;
   // Cross-check with /users record by name → role==='OWNER'
   const p = NAME_TO_PROFILE.get(low);
   if (p && (p.role === 'OWNER' || p.role === 'EXECUTIVE' || EXCLUDE_EMAILS.has((p.email||'').toLowerCase()))) return true;
@@ -1500,7 +1512,13 @@ async function loadAll(){
   await Promise.all(baseFetches);
   computeScores(agg);
   // Filter to anyone with score > 0
-  const rows = Object.values(agg).filter(r => r.score > 0).sort((a,b) => b.score - a.score);
+  // 🔒 2026-06-08: 한 지점 선택 시 그 지점에 '등록된' 사람만 (schedules/employees 기준의
+  //    r.branch). 다른 지점 직원이 (senderBranch 빈값으로) 새어 들어오는 것 방지.
+  //    ALL 일 때는 모든 사람 표시 (현 동작 유지).
+  const rows = Object.values(agg)
+    .filter(r => r.score > 0)
+    .filter(r => CUR_BRANCH === 'ALL' || r.branch === CUR_BRANCH)
+    .sort((a,b) => b.score - a.score);
   if (_seq !== _lbLoadSeq) return;   // 그 사이 더 새 요청(탭 전환 등)이 시작됐으면 이 결과는 폐기
   _lbWriteCache(rows);               // 다음 방문 즉시표시용 캐시 저장
   buildAndRender(rows, false);
