@@ -7294,6 +7294,14 @@ window.forceCompleteTask = async function(taskId, branchId){
   if (!t){ alert('❌ 업무 없음 — id=' + taskId + ' / branch=' + branchId); return; }
   if (!isOwner() && !isManager(me?.role)){ alert('❌ 오너/매니저 권한 필요 — 현재 role: ' + (me?.role||'?')); return; }
   const alreadyDone = !!t.completedAt;
+  // 🛡️ 2026-06-10 전무님 지시: 온도 task 강제완료도 측정 0건이면 차단 (점수·보고 안 나감).
+  if (!alreadyDone && t.autoTempDaily) {
+    const __chk = await __getTempCheckedCount(branchId);
+    if (__chk === 0) {
+      alert('🌡 온도 측정 0건 — 측정 후에 완료/보고할 수 있어요.');
+      return;
+    }
+  }
   // 🆕 2026-05-19 — 30분 쿨다운. Luis Perez 가 같은 해산물 보고를 5번 연속 강제
   // 완료해 평가방 도배된 사례 (1개 task 3pt 였지만 채팅에 5번 보임). 같은 업무
   // 보고 재발사는 30분에 1번만 허용. 오너는 예외 (긴급 보고 재발사 가능).
@@ -7387,6 +7395,16 @@ window.forceCompleteTask = async function(taskId, branchId){
 };
 async function finishTask(){
   if (!CURRENT_TASK) return;
+  // 🛡️ 2026-06-10 전무님 지시: 온도 task 는 실제 측정 0건이면 완료/점수/보고 차단.
+  if (CURRENT_TASK.autoTempDaily) {
+    const __chk = await __getTempCheckedCount(CURRENT_TASK.branchId);
+    if (__chk === 0) {
+      alert(LANG==='en' ? '🌡 Measure at least one unit before completing (0 measured).'
+          : LANG==='es' ? '🌡 Mide al menos un equipo antes de completar (0 medidos).'
+          :               '🌡 온도 측정 0건 — 측정을 먼저 한 뒤에 완료할 수 있어요.');
+      return;
+    }
+  }
   // 🆕 2026-05-22 — requirePhoto:false 또는 autoTempDaily task 는 사진 미요구.
   const photoExempt = (CURRENT_TASK.requirePhoto === false) || (CURRENT_TASK.autoTempDaily === true);
   if (!photoExempt && DONE_PHOTOS.length < 3) {
@@ -7743,6 +7761,26 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
   }
 }
 
+// 🌡 헬퍼: 오늘 실제 측정된 장비 수만 빠르게 반환 (0이면 미측정).
+// 🛡️ 2026-06-10 전무님 지시: 측정 0건이면 온도 task 완료/점수/보고 차단에 사용.
+async function __getTempCheckedCount(branchId){
+  if (!branchId) return null;
+  const today = todayStr();
+  let aq = '';
+  try {
+    const u = window.__fb?.auth?.currentUser;
+    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+  try {
+    const r = await fetch(`${FB_DB_URL}/temp/${encodeURIComponent(branchId)}/checks/${today}.json` + aq, { cache:'no-store' });
+    if (!r.ok) return null;
+    const chObj = (await r.json()) || {};
+    const eqMeasured = new Set();
+    Object.values(chObj).forEach(c => { if (c && c.eqId) eqMeasured.add(c.eqId); });
+    return eqMeasured.size;
+  } catch(_) { return null; }
+}
+
 // 🌡 헬퍼: temp/{branch}/equipment + checks/{today} 읽어와서 사람 읽기 좋은 요약 라인 배열로 빌드.
 // daily-report.html 의 loadTempData() 와 같은 데이터 셰이프 사용.
 async function __buildTempSummaryLines(branchId){
@@ -7781,6 +7819,8 @@ async function __buildTempSummaryLines(branchId){
     else if (last.status === 'warn') { warn++; issues.push({ eq, last }); }
     else normal++;
   });
+  // 🛡️ 2026-06-10 전무님 지시: 측정 0건이면 보고 자체를 만들지 않음 (채팅 미발송).
+  if (checked === 0) return null;
   const lines = [];
   lines.push(`🌡 온도 체크 요약 (${checked}/${eqEntries.length} 측정 · 정상 ${normal} · ⚠️ ${warn} · 🚨 ${danger})`);
   if (issues.length){
@@ -7804,9 +7844,10 @@ async function __buildTempSummaryLines(branchId){
 // 🛡️ 2026-05-25 전무님 지시: 0/N 측정 (미측정) 보고는 매니저 룸에 발송하지 않음.
 // 직원이 temp.html 에서 실제 측정 후 "발송" 버튼 누르면 그때만 보고 전송.
 async function __postTempSummaryToManagers(task, branchLbl, senderName, baseTs, tempLines){
-  // 미측정 여부 체크 — 첫 줄에 "0/N 측정" 패턴 있으면 발송 차단
+  // 미측정 여부 체크 — 첫 줄에 "0/N 측정" 패턴 있으면 발송 차단.
+  // ⚠️ 한글 "측정" 뒤 \b 는 JS(ASCII)에서 매칭 안 됨 → 후행 \b 제거하고 "(0/N 측정" 으로 매칭.
   const firstLine = (tempLines && tempLines[0]) || '';
-  if (/\b0\/\d+\s*측정\b/.test(firstLine)) {
+  if (!tempLines || !tempLines.length || /\(\s*0\s*\/\s*\d+\s*측정/.test(firstLine)) {
     console.info('[temp→managers] skip — 0개 측정 (자동 발송 차단)');
     return;
   }
