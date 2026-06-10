@@ -854,12 +854,20 @@ async function fetchChat(agg, since, until){
         const branchOk = (CUR_BRANCH === 'ALL') || !m.senderBranch || (m.senderBranch === CUR_BRANCH);
 
         if (inWindow && branchOk && m.sender) {
-          bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);
-          // 한 메시지에 사진 21장 이상 올려도 점수는 20장까지만 — 21번째부터는
-          // 보너스 0점으로 처리해서 점수 부풀리기 방지.
-          const phRaw = (m.photos && m.photos.length) || 0;
-          const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
-          if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
+          // 🛡️ 2026-06-10 전무님 지시: 자동 완료/보고 메시지(업무완료·일일/온도 보고)는
+          //   채팅 활동 점수(메시지·사진)에서 제외. 업무 점수는 task 기준으로 따로 1회만
+          //   집계되므로, 같은 보고가 채팅에 여러 번 올라와도 점수 중복(부풀리기) 0.
+          //   (좋아요·답글은 실제 참여라 아래에서 그대로 인정)
+          const __isAutoReport = !!(m._dailyReport || m._tempReport ||
+            (m.meta && (m.meta.kind === 'task_complete' || m.meta.kind === 'temp_daily_summary')));
+          if (!__isAutoReport) {
+            bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);
+            // 한 메시지에 사진 21장 이상 올려도 점수는 20장까지만 — 21번째부터는
+            // 보너스 0점으로 처리해서 점수 부풀리기 방지.
+            const phRaw = (m.photos && m.photos.length) || 0;
+            const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
+            if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
+          }
 
           // 👍 Reactions — 2026-05-28 옵션 B (전무님 지시):
           //   - 받은 사람(메시지 작성자): +1 reaction (0.2pt) — 큰 보상

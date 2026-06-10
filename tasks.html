@@ -7522,6 +7522,20 @@ async function postCompletionToChat(task, photoUrls, memoText, opts){
   // opts.senderBranch   : senderBranch 강제 지정 (해당 직원의 매장)
   if (!me || !me.name || !task) return;
   opts = opts || {};
+  // 🛡 2026-06-10 — 같은 완료 보고 중복 발송 방지 (전무님 지시).
+  // 같은 task 를 짧은 시간(90초) 안에 두 번·세 번 완료 처리하면 평가방에
+  // 동일 보고가 도배됨. localStorage 에 마지막 발송 시각을 기록해 90초 내
+  // 재발송을 차단. (강제 완료 forceCompleteTask 는 자체 30분 쿨다운이 있어
+  // 90초 가드와 충돌하지 않음.)
+  try {
+    const _dupKey = 'tcpost_' + (task.id || '') + '_' + todayStr();
+    const _lastTs = parseInt(localStorage.getItem(_dupKey) || '0', 10);
+    if (Date.now() - _lastTs < 90000) {
+      console.info('[postCompletionToChat] 중복 발송 방지 — 90초 내 재발송 차단', task.id);
+      return;
+    }
+    localStorage.setItem(_dupKey, String(Date.now()));
+  } catch(_){}
   const senderName   = opts.senderOverride || me.name;
   const senderBranch = opts.senderBranch   || me.branch || task.branchId || '';
   const ts = Date.now();
