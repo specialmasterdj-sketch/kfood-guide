@@ -231,6 +231,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="welluck">Well Luck</option>
         <option value="walong">Walong</option>
         <option value="haitai">HAITAI</option>
+        <option value="two_bros">Two Bros Food</option>
         <option value="generic" data-t="vendor_generic">기타 / 일반 (지원 예정)</option>
       </select>
     </div>
@@ -587,6 +588,11 @@ const VENDORS_PARSER = {
     detect: text => /HAITAI\s+INC|HAITAI\s+CHICAGO|해태\)/i.test(text),
     parse: rows => parseHaitai(rows)
   },
+  two_bros: {
+    name: 'Two Bros Food',
+    detect: text => /TWO\s*BROS\s*FOOD|Twobrosfood/i.test(text),
+    parse: rows => parseTwoBros(rows)
+  },
   generic: {
     name: 'Generic / fallback',
     detect: () => false,
@@ -606,7 +612,7 @@ try {
 // Vendors without printed barcodes need the reference-Excel barcode fill.
 // RHEE BROS never prints barcodes; Wang prints them inconsistently (many Hanmi
 // and most CJ lines come through blank), so it also needs the reference sheet.
-const VENDORS_WITHOUT_BARCODE = new Set(['rhee_bros', 'wang_global', 'welluck', 'walong']);
+const VENDORS_WITHOUT_BARCODE = new Set(['rhee_bros', 'wang_global', 'welluck', 'walong', 'two_bros']);
 
 function setVendor(v){
   currentVendor = (v && VENDORS_PARSER[v]) ? v : DEFAULT_VENDOR;
@@ -2900,6 +2906,60 @@ function parseWellLuck(rows){
       qty:        parseInt(qty, 10) || '',
       unit:       um.toUpperCase(),
       total:      amount,
+    });
+  }
+  return out;
+}
+
+// ============== Two Bros Food Inc (East Coast Branch) ==============
+// 2026-06-11 전무님: 음료·스낵 도매. 레이아웃:
+//   Item#  Product...  Desc  Price/ea.  QTY  Amount  [Remarks]
+//   예) "HKT907 HKT Sparkling Soda Strawberry 350ml*24 $48.00 1 $48.00"
+// ⚠️ 중요: 인보이스의 "Price/ea." 컬럼은 사실 케이스(박스) 단가임.
+//   진짜 낱개(EA) 단가 = 박스단가 ÷ Desc 의 입수 수량.
+//   Desc 곱: 350ml*24→24 · (320ml*6)*4→24 · 125g*6*12→72 · 360*12→12.
+//   (전무님 지시: "desc 에 나오는 수량으로 ea price 를 뽑아줘")
+function parseTwoBros(rows){
+  const out = [];
+  const seen = new Set();
+  const ITEM_RE = /^([A-Z]{2,5}\d{2,4})\b/;
+  // 사이즈+곱: 곱(*N) 1개 이상 필수. 파렌 그룹·연속 곱 모두 지원.
+  const DESC_RE = /\(?\d[\d.]*\s*(?:ml|oz|l|g|kg|lb)?(?:\s*\)?\s*\*\s*\d+\s*\(?)+\)?/i;
+  // $Price  QTY  $Amount
+  const PQA_RE = /\$\s*([\d.,]+)\s+(\d+)\s+\$\s*([\d.,]+)/;
+  for (let i = 0; i < rows.length; i++){
+    const text = (rows[i].items || []).map(it => it.text || '').join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const im = text.match(ITEM_RE);
+    if (!im) continue;
+    const item = im[1];
+    if (seen.has(item)) continue;
+    const pqa = text.match(PQA_RE);
+    if (!pqa) continue;
+    const casePrice = parseFloat(pqa[1].replace(/,/g, ''));
+    if (!(casePrice > 0)) continue;   // $0.00 FREE 샘플 라인 제외 (유료 라인만 집계)
+    const beforePrice = text.slice(0, pqa.index);
+    const dm = beforePrice.match(DESC_RE);
+    let packQty = 1, size = '', descStr = '';
+    if (dm){
+      descStr = dm[0].trim();
+      const mults = descStr.match(/\*\s*\d+/g) || [];
+      packQty = mults.reduce((p, s) => p * (parseInt(s.replace(/[^\d]/g, ''), 10) || 1), 1) || 1;
+      size = descStr.replace(/^\(/, '').split('*')[0].trim();
+    }
+    let name = beforePrice.replace(ITEM_RE, '').trim();
+    if (descStr) name = name.replace(descStr, '').trim();
+    name = name.replace(/\s+/g, ' ').replace(/\(\s*\)/g, '').trim();
+    seen.add(item);
+    out.push({
+      vendorCode: item,
+      barcode:    '',
+      name:       name,
+      eaPrice:    packQty > 0 ? +(casePrice / packQty).toFixed(4) : casePrice,
+      casePrice:  casePrice,
+      qty:        packQty || '',     // Desc 의 케이스당 입수 수량 (= 낱개 개수)
+      unit:       size || 'CS',      // 낱개 사이즈 (예: 350ml, 70g)
+      total:      parseFloat(pqa[3].replace(/,/g, '')),
     });
   }
   return out;
