@@ -683,6 +683,23 @@ function loadRefForVendor(vendor){
 }
 
 async function tryFetchSharedRef(vendor){
+  // 1) JSON 공용 참조 우선 — 가벼움(가격 정보 없이 바코드+코드+이름만).
+  //    XLSX 라이브러리 없이도 동작. 예: reference/two_bros.json (앱에 동봉).
+  try {
+    const jr = await fetch(`reference/${vendor}.json`, { cache: 'no-cache' });
+    if (jr.ok) {
+      const obj = await jr.json();
+      if (obj && obj.byVC) {
+        REF = { byVC: obj.byVC, byName: obj.byName || {}, count: obj.count || Object.keys(obj.byVC).length, ts: Date.now(), vendor, shared: true };
+        try { localStorage.setItem(refKeyFor(vendor), JSON.stringify(REF)); } catch(e){}
+        if (typeof renderRefInfo === 'function') renderRefInfo();
+        const vLabel = VENDORS_PARSER[vendor]?.name || vendor;
+        if (typeof toast === 'function') toast(`✅ ${vLabel} 공용 참조 ${REF.count}건 자동 로드`);
+        return;
+      }
+    }
+  } catch(e){ /* JSON 없으면 xlsx 로 폴백 */ }
+  // 2) xlsx 공용 참조 (기존 공급사용)
   if (typeof XLSX === 'undefined') return;
   try {
     const resp = await fetch(`reference/${vendor}.xlsx`, { cache: 'no-cache' });
