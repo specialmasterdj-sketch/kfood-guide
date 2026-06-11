@@ -886,9 +886,26 @@ function isSlotOpen(slotKey){
 }
 
 // =============== Judge temp ===============
+// 🆕 2026-06-10 (전무님): 표준 타입(냉장/냉동/핫푸드)의 기준이 타입과 명백히 어긋나게
+//   저장된 경우(예: 냉동인데 max 40°F → 냉동이 40°F 인데도 '정상'으로 오판) 식품안전상
+//   위험하므로 타입 표준 기준으로 자동 보정. 망가진 값(min>=max 등)도 보정.
+//   상온(ambient)은 커스텀 허용 그대로. 이 보정은 판정·범위표시 모두에 동일 적용.
+function effRange(eq){
+  let min = Number(eq.min ?? 32), max = Number(eq.max ?? 40);
+  const d = TYPE_DEFAULTS[eq.type];
+  if (d) {
+    const broken = !Number.isFinite(min) || !Number.isFinite(max) || min >= max;
+    const mismatch =
+        (eq.type === 'freezer' && (max > 0  || min >= 0))   // 냉동인데 0°F 초과거나 영하가 아님
+     || (eq.type === 'fridge'  && (max > 50 || min < 20))    // 냉장 표준 범위를 크게 벗어남
+     || (eq.type === 'hot'     && min < 100);                // 핫푸드인데 100°F 미만
+    if (broken || mismatch) { min = d.min; max = d.max; }
+  }
+  return { min, max };
+}
 function judgeTemp(temp, eq){
   if (temp === null || temp === undefined || isNaN(temp)) return 'unknown';
-  const min = Number(eq.min ?? 32), max = Number(eq.max ?? 40);
+  const { min, max } = effRange(eq);
   // 5% tolerance band for "warn" before "danger"
   const range = max - min;
   const tolerance = Math.max(1, Math.abs(range) * 0.2);
@@ -974,7 +991,7 @@ function eqIcon(eq){
   return `<div class="icon ${d.cls}">${d.icon}</div>`;
 }
 function eqRangeText(eq){
-  const min = Number(eq.min ?? 32), max = Number(eq.max ?? 40);
+  const { min, max } = effRange(eq);
   return min + '~' + max + '°F';
 }
 function renderCheckList(){
@@ -1334,7 +1351,7 @@ function openInputModal(eq){
   __activeEqId = eq.id;
   __ipPhotoData = null;
   $('ipEqName').textContent = eq.name || eq.qr;
-  $('ipEqRange').textContent = t('ipRange', { min: eq.min ?? 0, max: eq.max ?? 4 });
+  { const __r = effRange(eq); $('ipEqRange').textContent = t('ipRange', { min: __r.min, max: __r.max }); }
   $('ipTemp').value = '';
   $('ipNote').value = '';
   $('ipTempVal').textContent = '--';
