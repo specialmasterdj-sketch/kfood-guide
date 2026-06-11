@@ -838,7 +838,7 @@ function onRefFile(f){
       //   only stores supplier names (Hanmi/CJ on the Wang sheet). Fall back to
       //   any header containing "code", then finally to a "vendor" substring for
       //   sheets that only expose a single vendor-code column.
-      let vci = idxEq(['itemcode','itemno','sku','벤더코드','품번','vendorcode','code']);
+      let vci = idxEq(['itemcode','itemno','itemid','sku','벤더코드','품번','vendorcode','code']);
       if (vci < 0) vci = idxInc(['code'], new Set([bci]));
       if (vci < 0){
         for (let i=0; i<normalized.length; i++){
@@ -871,6 +871,7 @@ function onRefFile(f){
         const nmKR = nkIdx >= 0 ? String(row[nkIdx]||'').trim() : '';
         const nmEN = neIdx >= 0 ? String(row[neIdx]||'').trim() : '';
         if (!bc) continue;
+        if (!/\d/.test(bc)) continue;   // 바코드는 숫자 포함 (깨진 UPC 'COCA COLA' 등 제외)
         if (vc && !byVC[vc])  byVC[vc]  = { barcode: bc, nameKR: nmKR, nameEN: nmEN, name: nmKR || nmEN };
         // Index every distinct name variant so enrichment by name works whether
         // the invoice carries the KR or EN string.
@@ -1085,6 +1086,9 @@ function enrichBarcodeFromRef(row){
   if (stripped && stripped !== vc && REF.byVC[stripped]){
     row.barcode = REF.byVC[stripped].barcode; return true;
   }
+  // Two Bros 아이템 다운로드 카탈로그는 Item ID 를 "TWO-<code>" 로 저장하지만
+  // 인보이스엔 접두어 없는 코드("HKT907")만 인쇄됨 → "TWO-" 붙여서 조회.
+  if (REF.byVC['TWO-' + vc]){ row.barcode = REF.byVC['TWO-' + vc].barcode; return true; }
   const nm = (row.name || '').toUpperCase().trim();
   if (nm && REF.byName[nm]){ row.barcode = REF.byName[nm].barcode; return true; }
   return false;
