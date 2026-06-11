@@ -1173,10 +1173,16 @@ async function openScanner(){
     modal.id = '__scModal';
     modal.style.cssText = 'position:fixed;inset:0;background:#000;z-index:600;display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px';
     modal.innerHTML = `
-      <video id="__scVideo" style="width:100%;max-width:480px;max-height:60vh;border-radius:14px;object-fit:cover" autoplay playsinline muted></video>
-      <div style="color:#fff;margin-top:20px;font-size:1em;font-weight:600;text-align:center">QR을 화면 가운데에 맞추세요</div>
+      <video id="__scVideo" style="width:100%;max-width:480px;max-height:55vh;border-radius:14px;object-fit:cover" autoplay playsinline muted></video>
+      <div style="color:#fff;margin-top:16px;font-size:1em;font-weight:600;text-align:center">${LANG==='es'?'Centra el QR en la pantalla':LANG==='en'?'Center the QR in the frame':'QR을 화면 가운데에 맞추세요'}</div>
       <div id="__scStatus" style="color:#22c55e;margin-top:8px;font-size:.9em;font-weight:600">📡 인식 중…</div>
-      <button onclick="closeScanner()" style="margin-top:18px;background:#fff;color:#0369a1;border:0;border-radius:24px;padding:10px 28px;font-weight:700;font-size:.95em;cursor:pointer">취소</button>
+      <!-- 🆕 2026-06-10 카메라가 QR을 못 읽을 때 — 스티커 숫자 직접 입력 (코럴 Yonsu 6/8 신고) -->
+      <div style="margin-top:16px;display:flex;gap:8px;align-items:center;background:#fff;border-radius:24px;padding:6px 6px 6px 16px;max-width:480px;width:100%;box-sizing:border-box">
+        <span style="font-size:.82em;color:#0369a1;font-weight:800;white-space:nowrap">${LANG==='es'?'¿No lee? N.º:':LANG==='en'?"Won't scan? No.:":'안 읽히면 번호:'}</span>
+        <input id="__scManual" inputmode="text" autocapitalize="characters" autocomplete="off" placeholder="${LANG==='es'?'ej. 54':LANG==='en'?'e.g. 54':'예: 54'}" style="flex:1;border:0;outline:0;font-size:1.05em;font-weight:800;color:#0f172a;min-width:0;background:transparent" onkeydown="if(event.key==='Enter')scannerManualEntry()">
+        <button onclick="scannerManualEntry()" style="background:#0369a1;color:#fff;border:0;border-radius:20px;padding:9px 18px;font-weight:800;font-size:.9em;cursor:pointer;white-space:nowrap">${LANG==='es'?'OK':LANG==='en'?'OK':'확인'}</button>
+      </div>
+      <button onclick="closeScanner()" style="margin-top:14px;background:#fff;color:#0369a1;border:0;border-radius:24px;padding:10px 28px;font-weight:700;font-size:.95em;cursor:pointer">${LANG==='es'?'Cancelar':LANG==='en'?'Cancel':'취소'}</button>
     `;
     document.body.appendChild(modal);
   }
@@ -1210,14 +1216,29 @@ async function openScanner(){
     };
     tick();
   } else {
-    // ZXing fallback
+    // ZXing fallback (iOS Safari 등 BarcodeDetector 미지원). CDN 한 곳이 막혀도
+    // 다른 곳에서 로드되도록 unpkg → jsdelivr 순서로 시도.
     try {
       if (!window.ZXingBrowser) {
-        await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src='https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js'; sc.onload=res; sc.onerror=rej; document.head.appendChild(sc); });
+        const cdns = [
+          'https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js',
+          'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js'
+        ];
+        let loaded = false;
+        for (const url of cdns) {
+          try { await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src=url; sc.onload=res; sc.onerror=rej; document.head.appendChild(sc); }); loaded = true; break; }
+          catch(_){}
+        }
+        if (!loaded || !window.ZXingBrowser) throw new Error('ZXing CDN load failed');
       }
       __zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
       __zxingReader.decodeFromVideoDevice(null, video, (result) => { if (result) onCode(result.getText()); });
-    } catch(e){ statusEl.textContent = '⚠️ ZXing 로드 실패'; }
+    } catch(e){
+      // 스캐너 로드 실패 — 아래 '번호 직접 입력' 으로 진행하도록 안내.
+      statusEl.textContent = '⚠️ ' + (LANG==='es'?'Cámara no disponible — escribe el número abajo'
+                                    : LANG==='en'?'Camera scan unavailable — type the number below'
+                                    : '카메라 스캔 불가 — 아래에 번호를 직접 입력하세요');
+    }
   }
 }
 function closeScanner(){
@@ -1228,6 +1249,30 @@ function closeScanner(){
 }
 window.closeScanner = closeScanner;
 window.openScanner = openScanner;
+
+// 🆕 2026-06-10 번호 직접 입력 — 카메라가 QR을 못 읽을 때 스티커 숫자로 장비 선택.
+//   스티커 표기 'TEMP-EQ054' 기준: '54' · '054' · 'EQ054' · 'TEMP-EQ054' 모두 인식.
+function _normEqInput(raw){
+  let s = String(raw||'').trim().toUpperCase().replace(/\s+/g,'');
+  if (!s) return '';
+  if (s.startsWith(QR_NS)) s = s.slice(QR_NS.length); // 'TEMP-' 떼기
+  const m = s.match(/^([A-Z]*)(\d+)$/);              // 접두어(선택) + 숫자
+  if (!m) return '';
+  return makeQrId(m[1] || 'EQ', parseInt(m[2], 10)); // → 'TEMP-EQ054'
+}
+function scannerManualEntry(){
+  const inp = $('__scManual');
+  const st  = $('__scStatus');
+  const qr  = _normEqInput(inp ? inp.value : '');
+  if (!qr) { if (st) st.textContent = '⚠️ ' + (LANG==='es'?'Número inválido':LANG==='en'?'Invalid number':'번호 형식 오류'); return; }
+  const eq = EQUIPMENT.find(e => e.qr === qr);
+  if (!eq) { if (st) st.textContent = '⚠️ ' + (LANG==='es'?'No encontrado: ':LANG==='en'?'Not found: ':'장비 없음: ') + qr; return; }
+  if (inp) inp.value = '';
+  closeScanner();
+  __activeEqId = eq.id;
+  openInputModal(eq);
+}
+window.scannerManualEntry = scannerManualEntry;
 
 function handleScannedQr(qr){
   const eq = EQUIPMENT.find(e => e.qr === qr);
