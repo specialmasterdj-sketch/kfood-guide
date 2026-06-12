@@ -1097,28 +1097,40 @@ function runCmp(){
 
   setTimeout(()=>{
     // ── Build fast-lookup Maps ────────────────────────────────
-    const byBC=new Map();  // normalizedBarcode → {d, i}
-    const byVC=new Map();  // vendorCode        → {d, i}
-
-    const addBCKey = (key, d, i) => {
-      if (key && key.length >= 8 && !byBC.has(key)) byBC.set(key, {d, i});
-    };
-    inv.forEach((d,i)=>{
-      const bc=normBC(d.barcode);
-      if(bc.length>=8){
-        addBCKey(bc, d, i);
-        // POS systems commonly store barcodes WITHOUT the EAN-13 check digit
-        // (e.g. POS "880175902075" vs invoice "8801759020750"). Register the
-        // invoice barcode minus its last digit so the POS side matches as-is.
-        if(bc.length>=9) addBCKey(bc.slice(0,-1), d, i);
-        // POS also commonly strips leading zeros (Vela POS stores 77035102961
-        // while the invoice prints 077035102961). Index both forms.
-        const noZero = bc.replace(/^0+/, '');
-        if (noZero && noZero !== bc){
-          addBCKey(noZero, d, i);
-          if (noZero.length >= 9) addBCKey(noZero.slice(0,-1), d, i);
-        }
+    // Two barcode indexes by confidence:
+    //   exactBC — full-length (≥11) forms, trusted on a bare match.
+    //   fuzzyBC — leading-zero-stripped 10-digit core + check-digit/pack-suffix
+    //             trims. These can collide between same-manufacturer SKUs, so a
+    //             fuzzy hit also requires the two product NAMES to share a word.
+    // Why the fuzzy tier exists: JFC prints a 12-digit UPC ("711460095300") while
+    // Vela stores "0"+first-10 ("07114600953") — leading zero + 2 trailing digits
+    // dropped. The 10-digit core ("7114600953") is the only reliable common key.
+    const exactBC=new Map(), fuzzyBC=new Map(), byVC=new Map();
+    const put = (m,k,d,i) => { if (k && k.length>=10 && !m.has(k)) m.set(k,{d,i}); };
+    const bcKeys = raw => {
+      const d=normBC(raw);
+      if(d.length<8) return {exact:[],fuzzy:[]};
+      const keys=new Set();
+      for(const f of new Set([d, d.replace(/^0+/,'')])){
+        if(f.length>=10) keys.add(f);              // incl. leading-zero-stripped core
+        if(f.length>=11) keys.add(f.slice(0,-1));  // drop EAN check digit
+        if(f.length>=12) keys.add(f.slice(0,-2));  // drop 2-digit pack suffix (JFC↔Vela)
       }
+      // Classify by resulting length: ≥11 is high-confidence (full UPC/EAN with or
+      // without a check digit); a bare 10-digit core can collide, so it is fuzzy
+      // and only matches when the product names also share a word.
+      const exact=[], fuzzy=[];
+      keys.forEach(k => { if(k.length>=11) exact.push(k); else if(k.length===10) fuzzy.push(k); });
+      return {exact, fuzzy};
+    };
+    const STOP=new Set(['THE','AND','FOR','OZ','FZ','PC','CS','BX','PK','EA','BAG','BTL','CAN','JPN','USA','FZN','GF']);
+    const nameTokens = s => new Set(String(s||'').toUpperCase().split(/[^A-Z0-9]+/).filter(w=>w.length>=3 && !STOP.has(w)));
+    const shareWord = (a,b) => { const ta=nameTokens(a); for(const w of nameTokens(b)) if(ta.has(w)) return true; return false; };
+
+    inv.forEach((d,i)=>{
+      const k=bcKeys(d.barcode);
+      k.exact.forEach(x=>put(exactBC,x,d,i));
+      k.fuzzy.forEach(x=>put(fuzzyBC,x,d,i));
       const vc=(d.vendorCode||'').toUpperCase().trim();
       if(vc && !byVC.has(vc)) byVC.set(vc,{d,i});
     });
@@ -1135,23 +1147,25 @@ function runCmp(){
       const posBC=normBC(pos.barcode);
       const posVC=(pos.vendorCode||'').toUpperCase().trim();
 
-      // ── Try barcode match first, then vendor code fallback ───
-      // Vela POS leaves 풀바코드 empty and stores the retail barcode in the
-      // 벤더코드 column instead. If VC is a 10–14 digit numeric, try it as a
-      // barcode before falling through to a vendor-code match.
+      // ── Barcode (exact) → barcode (fuzzy+name guard) → vendor code ───
+      // Vela POS often leaves 풀바코드 empty and stores the retail barcode in the
+      // 벤더코드 column instead. Try both the barcode and a numeric VC as barcodes.
       const vcAsBC = /^\d{10,14}$/.test(posVC) ? posVC : '';
+      const posKeys = bcKeys(posBC);
+      const vcKeys  = vcAsBC ? bcKeys(vcAsBC) : {exact:[],fuzzy:[]};
       let f = null, via = '';
-      if (posBC.length >= 8 && byBC.has(posBC)) {
-        f = byBC.get(posBC); via = '바코드';
-      } else if (vcAsBC && byBC.has(vcAsBC)) {
-        f = byBC.get(vcAsBC); via = '바코드';
-      } else if (posVC && byVC.has(posVC)) {
-        f = byVC.get(posVC); via = '코드';
+      // tier 1 — exact full-length barcode (no name check needed)
+      for (const x of [...posKeys.exact, ...vcKeys.exact]){ if(exactBC.has(x)){ f=exactBC.get(x); via='바코드'; break; } }
+      // tier 2 — fuzzy core, but only if invoice & POS names share a word
+      if (!f) for (const x of [...posKeys.fuzzy, ...vcKeys.fuzzy]){
+        if(fuzzyBC.has(x)){ const cand=fuzzyBC.get(x); if(shareWord(cand.d.name, pos.name)){ f=cand; via='바코드≈'; break; } }
       }
+      // tier 3 — vendor code fallback
+      if (!f && posVC && byVC.has(posVC)){ f=byVC.get(posVC); via='코드'; }
       if (!f) return;
       if (used.has(f.i)) return;
       used.add(f.i);
-      if (via === '바코드') bcMatchCount++; else vcMatchCount++;
+      if (via.startsWith('바코드')) bcMatchCount++; else vcMatchCount++;
 
       const inv=f.d;
       const diff=inv.eaPrice - pos.price;
