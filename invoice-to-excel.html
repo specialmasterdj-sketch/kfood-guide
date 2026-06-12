@@ -3746,6 +3746,21 @@ function archivePDFs(){
 }
 
 /* ===================== BRIDGE → PRICE COMPARE APP ===================== */
+/* Free expendable localStorage when the handoff hits the quota. Both targets
+ * are recoverable: invoice history is mirrored to Firebase (cloudPushInvoiceEntry)
+ * and re-syncs on load; barcode reference sheets re-fetch from reference/<vendor>
+ * in the repo. So pruning them locally is safe. */
+function freeInvoiceStorage(){
+  const drop = [];
+  for (let i = 0; i < localStorage.length; i++){
+    const k = localStorage.key(i);
+    if (!k) continue;
+    if (k.startsWith(HIST_PREFIX) || k.startsWith('kimchi-invoice-ref-v1')) drop.push(k);
+  }
+  drop.forEach(k => { try { localStorage.removeItem(k); } catch(_){} });
+  return drop.length;
+}
+
 /* Stash the current grid rows into sessionStorage and open the compare app.
  * kimchi-price-compare.html checks for this key on load and auto-fills its
  * Step-2 invoice grid. */
@@ -3779,16 +3794,29 @@ function sendToCompare(){
     }))
   };
 
+  const json = JSON.stringify(payload);
+  let ok = false;
+
+  // sessionStorage is the reliable handoff channel: it survives the same-tab
+  // navigation to the compare page and has a quota separate from localStorage
+  // (which fills up with invoice history + barcode reference sheets). The
+  // compare page reads `localStorage || sessionStorage`, so this alone works.
+  try { sessionStorage.setItem('kimchi-invoice-import', json); ok = true; } catch(_){}
+
+  // localStorage additionally lets the handoff survive a refresh / tab reopen.
+  // Best-effort: on a quota error, free expendable space and retry once. A
+  // failure here must NOT abort the handoff — sessionStorage already carries it.
   try {
-    // Persist in localStorage so the handoff survives tab close / refresh.
-    // Compare page keeps it until a new invoice is uploaded there.
-    localStorage.setItem('kimchi-invoice-import', JSON.stringify(payload));
-    // Also leave it in sessionStorage as a legacy fallback.
-    try { sessionStorage.setItem('kimchi-invoice-import', JSON.stringify(payload)); } catch(_){}
+    localStorage.removeItem('kimchi-invoice-import'); // drop any stale copy first
+    localStorage.setItem('kimchi-invoice-import', json);
+    ok = true;
   } catch(e) {
-    toast('데이터 저장 실패: ' + e.message);
-    return;
+    freeInvoiceStorage();
+    try { localStorage.setItem('kimchi-invoice-import', json); ok = true; }
+    catch(_){ /* keep going — sessionStorage holds the handoff */ }
   }
+
+  if (!ok) { toast('데이터 저장 실패 — 저장 공간이 가득 찼습니다. 페이지 새로고침 후 다시 시도하세요.'); return; }
 
   toast(`🔗 ${payload.rows.length}건을 가격 비교로 넘기는 중...`);
   setTimeout(() => { window.location.href = 'kimchi-price-compare.html'; }, 400);
