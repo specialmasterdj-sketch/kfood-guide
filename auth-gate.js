@@ -34,7 +34,8 @@ function bootstrapFor(email){
 }
 // 전화번호 로그인 관리자 자동승인 (E.164 +1XXXXXXXXXX). auth.html 의 BOOTSTRAP_PHONES 와 동기 유지.
 const BOOTSTRAP_PHONES = {
-  '+13059264744': { role: 'OWNER', branch: '*', name: 'DJ' },
+  '+13059264744': { role: 'EXECUTIVE', branch: '*', name: 'B.H.K' },
+  '+19544945025': { role: 'OWNER',     branch: '*', name: 'DJ' },
 };
 function bootstrapForPhone(phone){ return phone ? (BOOTSTRAP_PHONES[String(phone).trim()] || null) : null; }
 function bootstrapForUser(user){ return bootstrapFor(user && user.email) || bootstrapForPhone(user && user.phoneNumber); }
