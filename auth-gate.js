@@ -245,12 +245,12 @@ function watchProfile(user){
       // bootstrap entry was added), upgrade it in place. Without this,
       // pages like approve.html that gate on profile.role keep rejecting.
       const boot = bootstrapForUser(user);
-      if (boot && (profile.status !== 'approved' || !profile.role || !profile.branch)) {
+      if (boot && (profile.status !== 'approved' || profile.role !== boot.role || profile.name !== boot.name)) {
         const upgraded = Object.assign({}, profile, {
           status: 'approved',
-          role: profile.role || boot.role,
-          branch: profile.branch || boot.branch,
-          name: profile.name || boot.name,
+          role: boot.role,
+          branch: boot.branch,
+          name: boot.name,
           approvedAt: profile.approvedAt || Date.now(),
           approvedBy: profile.approvedBy || 'bootstrap-upgrade',
         });
