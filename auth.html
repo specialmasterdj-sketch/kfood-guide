@@ -858,17 +858,27 @@ onAuthStateChanged(auth, async (user) => {
   }
   if (!snap || !snap.exists()) {
     const boot = bootstrapForUser(user);
+    // 방식2: 매니저가 미리 등록한 전화번호(phoneRoster)면 PIN·승인 없이 바로 승인.
+    let roster = null;
+    if (!boot && user.phoneNumber) {
+      try {
+        const rk = String(user.phoneNumber).replace(/\D/g, '');
+        const rs = await get(ref(db, 'phoneRoster/' + rk));
+        if (rs.exists()) roster = rs.val();
+      } catch(_){}
+    }
+    const eff = boot || roster;   // 둘 중 하나면 자동 승인
     const profile = {
       email: user.email || null,
       phone: user.phoneNumber || null,
-      name: boot?.name || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || ('user-' + String(user.uid).slice(0,5)))),
+      name: boot?.name || roster?.name || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || ('user-' + String(user.uid).slice(0,5)))),
       photoURL: user.photoURL || null,
-      status: boot ? 'approved' : 'pending',
-      role: boot?.role || null,
-      branch: boot?.branch || null,
+      status: eff ? 'approved' : 'pending',
+      role: boot?.role || roster?.role || null,
+      branch: boot?.branch || roster?.branch || null,
       createdAt: Date.now(),
-      approvedAt: boot ? Date.now() : null,
-      approvedBy: boot ? 'bootstrap' : null,
+      approvedAt: eff ? Date.now() : null,
+      approvedBy: boot ? 'bootstrap' : (roster ? 'roster' : null),
     };
     try { await set(userRef, profile); } catch(e){
       clearTimeout(__loadingGuard);

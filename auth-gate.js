@@ -167,6 +167,16 @@ function watchProfile(user){
     if (!profile) {
       // First-time login — create record. Bootstrap admins get auto-approved.
       const boot = bootstrapForUser(user);
+      // 방식2: 매니저가 미리 등록한 전화번호(phoneRoster)면 PIN·승인 없이 자동 승인.
+      let roster = null;
+      if (!boot && user.phoneNumber) {
+        try {
+          const rk = String(user.phoneNumber).replace(/\D/g, '');
+          const rs = await get(ref(db, 'phoneRoster/' + rk));
+          if (rs.exists()) roster = rs.val();
+        } catch(_){}
+      }
+      const eff = boot || roster;
       // 사용자가 auth.html 에서 가입 직전 직접 고른 지점/이름이 chat.me 에 있으면
       // users/{uid} 에도 미리 채워둠 — 어드민 승인 페이지에서 매장이 빈칸으로 뜨던 문제.
       let preBranch = null, preName = null, preRole = null;
@@ -179,9 +189,9 @@ function watchProfile(user){
         }
       } catch(_){}
 
-      // 신규 가입자 PIN 검증 — bootstrap admin 이 아니면 매장 PIN 일치해야 가입 허용.
+      // 신규 가입자 PIN 검증 — bootstrap/roster 가 아니면 매장 PIN 일치해야 가입 허용.
       // 모르는 사람이 본인 gmail 로 임의 가입하던 문제 차단.
-      if (!boot) {
+      if (!eff) {
         let joinPin = '';
         try { joinPin = sessionStorage.getItem('km.joinPin') || ''; } catch(_){}
         // PIN 비어있거나 매장 안 골랐으면 가입 차단
@@ -218,14 +228,14 @@ function watchProfile(user){
       profile = {
         email: user.email || null,
         phone: user.phoneNumber || null,
-        name: boot?.name || preName || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || ('user-' + String(user.uid).slice(0,5)))),
+        name: boot?.name || roster?.name || preName || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || ('user-' + String(user.uid).slice(0,5)))),
         photoURL: user.photoURL || null,
-        status: boot ? 'approved' : 'pending',
-        role: boot?.role || preRole || null,
-        branch: boot?.branch || preBranch || null,
+        status: eff ? 'approved' : 'pending',
+        role: boot?.role || roster?.role || preRole || null,
+        branch: boot?.branch || roster?.branch || preBranch || null,
         createdAt: Date.now(),
-        approvedAt: boot ? Date.now() : null,
-        approvedBy: boot ? 'bootstrap' : null,
+        approvedAt: eff ? Date.now() : null,
+        approvedBy: boot ? 'bootstrap' : (roster ? 'roster' : null),
       };
       try { await set(r, profile); } catch(e){ console.warn('create user record failed', e); }
     } else {
