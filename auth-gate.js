@@ -69,7 +69,7 @@ function showOverlay({ kind, user, profile }){
       ${user?.photoURL ? `<img src="${user.photoURL}" style="width:60px;height:60px;border-radius:50%;margin:0 auto 8px;display:block">` : ''}
       <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;font-size:.85em;color:#374151;margin-bottom:14px">
         ${user?.displayName ? `<b>${escapeHtml(user.displayName)}</b><br>` : ''}
-        <span style="color:#6b7280">${escapeHtml(user?.email || '')}</span>
+        <span style="color:#6b7280">${escapeHtml(user?.email || user?.phoneNumber || '')}</span>
       </div>
       <button id="__authGateLogout" style="background:#374151;color:#fff;border:0;border-radius:10px;padding:10px 22px;font-weight:700;font-size:.92em;cursor:pointer">로그아웃</button>
     </div>`;
@@ -210,8 +210,9 @@ function watchProfile(user){
       }
 
       profile = {
-        email: user.email,
-        name: boot?.name || preName || user.displayName || user.email.split('@')[0],
+        email: user.email || null,
+        phone: user.phoneNumber || null,
+        name: boot?.name || preName || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || ('user-' + String(user.uid).slice(0,5)))),
         photoURL: user.photoURL || null,
         status: boot ? 'approved' : 'pending',
         role: boot?.role || preRole || null,
