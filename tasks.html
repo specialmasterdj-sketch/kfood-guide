@@ -1316,6 +1316,19 @@ button{font-family:inherit;cursor:pointer}
     <h3>⏰ 시간대별 완료율 (피크 타임)</h3>
     <div id="repByHour"><div class="empty" style="background:transparent">데이터 없음</div></div>
   </div>
+
+  <!-- 📋 완료 업무 상세 (포인트·사진) — 점수 근거 자료 -->
+  <div class="report-card" id="repProofCard">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">📋 완료 업무 상세 — 포인트·사진</h3>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="repProofBranch" onchange="renderProofReport()" style="border:1.5px solid #1a5c3a;border-radius:8px;padding:6px 10px;font-size:.84em;background:#f0fdf4;font-weight:700;color:#15803d"></select>
+        <button onclick="printCompletedReport()" style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-weight:800;cursor:pointer;font-size:.85em">🖨️ 인쇄 / PDF</button>
+      </div>
+    </div>
+    <div id="repProofSummary" style="font-size:.85em;color:#475569;margin-bottom:10px"></div>
+    <div id="repProofList"><div class="empty" style="background:transparent">완료 기록이 쌓이면 표시됩니다</div></div>
+  </div>
 </div>
 
 <!-- ASSIGN MODAL -->
@@ -3790,7 +3803,7 @@ function switchTab(t){
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-'+t).classList.add('active');
-  if (t === 'rep') renderReport();
+  if (t === 'rep') { renderReport(); renderProofReport(); }
   if (t === 'home') renderDashboard();
   if (window.kmBack && prev && prev !== t && t !== 'emp') kmBack.push('tab:'+t);
 }
@@ -9290,6 +9303,81 @@ function toggleMgrRowDetail(key){
 window.toggleMgrRowDetail = toggleMgrRowDetail;
 
 // ================= REPORT =================
+// 한 task 의 모든 사진 모으기 (photos / completionPhotos / checklist[].photos)
+function _taskPhotos(t){
+  let ph = [];
+  if (Array.isArray(t.photos)) ph = ph.concat(t.photos);
+  if (Array.isArray(t.completionPhotos)) ph = ph.concat(t.completionPhotos);
+  if (Array.isArray(t.checklist)) t.checklist.forEach(c => {
+    if (Array.isArray(c.photos)) ph = ph.concat(c.photos);
+    else if (c.photo) ph.push(c.photo);
+  });
+  return [...new Set(ph.filter(Boolean))];
+}
+function _proofBranchName(br){
+  const bo = (BRANCHES||[]).find(b => b.id === br);
+  return bo ? (bo[LANG] || bo.ko || bo.label || br) : (br || '-');
+}
+// 📋 완료 업무 상세 (포인트·사진) — 점수 근거 자료
+function renderProofReport(){
+  const sel = document.getElementById('repProofBranch');
+  if (!sel) return;
+  // 지점 드롭다운 1회 채우기 (기본 = 현재 보는 매장)
+  if (!sel.options.length){
+    sel.innerHTML = (BRANCHES||[]).map(b => `<option value="${b.id}">${escHtml(b[LANG]||b.ko||b.label||b.id)}</option>`).join('');
+    const def = (typeof MGR_BRANCH === 'string' && MGR_BRANCH) || (me && me.branch) || (BRANCHES[0] && BRANCHES[0].id);
+    if (def && def !== '*') sel.value = def;
+  }
+  const br = sel.value || (me && me.branch) || '';
+  const items = (TASKS||[]).filter(t => t.completedAt && (!t.branchId || t.branchId === br));
+  items.sort((a,b) => (a.completedAt||0) - (b.completedAt||0));
+  let totalPts = 0; const staff = new Set();
+  items.forEach(t => {
+    totalPts += (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+    const w = t.completedBy || t.assignedTo; if (w && w !== '*') staff.add(w);
+  });
+  const sumEl = document.getElementById('repProofSummary');
+  if (sumEl) sumEl.innerHTML = `<b>${escHtml(_proofBranchName(br))}</b> · 완료 <b>${items.length}건</b> · 총 포인트 <b style="color:#16a34a">${totalPts}pt</b> · 직원 <b>${staff.size}명</b>`;
+  const listEl = document.getElementById('repProofList');
+  if (listEl) listEl.innerHTML = items.length ? items.map(t => {
+    const who = t.completedBy || t.assignedTo || '?';
+    const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+    const ph = _taskPhotos(t);
+    const photosHtml = ph.length
+      ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">${ph.slice(0,10).map(u => `<img src="${u}" style="width:46px;height:46px;border-radius:6px;object-fit:cover;cursor:pointer" onclick="openLb('${u}')">`).join('')}</div>`
+      : `<span style="font-size:.74em;color:#cbd5e1">사진 없음</span>`;
+    return `<div style="border:1px solid #e5e7eb;border-radius:9px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div style="font-weight:700;font-size:.9em">${escHtml(t.name || t.area || '-')}</div><div style="white-space:nowrap;font-size:.8em">⭐${pts} · <span style="color:#16a34a;font-weight:700">${escHtml(who)}</span></div></div>
+      <div style="font-size:.74em;color:#94a3b8;margin-top:2px">${t.completedAt ? new Date(t.completedAt).toLocaleString('ko-KR') : ''}</div>
+      ${photosHtml}
+    </div>`;
+  }).join('') : '<div class="empty" style="background:transparent">이 매장 완료 기록 없음</div>';
+  window.__proofData = { br, brName: _proofBranchName(br), items, totalPts, staffCount: staff.size };
+}
+window.renderProofReport = renderProofReport;
+window.printCompletedReport = function(){
+  const d = window.__proofData;
+  if (!d || !d.items) { alert('먼저 리포트를 불러오세요.'); return; }
+  const rows = d.items.map(t => {
+    const who = t.completedBy || t.assignedTo || '?';
+    const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
+    const ph = _taskPhotos(t).slice(0,6);
+    return `<tr><td>${escHtml(t.name || t.area || '-')}</td><td>${escHtml(who)}</td><td style="text-align:center;font-weight:700">${pts}</td><td style="font-size:11px;white-space:nowrap">${t.completedAt ? new Date(t.completedAt).toLocaleString('ko-KR') : ''}</td><td>${ph.map(u => `<img src="${u}" style="width:48px;height:48px;object-fit:cover;border-radius:4px;margin:1px">`).join('') || '-'}</td></tr>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>${escHtml(d.brName)} 완료 리포트</title>
+  <style>body{font-family:'Malgun Gothic',Arial,sans-serif;padding:22px;color:#111}h1{font-size:19px;margin:0 0 4px}.sum{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;margin:12px 0;font-size:14px}
+  table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}th{background:#1a5c3a;color:#fff}tr:nth-child(even){background:#fafafa}
+  @media print{.noprint{display:none}}</style></head>
+  <body><h1>📋 ${escHtml(d.brName)} — 완료 업무 리포트</h1>
+  <div class="sum">완료 <b>${d.items.length}건</b> · 총 포인트 <b>${d.totalPts}pt</b> · 직원 <b>${d.staffCount}명</b> · 출력일 ${new Date().toLocaleString('ko-KR')}</div>
+  <table><thead><tr><th>업무</th><th>완료자</th><th>점수</th><th>완료 시각</th><th>사진(인증)</th></tr></thead><tbody>${rows || '<tr><td colspan=5 style="text-align:center;padding:20px">완료 기록 없음</td></tr>'}</tbody></table>
+  <button class="noprint" onclick="window.print()" style="margin-top:18px;padding:11px 22px;font-size:14px;font-weight:700;background:#1a5c3a;color:#fff;border:0;border-radius:8px;cursor:pointer">🖨️ 인쇄 / PDF 저장</button>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { alert('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return; }
+  w.document.write(html); w.document.close();
+};
+
 function renderReport(){
   const all = TASKS;
   const total = all.length;
