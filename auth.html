@@ -851,12 +851,21 @@ onAuthStateChanged(auth, async (user) => {
   }, 10000);
   const userRef = ref(db, 'users/' + user.uid);
   // First-time login: create record and bootstrap admins
+  // 전화 인증 직후엔 RTDB 실시간연결 auth 가 지연돼 SDK get/set/onValue 가 멈출 수
+  // 있어(무한 로딩), 로그인 완료 경로를 REST + 명시 토큰으로 처리한다.
+  let __tok = '';
+  try { __tok = await user.getIdToken(); } catch(_){}
+  const __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok);
   let snap, getErr = null;
-  try { snap = await get(userRef); } catch(e){ getErr = e; console.warn('[auth] get(userRef) failed:', e); }
+  try {
+    const __r = await fetch(__uurl, { cache:'no-store' });
+    if (__r.ok) { const v = await __r.json(); snap = { exists: () => v != null, val: () => v }; }
+    else getErr = 'HTTP ' + __r.status;
+  } catch(e){ getErr = e.message || e; }
   if (getErr) {
     clearTimeout(__loadingGuard);
     show('signinView');
-    showError('계정 정보 조회 실패: ' + (getErr.message || getErr) + ' — 다시 로그인 해주세요.');
+    showError('계정 정보 조회 실패: ' + getErr + ' — 다시 로그인 해주세요.');
     return;
   }
   if (!snap || !snap.exists()) {
@@ -886,37 +895,38 @@ onAuthStateChanged(auth, async (user) => {
       approvedAt: eff ? Date.now() : null,
       approvedBy: boot ? 'bootstrap' : (roster ? 'roster' : null),
     };
-    try { await set(userRef, profile); } catch(e){
+    try {
+      const __pr = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
+      if (!__pr.ok) throw new Error('HTTP ' + __pr.status);
+    } catch(e){
       clearTimeout(__loadingGuard);
       show('signinView');
       showError('계정 생성 실패: ' + (e.message || e) + ' — Firebase 규칙 또는 네트워크 문제일 수 있습니다.');
       return;
     }
+    __currentProfile = profile;
   } else {
     // Existing record — if the user is a bootstrap admin (added to the
     // hardcoded list later, or whose role is missing), upgrade them to
     // approved on-the-fly so they don't get stuck on "매니저 승인 대기".
-    const existing = snap.val() || {};
+    let existing = snap.val() || {};
     const boot = bootstrapForUser(user);
-    // boot 의 이름/권한이 기록과 다르면 정정(예: 번호 주인을 잘못 넣었다가 바로잡은 경우
-    // 다음 로그인에 자동 보정). 부트스트랩 admin 은 하드코딩 값이 정답.
+    // boot 의 이름/권한이 기록과 다르면 정정(번호 주인 잘못 넣었다 바로잡은 경우 자동 보정).
     if (boot && (existing.status !== 'approved' || existing.role !== boot.role || existing.name !== boot.name)) {
+      const __up = Object.assign({}, existing, {
+        status: 'approved', role: boot.role, branch: boot.branch, name: boot.name,
+        approvedAt: existing.approvedAt || Date.now(), approvedBy: existing.approvedBy || 'bootstrap-upgrade',
+      });
       try {
-        await set(userRef, Object.assign({}, existing, {
-          status: 'approved',
-          role: boot.role,
-          branch: boot.branch,
-          name: boot.name,
-          approvedAt: existing.approvedAt || Date.now(),
-          approvedBy: existing.approvedBy || 'bootstrap-upgrade',
-        }));
+        const __ur = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up) });
+        if (__ur.ok) existing = __up;
       } catch (e) { console.warn('bootstrap-upgrade failed:', e); }
     }
+    __currentProfile = existing;
   }
-  // Subscribe so manager approval applies live
-  if (__unsub) { try{__unsub();}catch(e){} }
-  __unsub = onValue(userRef, (snap2) => {
-    __currentProfile = snap2.val();
+  // REST 로 결정된 profile 을 즉시 표시(무한로딩 방지). 라이브 승인은 아래 onValue(best-effort).
+  function _finishLogin(prof){
+    if (prof) __currentProfile = prof;
     if (!__currentProfile) {
       // 🚨 레코드 없음 — set() 실패했거나 RTDB 규칙으로 막힘. 무한 spinner
       // 대신 sign-in 화면으로 복귀 + 진단 메시지.
@@ -990,7 +1000,11 @@ onAuthStateChanged(auth, async (user) => {
         else location.replace('./hub.html');
       }, 800);
     }
-  });
+  }
+  _finishLogin(__currentProfile);
+  // 라이브 승인 반영 (best-effort; 실시간연결 동작 시 pending→approved 자동 갱신)
+  if (__unsub) { try{__unsub();}catch(e){} }
+  try { __unsub = onValue(userRef, (snap2) => { const v = snap2.val(); if (v) _finishLogin(v); }); } catch(_){}
 });
 
 // Handle redirect-flow result if signInWithPopup fell back
