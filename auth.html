@@ -225,6 +225,13 @@ const BOOTSTRAP_ADMINS = {
   'kdaisy81@yahoo.com':         { role: 'OWNER',     branch: '*', name: 'Sun Kim' },
 };
 function bootstrapFor(email){ return email ? (BOOTSTRAP_ADMINS[email.toLowerCase()] || null) : null; }
+// 전화번호 로그인 관리자 자동승인 (E.164). 전화 사용자는 email 이 없으므로 별도 맵.
+// 번호는 +1XXXXXXXXXX 형식. 관리자 추가 시 여기에만 넣으면 됨.
+const BOOTSTRAP_PHONES = {
+  '+13059264744': { role: 'OWNER', branch: '*', name: 'DJ' },
+};
+function bootstrapForPhone(phone){ return phone ? (BOOTSTRAP_PHONES[String(phone).trim()] || null) : null; }
+function bootstrapForUser(user){ return bootstrapFor(user && user.email) || bootstrapForPhone(user && user.phoneNumber); }
 
 // 지점 + 이름 한 번에 — Pembroke Pines 등 공유 계정 직원이 로그인 단계에서
 // 바로 본인 정보를 입력할 수 있도록. 로그인 성공 시 chat.me 에 저장되어
@@ -850,10 +857,11 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
   if (!snap || !snap.exists()) {
-    const boot = bootstrapFor(user.email);
+    const boot = bootstrapForUser(user);
     const profile = {
-      email: user.email,
-      name: boot?.name || user.displayName || user.email.split('@')[0],
+      email: user.email || null,
+      phone: user.phoneNumber || null,
+      name: boot?.name || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || ('user-' + String(user.uid).slice(0,5)))),
       photoURL: user.photoURL || null,
       status: boot ? 'approved' : 'pending',
       role: boot?.role || null,
@@ -873,7 +881,7 @@ onAuthStateChanged(auth, async (user) => {
     // hardcoded list later, or whose role is missing), upgrade them to
     // approved on-the-fly so they don't get stuck on "매니저 승인 대기".
     const existing = snap.val() || {};
-    const boot = bootstrapFor(user.email);
+    const boot = bootstrapForUser(user);
     if (boot && (existing.status !== 'approved' || !existing.role)) {
       try {
         await set(userRef, Object.assign({}, existing, {
@@ -912,7 +920,7 @@ onAuthStateChanged(auth, async (user) => {
     // specific store but the shared profile says branch:'*'.
     try {
       const existing = (() => { try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_) { return null; } })();
-      const profileName = __currentProfile.name || user.displayName || user.email.split('@')[0];
+      const profileName = __currentProfile.name || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || 'User'));
       const isSharedAccount = (user.email === 'staff@miamikimchi.com' || user.email === 'manager@miamikimchi.com');
       // 로그인 화면에서 '본인 이름 + 지점' 을 미리 골랐다면 그 값을 최우선 보존.
       // (Pembroke Pines 등 공유 계정 로그인 — 한 번에 다 처리하는 신규 흐름)

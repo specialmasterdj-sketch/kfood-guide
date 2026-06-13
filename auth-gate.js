@@ -32,6 +32,12 @@ function bootstrapFor(email){
   if (!email) return null;
   return BOOTSTRAP_ADMINS[email.toLowerCase()] || null;
 }
+// 전화번호 로그인 관리자 자동승인 (E.164 +1XXXXXXXXXX). auth.html 의 BOOTSTRAP_PHONES 와 동기 유지.
+const BOOTSTRAP_PHONES = {
+  '+13059264744': { role: 'OWNER', branch: '*', name: 'DJ' },
+};
+function bootstrapForPhone(phone){ return phone ? (BOOTSTRAP_PHONES[String(phone).trim()] || null) : null; }
+function bootstrapForUser(user){ return bootstrapFor(user && user.email) || bootstrapForPhone(user && user.phoneNumber); }
 
 // Pages exempt from the gate (login page itself, plus the public lookup so
 // store-floor barcode scanning keeps working without forcing auth on
@@ -160,7 +166,7 @@ function watchProfile(user){
     let profile = snap.val();
     if (!profile) {
       // First-time login — create record. Bootstrap admins get auto-approved.
-      const boot = bootstrapFor(user.email);
+      const boot = bootstrapForUser(user);
       // 사용자가 auth.html 에서 가입 직전 직접 고른 지점/이름이 chat.me 에 있으면
       // users/{uid} 에도 미리 채워둠 — 어드민 승인 페이지에서 매장이 빈칸으로 뜨던 문제.
       let preBranch = null, preName = null, preRole = null;
@@ -227,7 +233,7 @@ function watchProfile(user){
       // is still pending or missing role/branch (e.g. created before the
       // bootstrap entry was added), upgrade it in place. Without this,
       // pages like approve.html that gate on profile.role keep rejecting.
-      const boot = bootstrapFor(user.email);
+      const boot = bootstrapForUser(user);
       if (boot && (profile.status !== 'approved' || !profile.role || !profile.branch)) {
         const upgraded = Object.assign({}, profile, {
           status: 'approved',
