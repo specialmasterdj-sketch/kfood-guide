@@ -171,10 +171,12 @@ function watchProfile(user){
       // 방식2: 매니저가 미리 등록한 전화번호(phoneRoster)면 PIN·승인 없이 자동 승인.
       let roster = null;
       if (!boot && user.phoneNumber) {
+        // REST + 명시적 토큰 (전화 인증 직후 SDK 연결 auth 지연 회피)
         try {
           const rk = String(user.phoneNumber).replace(/\D/g, '');
-          const rs = await get(ref(db, 'phoneRoster/' + rk));
-          if (rs.exists()) roster = rs.val();
+          const tok = await user.getIdToken();
+          const rr = await fetch('https://kimchi-mart-order-default-rtdb.firebaseio.com/phoneRoster/' + rk + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
+          if (rr.ok) { const v = await rr.json(); if (v) roster = v; }
         } catch(_){}
       }
       const eff = boot || roster;
