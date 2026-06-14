@@ -208,10 +208,27 @@ window.loadRoster = async function(){
 applyLang();
 // 인증(currentUser)이 준비된 뒤 로드 — 폰/다른기기에서 인증 복원이 느려 토큰 없이
 // 읽다가 빈 목록 뜨던 문제 방지. onAuthStateChanged 가 가장 확실한 신호.
+// 🔒 부매니저(ASSISTANT_MANAGER) 이상만 접근 — 등록 행위 자체가 승인이므로 권한 있는 사람만.
+//    (SUPERVISOR·일반직원 차단). 권한은 users/{uid}.role 을 REST 로 직접 확인.
 let _loadedOnce = false;
-onAuthStateChanged(auth, (u) => { if (u && !_loadedOnce) { _loadedOnce = true; loadRoster(); } });
-window.addEventListener('fb-auth-ready', () => { if (!_loadedOnce) { _loadedOnce = true; loadRoster(); } }, { once:true });
-setTimeout(() => { if (document.getElementById('list').querySelector('[data-i="loading"]')) loadRoster(); }, 4000);
+async function gateAndLoad(){
+  if (_loadedOnce) return; _loadedOnce = true;
+  let role = '';
+  try {
+    const u = auth.currentUser;
+    if (u){ const tok = await u.getIdToken(); const r = await fetch(`${FB_DB}/users/${u.uid}.json?auth=${encodeURIComponent(tok)}`, { cache:'no-store' }); if (r.ok){ const d = await r.json(); role = (d && d.role) || ''; } }
+  } catch(_){}
+  const ALLOWED = /OWNER|EXECUTIVE|MANAGER|오너|사장|대표|전무|점장|매니저/i;   // 부매니저(…MANAGER) 포함, 슈퍼바이저 제외
+  if (!ALLOWED.test(String(role))){
+    const w = document.querySelector('.wrap');
+    if (w) w.innerHTML = '<div style="max-width:520px;margin:60px auto;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:30px;text-align:center;color:#334155"><div style="font-size:2.4em">🔒</div><div style="font-weight:800;font-size:1.05em;margin:10px 0 6px">접근 권한 없음 / No access</div><div style="font-size:.9em;color:#64748b;line-height:1.6">이 페이지는 <b>부매니저 이상</b>만 사용할 수 있습니다.<br>Assistant Manager and above only.</div><div style="margin-top:18px"><a href="apps.html" style="color:#0277BD;font-weight:700">← apps</a></div></div>';
+    return;
+  }
+  loadRoster();
+}
+onAuthStateChanged(auth, (u) => { if (u) gateAndLoad(); });
+window.addEventListener('fb-auth-ready', () => gateAndLoad(), { once:true });
+setTimeout(() => { if (!_loadedOnce) gateAndLoad(); }, 4000);
 </script>
 </body>
 </html>
