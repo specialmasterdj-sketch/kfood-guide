@@ -256,7 +256,7 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;
     </label>
     <span style="flex:1"></span>
     <button id="btnPrint" onclick="printLeaderboard()" style="background:#1e40af;border:1px solid #1e3a8a;border-radius:8px;padding:7px 12px;font-size:.82em;font-weight:600;color:#fff;cursor:pointer;margin-right:6px">🖨 프린트</button>
-    <button id="btnRefresh" onclick="loadAll()" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:7px 12px;font-size:.82em;font-weight:600;color:#374151;cursor:pointer">↻ 새로고침</button>
+    <button id="btnRefresh" onclick="loadAll(true)" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:7px 12px;font-size:.82em;font-weight:600;color:#374151;cursor:pointer">↻ 새로고침</button>
   </div>
 
   <div class="tab-bar" id="tabBar">
@@ -597,7 +597,7 @@ function tasksStartKey(){
 // 채팅방별로 최근 N건만 받음 (push key 는 시간순이라 limitToLast 로 최신만). 'all' 은 무제한.
 // ⚠️ 채팅 사진은 메시지 안에 base64 로 통째 저장 → 옛 메시지까지 받으면 폰에서 수십 MB.
 //    채팅 점수는 어차피 1일 10pt 캡(소액)이라, 최근 일부만 받아도 순위 영향 거의 없음.
-const CHAT_LIMIT_BY_RANGE = { today:150, week:350, month:600, lastmonth:600 };
+const CHAT_LIMIT_BY_RANGE = { today:100, week:200, month:350, lastmonth:600 };
 // 2026-06-08 사장님 지시: 지난달(5월)은 정산 당시 limitToLast=600 으로 보너스 지급됨.
 // 소급 변경 방지를 위해 옛 동작 그대로 복원 (MIRNA #1 등 지급 순위 보존).
 // 'all' 은 옛날에도 무제한이라 그대로. today/week/month 은 현재 윈도우라 최신 N건 OK.
@@ -679,6 +679,8 @@ async function loadBranchEmployees(){
   console.info('[lb] schedules NAME_TO_BRANCH ready —', NAME_TO_BRANCH.size, 'employees mapped');
 }
 async function loadUsers(){
+  // ⚡ 사용자/직원 명단은 기간과 무관 — 탭 전환마다 재요청하던 것 5분 캐시 (탭 전환 속도↑).
+  if (window.__lbUsersAt && (Date.now() - window.__lbUsersAt < 300000) && USERS && Object.keys(USERS).length) return;
   const aq = await authParam();
   // schedules 기반 매장 매핑 먼저
   await loadBranchEmployees();
@@ -694,6 +696,7 @@ async function loadUsers(){
     if (p.email && EXCLUDE_EMAILS.has(p.email.toLowerCase())) OWNER_UIDS.add(uid);
     if (p.name) NAME_TO_PROFILE.set(p.name.toLowerCase(), { uid, ...p });
   }
+  window.__lbUsersAt = Date.now();
 }
 
 function isExcludedSender(name, branch){
@@ -1453,7 +1456,7 @@ async function _submitBonus(){
     if(!r.ok) throw new Error('HTTP '+r.status+' '+(await r.text()).slice(0,140));
     _closeBonusModal();
     alert(_bt(`✅ ${to} 에게 +${points}pt 부여`,`✅ +${points}pt to ${to}`,`✅ +${points}pt a ${to}`));
-    loadAll();
+    loadAll(true);
   }catch(e){
     alert(_bt('저장 실패 — Firebase 규칙에 mgrBonus 쓰기 허용이 필요할 수 있습니다.\n','Save failed — RTDB rules may need mgrBonus write.\n','Error al guardar.\n')+e.message);
   }finally{ btn.disabled=false; btn.textContent=_orig; }
@@ -1499,12 +1502,15 @@ function initBonusUI(){
 }
 
 let _lbLoadSeq = 0;
-async function loadAll(){
+async function loadAll(force){
   const _seq = ++_lbLoadSeq;   // 탭 빠르게 바꿔도 옛 응답이 새 화면 덮어쓰지 않게
-  // 캐시 있으면 즉시 표시(스피너 생략) + 갱신중 표시. 없으면 기존 로딩 스피너.
+  // ⚡ 캐시 즉시 표시. 충분히 최신이면(지난달=동결 무기한 / 그 외 30초) 네트워크 재요청 생략 → 탭 전환 즉시.
   const _cached = _lbReadCache();
-  if (_cached) buildAndRender(_cached.rows, true);
+  const _ttl = (CUR_RANGE === 'lastmonth') ? Infinity : 30000;
+  const _fresh = !!(_cached && !force && (Date.now() - (_cached.ts || 0)) < _ttl);
+  if (_cached) buildAndRender(_cached.rows, !_fresh);
   else document.getElementById('content').innerHTML = `<div class="loading"><div class="ic">⏳</div>${escHtml(t('loading'))}</div>`;
+  if (_fresh) return;   // 즉시 표시로 끝 — 재요청 생략 (새로고침 버튼/보너스부여는 force=true 로 무시)
   const since = rangeStart();
   const until = rangeEnd();
   const agg = {};
