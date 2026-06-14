@@ -3620,6 +3620,9 @@ const MANAGER_TOKENS = ['MANAGER','SUPERVISOR','OFFICE','OWNER','매니저','점
 const EXECUTIVE_NAMES = ['B.H.K','BHK','B H K','비에이치케이','SUN KIM','SUNKIM','SUN.KIM','선킴','썬킴'];
 function isManager(role){ if(!role)return false; const r=role.toUpperCase(); return MANAGER_TOKENS.some(t=>r.includes(t)); }
 function isOwner(){ if(!me)return false; const nm=(me.name||'').replace(/\s+/g,'').toUpperCase(); if(EXECUTIVE_NAMES.some(n=>n.replace(/\s+/g,'').toUpperCase()===nm)) return true; return /OWNER|BOSS|오너|사장|대표/i.test((me.role||'').toUpperCase()); }
+// ⭐ 사장님 상점(Owner Merit) — '나만(DJ)' 전용 식별. 사장님 지시: 본인 외 아무도(전무·다른 오너 포함) 안 보임.
+//   다른 사람도 포함하려면 아래 이메일/이름을 추가.
+function isMeritAdmin(){ if(typeof isOwner!=='function'||!isOwner())return false; const em=(me&&me.email?String(me.email).toLowerCase().trim():''); const nm=(me&&me.name?String(me.name).trim().toUpperCase():''); return em==='specialmasterdj@gmail.com'||nm==='DJ'; }
 // 🆕 2026-06-13 전무님 지시: 새 지시(task 발송) 권한을 "슈퍼바이저 이상"으로 확대.
 //   기본 허용: SUPERVISOR(60) · SENIOR SUPERVISOR(70) · ASSISTANT MANAGER(80) ·
 //             STORE/HR MANAGER(90) (= _roleRank>=60) + OWNER / 임원(B.H.K, SUN KIM).
@@ -3956,8 +3959,7 @@ function renderTeamRank(){
     _setTxt('teamRankLink',     gt('teamRankLink'));
     _setTxt('teamRankEmptyMsg', _pE[_lang] || _pE.ko);
   } catch(e){}
-  const _ownerView = (typeof isOwner === 'function' && isOwner());
-  const _hasBonusInPeriod = _ownerView && Array.isArray(window.MGR_BONUS) && window.MGR_BONUS.some(a => a && a.to && (a.ts||0) >= startMs);
+  const _hasBonusInPeriod = Array.isArray(window.MGR_BONUS) && window.MGR_BONUS.some(a => a && a.to && a.kind === 'owner' && (a.ts||0) >= startMs);
   if ((!Array.isArray(TASKS) || !TASKS.length) && !_hasBonusInPeriod){
     podiumEl.innerHTML = ''; listEl.innerHTML = '';
     if (emptyEl) emptyEl.style.display = '';
@@ -3996,9 +3998,9 @@ function renderTeamRank(){
     if (!cur.branch && t.branchId) cur.branch = _branchName(t.branchId);
     agg.set(k, cur);
   });
-  // 🌟 사장님 상점(mgrBonus) 합산 — 오너 본인 화면에서만 (직원·매니저에겐 완전 비표시)
-  if (_ownerView) (window.MGR_BONUS || []).forEach(a => {
-    if (!a || !a.to) return;
+  // 🌟 사장님 상점(mgrBonus, kind:'owner') — 점수에만 합산(전원에게), 출처 표시는 없음
+  (window.MGR_BONUS || []).forEach(a => {
+    if (!a || !a.to || a.kind !== 'owner') return;
     if ((a.ts || 0) < startMs) return;
     if (!isMgr && myBranch && a.branch && a.branch !== myBranch) return;
     const bpts = (typeof a.points === 'number') ? a.points : 0;
@@ -4027,7 +4029,7 @@ function renderTeamRank(){
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
-  const ownerCanAward = (typeof isOwner === 'function' && isOwner());
+  const ownerCanAward = (typeof isMeritAdmin === 'function' && isMeritAdmin());
 
   // 2) 포디움 (1·2·3) — 시각적 순서: 2위 / 1위 / 3위
   const medals = ['🥇','🥈','🥉'];
@@ -4039,13 +4041,12 @@ function renderTeamRank(){
     const initial = (r.name || '?').trim().charAt(0).toUpperCase();
     const meHit = me0 && _norm(me0.name) === _norm(r.name);
     const podStar = ownerCanAward ? `<button type="button" class="trc-star trc-star-pod" data-name="${escapeHtml(r.name)}" data-branch="${r.__branchId||''}" title="상점 주기">⭐</button>` : '';
-    const podBonus = r.bonus ? `<span class="trc-bonus" title="사장님 상점">⭐${r.bonus}</span>` : '';
     return `
       <div class="trc-pod r${rank}" title="${escapeHtml(r.name)} — ${r.score}점 (${r.count}건 완료)">
         ${podStar}
         <div class="trc-pod-medal">${medals[i]}</div>
         <div class="trc-pod-av">${initial}</div>
-        <div class="trc-pod-name">${meHit ? '★ ':''}${escapeHtml(r.name)} ${podBonus}</div>
+        <div class="trc-pod-name">${meHit ? '★ ':''}${escapeHtml(r.name)}</div>
         ${r.branch ? `<div class="trc-pod-branch">${escapeHtml(r.branch)}</div>` : ''}
         <div class="trc-pod-score">${r.score}pt</div>
       </div>`;
@@ -4057,13 +4058,12 @@ function renderTeamRank(){
   listEl.innerHTML = rest.map((r, idx) => {
     const rank = idx + 4;
     const meHit = me0 && _norm(me0.name) === _norm(r.name);
-    const bonusChip = r.bonus ? `<span class="trc-bonus" title="사장님 상점">⭐${r.bonus}</span>` : '';
     const starBtn = ownerCanAward ? `<button type="button" class="trc-star" data-name="${escapeHtml(r.name)}" data-branch="${r.__branchId||''}" title="상점 주기">⭐</button>` : '';
     return `
       <div class="trc-row ${meHit ? 'me' : ''}">
         <div class="trc-rank-n">${rank}</div>
         <div class="trc-row-mid">
-          <div class="trc-row-name">${escapeHtml(r.name)} ${bonusChip}</div>
+          <div class="trc-row-name">${escapeHtml(r.name)}</div>
           ${r.branch ? `<div class="trc-row-branch">${escapeHtml(r.branch)} · ${r.count}건</div>` : `<div class="trc-row-branch">${r.count}건 완료</div>`}
         </div>
         <div class="trc-row-score">${r.score}pt</div>
@@ -4217,11 +4217,11 @@ function renderScoreboard(){
     const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
     scores[t.branchId] += pts;
   });
-  // 🌟 오늘 사장님 상점(mgrBonus) — 오너 본인 화면에서만 지점 점수에 합산
-  if (typeof isOwner === 'function' && isOwner()) {
+  // 🌟 오늘 사장님 상점(mgrBonus, kind:'owner') — 지점 점수에 합산(전원에게), 표시는 없음
+  {
     const _t0 = new Date(); _t0.setHours(0,0,0,0); const _todayMs = _t0.getTime();
     (window.MGR_BONUS || []).forEach(a => {
-      if (!a || !a.branch || !(a.branch in scores)) return;
+      if (!a || !a.branch || a.kind !== 'owner' || !(a.branch in scores)) return;
       if ((a.ts || 0) < _todayMs) return;
       const p = (typeof a.points === 'number') ? a.points : 0;
       if (p > 0) scores[a.branch] += p;
@@ -10413,14 +10413,15 @@ function _meritRenderRecent(){
     var bn=(BRANCHES.find(function(x){return x.id===a.branch;})||{});
     var bname=bn[LANG]||bn.ko||a.branch||'';
     var when=''; try{ var d=new Date(a.ts); when=(d.getMonth()+1)+'/'+d.getDate(); }catch(_){}
-    return '<div class="kmmr-row"><span class="kmmr-main">⭐ +'+a.points+' <b>'+escHtml(a.to)+'</b> <small>'+escHtml(bname)+(when?' · '+when:'')+'</small></span>'
+    var _note = a.note || a.reason || '';
+    return '<div class="kmmr-row"><span class="kmmr-main">⭐ +'+a.points+' <b>'+escHtml(a.to)+'</b> <small>'+escHtml(bname)+(when?' · '+when:'')+'</small>'+(_note?'<span class="kmmr-note">'+escHtml(_note)+'</span>':'')+'</span>'
       +'<button type="button" class="kmrr-undo" data-branch="'+escHtml(a.branch)+'" data-id="'+escHtml(a.id)+'">'+_mt('취소','Undo','Deshacer')+'</button></div>';
   }).join('');
 }
 
 /* 모달 열기/닫기 */
 function openMeritModal(prefillName, prefillBranch){
-  if(!(typeof isOwner==='function'&&isOwner())) return;
+  if(!(typeof isMeritAdmin==='function'&&isMeritAdmin())) return;
   injectOwnerMeritUI();
   var modal=document.getElementById('kmMeritModal'); if(!modal) return;
   var brSel=document.getElementById('kmMeritBranch');
@@ -10436,7 +10437,7 @@ function closeMeritModal(){ var m=document.getElementById('kmMeritModal'); if(m)
 
 /* 제출 */
 async function submitMerit(){
-  if(!(typeof isOwner==='function'&&isOwner())){ alert(_mt('오너만 가능','Owner only','Solo dueño')); return; }
+  if(!(typeof isMeritAdmin==='function'&&isMeritAdmin())){ alert(_mt('사장님 본인만 가능','Only you','Solo tú')); return; }
   var branch=document.getElementById('kmMeritBranch').value;
   var to=document.getElementById('kmMeritEmp').value;
   var onBtn=document.querySelector('#kmMeritPts .km-merit-pt.on');
@@ -10445,7 +10446,7 @@ async function submitMerit(){
   if(!branch){ alert(_mt('지점을 선택하세요','Select a branch','Selecciona sucursal')); return; }
   if(!to){ alert(_mt('직원을 선택하세요','Select an employee','Selecciona empleado')); return; }
   if(!points){ alert(_mt('점수를 선택하세요','Select points','Selecciona puntos')); return; }
-  var award={to:to,points:points,reason:reason||null,by:(me&&me.name)||'OWNER',byRole:(me&&me.role)||'OWNER',branch:branch,ts:Date.now(),kind:'owner'};
+  var award={to:to,points:points,note:reason||null,reason:reason||null,by:(me&&me.name)||'OWNER',byRole:(me&&me.role)||'OWNER',branch:branch,ts:Date.now(),kind:'owner'};
   var btn=document.getElementById('kmMeritSubmit'); var _o=btn.textContent; btn.disabled=true; btn.textContent='…';
   try{
     await window.__fb.push(window.__fb.ref(window.__fb.db,'mgrBonus/'+branch),award);
@@ -10461,6 +10462,7 @@ async function submitMerit(){
 
 /* 취소(되돌리기) */
 async function undoMerit(branch,id){
+  if(!(typeof isMeritAdmin==='function'&&isMeritAdmin())) return;
   if(!branch||!id) return;
   if(!confirm(_mt('이 상점을 취소할까요?','Undo this merit?','¿Deshacer este mérito?'))) return;
   try{
@@ -10476,7 +10478,7 @@ async function undoMerit(branch,id){
 var _meritUIReady=false;
 function injectOwnerMeritUI(){
   if(_meritUIReady) return;
-  if(!(typeof isOwner==='function'&&isOwner())) return;
+  if(!(typeof isMeritAdmin==='function'&&isMeritAdmin())) return;
   _meritUIReady=true;
   var st=document.createElement('style');
   st.textContent=
@@ -10504,7 +10506,7 @@ function injectOwnerMeritUI(){
    +'.km-merit-submit:disabled{opacity:.6;cursor:default}'
    +'.km-merit-recent-hd{margin:20px 2px 8px;font-size:.82em;font-weight:800;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:14px}'
    +'.kmmr-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #f8fafc}'
-   +'.kmmr-main{font-size:.9em;color:#334155}.kmmr-main small{color:#94a3b8;font-weight:600}'
+   +'.kmmr-main{font-size:.9em;color:#334155}.kmmr-main small{color:#94a3b8;font-weight:600}.kmmr-note{display:block;font-size:.82em;color:#475569;margin-top:3px;font-style:italic;white-space:pre-wrap}'
    +'.kmrr-undo{flex:0 0 auto;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:8px;padding:5px 10px;font-size:.8em;font-weight:700;cursor:pointer}'
    +'.kmmr-empty{font-size:.86em;color:#cbd5e1;padding:10px 0}';
   document.head.appendChild(st);
@@ -10513,7 +10515,7 @@ function injectOwnerMeritUI(){
     var card=document.createElement('a');
     card.id='kmMeritCard'; card.className='dash-action km-merit-card';
     card.innerHTML='<div class="ic-wrap">⭐</div><div><div class="nm">'+_mt('사장님 상점 주기','Owner Merit','Mérito del dueño')
-      +'</div><div class="ds">'+_mt('직원에게 상점 점수 (오너 전용)','Give merit points (owner only)','Dar puntos (solo dueño)')+'</div></div>';
+      +'</div><div class="ds">'+_mt('직원에게 비밀 상점 · 메모 (나만 보임)','Private merit + note (only you)','Mérito privado (solo tú)')+'</div></div>';
     card.addEventListener('click',function(){ openMeritModal('',''); });
     acts.insertBefore(card,acts.firstChild);
   }
@@ -10538,9 +10540,9 @@ function injectOwnerMeritUI(){
       +'<select id="kmMeritEmp" class="km-merit-input"></select>'
       +'<label class="km-merit-lbl">'+_mt('상점 점수','Merit points','Puntos')+'</label>'
       +'<div id="kmMeritPts" class="km-merit-pts"><button type="button" class="km-merit-pt" data-p="3">+3</button><button type="button" class="km-merit-pt on" data-p="5">+5</button><button type="button" class="km-merit-pt" data-p="10">+10</button></div>'
-      +'<label class="km-merit-lbl">'+_mt('이유 (선택)','Reason (optional)','Motivo (opcional)')+'</label>'
+      +'<label class="km-merit-lbl">'+_mt('이유 · 메모 (선택, 사장님만 봄)','Reason · note (only you)','Motivo · nota (solo tú)')+'</label>'
       +'<div id="kmMeritChips" class="km-merit-chips">'+chipsHtml+'</div>'
-      +'<input id="kmMeritReason" class="km-merit-input" placeholder="'+_mt('이유 직접 입력…','Type a reason…','Escribe…')+'">'
+      +'<textarea id="kmMeritReason" class="km-merit-input" rows="3" style="resize:vertical;min-height:66px" placeholder="'+_mt('특별 과업·과도한 업무 등 구체적으로 적어두세요 (사장님만 보임)','Specific note — only you can see this','Nota específica — solo tú')+'"></textarea>'
       +'<button type="button" id="kmMeritSubmit" class="km-merit-submit">⭐ '+_mt('상점 주기','Give merit','Dar mérito')+'</button>'
       +'<div class="km-merit-recent-hd">'+_mt('최근 부여한 상점','Recent merits','Méritos recientes')+'</div>'
       +'<div id="kmMeritRecent" class="km-merit-recent"></div>'
@@ -10550,7 +10552,7 @@ function injectOwnerMeritUI(){
     wrap.addEventListener('click',function(e){ if(e.target===wrap) closeMeritModal(); });
     document.getElementById('kmMeritBranch').addEventListener('change',function(e){ _meritLoadEmployees(e.target.value,''); });
     document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(b){ b.addEventListener('click',function(){ document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(x){x.classList.remove('on');}); b.classList.add('on'); }); });
-    document.querySelectorAll('#kmMeritChips .km-merit-chip').forEach(function(c){ c.addEventListener('click',function(){ var r=document.getElementById('kmMeritReason'); if(r) r.value=c.dataset.r||''; }); });
+    document.querySelectorAll('#kmMeritChips .km-merit-chip').forEach(function(c){ c.addEventListener('click',function(){ var r=document.getElementById('kmMeritReason'); if(r){ var v=(r.value||'').trim(); r.value=v?(v+', '+(c.dataset.r||'')):(c.dataset.r||''); r.focus(); } }); });
     document.getElementById('kmMeritSubmit').addEventListener('click',submitMerit);
   }
 }
