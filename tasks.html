@@ -3956,7 +3956,8 @@ function renderTeamRank(){
     _setTxt('teamRankLink',     gt('teamRankLink'));
     _setTxt('teamRankEmptyMsg', _pE[_lang] || _pE.ko);
   } catch(e){}
-  if (!Array.isArray(TASKS) || !TASKS.length){
+  const _hasBonusInPeriod = Array.isArray(window.MGR_BONUS) && window.MGR_BONUS.some(a => a && a.to && (a.ts||0) >= startMs);
+  if ((!Array.isArray(TASKS) || !TASKS.length) && !_hasBonusInPeriod){
     podiumEl.innerHTML = ''; listEl.innerHTML = '';
     if (emptyEl) emptyEl.style.display = '';
     return;
@@ -3994,11 +3995,28 @@ function renderTeamRank(){
     if (!cur.branch && t.branchId) cur.branch = _branchName(t.branchId);
     agg.set(k, cur);
   });
+  // 🌟 사장님 상점(mgrBonus) 합산 — 선택 기간 내. 일반 직원은 본인 매장만.
+  (window.MGR_BONUS || []).forEach(a => {
+    if (!a || !a.to) return;
+    if ((a.ts || 0) < startMs) return;
+    if (!isMgr && myBranch && a.branch && a.branch !== myBranch) return;
+    const bpts = (typeof a.points === 'number') ? a.points : 0;
+    if (!bpts) return;
+    const bk = _norm(a.to);
+    if (!bk) return;
+    const bcur = agg.get(bk) || { name: a.to, branch: _branchName(a.branch), score: 0, count: 0, branches: new Set() };
+    bcur.score += bpts;
+    bcur.bonus = (bcur.bonus || 0) + bpts;
+    if (a.branch) bcur.branches.add(a.branch);
+    if (!bcur.branch && a.branch) bcur.branch = _branchName(a.branch);
+    agg.set(bk, bcur);
+  });
   const rows = Array.from(agg.values()).map(r => {
     // 매니저 통합 뷰에서 한 직원이 여러 매장 일했으면 표시 보강
     if (r.branches && r.branches.size > 1) {
       r.branch = _branchName([...r.branches][0]) + ' +' + (r.branches.size - 1);
     }
+    r.__branchId = (r.branches && r.branches.size) ? [...r.branches][0] : '';
     return r;
   }).sort((a,b) => b.score - a.score || b.count - a.count);
 
@@ -4008,6 +4026,7 @@ function renderTeamRank(){
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
+  const ownerCanAward = (typeof isOwner === 'function' && isOwner());
 
   // 2) 포디움 (1·2·3) — 시각적 순서: 2위 / 1위 / 3위
   const medals = ['🥇','🥈','🥉'];
@@ -4018,11 +4037,14 @@ function renderTeamRank(){
     const rank = i + 1;
     const initial = (r.name || '?').trim().charAt(0).toUpperCase();
     const meHit = me0 && _norm(me0.name) === _norm(r.name);
+    const podStar = ownerCanAward ? `<button type="button" class="trc-star trc-star-pod" data-name="${escapeHtml(r.name)}" data-branch="${r.__branchId||''}" title="상점 주기">⭐</button>` : '';
+    const podBonus = r.bonus ? `<span class="trc-bonus" title="사장님 상점">⭐${r.bonus}</span>` : '';
     return `
-      <div class="trc-pod r${rank}" title="${r.name} — ${r.score}점 (${r.count}건 완료)">
+      <div class="trc-pod r${rank}" title="${escapeHtml(r.name)} — ${r.score}점 (${r.count}건 완료)">
+        ${podStar}
         <div class="trc-pod-medal">${medals[i]}</div>
         <div class="trc-pod-av">${initial}</div>
-        <div class="trc-pod-name">${meHit ? '★ ':''}${escapeHtml(r.name)}</div>
+        <div class="trc-pod-name">${meHit ? '★ ':''}${escapeHtml(r.name)} ${podBonus}</div>
         ${r.branch ? `<div class="trc-pod-branch">${escapeHtml(r.branch)}</div>` : ''}
         <div class="trc-pod-score">${r.score}pt</div>
       </div>`;
@@ -4034,14 +4056,17 @@ function renderTeamRank(){
   listEl.innerHTML = rest.map((r, idx) => {
     const rank = idx + 4;
     const meHit = me0 && _norm(me0.name) === _norm(r.name);
+    const bonusChip = r.bonus ? `<span class="trc-bonus" title="사장님 상점">⭐${r.bonus}</span>` : '';
+    const starBtn = ownerCanAward ? `<button type="button" class="trc-star" data-name="${escapeHtml(r.name)}" data-branch="${r.__branchId||''}" title="상점 주기">⭐</button>` : '';
     return `
       <div class="trc-row ${meHit ? 'me' : ''}">
         <div class="trc-rank-n">${rank}</div>
         <div class="trc-row-mid">
-          <div class="trc-row-name">${escapeHtml(r.name)}</div>
+          <div class="trc-row-name">${escapeHtml(r.name)} ${bonusChip}</div>
           ${r.branch ? `<div class="trc-row-branch">${escapeHtml(r.branch)} · ${r.count}건</div>` : `<div class="trc-row-branch">${r.count}건 완료</div>`}
         </div>
         <div class="trc-row-score">${r.score}pt</div>
+        ${starBtn}
       </div>`;
   }).join('');
 
@@ -4191,6 +4216,16 @@ function renderScoreboard(){
     const pts = (typeof t.points === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
     scores[t.branchId] += pts;
   });
+  // 🌟 오늘 사장님 상점(mgrBonus) — 지점 점수에 합산
+  {
+    const _t0 = new Date(); _t0.setHours(0,0,0,0); const _todayMs = _t0.getTime();
+    (window.MGR_BONUS || []).forEach(a => {
+      if (!a || !a.branch || !(a.branch in scores)) return;
+      if ((a.ts || 0) < _todayMs) return;
+      const p = (typeof a.points === 'number') ? a.points : 0;
+      if (p > 0) scores[a.branch] += p;
+    });
+  }
   const ranked = BRANCHES.map(b => ({ id:b.id, name:(b[LANG] || b.ko || b.id), score: scores[b.id] || 0 }))
     .sort((a,b) => b.score - a.score);
   const maxScore = Math.max(1, ...ranked.map(r => r.score));
@@ -10305,6 +10340,242 @@ setInterval(() => {
 }, 60000);
 // Refresh location every 2 minutes (only if signed in and not yet clocked in)
 setInterval(() => { if (me && !(TODAY_CLOCKIN && TODAY_CLOCKIN.clockIn)) tickLocation(); }, 120000);
+</script>
+
+<!-- ====================================================================
+     ⭐ 사장님 상점 (Owner Merit) — 2026-06-14
+     오너 전용. 각 지점의 개별 직원에게 상점(보너스) 점수 부여.
+     저장: mgrBonus/{branch}/{pushId} = {to,points,reason,by,byRole,branch,ts,kind:'owner'}
+       (leaderboard.html 이 이미 읽는 경로 — 활동순위 자동 합산. RTDB 규칙상 오너 쓰기 허용.)
+     반영: 대시보드 활동순위(renderTeamRank) + 전광판(renderScoreboard) 에도 합산.
+     명단: schedules/{branch}/employees (권위 source).
+     ==================================================================== -->
+<script>
+window.MGR_BONUS = window.MGR_BONUS || [];
+function _mt(ko,en,es){ var L=(typeof LANG==='string'?LANG:'ko'); return L==='en'?en:(L==='es'?(es||en):ko); }
+
+/* mgrBonus 실시간 구독 (전 지점) — 모든 사용자: 순위/전광판에 상점 반영 */
+var _mgrBonusSubbed=false;
+function subscribeMgrBonus(){
+  if(_mgrBonusSubbed) return;
+  if(!window.__fb || !window.__fb.onValue){ setTimeout(subscribeMgrBonus,700); return; }
+  _mgrBonusSubbed=true;
+  window.MGR_BONUS = window.MGR_BONUS || [];
+  (BRANCHES||[]).forEach(function(b){
+    try{
+      var r=window.__fb.ref(window.__fb.db,'mgrBonus/'+b.id);
+      window.__fb.onValue(r,function(snap){
+        var v=snap.val()||{};
+        window.MGR_BONUS=(window.MGR_BONUS||[]).filter(function(x){return x.branch!==b.id;});
+        Object.entries(v).forEach(function(p){ var id=p[0],a=p[1]; if(a&&typeof a==='object') window.MGR_BONUS.push(Object.assign({},a,{id:id,branch:b.id})); });
+        try{ var home=document.getElementById('page-home'); if(home&&home.classList.contains('active')){ renderTeamRank(); renderScoreboard(); } }catch(_){}
+        try{ var m=document.getElementById('kmMeritModal'); if(m&&m.style.display==='flex') _meritRenderRecent(); }catch(_){}
+      },function(err){ console.warn('[merit] onValue',b.id,err&&err.message); });
+    }catch(e){ console.warn('[merit] sub',b.id,e); }
+  });
+}
+
+/* 직원 명단 로드 (지점별) */
+async function _meritLoadEmployees(branch, preselectName){
+  var sel=document.getElementById('kmMeritEmp'); if(!sel) return;
+  sel.innerHTML='<option value="">'+_mt('직원 불러오는 중…','Loading…','Cargando…')+'</option>';
+  var employees=[];
+  try{
+    var data=await fetch(FB_DB_URL+'/schedules/'+branch+'.json?cache='+Date.now(),{cache:'no-store'}).then(function(r){return r.json();});
+    if(data && Array.isArray(data.employees)) employees=data.employees.filter(function(e){return e&&e.name;});
+  }catch(e){ console.warn('[merit] load emp',e); }
+  if(!employees.length){ sel.innerHTML='<option value="">'+_mt('명단 없음','No roster','Sin lista')+'</option>'; return; }
+  var grouped={};
+  employees.forEach(function(e){ var role=e.role||'기타'; (grouped[role]=grouped[role]||[]).push(e); });
+  var roles=Object.keys(grouped).sort(function(a,bb){ var pa=(typeof _roleRank==='function'?_roleRank(a):0),pb=(typeof _roleRank==='function'?_roleRank(bb):0); if(pa!==pb)return pb-pa; return a.localeCompare(bb); });
+  var html='<option value="">'+_mt('— 직원 선택 —','— Select employee —','— Selecciona —')+'</option>';
+  roles.forEach(function(role){
+    html+='<optgroup label="'+escHtml(role)+'">';
+    grouped[role].sort(function(a,bb){return String(a.name).localeCompare(String(bb.name));}).forEach(function(e){
+      var nm=escHtml(e.name);
+      var seld=(preselectName && String(e.name).trim().toLowerCase()===String(preselectName).trim().toLowerCase())?' selected':'';
+      html+='<option value="'+nm+'"'+seld+'>'+nm+'</option>';
+    });
+    html+='</optgroup>';
+  });
+  sel.innerHTML=html;
+}
+
+/* 최근 부여한 상점 (취소 가능) */
+function _meritRenderRecent(){
+  var box=document.getElementById('kmMeritRecent'); if(!box) return;
+  var myName=(me&&me.name)||'';
+  var mine=(window.MGR_BONUS||[]).filter(function(a){return a&&a.to&&(a.kind==='owner'||a.by===myName);})
+            .sort(function(a,bb){return (bb.ts||0)-(a.ts||0);}).slice(0,8);
+  if(!mine.length){ box.innerHTML='<div class="kmmr-empty">'+_mt('최근 부여한 상점이 없습니다','No recent merits','Sin méritos recientes')+'</div>'; return; }
+  box.innerHTML=mine.map(function(a){
+    var bn=(BRANCHES.find(function(x){return x.id===a.branch;})||{});
+    var bname=bn[LANG]||bn.ko||a.branch||'';
+    var when=''; try{ var d=new Date(a.ts); when=(d.getMonth()+1)+'/'+d.getDate(); }catch(_){}
+    return '<div class="kmmr-row"><span class="kmmr-main">⭐ +'+a.points+' <b>'+escHtml(a.to)+'</b> <small>'+escHtml(bname)+(when?' · '+when:'')+'</small></span>'
+      +'<button type="button" class="kmrr-undo" data-branch="'+escHtml(a.branch)+'" data-id="'+escHtml(a.id)+'">'+_mt('취소','Undo','Deshacer')+'</button></div>';
+  }).join('');
+}
+
+/* 모달 열기/닫기 */
+function openMeritModal(prefillName, prefillBranch){
+  if(!(typeof isOwner==='function'&&isOwner())) return;
+  injectOwnerMeritUI();
+  var modal=document.getElementById('kmMeritModal'); if(!modal) return;
+  var brSel=document.getElementById('kmMeritBranch');
+  var branch=prefillBranch||(typeof DASH_BRANCH!=='undefined'&&DASH_BRANCH)||((BRANCHES[0]&&BRANCHES[0].id)||'');
+  if(brSel){ brSel.value=branch; if(!brSel.value&&BRANCHES[0]){ brSel.value=BRANCHES[0].id; } branch=brSel.value; }
+  document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(b){ b.classList.toggle('on', b.dataset.p==='5'); });
+  var reason=document.getElementById('kmMeritReason'); if(reason) reason.value='';
+  _meritLoadEmployees(branch, prefillName||'');
+  _meritRenderRecent();
+  modal.style.display='flex';
+}
+function closeMeritModal(){ var m=document.getElementById('kmMeritModal'); if(m) m.style.display='none'; }
+
+/* 제출 */
+async function submitMerit(){
+  if(!(typeof isOwner==='function'&&isOwner())){ alert(_mt('오너만 가능','Owner only','Solo dueño')); return; }
+  var branch=document.getElementById('kmMeritBranch').value;
+  var to=document.getElementById('kmMeritEmp').value;
+  var onBtn=document.querySelector('#kmMeritPts .km-merit-pt.on');
+  var points=onBtn?+onBtn.dataset.p:0;
+  var reason=(document.getElementById('kmMeritReason').value||'').trim();
+  if(!branch){ alert(_mt('지점을 선택하세요','Select a branch','Selecciona sucursal')); return; }
+  if(!to){ alert(_mt('직원을 선택하세요','Select an employee','Selecciona empleado')); return; }
+  if(!points){ alert(_mt('점수를 선택하세요','Select points','Selecciona puntos')); return; }
+  var award={to:to,points:points,reason:reason||null,by:(me&&me.name)||'OWNER',byRole:(me&&me.role)||'OWNER',branch:branch,ts:Date.now(),kind:'owner'};
+  var btn=document.getElementById('kmMeritSubmit'); var _o=btn.textContent; btn.disabled=true; btn.textContent='…';
+  try{
+    await window.__fb.push(window.__fb.ref(window.__fb.db,'mgrBonus/'+branch),award);
+    try{ launchConfetti(); }catch(_){}
+    try{ showToast('⭐ '+_mt('상점 부여 완료','Merit given','Mérito dado'), to+'  +'+points+'pt'); }catch(_){}
+    closeMeritModal();
+    try{ renderTeamRank(); }catch(_){}
+    try{ renderScoreboard(); }catch(_){}
+  }catch(e){
+    alert(_mt('저장 실패 — 잠시 후 다시 시도','Save failed — try again','Error al guardar')+'\n'+(e&&e.message||e));
+  }finally{ btn.disabled=false; btn.textContent=_o; }
+}
+
+/* 취소(되돌리기) */
+async function undoMerit(branch,id){
+  if(!branch||!id) return;
+  if(!confirm(_mt('이 상점을 취소할까요?','Undo this merit?','¿Deshacer este mérito?'))) return;
+  try{
+    await window.__fb.remove(window.__fb.ref(window.__fb.db,'mgrBonus/'+branch+'/'+id));
+    try{ showToast('↩️ '+_mt('상점 취소됨','Merit undone','Mérito deshecho'),''); }catch(_){}
+    setTimeout(_meritRenderRecent,400);
+    try{ renderTeamRank(); }catch(_){}
+    try{ renderScoreboard(); }catch(_){}
+  }catch(e){ alert(_mt('취소 실패','Undo failed','Error')+': '+(e&&e.message||e)); }
+}
+
+/* UI 주입 (오너만) */
+var _meritUIReady=false;
+function injectOwnerMeritUI(){
+  if(_meritUIReady) return;
+  if(!(typeof isOwner==='function'&&isOwner())) return;
+  _meritUIReady=true;
+  var st=document.createElement('style');
+  st.textContent=
+    '.km-merit-card{--bar:#f59e0b;--bg:linear-gradient(135deg,#fbbf24,#f59e0b);--shadow:rgba(245,158,11,.30);cursor:pointer}'
+   +'.trc-row{position:relative}.trc-pod{position:relative}'
+   +'.trc-star{margin-left:8px;flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid #fcd34d;background:linear-gradient(135deg,#fffbeb,#fef3c7);color:#b45309;font-size:1.05em;cursor:pointer;line-height:1;display:inline-flex;align-items:center;justify-content:center;transition:transform .12s}'
+   +'.trc-star:hover{transform:scale(1.12);background:#fde68a}'
+   +'.trc-star-pod{position:absolute;top:5px;right:5px;width:30px;height:30px;font-size:.95em}'
+   +'.trc-bonus{display:inline-block;font-size:.72em;font-weight:800;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:999px;padding:1px 7px;margin-left:2px;vertical-align:middle}'
+   +'.km-merit-modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:4000;align-items:center;justify-content:center;padding:14px}'
+   +'.km-merit-sheet{background:#fff;border-radius:20px;max-width:440px;width:100%;max-height:92vh;overflow:auto;padding:18px 18px 22px;box-shadow:0 24px 60px rgba(0,0,0,.35);box-sizing:border-box}'
+   +'.km-merit-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}'
+   +'.km-merit-hd h3{font-size:1.16em;font-weight:900;color:#92400e;margin:0}'
+   +'.km-merit-x{background:#f3f4f6;border:0;border-radius:10px;width:34px;height:34px;cursor:pointer;font-size:1.1em}'
+   +'.km-merit-lbl{display:block;font-size:.82em;font-weight:800;color:#475569;margin:12px 2px 5px}'
+   +'.km-merit-input{width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:12px;padding:11px 12px;font-size:1em;font-family:inherit;font-weight:600;color:#0f172a;background:#fff;outline:0}'
+   +'.km-merit-input:focus{border-color:#f59e0b}'
+   +'.km-merit-pts{display:flex;gap:9px}'
+   +'.km-merit-pt{flex:1;border:2px solid #e2e8f0;background:#fff;border-radius:14px;padding:14px 0;font-size:1.25em;font-weight:900;color:#64748b;cursor:pointer;transition:all .12s}'
+   +'.km-merit-pt.on{border-color:#f59e0b;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#fff;box-shadow:0 8px 20px rgba(245,158,11,.32)}'
+   +'.km-merit-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:7px}'
+   +'.km-merit-chip{border:1.5px solid #e2e8f0;background:#f8fafc;border-radius:999px;padding:7px 12px;font-size:.84em;font-weight:700;color:#475569;cursor:pointer}'
+   +'.km-merit-chip:hover{border-color:#f59e0b;color:#b45309;background:#fffbeb}'
+   +'.km-merit-submit{margin-top:16px;width:100%;border:0;border-radius:14px;padding:15px;font-size:1.08em;font-weight:900;color:#fff;background:linear-gradient(135deg,#f59e0b,#d97706);cursor:pointer;box-shadow:0 10px 26px rgba(217,119,6,.35)}'
+   +'.km-merit-submit:disabled{opacity:.6;cursor:default}'
+   +'.km-merit-recent-hd{margin:20px 2px 8px;font-size:.82em;font-weight:800;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:14px}'
+   +'.kmmr-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #f8fafc}'
+   +'.kmmr-main{font-size:.9em;color:#334155}.kmmr-main small{color:#94a3b8;font-weight:600}'
+   +'.kmrr-undo{flex:0 0 auto;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:8px;padding:5px 10px;font-size:.8em;font-weight:700;cursor:pointer}'
+   +'.kmmr-empty{font-size:.86em;color:#cbd5e1;padding:10px 0}';
+  document.head.appendChild(st);
+  var acts=document.getElementById('dashActions');
+  if(acts&&!document.getElementById('kmMeritCard')){
+    var card=document.createElement('a');
+    card.id='kmMeritCard'; card.className='dash-action km-merit-card';
+    card.innerHTML='<div class="ic-wrap">⭐</div><div><div class="nm">'+_mt('사장님 상점 주기','Owner Merit','Mérito del dueño')
+      +'</div><div class="ds">'+_mt('직원에게 상점 점수 (오너 전용)','Give merit points (owner only)','Dar puntos (solo dueño)')+'</div></div>';
+    card.addEventListener('click',function(){ openMeritModal('',''); });
+    acts.insertBefore(card,acts.firstChild);
+  }
+  if(!document.getElementById('kmMeritModal')){
+    var CHIPS=[
+      {ko:'솔선수범',en:'Above & beyond',es:'Excepcional'},
+      {ko:'친절 응대',en:'Great service',es:'Buen servicio'},
+      {ko:'청결·정리',en:'Clean & tidy',es:'Limpieza'},
+      {ko:'매출 기여',en:'Boosted sales',es:'Más ventas'},
+      {ko:'이달의 모범',en:'Model of month',es:'Modelo del mes'}
+    ];
+    var chipsHtml=CHIPS.map(function(c){ var tx=_mt(c.ko,c.en,c.es); return '<button type="button" class="km-merit-chip" data-r="'+escHtml(tx)+'">'+escHtml(tx)+'</button>'; }).join('');
+    var brOpts=(BRANCHES||[]).map(function(b){ return '<option value="'+b.id+'">'+escHtml(b[LANG]||b.ko||b.id)+'</option>'; }).join('');
+    var wrap=document.createElement('div');
+    wrap.id='kmMeritModal'; wrap.className='km-merit-modal';
+    wrap.innerHTML=
+      '<div class="km-merit-sheet">'
+      +'<div class="km-merit-hd"><h3>⭐ '+_mt('사장님 상점 주기','Owner Merit','Mérito del dueño')+'</h3><button type="button" class="km-merit-x" id="kmMeritClose">✕</button></div>'
+      +'<label class="km-merit-lbl">'+_mt('지점','Branch','Sucursal')+'</label>'
+      +'<select id="kmMeritBranch" class="km-merit-input">'+brOpts+'</select>'
+      +'<label class="km-merit-lbl">'+_mt('직원','Employee','Empleado')+'</label>'
+      +'<select id="kmMeritEmp" class="km-merit-input"></select>'
+      +'<label class="km-merit-lbl">'+_mt('상점 점수','Merit points','Puntos')+'</label>'
+      +'<div id="kmMeritPts" class="km-merit-pts"><button type="button" class="km-merit-pt" data-p="3">+3</button><button type="button" class="km-merit-pt on" data-p="5">+5</button><button type="button" class="km-merit-pt" data-p="10">+10</button></div>'
+      +'<label class="km-merit-lbl">'+_mt('이유 (선택)','Reason (optional)','Motivo (opcional)')+'</label>'
+      +'<div id="kmMeritChips" class="km-merit-chips">'+chipsHtml+'</div>'
+      +'<input id="kmMeritReason" class="km-merit-input" placeholder="'+_mt('이유 직접 입력…','Type a reason…','Escribe…')+'">'
+      +'<button type="button" id="kmMeritSubmit" class="km-merit-submit">⭐ '+_mt('상점 주기','Give merit','Dar mérito')+'</button>'
+      +'<div class="km-merit-recent-hd">'+_mt('최근 부여한 상점','Recent merits','Méritos recientes')+'</div>'
+      +'<div id="kmMeritRecent" class="km-merit-recent"></div>'
+      +'</div>';
+    document.body.appendChild(wrap);
+    document.getElementById('kmMeritClose').addEventListener('click',closeMeritModal);
+    wrap.addEventListener('click',function(e){ if(e.target===wrap) closeMeritModal(); });
+    document.getElementById('kmMeritBranch').addEventListener('change',function(e){ _meritLoadEmployees(e.target.value,''); });
+    document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(b){ b.addEventListener('click',function(){ document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(x){x.classList.remove('on');}); b.classList.add('on'); }); });
+    document.querySelectorAll('#kmMeritChips .km-merit-chip').forEach(function(c){ c.addEventListener('click',function(){ var r=document.getElementById('kmMeritReason'); if(r) r.value=c.dataset.r||''; }); });
+    document.getElementById('kmMeritSubmit').addEventListener('click',submitMerit);
+  }
+}
+
+/* ⭐버튼 / 취소버튼 위임 */
+document.addEventListener('click',function(ev){
+  var star=ev.target.closest&&ev.target.closest('.trc-star');
+  if(star){ ev.preventDefault(); ev.stopPropagation(); openMeritModal(star.dataset.name||'',star.dataset.branch||''); return; }
+  var undo=ev.target.closest&&ev.target.closest('.kmrr-undo');
+  if(undo){ ev.preventDefault(); undoMerit(undo.dataset.branch||'',undo.dataset.id||''); return; }
+},true);
+
+window.openMeritModal=openMeritModal;
+window.subscribeMgrBonus=subscribeMgrBonus;
+
+/* init — auth + me 준비되면 구독 & (오너면) UI 주입 */
+(function _meritInit(){
+  try{
+    if(window.__fb && typeof me!=='undefined' && me && me.name){
+      try{ subscribeMgrBonus(); }catch(e){ console.warn('[merit] sub init',e); }
+      try{ injectOwnerMeritUI(); }catch(e){ console.warn('[merit] ui init',e); }
+      return;
+    }
+  }catch(_){}
+  setTimeout(_meritInit,700);
+})();
 </script>
 </body>
 </html>
