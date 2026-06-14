@@ -1358,8 +1358,12 @@ button{font-family:inherit;cursor:pointer}
       <div class="hint" id="aBranchHint">선택한 지점의 직원만 담당자 목록에 노출됩니다</div>
     </div>
     <div class="field"><label id="aToLbl">① 담당자</label>
-      <select id="aTo"><option value="" id="aToDefault">— 직원 선택 —</option></select>
-      <div class="hint" id="aToHint">또는 본 지점 전체에 배정 가능</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="aTo" style="flex:1"><option value="" id="aToDefault">— 직원 선택 —</option></select>
+        <button type="button" id="aAddTo" onclick="addMultiAssignee()" title="여러 명에게 각자 발송 — 직원 골라 ➕ 추가" style="background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:0 12px;font-size:.85em;font-weight:800;cursor:pointer;white-space:nowrap;flex-shrink:0">➕ 추가</button>
+      </div>
+      <div id="aMultiTo" style="display:none;flex-wrap:wrap;gap:6px;margin-top:7px"></div>
+      <div class="hint" id="aToHint">또는 본 지점 전체에 배정 가능 · ➕추가로 여러 명에게 각자 발송</div>
     </div>
     <div class="field"><label id="aCatLbl">② 카테고리</label>
       <div style="display:flex;gap:4px;align-items:stretch;flex-wrap:wrap">
@@ -9710,6 +9714,7 @@ async function openAssignModal(presetCat){
   // 특별 지시 모드 초기화 (default OFF)
   if (QUICK_MODE) { QUICK_MODE = true; toggleQuickMode(); } // OFF 로 복귀
   document.getElementById('aName').value = '';
+  MULTI_ASSIGNEES = []; try { renderMultiAssignees(); } catch(_){}
   await populateTaskTemplates();
   const tpl = document.getElementById('aNameTpl'); if (tpl) tpl.value = '';
   document.getElementById('aDeadline').value = '';   // 🚫 시간 제한 제거 — 데드라인 자동 채우기 안 함
@@ -9879,6 +9884,23 @@ function toggleQuickMode(){
 }
 window.toggleQuickMode = toggleQuickMode;
 
+// 👥 여러 명에게 각자 발송 — 담당자 드롭다운에서 골라 ➕추가 하면 칩으로 담김.
+let MULTI_ASSIGNEES = [];
+function renderMultiAssignees(){
+  const box = document.getElementById('aMultiTo');
+  if (!box) return;
+  if (!MULTI_ASSIGNEES.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='flex';
+  box.innerHTML = MULTI_ASSIGNEES.map(n => `<span style="display:inline-flex;align-items:center;gap:5px;background:#e8f5e9;border:1px solid #a5d6a7;color:#1b5e20;border-radius:14px;padding:3px 9px;font-size:.82em;font-weight:700">👤 ${escHtml(n)}<span onclick="removeMultiAssignee('${String(n).replace(/'/g,"\\'")}')" style="cursor:pointer;color:#c62828;font-weight:900">×</span></span>`).join('');
+}
+window.addMultiAssignee = function(){
+  const v = (document.getElementById('aTo')||{}).value;
+  if (!v || v === '*'){ alert(LANG==='en'?'Pick a specific employee first':LANG==='es'?'Elige un empleado primero':'먼저 직원을 선택하세요'); return; }
+  if (!MULTI_ASSIGNEES.includes(v)) MULTI_ASSIGNEES.push(v);
+  renderMultiAssignees();
+};
+window.removeMultiAssignee = function(n){ MULTI_ASSIGNEES = MULTI_ASSIGNEES.filter(x => x !== n); renderMultiAssignees(); };
+
 async function sendAssign(){
   // ⚡ 특별 지시 모드: 카테고리/체크리스트 우회 — 단순 task 1개 발송
   if (QUICK_MODE) {
@@ -9955,7 +9977,7 @@ async function sendAssign(){
     const tplFallback = (document.getElementById('tplNewName')?.value || '').trim();
     name = inlineFallback || tplFallback || '업무';
   }
-  if (!to && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
+  if (!to && !MULTI_ASSIGNEES.length && !STAGE_MODE_CATS.includes(cat)) { alert('담당자를 선택하세요.'); return; }
   // 장소가 선택돼 있으면 카테고리 무관하게 업무명 앞에 [장소] prefix 를 붙이고
   // task.place 필드로도 저장해 카드·매니저 뷰·채팅 자동 공유에서 같은
   // 라벨로 노출되게 한다.
@@ -10142,36 +10164,37 @@ async function sendAssign(){
     checklist = pickedItems.map(it => ({ name: it.name, done: false }));
   }
   const path = 'tasks/'+getAssignTargetBranch()+'/'+todayStr();
-  const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
-  await window.__fb.set(r, {
-    name, nameTr,
-    deadline, category: cat, requirePhoto: photo,
-    assignedTo: to === '*' ? '*' : to,
-    from: me.name, fromRole: me.role,
-    createdAt: Date.now(),
-    note: note || null,
-    noteTr: noteTr || null,
-    checklist: checklist,
-    stageDeadlines: stageDeadlines || null,
-    // 장소 + 매니저 첨부 사진/메모 — 모든 카테고리에서 함께 저장.
-    // 이전엔 stage-mode 와 quick-mode 에서만 저장돼서 일반 카테고리
-    // (유통기한, 청결, 진열 단일 등)에선 매니저가 사진 올려도 사라졌음.
-    place: place || null,
-    locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
-    locationNote: window.LOC_NOTE || null,
-    // 💎 업무 강도 포인트 — 매니저가 1/2/3 중 선택. 완료 시 활동 순위에 그 점수
-    // 가 적립. 미지정(레거시) task 는 leaderboard 가 1점으로 기본 처리.
-    points: getAssignPoints(),
-    // 📦 벤더 (Ordering Products 카테고리에서 선택했을 때만) — task 카드에
-    // 그 벤더 이름이 노출되어 직원이 어느 거래처 주문서를 작성할지 명확.
-    vendor: (document.getElementById('aVendor')?.value || null) || null,
-    // 🆕 2026-05-20 zone picker 로 선택한 도면 zone ID — Manager View 히트맵에
-    // 정확한 위치 매핑됨 (텍스트 fuzzy match 불필요).
-    zoneId: (typeof __pickedZoneId === 'number' ? __pickedZoneId : null),
-  });
+  // 👥 다중 담당자면 각자에게 별도 task 발송, 아니면 단일.
+  const _recipients = (MULTI_ASSIGNEES && MULTI_ASSIGNEES.length) ? MULTI_ASSIGNEES.slice() : [to];
+  const _vendorVal = (document.getElementById('aVendor')?.value || null) || null;
+  const _zoneVal = (typeof __pickedZoneId === 'number' ? __pickedZoneId : null);
+  for (const _rcpt of _recipients) {
+    const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
+    await window.__fb.set(r, {
+      name, nameTr,
+      deadline, category: cat, requirePhoto: photo,
+      assignedTo: _rcpt === '*' ? '*' : _rcpt,
+      assignedToId: _rcpt === '*' ? null : _rcpt,
+      from: me.name, fromRole: me.role,
+      createdAt: Date.now(),
+      note: note || null,
+      noteTr: noteTr || null,
+      // 각 담당자별 체크리스트는 독립 복사본 (done 상태가 서로 안 섞이게)
+      checklist: checklist ? checklist.map(c => Object.assign({}, c)) : null,
+      stageDeadlines: stageDeadlines || null,
+      place: place || null,
+      locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
+      locationNote: window.LOC_NOTE || null,
+      points: getAssignPoints(),
+      vendor: _vendorVal,
+      zoneId: _zoneVal,
+    });
+    // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
+    sendTaskChatBackup(_rcpt, name, deadline);
+  }
+  const _sentN = _recipients.length;
+  MULTI_ASSIGNEES = []; try { renderMultiAssignees(); } catch(_){}
   __pickedZoneId = null;  // 다음 발사를 위해 초기화
-  // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
-  sendTaskChatBackup(to, name, deadline);
   if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 보내기'; }
   // Optionally save this task name as a reusable template for the user's branch
   const saveTpl = document.getElementById('aSaveTpl');
@@ -10180,7 +10203,7 @@ async function sendAssign(){
     if (!exists) { try { await saveBranchTemplate(me.branch, { name, category: cat }); } catch(e){} }
   }
   closeOv('assignOv');
-  alert('✅ 업무 지시 전송 완료\n· 담당자 화면에 즉시 표시됩니다 (KO/EN/ES 자동 번역)');
+  alert((_sentN > 1 ? `✅ ${_sentN}명에게 각자 발송 완료` : '✅ 업무 지시 전송 완료') + '\n· 담당자 화면에 즉시 표시됩니다 (KO/EN/ES 자동 번역)');
 }
 
 // ================= UTIL =================
