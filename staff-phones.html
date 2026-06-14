@@ -137,6 +137,8 @@ const GLOBAL_RE=/OWNER|EXECUTIVE|오너|사장|대표|전무/i;
 // 임원·오너 이름(역할 문자열이 MANAGER 등으로 저장돼 있어도 전 지점 인정) — tasks.html EXECUTIVE_NAMES 와 동일 + DJ
 const EXEC_NAMES=['B.H.K','BHK','B H K','비에이치케이','SUN KIM','SUNKIM','SUN.KIM','선킴','썬킴','DJ'];
 const isExecName=(nm)=>{ const k=String(nm||'').replace(/\s+/g,'').toUpperCase(); return EXEC_NAMES.some(n=>n.replace(/\s+/g,'').toUpperCase()===k); };
+// 오너·임원 전화번호(자릿수만) — 폰 로그인 시 가장 확실한 전역 판정. B.H.K / DJ
+const GLOBAL_PHONES = { '13059264744':1, '19544945025':1 };
 
 function fillSelects(){
   const bsel = document.getElementById('inBranch');
@@ -238,20 +240,30 @@ applyLang();
 let _loadedOnce = false;
 async function gateAndLoad(){
   if (_loadedOnce) return; _loadedOnce = true;
-  let role = '';
+  let role = '', myPhone = '';
   try {
     const u = auth.currentUser;
-    if (u){ const tok = await u.getIdToken(); const r = await fetch(`${FB_DB}/users/${u.uid}.json?auth=${encodeURIComponent(tok)}`, { cache:'no-store' }); if (r.ok){ const d = await r.json(); role = (d && d.role) || ''; MY_BRANCH = (d && d.branch) || ''; MY_NAME = (d && d.name) || ''; } }
+    if (u){ myPhone = u.phoneNumber || ''; const tok = await u.getIdToken(); const r = await fetch(`${FB_DB}/users/${u.uid}.json?auth=${encodeURIComponent(tok)}`, { cache:'no-store' }); if (r.ok){ const d = await r.json(); role = (d && d.role) || ''; MY_BRANCH = (d && d.branch) || ''; MY_NAME = (d && d.name) || ''; if (!myPhone && d && d.phone) myPhone = d.phone; } }
   } catch(_){}
+  const phoneGlobal = !!GLOBAL_PHONES[digitsKey(myPhone)];
   const ALLOWED = /OWNER|EXECUTIVE|MANAGER|오너|사장|대표|전무|점장|매니저/i;   // 부매니저(…MANAGER) 포함, 슈퍼바이저 제외
-  if (!ALLOWED.test(String(role)) && !isExecName(MY_NAME)){
+  if (!ALLOWED.test(String(role)) && !isExecName(MY_NAME) && !phoneGlobal){
     const w = document.querySelector('.wrap');
     if (w) w.innerHTML = '<div style="max-width:520px;margin:60px auto;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:30px;text-align:center;color:#334155"><div style="font-size:2.4em">🔒</div><div style="font-weight:800;font-size:1.05em;margin:10px 0 6px">접근 권한 없음 / No access</div><div style="font-size:.9em;color:#64748b;line-height:1.6">이 페이지는 <b>부매니저 이상</b>만 사용할 수 있습니다.<br>Assistant Manager and above only.</div><div style="margin-top:18px"><a href="apps.html" style="color:#0277BD;font-weight:700">← apps</a></div></div>';
     return;
   }
   MY_ROLE = role;
-  MY_GLOBAL = GLOBAL_RE.test(String(role)) || MY_BRANCH === '*' || isExecName(MY_NAME);
+  MY_GLOBAL = GLOBAL_RE.test(String(role)) || MY_BRANCH === '*' || isExecName(MY_NAME) || phoneGlobal;
   fillSelects();   // 권한 확정 후 지점 드롭다운 재구성 (일반 매니저=본인 지점만)
+  // 🔎 본인 권한 진단 — 왜 본인지점/전지점인지 즉시 보이게 (디버그 겸 정보)
+  try {
+    const list = document.getElementById('list');
+    if (list){
+      let dg = document.getElementById('diag');
+      if (!dg){ dg = document.createElement('div'); dg.id='diag'; dg.style.cssText='font-size:.72em;color:#94a3b8;margin:0 0 8px;font-weight:600;line-height:1.4'; list.parentNode.insertBefore(dg, list); }
+      dg.textContent = `🔎 ${MY_NAME||'(이름?)'} · ${MY_ROLE||'(역할?)'} · ${MY_BRANCH||'(지점?)'} · ${MY_GLOBAL?'전역(전 지점 보기)':'본인 지점만'}`;
+    }
+  } catch(_){}
   loadRoster();
 }
 onAuthStateChanged(auth, (u) => { if (u) gateAndLoad(); });
