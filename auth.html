@@ -950,7 +950,8 @@ onAuthStateChanged(auth, async (user) => {
           if (__rv) {
             const __up2 = Object.assign({}, existing, {
               status: 'approved',
-              name: existing.name || __rv.name,
+              // 이름이 비었거나 전화번호 placeholder 면 명단(roster)의 실제 이름 사용
+              name: (existing.name && existing.name !== user.phoneNumber && existing.name !== String(user.phoneNumber||'').replace(/\D/g,'')) ? existing.name : (__rv.name || existing.name),
               branch: __rv.branch || existing.branch,
               role: __rv.role || existing.role || null,
               approvedAt: existing.approvedAt || Date.now(),
@@ -961,6 +962,25 @@ onAuthStateChanged(auth, async (user) => {
           }
         }
       } catch(_){}
+    }
+    // 🩹 이름이 전화번호로 남은 직원 교정 (이미 승인된 케이스 포함) — 명단 등록 전 먼저
+    //    로그인해 name=전화번호로 생성된 직원. 명단(roster) 실제 이름으로 교정해
+    //    업무(이름 기준) 매칭 복구. 이름만 변경 → status/role/branch 불변이라 규칙 통과.
+    if (!boot && user.phoneNumber) {
+      const __phd = String(user.phoneNumber).replace(/\D/g, '');
+      if (!existing.name || existing.name === user.phoneNumber || existing.name === __phd) {
+        try {
+          const __rr3 = await fetch(cfg.databaseURL + '/phoneRoster/' + __phd + '.json?auth=' + encodeURIComponent(__tok), { cache:'no-store' });
+          if (__rr3.ok) {
+            const __rv3 = await __rr3.json();
+            if (__rv3 && __rv3.name && __rv3.name !== existing.name) {
+              const __up3 = Object.assign({}, existing, { name: __rv3.name });
+              const __ur3 = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up3) });
+              if (__ur3.ok) existing = __up3;
+            }
+          }
+        } catch(_){}
+      }
     }
     __currentProfile = existing;
   }
