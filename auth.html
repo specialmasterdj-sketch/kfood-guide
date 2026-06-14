@@ -855,13 +855,20 @@ onAuthStateChanged(auth, async (user) => {
   // 있어(무한 로딩), 로그인 완료 경로를 REST + 명시 토큰으로 처리한다.
   let __tok = '';
   try { __tok = await user.getIdToken(); } catch(_){}
-  const __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok);
+  let __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok);
+  // 🔁 전화 인증 직후 토큰이 RTDB 에 전파되기 전이라 첫 요청이 401/네트워크로 실패하던 케이스 →
+  // 잠깐 후 토큰을 강제 갱신하며 재시도. (코드를 두 번 받아야 입장되던 문제 해결)
   let snap, getErr = null;
-  try {
-    const __r = await fetch(__uurl, { cache:'no-store' });
-    if (__r.ok) { const v = await __r.json(); snap = { exists: () => v != null, val: () => v }; }
-    else getErr = 'HTTP ' + __r.status;
-  } catch(e){ getErr = e.message || e; }
+  for (let __a = 0; __a < 3; __a++) {
+    getErr = null;
+    try {
+      const __r = await fetch(__uurl, { cache:'no-store' });
+      if (__r.ok) { const v = await __r.json(); snap = { exists: () => v != null, val: () => v }; break; }
+      getErr = 'HTTP ' + __r.status;
+    } catch(e){ getErr = e.message || e; }
+    await new Promise(r => setTimeout(r, 400 + __a*250));
+    try { __tok = await user.getIdToken(true); __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok); } catch(_){}
+  }
   if (getErr) {
     clearTimeout(__loadingGuard);
     show('signinView');
@@ -895,13 +902,23 @@ onAuthStateChanged(auth, async (user) => {
       approvedAt: eff ? Date.now() : null,
       approvedBy: boot ? 'bootstrap' : (roster ? 'roster' : null),
     };
-    try {
-      const __pr = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
-      if (!__pr.ok) throw new Error('HTTP ' + __pr.status);
-    } catch(e){
+    // 🔁 생성도 동일하게 재시도 — 인증 직후 토큰 전파 지연으로 첫 PUT 이 실패하면
+    // 로그인 화면으로 튕겨 두 번째 코드를 받아야 했음.
+    let __putErr = null, __putOk = false;
+    for (let __b = 0; __b < 3; __b++) {
+      __putErr = null;
+      try {
+        const __pr = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
+        if (__pr.ok) { __putOk = true; break; }
+        __putErr = 'HTTP ' + __pr.status;
+      } catch(e){ __putErr = e.message || e; }
+      await new Promise(r => setTimeout(r, 400 + __b*250));
+      try { __tok = await user.getIdToken(true); __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok); } catch(_){}
+    }
+    if (!__putOk) {
       clearTimeout(__loadingGuard);
       show('signinView');
-      showError('계정 생성 실패: ' + (e.message || e) + ' — Firebase 규칙 또는 네트워크 문제일 수 있습니다.');
+      showError('계정 생성 실패: ' + (__putErr || '') + ' — Firebase 규칙 또는 네트워크 문제일 수 있습니다.');
       return;
     }
     __currentProfile = profile;
