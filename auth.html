@@ -948,7 +948,7 @@ onAuthStateChanged(auth, async (user) => {
     __currentProfile = existing;
   }
   // REST 로 결정된 profile 을 즉시 표시(무한로딩 방지). 라이브 승인은 아래 onValue(best-effort).
-  function _finishLogin(prof){
+  async function _finishLogin(prof){
     if (prof) __currentProfile = prof;
     if (!__currentProfile) {
       // 🚨 레코드 없음 — set() 실패했거나 RTDB 규칙으로 막힘. 무한 spinner
@@ -978,7 +978,7 @@ onAuthStateChanged(auth, async (user) => {
       const presetIdentity = _captureLoginIdentity();
       // If user has an existing personal chat.me name and is on a shared
       // account, keep their personal name. Otherwise use the profile name.
-      const name = (presetIdentity && presetIdentity.name)
+      let name = (presetIdentity && presetIdentity.name)
         || ((isSharedAccount && existing && existing.name && existing.name !== 'Staff' && existing.name !== 'Manager')
             ? existing.name
             : profileName);
@@ -994,6 +994,22 @@ onAuthStateChanged(auth, async (user) => {
         || __currentProfile.role
         || (existing && existing.role)
         || '';
+      // 스케줄표에 비슷한 이름(대소문자·띄어쓰기만 다른)이 있으면 그 정식 이름으로 보정 →
+      // 전화 로그인 직원의 점수·스케줄·업무기록이 기존 이름과 끊기지 않고 이어짐.
+      try {
+        if (branch && name) {
+          const _tk = __tok || (await user.getIdToken());
+          const sr = await fetch(cfg.databaseURL + '/schedules/' + branch + '.json?auth=' + encodeURIComponent(_tk), { cache:'no-store' });
+          if (sr.ok) {
+            const sd = await sr.json();
+            const emps = (sd && Array.isArray(sd.employees)) ? sd.employees : [];
+            const _n = s => String(s||'').toLowerCase().replace(/\s+/g,' ').trim();
+            const tgt = _n(name);
+            const hit = emps.find(e => e && _n(e.name) === tgt);
+            if (hit && hit.name && hit.name !== name) name = hit.name;   // 스케줄표 정식 이름으로
+          }
+        }
+      } catch(_){}
       const chatMe = Object.assign({}, existing || {}, {
         name, branch, role,
         email: user?.email || (existing && existing.email) || '',   // 다음 방문 시 prefill 용
