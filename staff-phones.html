@@ -127,12 +127,21 @@ let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'
 if (!I18N[LANG]) LANG = 'ko';
 const T = () => I18N[LANG];
 const roleLabel = (role) => ({ '':T().rStaff, SUPERVISOR:T().rSup, ASSISTANT_MANAGER:T().rAsst, MANAGER:T().rMgr })[role||''] || (role||T().rStaff);
+// 🔒 본인 지점 제한 — 오너·임원(또는 branch '*')만 전 지점, 그 외 매니저는 본인 지점만
+let MY_ROLE='', MY_BRANCH='', MY_GLOBAL=false;
+const GLOBAL_RE=/OWNER|EXECUTIVE|오너|사장|대표|전무/i;
 
 function fillSelects(){
   const bsel = document.getElementById('inBranch');
   const bv = bsel.value;
-  bsel.innerHTML = '<option value="">'+T().branchDef+'</option>' + BRANCHES.map(b=>`<option value="${b.id}">${b.label}</option>`).join('');
-  bsel.value = bv;
+  if (!MY_GLOBAL && MY_BRANCH){
+    const mb = BRANCHES.find(b=>b.id===MY_BRANCH);
+    bsel.innerHTML = mb ? `<option value="${mb.id}">${mb.label}</option>` : '<option value="">'+T().branchDef+'</option>';
+    bsel.value = MY_BRANCH; bsel.disabled = true;
+  } else {
+    bsel.innerHTML = '<option value="">'+T().branchDef+'</option>' + BRANCHES.map(b=>`<option value="${b.id}">${b.label}</option>`).join('');
+    bsel.value = bv; bsel.disabled = false;
+  }
   const rsel = document.getElementById('inRole');
   const rv = rsel.value;
   rsel.innerHTML = `<option value="">${T().rStaff}</option><option value="SUPERVISOR">${T().rSup}</option><option value="ASSISTANT_MANAGER">${T().rAsst}</option><option value="MANAGER">${T().rMgr}</option>`;
@@ -158,7 +167,7 @@ async function authQ(){ try { const u=auth.currentUser; if(u){ const t=await u.g
 window.addStaff = async function(){
   const name=(document.getElementById('inName').value||'').trim();
   const phoneRaw=(document.getElementById('inPhone').value||'').trim();
-  const branch=document.getElementById('inBranch').value;
+  const branch = MY_GLOBAL ? document.getElementById('inBranch').value : (MY_BRANCH || document.getElementById('inBranch').value);
   const role=document.getElementById('inRole').value||'';
   const msg=document.getElementById('addMsg'); msg.className='msg';
   if(!name){ msg.textContent=T().errName; msg.className='msg err'; return; }
@@ -193,7 +202,7 @@ window.loadRoster = async function(){
     if(!entries.length){ list.innerHTML='<div class="empty">'+T().empty+'</div>'; return; }
     const byBranch={}; entries.forEach(([k,v])=>{ const b=v.branch||'(?)'; (byBranch[b]=byBranch[b]||[]).push([k,v]); });
     let html='';
-    BRANCHES.forEach(b => { const rows=byBranch[b.id]; if(!rows||!rows.length) return;
+    (MY_GLOBAL ? BRANCHES : BRANCHES.filter(b=>b.id===MY_BRANCH)).forEach(b => { const rows=byBranch[b.id]; if(!rows||!rows.length) return;
       rows.sort((a,b)=>(a[1].name||'').localeCompare(b[1].name||''));
       html += `<div class="branch-group"><div class="bh">📍 ${b.label} (${rows.length})</div>`;
       rows.forEach(([k,v]) => { const rl=roleLabel(v.role||'');
@@ -216,7 +225,7 @@ async function gateAndLoad(){
   let role = '';
   try {
     const u = auth.currentUser;
-    if (u){ const tok = await u.getIdToken(); const r = await fetch(`${FB_DB}/users/${u.uid}.json?auth=${encodeURIComponent(tok)}`, { cache:'no-store' }); if (r.ok){ const d = await r.json(); role = (d && d.role) || ''; } }
+    if (u){ const tok = await u.getIdToken(); const r = await fetch(`${FB_DB}/users/${u.uid}.json?auth=${encodeURIComponent(tok)}`, { cache:'no-store' }); if (r.ok){ const d = await r.json(); role = (d && d.role) || ''; MY_BRANCH = (d && d.branch) || ''; } }
   } catch(_){}
   const ALLOWED = /OWNER|EXECUTIVE|MANAGER|오너|사장|대표|전무|점장|매니저/i;   // 부매니저(…MANAGER) 포함, 슈퍼바이저 제외
   if (!ALLOWED.test(String(role))){
@@ -224,6 +233,9 @@ async function gateAndLoad(){
     if (w) w.innerHTML = '<div style="max-width:520px;margin:60px auto;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:30px;text-align:center;color:#334155"><div style="font-size:2.4em">🔒</div><div style="font-weight:800;font-size:1.05em;margin:10px 0 6px">접근 권한 없음 / No access</div><div style="font-size:.9em;color:#64748b;line-height:1.6">이 페이지는 <b>부매니저 이상</b>만 사용할 수 있습니다.<br>Assistant Manager and above only.</div><div style="margin-top:18px"><a href="apps.html" style="color:#0277BD;font-weight:700">← apps</a></div></div>';
     return;
   }
+  MY_ROLE = role;
+  MY_GLOBAL = GLOBAL_RE.test(String(role)) || MY_BRANCH === '*';
+  fillSelects();   // 권한 확정 후 지점 드롭다운 재구성 (일반 매니저=본인 지점만)
   loadRoster();
 }
 onAuthStateChanged(auth, (u) => { if (u) gateAndLoad(); });
