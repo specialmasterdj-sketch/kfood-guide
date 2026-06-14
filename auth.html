@@ -922,6 +922,29 @@ onAuthStateChanged(auth, async (user) => {
         if (__ur.ok) existing = __up;
       } catch (e) { console.warn('bootstrap-upgrade failed:', e); }
     }
+    // 기존 '대기' 레코드인데 이제 전화번호 명단(roster)에 등록됐으면 자동 승인.
+    // 명단 등록 전에 전화로 먼저 로그인해 pending 으로 생긴 기존 직원 구제 (재로그인 1회로 입장).
+    if (!boot && existing.status !== 'approved' && user.phoneNumber) {
+      try {
+        const __rk = String(user.phoneNumber).replace(/\D/g, '');
+        const __rr = await fetch(cfg.databaseURL + '/phoneRoster/' + __rk + '.json?auth=' + encodeURIComponent(__tok), { cache:'no-store' });
+        if (__rr.ok) {
+          const __rv = await __rr.json();
+          if (__rv) {
+            const __up2 = Object.assign({}, existing, {
+              status: 'approved',
+              name: existing.name || __rv.name,
+              branch: __rv.branch || existing.branch,
+              role: __rv.role || existing.role || null,
+              approvedAt: existing.approvedAt || Date.now(),
+              approvedBy: existing.approvedBy || 'roster',
+            });
+            const __ur2 = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up2) });
+            if (__ur2.ok) existing = __up2;
+          }
+        }
+      } catch(_){}
+    }
     __currentProfile = existing;
   }
   // REST 로 결정된 profile 을 즉시 표시(무한로딩 방지). 라이브 승인은 아래 onValue(best-effort).
