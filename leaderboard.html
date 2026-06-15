@@ -1381,8 +1381,11 @@ function buildAndRender(rows, updating, warn){
     ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 12px;margin-bottom:12px;color:#3730a3;font-weight:700;font-size:.82em;line-height:1.45">${escHtml(t('lastMonthFrozen'))}</div>`
     : '';
   const warnBanner = warn ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px 12px;margin-bottom:10px;color:#b91c1c;font-weight:800;font-size:.84em;line-height:1.4">${escHtml(warn)}</div>` : '';
+  // 🔒 2026-06-14 사장님 지시: ACTIVITY RANKING = '전체 순위만'.
+  //   지점별 Store Rankings·Branch MVPs 섹션 제거 (지점 현황이 섞여 보이지 않게).
+  //   지점별로 보려면 상단 'All Branches' 드롭다운에서 지점 선택 → 그 지점 사람만.
   document.getElementById('content').innerHTML =
-    `${warnBanner}${frozenNote}${renderPodium(top3)}${renderBonusTrack(rows)}${renderStoreRank(rows)}${renderBranchMVPs(rows)}${renderRows(rest)}${renderLegend()}`;
+    `${warnBanner}${frozenNote}${renderPodium(top3)}${renderBonusTrack(rows)}${renderRows(rest)}${renderLegend()}`;
 }
 
 // ====== 🎖 매니저/오너 보너스 점수 (2026-06-08) ======
@@ -1579,23 +1582,21 @@ async function loadAll(force){
     if (!force) setTimeout(() => { if (_seq === _lbLoadSeq) loadAll(true); }, 2500);
   };
 
-  // ⚡ Phase 1 (빠름) — 무거운 채팅(메시지 속 base64 사진) 빼고 핵심 점수부터.
-  //   업무·유통기한·보너스만으로 순위를 수 초 내 표시. 채팅은 Phase 2 에서 합산.
+  // 🔒 2026-06-14 사장님 지시: ACTIVITY RANKING 은 '고정 화면'.
+  //   단계식(Phase1→2) 중간 렌더를 제거 — 화면이 도중에 바뀌지 않게 모든 점수
+  //   (업무·유통기한·보너스·채팅)를 한 번에 받고 '딱 한 번만' 그린다.
+  //   (탭 재진입/새로고침은 캐시로 즉시 표시 → 체감 속도는 유지. 자동 갱신 없음.)
   await Promise.all([
     fetchExpiry(agg, since, until),
     fetchTasks(agg, since, until),
     fetchMgrBonus(agg, since, until),
+    fetchChat(agg, since, until),
   ]);
   if (_seq !== _lbLoadSeq) return;
-  if (CORE_FAILS > 0) { _partialFallback(); return; }   // 핵심 지점 실패 → 채팅 생략, 경고+재시도
-  buildAndRender(_rowsFromAgg(), true);   // 핵심 OK → 즉시 표시 (🔄 채팅 반영 중)
-
-  // ⚡ Phase 2 (백그라운드) — 채팅 점수(메시지·사진·좋아요·답글) 합산 후 최종 표시.
-  await fetchChat(agg, since, until);
-  if (_seq !== _lbLoadSeq) return;
+  if (CORE_FAILS > 0) { _partialFallback(); return; }   // 핵심 지점 실패 → 경고 + 재시도
   const rows = _rowsFromAgg();
-  _lbWriteCache(rows);   // 핵심 완결 → 캐시 저장 (채팅 일부 실패는 경미 — 1일 10pt 캡)
-  buildAndRender(rows, false);
+  _lbWriteCache(rows);
+  buildAndRender(rows, false);   // 단 한 번만 렌더 — 도중에 안 바뀜 (고정 화면)
 }
 
 initBranchSel();
