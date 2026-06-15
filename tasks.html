@@ -3742,12 +3742,14 @@ function initials(name){ return name.split(/\s+/).map(w=>w[0]||'').join('').slic
 function fmtTime(ts){ if(!ts)return''; const d=new Date(ts); return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}); }
 
 // ================= INIT =================
-// me.role 이 비어있을 때 schedules 데이터에서 자동 회복 — 매니저(Kendell 등)가
-// chat.me 등록 시 role 비워뒀거나, ITP/캐시로 사라진 경우 schedules 의 본인
-// 엔트리에서 회복. 이미 어떤 role 이든 있으면 사용자 의도 존중하고 그대로 둠.
+// 🆕 2026-06-15 사장님 지시: task 생성 권한은 "반드시 현재 스케줄 표 직급" 기준.
+//   schedules/{branch}/employees 의 본인 role 을 권위로 사용 — me.role(잘못/오래된 값,
+//   예: 실제 cashier 인데 supervisor 로 저장됨)과 달라도 스케줄 값으로 덮어씀. 이래야
+//   연수처럼 직급이 잘못 박힌 직원이 task 발송 권한을 얻지 못함. (오너/임원은 guard 로 제외.)
 let __roleRecoveredFor = '';
 async function _recoverMyRoleFromSchedules(){
   if (!me || !me.name || !me.branch) return;
+  if (typeof isOwner === 'function' && isOwner()) return;   // 오너/임원 권한 보존 (스케줄 역할로 안 덮음)
   const key = me.name + '|' + me.branch;
   if (__roleRecoveredFor === key) return;
   __roleRecoveredFor = key;
@@ -3836,8 +3838,9 @@ function refreshMe(){
   const nm = document.getElementById('meName');
   if (!me) { pill.style.background='#fef3c7'; pill.style.color='#92400e'; av.textContent='?'; av.style.background='#92400e'; nm.textContent='이름 등록 →'; return; }
   pill.style.background='#f0fdf4'; pill.style.color='#1a5c3a'; av.textContent=initials(me.name); av.style.background=colorFor(me.name); nm.textContent=me.name;
-  // me.role 비어있으면 schedules 에서 자동 회복 (fire-and-forget)
-  if (me && me.name && me.branch && !String(me.role||'').trim()) {
+  // 🆕 2026-06-15: 항상 schedules 의 직급으로 me.role 동기화 (task 권한 = 스케줄 직급 기준).
+  //   비어있을 때뿐 아니라 값이 있어도 스케줄과 다르면 스케줄 값으로 교정 → 잘못된 고직급 차단.
+  if (me && me.name && me.branch) {
     _recoverMyRoleFromSchedules();
   }
   const showMgr = canAssignTask();
