@@ -983,9 +983,6 @@ button{font-family:inherit;cursor:pointer}
       </div>
     </div>
 
-    <!-- 🏆 이달의 챔피언 슬라이드 배너 (대시보드 = 첫 화면). 마운트만 두고 page-emp 의 <script> 가 CHAMP.slides 로 렌더. -->
-    <div class="champ-banner-mount"></div>
-
     <!-- 🏆 LIVE 매장 점수판 (전광판 스타일) — 대시보드 최상단 (자극 효과) -->
     <div class="scoreboard" id="scoreboard">
       <div class="sb-header">
@@ -996,6 +993,12 @@ button{font-family:inherit;cursor:pointer}
       <div class="sb-rows" id="sbRows"></div>
       <div class="sb-footer" id="sbFooter">매장별 오늘 누적 점수 — 1위 매장은 🥇 자동 표시</div>
     </div>
+
+    <!-- 🏅 파트별 순위 (정육·스시·K-Food·해산물·농산물) — 점수판 아래 -->
+    <div id="partRank"></div>
+
+    <!-- 🏆 이달의 챔피언 슬라이드 배너 — 점수판·파트순위 아래로 (전무님 2026-06-14). page-emp <script> 가 CHAMP.slides 로 렌더. -->
+    <div class="champ-banner-mount"></div>
 
     <!-- 🚫 2026-05-28 — 오늘 매장 점수 hero 카드 제거 (전무님 요청).
          dashScoreNum / dashRingFg / dashRingPct 채우는 코드는 보존 — 다른 화면에서 사용될 수 있음. -->
@@ -4317,6 +4320,53 @@ function renderScoreboard(){
       el.style.width = (el.dataset.target || '0') + '%';
     });
   }, 100);
+  try { renderPartRank(); } catch(e){ console.warn('[partRank]', e); }
+}
+
+// 🏅 파트별(정육·스시·K-Food·해산물·농산물) 순위 — 그 카테고리 task 완료 점수 합으로 1등~꼴등.
+//    점수판과 같은 TASKS(매니저는 전 지점, 오늘 기준) 사용. taskScore = 항목당/강도 점수.
+function renderPartRank(){
+  const el = document.getElementById('partRank');
+  if (!el) return;
+  const unit = (LANG==='ko')?'점':'pts';
+  const PARTS = [
+    ['정육',   (LANG==='en'?'🥩 Meat':LANG==='es'?'🥩 Carne':'🥩 정육'),        '#d97706'],
+    ['스시',   (LANG==='en'?'🍣 Sushi':LANG==='es'?'🍣 Sushi':'🍣 스시'),       '#c026d3'],
+    ['K-Food', '🍙 K-Food',                                                      '#2563eb'],
+    ['Seafood',(LANG==='en'?'🐟 Seafood':LANG==='es'?'🐟 Mariscos':'🐟 해산물'), '#0891b2'],
+    ['Produce',(LANG==='en'?'🥬 Produce':LANG==='es'?'🥬 Frutas/Verd.':'🥬 농산물'),'#16a34a'],
+  ];
+  const agg = {}; PARTS.forEach(([c]) => agg[c] = {});
+  (TASKS || []).forEach(t => {
+    if (!t || !t.completedAt || !t.completedBy) return;
+    if (!(t.category in agg)) return;
+    const s = taskScore(t);
+    if (s > 0) agg[t.category][t.completedBy] = (agg[t.category][t.completedBy] || 0) + s;
+  });
+  const title = LANG==='en'?'🏅 Part rankings':LANG==='es'?'🏅 Ranking por parte':'🏅 파트별 순위';
+  const todayLbl = LANG==='en'?'(today)':LANG==='es'?'(hoy)':'(오늘)';
+  const emptyLbl = LANG==='en'?'No entries yet':LANG==='es'?'Sin registros aún':'아직 없음';
+  let html = `<div style="margin:14px 2px 8px;font-weight:800;font-size:1.02em;color:#1f2937">${title} <span style="font-size:.68em;color:#9ca3af;font-weight:600">${todayLbl}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
+  PARTS.forEach(([cat, label, color]) => {
+    const ranked = Object.entries(agg[cat]).sort((a,b) => b[1]-a[1]);
+    let rows;
+    if (!ranked.length) {
+      rows = `<div style="font-size:.82em;color:#9ca3af;padding:3px 2px">${emptyLbl}</div>`;
+    } else {
+      rows = ranked.map(([nm,s],i) => {
+        const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1);
+        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''}">
+          <span style="width:22px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span>
+          <span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(nm)}</span>
+          <span style="font-weight:900;color:${color};font-size:.92em">${s}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span>
+        </div>`;
+      }).join('');
+    }
+    html += `<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${color};border-radius:10px;padding:9px 12px">
+      <div style="font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label}</div>${rows}</div>`;
+  });
+  html += `</div>`;
+  el.innerHTML = html;
 }
 
 function animateCounter(el, target){
