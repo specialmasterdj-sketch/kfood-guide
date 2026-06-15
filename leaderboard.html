@@ -635,6 +635,20 @@ function fetchT(url, opts, ms){
   return fetch(url, o).then(function(r){ if(timer) clearTimeout(timer); return r; },
                            function(e){ if(timer) clearTimeout(timer); throw e; });
 }
+// ⚡ 2026-06-14 — fetchT + 자동 재시도(2회). 타임아웃/오류면 한 번 더 시도하고, 그래도
+//   실패하면 실패 카운터++ 후 null 반환. loadAll 이 '부분 로드'를 감지해 ① 깨진 숫자를
+//   캐시에 저장하지 않고 ② 경고 + 자동 재시도 하게 함. kind==='chat' 은 가벼운 실패로 분류
+//   (채팅 점수는 1일 10pt 캡이라 순위 영향 작음 → 핵심 순위는 안 막음).
+let CORE_FAILS = 0, CHAT_FAILS = 0;
+function resetLoadStats(){ CORE_FAILS = 0; CHAT_FAILS = 0; }
+async function fetchTR(url, opts, ms, kind){
+  for (let i = 0; i < 2; i++){
+    try { const r = await fetchT(url, opts, ms); if (r && r.ok) return r; }
+    catch(e){ /* 타임아웃/네트워크 → 재시도 */ }
+  }
+  if (kind === 'chat') CHAT_FAILS++; else CORE_FAILS++;
+  return null;
+}
 
 // ============== Branch dropdown ==============
 function initBranchSel(){
@@ -757,8 +771,8 @@ async function fetchExpiry(agg, since, until){
   const branches = (CUR_BRANCH === 'ALL') ? BRANCHES.map(b => b.id) : [CUR_BRANCH];
   await Promise.all(branches.map(async (br) => {
     try {
-      const r = await fetchT(`${FB_DB}/expiry/${br}/products.json${aq}`, { cache:'no-store' }, 9000);
-      if (!r.ok) return;
+      const r = await fetchTR(`${FB_DB}/expiry/${br}/products.json${aq}`, { cache:'no-store' }, 9000);
+      if (!r) return;
       const d = await r.json();
       if (!d) return;
       Object.values(d).forEach(p => {
@@ -794,8 +808,8 @@ async function fetchTasks(agg, since, until){
       // ⚡ 기간 한정 — 시작 날짜키 이후 버킷만 (orderBy $key, index 불필요). 'all' 은 전체.
       const _sk = tasksStartKey();
       const _extra = _sk ? ('orderBy=' + encodeURIComponent('"$key"') + '&startAt=' + encodeURIComponent('"'+_sk+'"')) : '';
-      const r = await fetchT(_fbq(`${FB_DB}/tasks/${br}.json`, aq, _extra), { cache:'no-store' }, 9000);
-      if (!r.ok) return;
+      const r = await fetchTR(_fbq(`${FB_DB}/tasks/${br}.json`, aq, _extra), { cache:'no-store' }, 9000);
+      if (!r) return;
       const tree = await r.json();
       if (!tree) return;
       // tree is { dateString: { taskId: taskObj } }
@@ -862,8 +876,8 @@ async function fetchChat(agg, since, until){
       // ⚡ 기간별 최근 N건만 — push key 시간순이라 limitToLast 로 최신만 받음 (index 불필요).
       const _lim = chatLimit();
       const _extra = _lim ? ('orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=' + _lim) : '';
-      const r = await fetchT(_fbq(`${FB_DB}/chat/messages/${encodeURIComponent(rid)}.json`, aq, _extra), { cache:'no-store' }, 8000);
-      if (!r.ok) return;
+      const r = await fetchTR(_fbq(`${FB_DB}/chat/messages/${encodeURIComponent(rid)}.json`, aq, _extra), { cache:'no-store' }, 8000, 'chat');
+      if (!r) return;
       const d = await r.json();
       if (!d) return;
       Object.values(d).forEach(m => {
@@ -1340,7 +1354,7 @@ function renderLegend(){
 // ============== Main ==============
 // ⚡ 캐시 (stale-while-revalidate) — 마지막 결과를 localStorage 에 저장.
 // 재방문 시 즉시 보여주고(스피너 없이) 뒤에서 새 데이터로 조용히 갱신. 폰 체감속도 ↑.
-function _lbCacheKey(){ return 'lb_cache_v2_' + CUR_RANGE + '_' + CUR_BRANCH + '_' + LANG; }
+function _lbCacheKey(){ return 'lb_cache_v3_' + CUR_RANGE + '_' + CUR_BRANCH + '_' + LANG; }
 function _lbReadCache(){
   try { const o = JSON.parse(localStorage.getItem(_lbCacheKey())||'null');
         return (o && Array.isArray(o.rows)) ? o : null; } catch(_) { return null; }
@@ -1349,7 +1363,7 @@ function _lbWriteCache(rows){
   try { localStorage.setItem(_lbCacheKey(), JSON.stringify({ ts: Date.now(), rows })); } catch(_){}
 }
 // rows → 화면. (loadAll 의 렌더 부분을 함수로 분리 — 캐시/실데이터 양쪽에서 재사용.)
-function buildAndRender(rows, updating){
+function buildAndRender(rows, updating, warn){
   const top3 = rows.slice(0, 3);
   const rest = rows.slice(3, 50);
   const rangeLbl = CUR_RANGE === 'today' ? t('rangeTodayLbl')
@@ -1364,8 +1378,9 @@ function buildAndRender(rows, updating){
   const frozenNote = (CUR_RANGE === 'lastmonth')
     ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 12px;margin-bottom:12px;color:#3730a3;font-weight:700;font-size:.82em;line-height:1.45">${escHtml(t('lastMonthFrozen'))}</div>`
     : '';
+  const warnBanner = warn ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px 12px;margin-bottom:10px;color:#b91c1c;font-weight:800;font-size:.84em;line-height:1.4">${escHtml(warn)}</div>` : '';
   document.getElementById('content').innerHTML =
-    `${frozenNote}${renderPodium(top3)}${renderBonusTrack(rows)}${renderStoreRank(rows)}${renderBranchMVPs(rows)}${renderRows(rest)}${renderLegend()}`;
+    `${warnBanner}${frozenNote}${renderPodium(top3)}${renderBonusTrack(rows)}${renderStoreRank(rows)}${renderBranchMVPs(rows)}${renderRows(rest)}${renderLegend()}`;
 }
 
 // ====== 🎖 매니저/오너 보너스 점수 (2026-06-08) ======
@@ -1395,8 +1410,8 @@ async function fetchMgrBonus(agg, since, until){
     const branches = (CUR_BRANCH === 'ALL') ? BRANCHES.map(b=>b.id) : [CUR_BRANCH];
     await Promise.all(branches.map(async (br) => {
       try {
-        const r = await fetchT(`${FB_DB}/mgrBonus/${br}.json${aq}`, { cache:'no-store' }, 8000);
-        if (!r.ok) return;
+        const r = await fetchTR(`${FB_DB}/mgrBonus/${br}.json${aq}`, { cache:'no-store' }, 8000);
+        if (!r) return;
         const d = await r.json();
         if (!d) return;
         Object.values(d).forEach(a => {
@@ -1527,6 +1542,7 @@ async function loadAll(force){
   const since = rangeStart();
   const until = rangeEnd();
   const agg = {};
+  resetLoadStats();
   // Wait for auth before pulling /users (rules likely require auth!=null)
   await new Promise(res => {
     if (window.__lbAuth?.currentUser) return res();
@@ -1537,28 +1553,46 @@ async function loadAll(force){
       }
     }, 150);
   });
+  if (_seq !== _lbLoadSeq) return;
   await loadUsers();
   try { initBonusUI(); } catch(e){ console.warn('[lb] initBonusUI', e); }   // 🎖 권한자에게 보너스 주기 버튼 (1회)
-  const baseFetches = [fetchExpiry(agg, since, until), fetchChat(agg, since, until), fetchTasks(agg, since, until), fetchMgrBonus(agg, since, until)];
-  // 🛑 2026-06-07: 보너스 트랙 비활성화 — fetchBonusChat/fetchBonusTaskSenders 호출 중단.
-  //   부활 시 아래 두 줄 주석 풀고 else 분기 살리면 됨.
-  // if (CUR_RANGE === 'lastmonth') {
-  //   baseFetches.push(fetchBonusChat(since, until), fetchBonusTaskSenders(since, until));
-  // } else {
-  BONUS_DEPT = {}; BONUS_MGR = {};
-  // }
-  await Promise.all(baseFetches);
-  computeScores(agg);
-  // Filter to anyone with score > 0
-  // 🔒 2026-06-08: 한 지점 선택 시 그 지점에 '등록된' 사람만 (schedules/employees 기준의
-  //    r.branch). 다른 지점 직원이 (senderBranch 빈값으로) 새어 들어오는 것 방지.
-  //    ALL 일 때는 모든 사람 표시 (현 동작 유지).
-  const rows = Object.values(agg)
-    .filter(r => r.score > 0)
-    .filter(r => CUR_BRANCH === 'ALL' || r.branch === CUR_BRANCH)
-    .sort((a,b) => b.score - a.score);
-  if (_seq !== _lbLoadSeq) return;   // 그 사이 더 새 요청(탭 전환 등)이 시작됐으면 이 결과는 폐기
-  _lbWriteCache(rows);               // 다음 방문 즉시표시용 캐시 저장
+  BONUS_DEPT = {}; BONUS_MGR = {};   // 보너스 트랙 비활성(2026-06-07) — 빈 객체 유지 ([[project_bonus_track_hold]])
+
+  // agg → 정렬된 rows. Phase 1·2 양쪽에서 재사용. (점수 계산식은 기존 그대로)
+  // 🔒 한 지점 선택 시 그 지점 등록자만 (ALL 이면 전원).
+  const _rowsFromAgg = () => {
+    computeScores(agg);
+    return Object.values(agg)
+      .filter(r => r.score > 0)
+      .filter(r => CUR_BRANCH === 'ALL' || r.branch === CUR_BRANCH)
+      .sort((a,b) => b.score - a.score);
+  };
+  // 부분 로드(핵심 지점 실패) 시: 깨진 값은 캐시에 저장하지 않고 경고 + 1회 자동 재시도.
+  //   → 다음 방문/다른 기계가 깨진 값을 물려받지 않게. (이게 "2~3점" 붕괴의 근본 원인이었음)
+  const _partialFallback = () => {
+    const warn = (LANG==='en') ? '⚠️ Some branches failed to load — retrying, or tap ↻ Refresh'
+               : (LANG==='es') ? '⚠️ Algunas sucursales no cargaron — reintentando, o toca ↻'
+               :                 '⚠️ 일부 지점을 불러오지 못했습니다 — 잠시 후 다시 시도하거나 ↻ 새로고침';
+    buildAndRender(_rowsFromAgg(), true, warn);
+    if (!force) setTimeout(() => { if (_seq === _lbLoadSeq) loadAll(true); }, 2500);
+  };
+
+  // ⚡ Phase 1 (빠름) — 무거운 채팅(메시지 속 base64 사진) 빼고 핵심 점수부터.
+  //   업무·유통기한·보너스만으로 순위를 수 초 내 표시. 채팅은 Phase 2 에서 합산.
+  await Promise.all([
+    fetchExpiry(agg, since, until),
+    fetchTasks(agg, since, until),
+    fetchMgrBonus(agg, since, until),
+  ]);
+  if (_seq !== _lbLoadSeq) return;
+  if (CORE_FAILS > 0) { _partialFallback(); return; }   // 핵심 지점 실패 → 채팅 생략, 경고+재시도
+  buildAndRender(_rowsFromAgg(), true);   // 핵심 OK → 즉시 표시 (🔄 채팅 반영 중)
+
+  // ⚡ Phase 2 (백그라운드) — 채팅 점수(메시지·사진·좋아요·답글) 합산 후 최종 표시.
+  await fetchChat(agg, since, until);
+  if (_seq !== _lbLoadSeq) return;
+  const rows = _rowsFromAgg();
+  _lbWriteCache(rows);   // 핵심 완결 → 캐시 저장 (채팅 일부 실패는 경미 — 1일 10pt 캡)
   buildAndRender(rows, false);
 }
 
