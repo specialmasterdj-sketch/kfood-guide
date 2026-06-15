@@ -1386,6 +1386,72 @@ function buildAndRender(rows, updating, warn){
   //   지점별로 보려면 상단 'All Branches' 드롭다운에서 지점 선택 → 그 지점 사람만.
   document.getElementById('content').innerHTML =
     `${warnBanner}${frozenNote}${renderPodium(top3)}${renderBonusTrack(rows)}${renderRows(rest)}${renderLegend()}`;
+  try { renderPartRankLB(rows); } catch(e){ console.warn('[lb partRank]', e); }
+}
+
+// 🏅 파트별 순위 (총점) — 파트 소속은 스케줄표(시프트 포지션/역할), 점수는 활동순위 총점(rows).
+//    정육 담당이 다른 매장·다른 일로 얻은 점수까지 합산됨. 소속 직원 전원(0점 포함) 표시.
+function _partNorm(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
+const PART_OVERRIDES = { 'erika garcia':'K-Food', 'anderson godoy':'정육' };   // 자동분류 보정
+function _partOf(role, position){
+  const s = (String(role||'') + ' ' + String(position||'')).toLowerCase();
+  if (/sushi|스시|초밥/.test(s)) return '스시';
+  if (/kitchen|cocina|주방|hot\s*food|k-?food|반찬/.test(s)) return 'K-Food';
+  if (/meat\s*&?\s*seafood/.test(s)) return '정육';
+  if (/seafood|marisco|pescado|해산|생선|\bfish/.test(s)) return 'Seafood';
+  if (/produce|vegetable|verdura|fruta|농산|청과|야채/.test(s)) return 'Produce';
+  if (/meat|정육|carne|beef|pork|cerdo|pollo|chicken/.test(s)) return '정육';
+  return null;
+}
+let LB_PART_ROSTER = null, __lbRosterLoading = false;
+async function loadLBPartRoster(){
+  if (__lbRosterLoading) return; __lbRosterLoading = true;
+  const aq = await authParam(); const roster = []; const seen = new Set();
+  for (const b of BRANCHES){
+    try {
+      const data = await fetch(`${FB_DB}/schedules/${b.id}.json${aq}`, { cache:'no-store' }).then(r=>r.json());
+      const emps = (data && Array.isArray(data.employees)) ? data.employees : [];
+      const shifts = (data && data.shifts) ? data.shifts : {};
+      const posByEmp = {};
+      Object.keys(shifts).forEach(k => { const at=k.indexOf('@'); if(at<0)return; const eid=k.slice(0,at); const p=_partOf('',(shifts[k]&&shifts[k].position)||''); if(!p)return; (posByEmp[eid]=posByEmp[eid]||{}); posByEmp[eid][p]=(posByEmp[eid][p]||0)+1; });
+      emps.forEach(e => {
+        if (!e || !e.name) return;
+        let part = PART_OVERRIDES[_partNorm(e.name)] || null;
+        if (!part){ const c = (e.id!=null) ? posByEmp[e.id] : null; if (c) part = Object.entries(c).sort((a,b)=>b[1]-a[1])[0][0]; if (!part) part = _partOf(e.role,''); }
+        if (!part) return;
+        const key = part + '|' + _partNorm(e.name); if (seen.has(key)) return; seen.add(key);
+        roster.push({ name:e.name, branch:b.id, part });
+      });
+    } catch(_){}
+  }
+  LB_PART_ROSTER = roster; __lbRosterLoading = false;
+  try { renderPartRankLB(window.__lbLastRows || []); } catch(_){}
+}
+function renderPartRankLB(rows){
+  window.__lbLastRows = rows;
+  let el = document.getElementById('lbPartRank');
+  if (!el){ const c = document.getElementById('content'); if (!c) return; el = document.createElement('div'); el.id='lbPartRank'; el.style.cssText='margin-top:18px'; c.parentNode.insertBefore(el, c.nextSibling); }
+  if (LB_PART_ROSTER === null) loadLBPartRoster();
+  const scoreMap = {};
+  (rows||[]).forEach(r => { if(!r||!r.name) return; const k=_partNorm(r.name); scoreMap[k]=Math.max(scoreMap[k]||0, r.score||0); });
+  const PARTS = [['정육','🥩 정육','#d97706'],['스시','🍣 스시','#c026d3'],['K-Food','🍙 K-Food','#2563eb'],['Seafood','🐟 해산물','#0891b2'],['Produce','🥬 농산물','#16a34a']];
+  const unit = (LANG==='ko')?'점':'pts';
+  const title = LANG==='en'?'🏅 Part rankings (total)':LANG==='es'?'🏅 Ranking por parte (total)':'🏅 파트별 순위 (활동 총점)';
+  const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal':'스케줄 명단 없음';
+  const loadingLbl = (LB_PART_ROSTER===null) ? (LANG==='en'?' (loading…)':LANG==='es'?' (cargando…)':' (불러오는 중…)') : '';
+  let html = `<div style="font-weight:800;font-size:1.05em;color:#1f2937;margin:6px 2px 10px">${title}<span style="font-size:.7em;color:#9ca3af;font-weight:600">${loadingLbl}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
+  PARTS.forEach(([cat,label,color]) => {
+    const members = (LB_PART_ROSTER||[]).filter(r => r.part===cat && (CUR_BRANCH==='ALL' || r.branch===CUR_BRANCH));
+    let body;
+    if (!members.length){ body = `<div style="font-size:.82em;color:#9ca3af;padding:3px 2px">${emptyLbl}</div>`; }
+    else {
+      const ranked = members.map(m => ({ name:m.name, score: scoreMap[_partNorm(m.name)] || 0 })).sort((a,b)=>b.score-a.score || String(a.name).localeCompare(String(b.name)));
+      body = ranked.map((r,i) => { const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1); const dim=r.score===0?'opacity:.5':''; return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''};${dim}"><span style="width:22px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span><span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.name)}</span><span style="font-weight:900;color:${color};font-size:.92em">${r.score}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span></div>`; }).join('');
+    }
+    html += `<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${color};border-radius:10px;padding:9px 12px"><div style="font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label} <span style="font-size:.78em;color:#9ca3af;font-weight:600">${members.length}${LANG==='ko'?'명':''}</span></div>${body}</div>`;
+  });
+  html += `</div>`;
+  el.innerHTML = html;
 }
 
 // ====== 🎖 매니저/오너 보너스 점수 (2026-06-08) ======
