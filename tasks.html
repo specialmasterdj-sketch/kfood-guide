@@ -4404,16 +4404,19 @@ async function loadPartRoster(){
       });
       emps.forEach(e => {
         if (!e || !e.name) return;
-        let part = PART_OVERRIDES[_partNorm(e.name)] || null;                     // 수동 보정 최우선
-        if (!part){
+        const nm = _partNorm(e.name);
+        const ov = PART_OVERRIDES[nm];                                            // 수동 보정 최우선(문자열/배열)
+        let parts = ov ? (Array.isArray(ov) ? ov : [ov]) : null;
+        if (!parts){
           const counts = (e.id != null) ? posByEmp[e.id] : null;
-          if (counts) part = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0]; // 가장 많이 한 포지션
-          if (!part) part = _partOf(e.role, '');                                  // 포지션 없으면 역할로
+          if (counts){ const mx = Math.max.apply(null, Object.values(counts)); parts = Object.keys(counts).filter(p => counts[p] >= mx*0.5); }  // 겸업: 최다의 50%+ 모두
+          if (!parts || !parts.length){ const rp = _partOf(e.role, ''); parts = rp ? [rp] : []; }
         }
-        if (!part) return;                                                        // 캐셔/매니저/델리 등 — 5파트 아님
-        const key = part + '|' + _partNorm(e.name);
-        if (seen.has(key)) return; seen.add(key);
-        roster.push({ name: e.name, part });
+        parts.forEach(part => {                                                   // 겸업이면 여러 파트에 표시
+          const key = part + '|' + nm;
+          if (seen.has(key)) return; seen.add(key);
+          roster.push({ name: e.name, part });
+        });
       });
     } catch(_){}
   }

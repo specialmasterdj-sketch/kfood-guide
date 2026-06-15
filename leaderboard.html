@@ -1416,11 +1416,15 @@ async function loadLBPartRoster(){
       Object.keys(shifts).forEach(k => { const at=k.indexOf('@'); if(at<0)return; const eid=k.slice(0,at); const p=_partOf('',(shifts[k]&&shifts[k].position)||''); if(!p)return; (posByEmp[eid]=posByEmp[eid]||{}); posByEmp[eid][p]=(posByEmp[eid][p]||0)+1; });
       emps.forEach(e => {
         if (!e || !e.name) return;
-        let part = PART_OVERRIDES[_partNorm(e.name)] || null;
-        if (!part){ const c = (e.id!=null) ? posByEmp[e.id] : null; if (c) part = Object.entries(c).sort((a,b)=>b[1]-a[1])[0][0]; if (!part) part = _partOf(e.role,''); }
-        if (!part) return;
-        const key = part + '|' + _partNorm(e.name); if (seen.has(key)) return; seen.add(key);
-        roster.push({ name:e.name, branch:b.id, part });
+        const nm = _partNorm(e.name);
+        const ov = PART_OVERRIDES[nm];
+        let parts = ov ? (Array.isArray(ov) ? ov : [ov]) : null;
+        if (!parts){
+          const c = (e.id!=null) ? posByEmp[e.id] : null;
+          if (c){ const mx = Math.max.apply(null, Object.values(c)); parts = Object.keys(c).filter(p => c[p] >= mx*0.5); }  // 겸업: 최다의 50%+ 포지션 모두
+          if (!parts || !parts.length){ const rp = _partOf(e.role,''); parts = rp ? [rp] : []; }
+        }
+        parts.forEach(part => { const key = part + '|' + nm; if (seen.has(key)) return; seen.add(key); roster.push({ name:e.name, branch:b.id, part }); });
       });
     } catch(_){}
   }
