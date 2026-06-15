@@ -695,9 +695,29 @@ let NAME_TO_BRANCH = new Map();  // name(normalized, no spaces, uppercase) → b
 function _normForBranchLookup(s){
   return String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9_가-힣]/g,'');
 }
+// 🚫 2026-06-15 사장님 지시: 수퍼바이저 이상(스케줄 직급 rank≥60)은 task 점수(발송·완료) 0.
+//   이 프로그램은 일반직원 동기부여 전용 — 관리자는 급여로 대우받으므로 task 점수 대상 아님.
+//   ⚠️ _roleRank 는 tasks.html 의 동명 함수와 '반드시 동일하게' 유지할 것 (한쪽 바꾸면 같이).
+//   직급 권위 = 스케줄 employee.role. rank: OWNER100 MGR90 ASST80 SRSUP70 SUP60 VICESUP50 일반0.
+let NAME_TO_RANK = new Map();    // name(normalized) → 스케줄 직급 rank
+function _roleRank(role){
+  const u = String(role||'').toUpperCase().trim();
+  if (/OWNER|BOSS|오너|사장|대표|DUEÑO|DUENO|PROPIETARIO/.test(u)) return 100;
+  if (/ASSISTANT MANAGER|ASST MANAGER|ASST\. MANAGER|부매니저|GERENTE ASISTENTE/.test(u)) return 80;
+  if (/MANAGER|GERENTE|매니저|점장|GENERAL MANAGER|GERENTE GENERAL|\bGM\b|G\.M\.|제너럴|총괄/.test(u)) return 90;
+  if (/SENIOR SUPERVISOR|SR SUPERVISOR|SR\. SUPERVISOR|시니어 슈퍼바이저|SUPERVISOR SENIOR/.test(u)) return 70;
+  if (/VICE SUPERVISOR|VICE-SUPERVISOR|SUB SUPERVISOR/.test(u)) return 50;
+  if (/SUPERVISOR/.test(u)) return 60;
+  return 0;
+}
+const TASK_POINT_RANK_BLOCK = 60;   // 이 rank 이상(수퍼바이저+)은 task 점수 0
+function _earnsNoTaskPoints(name){
+  return (NAME_TO_RANK.get(_normForBranchLookup(name)) || 0) >= TASK_POINT_RANK_BLOCK;
+}
 async function loadBranchEmployees(){
   const aq = await authParam();
   NAME_TO_BRANCH.clear();
+  NAME_TO_RANK.clear();
   EMP_ROSTER = [];
   await Promise.all(BRANCHES.map(async b => {
     try {
@@ -709,6 +729,8 @@ async function loadBranchEmployees(){
         if (!e || !e.name) return;
         const key = _normForBranchLookup(e.name);
         if (key && !NAME_TO_BRANCH.has(key)) NAME_TO_BRANCH.set(key, b.id);
+        // 직급 rank 기록 — 여러 지점에 있으면 최고 rank 채택 (수퍼바이저+ task 점수 차단용)
+        if (key){ const rk = _roleRank(e.role); if (rk > (NAME_TO_RANK.get(key) || 0)) NAME_TO_RANK.set(key, rk); }
         EMP_ROSTER.push({ name: e.name, branch: b.id });
       });
     } catch(_){}
@@ -836,6 +858,10 @@ async function fetchTasks(agg, since, until){
           // taskComplete = 완료 건수 (배지용), taskPoints = 매니저가 부여한
           // 1·2·3 점 합 (실제 score 계산용). points 필드 없는 레거시 task 는
           // 기본 1점 처리해 호환성 유지.
+          // 🚫 2026-06-15 사장님 지시: 수퍼바이저 이상(스케줄 rank≥60)은 task 점수 0 (발송·완료 모두).
+          //   단 5월(이미 지급)은 보존 — 컷오프(RULE_START_TS=6/1) 이후 완료분에만 적용(소급 방지).
+          //   직급 미확인/일반직원은 종전대로 정상 인정(fail-open). 채팅·유통기한 점수엔 영향 없음.
+          if (_earnsNoTaskPoints(t.completedBy) && t.completedAt >= RULE_START_TS) return;
           bumpAgg(agg, t.completedBy, br, 'taskComplete', 1);
           const pts = _taskScore(t);
           bumpAgg(agg, t.completedBy, br, 'taskPoints', pts);
