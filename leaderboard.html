@@ -259,7 +259,7 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;
     </label>
     <span style="flex:1"></span>
     <button id="btnPrint" onclick="printLeaderboard()" style="background:#1e40af;border:1px solid #1e3a8a;border-radius:8px;padding:7px 12px;font-size:.82em;font-weight:600;color:#fff;cursor:pointer;margin-right:6px">🖨 프린트</button>
-    <button id="btnRefresh" onclick="loadAll(true)" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:7px 12px;font-size:.82em;font-weight:600;color:#374151;cursor:pointer">↻ 새로고침</button>
+    <button id="btnRefresh" onclick="lbRefresh()" style="background:#f4f6f9;border:1px solid #d1d5db;border-radius:8px;padding:7px 12px;font-size:.82em;font-weight:600;color:#374151;cursor:pointer">↻ 새로고침</button>
   </div>
 
   <div class="tab-bar" id="tabBar">
@@ -602,10 +602,29 @@ function rangeEnd(){
 }
 
 // ============== Auth helper for REST ==============
+// 🔐 2026-06-15 FIX — "일부 지점을 불러오지 못했습니다" 근본 원인:
+//   모든 지점 데이터는 Firebase REST 로 ?auth=<idToken> 을 붙여 받는다 (rules 가
+//   승인된 로그인 요구). 토큰이 아직 준비 안 된 채(IndexedDB 복원 지연 · PWA 콜드
+//   스타트 · iOS) fetch 가 나가면 전 지점이 401 → CORE_FAILS++ → "지점 로드 실패"
+//   경고 + 빈 화면("No data" / "No more staff"). 예전 authParam 은 currentUser 가
+//   잠깐 null 이면 즉시 ''(토큰 없음) 반환 → fetch 가 무인증으로 나가 401.
+//   이제 로그인 사용자면 토큰이 준비될 때까지 기다린 뒤 fetch 하므로 401 자체가 안 생김.
+function __lbWaitForUser(maxMs){
+  const u0 = window.__lbAuth?.currentUser;
+  if (u0) return Promise.resolve(u0);
+  return new Promise(resolve => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const u = window.__lbAuth?.currentUser;
+      if (u || Date.now() - t0 > (maxMs || 12000)) { clearInterval(iv); resolve(u || null); }
+    }, 120);
+  });
+}
 async function authParam(){
   try {
-    const u = window.__lbAuth?.currentUser;
-    if (!u) return '';
+    // currentUser 가 곧 채워질 수 있으니 짧게 기다림 (로그인 상태면 토큰 보장).
+    const u = await __lbWaitForUser(12000);
+    if (!u) return '';   // 진짜 로그아웃 — auth-gate 가 로그인 화면으로 보냄.
     const tok = await u.getIdToken();
     return tok ? '?auth=' + encodeURIComponent(tok) : '';
   } catch(_) { return ''; }
@@ -1673,6 +1692,7 @@ function initBonusUI(){
 }
 
 let _lbLoadSeq = 0;
+let __lbAutoRetries = 0;   // 🔁 자동 재시도 횟수 (성공/수동 새로고침 시 0 으로 리셋)
 async function loadAll(force){
   const _seq = ++_lbLoadSeq;   // 탭 빠르게 바꿔도 옛 응답이 새 화면 덮어쓰지 않게
   // ⚡ 캐시 즉시 표시. 충분히 최신이면(지난달=동결 무기한 / 그 외 30초) 네트워크 재요청 생략 → 탭 전환 즉시.
@@ -1686,16 +1706,10 @@ async function loadAll(force){
   const until = rangeEnd();
   const agg = {};
   resetLoadStats();
-  // Wait for auth before pulling /users (rules likely require auth!=null)
-  await new Promise(res => {
-    if (window.__lbAuth?.currentUser) return res();
-    const t0 = Date.now();
-    const iv = setInterval(() => {
-      if (window.__lbAuth?.currentUser || Date.now() - t0 > 5000) {
-        clearInterval(iv); res();
-      }
-    }, 150);
-  });
+  // 🔐 토큰이 준비될 때까지 기다린다 (5초 → 12초). 예전엔 5초 만에 무인증으로
+  //   진행해 느린 폰에서 전 지점 401 → "지점 로드 실패" + 빈 화면. 로그인 사용자면
+  //   토큰을 기다린 뒤 fetch 하므로 401 자체가 안 생김. (rules 가 auth!=null 요구)
+  await __lbWaitForUser(12000);
   if (_seq !== _lbLoadSeq) return;
   await loadUsers();
   try { initBonusUI(); } catch(e){ console.warn('[lb] initBonusUI', e); }   // 🎖 권한자에게 보너스 주기 버튼 (1회)
@@ -1717,7 +1731,13 @@ async function loadAll(force){
                : (LANG==='es') ? '⚠️ Algunas sucursales no cargaron — reintentando, o toca ↻'
                :                 '⚠️ 일부 지점을 불러오지 못했습니다 — 잠시 후 다시 시도하거나 ↻ 새로고침';
     buildAndRender(_rowsFromAgg(), true, warn);
-    if (!force) setTimeout(() => { if (_seq === _lbLoadSeq) loadAll(true); }, 2500);
+    // 🔁 핵심 지점 실패 → 자동 재시도. 예전엔 force 호출이면 1회만 재시도하고 멈춰,
+    //   토큰/네트워크가 그 사이 준비 안 되면 영구히 빈 화면이었음. 이제 상한(3회)까지
+    //   점점 늦게(2·4·6초) 재시도해 토큰 지연·일시 네트워크 실패에서 스스로 복구.
+    if (__lbAutoRetries < 3) {
+      __lbAutoRetries++;
+      setTimeout(() => { if (_seq === _lbLoadSeq) loadAll(true); }, 2000 * __lbAutoRetries);
+    }
   };
 
   // 🔒 2026-06-14 사장님 지시: ACTIVITY RANKING 은 '고정 화면'.
@@ -1732,6 +1752,7 @@ async function loadAll(force){
   ]);
   if (_seq !== _lbLoadSeq) return;
   if (CORE_FAILS > 0) { _partialFallback(); return; }   // 핵심 지점 실패 → 경고 + 재시도
+  __lbAutoRetries = 0;   // ✅ 전 지점 정상 로드 → 재시도 카운터 리셋
   const rows = _rowsFromAgg();
   _lbWriteCache(rows);
   buildAndRender(rows, false);   // 단 한 번만 렌더 — 도중에 안 바뀜 (고정 화면)
@@ -1742,6 +1763,8 @@ initTabs();
 applyStaticI18n();   // 언어 버튼·탭 라벨·refresh 버튼 즉시 다국어 적용
 loadAll();
 window.loadAll = loadAll;
+// ↻ 수동 새로고침 — 자동 재시도 상한을 리셋한 뒤 강제 재로드 (자동 재시도 소진 후에도 동작).
+window.lbRefresh = function(){ __lbAutoRetries = 0; loadAll(true); };
 
 // 🖨 프린트 — 현재 범위·지점 표시 후 인쇄 다이얼로그 호출
 function printLeaderboard(){
