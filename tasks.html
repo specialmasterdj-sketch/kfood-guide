@@ -4323,47 +4323,100 @@ function renderScoreboard(){
   try { renderPartRank(); } catch(e){ console.warn('[partRank]', e); }
 }
 
-// 🏅 파트별(정육·스시·K-Food·해산물·농산물) 순위 — 그 카테고리 task 완료 점수 합으로 1등~꼴등.
-//    점수판과 같은 TASKS(매니저는 전 지점, 오늘 기준) 사용. taskScore = 항목당/강도 점수.
+// 🏅 파트별 순위 — 파트 소속은 스케줄표(시프트 포지션/역할)로 판정, 점수는 그 직원의
+//    전체 완료 업무 점수(카테고리·매장 무관)로. 정육 담당이 다른 일로 얻은 점수도 합산.
+//    소속 직원 전원(1등~꼴등) 표시 (0점 포함). 점수는 점수판과 같은 TASKS(오늘) 기준.
+let PART_ROSTER = null;            // [{name, part}]
+let __partRosterLoading = false;
+function _partOf(role, position){
+  const s = (String(role||'') + ' ' + String(position||'')).toLowerCase();
+  if (/sushi|스시|초밥/.test(s)) return '스시';
+  if (/kitchen|cocina|주방|hot\s*food|k-?food|반찬/.test(s)) return 'K-Food';
+  if (/meat\s*&?\s*seafood|정육.*해산|육.*수산/.test(s)) return '정육';   // 묶음 역할 → 정육 기본(해산물은 포지션으로 분리)
+  if (/seafood|marisco|pescado|해산|생선|\bfish/.test(s)) return 'Seafood';
+  if (/produce|vegetable|verdura|fruta|농산|청과|야채/.test(s)) return 'Produce';
+  if (/meat|정육|carne|beef|pork|cerdo|pollo|chicken/.test(s)) return '정육';
+  return null;
+}
+async function loadPartRoster(){
+  if (__partRosterLoading) return;
+  __partRosterLoading = true;
+  const roster = []; const seen = new Set();
+  for (const b of BRANCHES){
+    try {
+      const data = await fetch(`${FB_DB_URL}/schedules/${b.id}.json?cache=`+Date.now(), { cache:'no-store' }).then(r=>r.json());
+      const emps = (data && Array.isArray(data.employees)) ? data.employees : [];
+      const shifts = (data && data.shifts) ? data.shifts : {};
+      // 직원별 시프트 포지션 → 파트 빈도 집계 (empId@date)
+      const posByEmp = {};
+      Object.keys(shifts).forEach(k => {
+        const at = k.indexOf('@'); if (at < 0) return;
+        const eid = k.slice(0, at);
+        const p = _partOf('', (shifts[k] && shifts[k].position) || '');
+        if (!p) return;
+        (posByEmp[eid] = posByEmp[eid] || {});
+        posByEmp[eid][p] = (posByEmp[eid][p] || 0) + 1;
+      });
+      emps.forEach(e => {
+        if (!e || !e.name) return;
+        let part = null;
+        const counts = (e.id != null) ? posByEmp[e.id] : null;
+        if (counts) part = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];   // 가장 많이 한 포지션
+        if (!part) part = _partOf(e.role, '');                                    // 포지션 없으면 역할로
+        if (!part) return;                                                        // 캐셔/매니저/델리 등 — 5파트 아님
+        const key = part + '|' + _norm(e.name);
+        if (seen.has(key)) return; seen.add(key);
+        roster.push({ name: e.name, part });
+      });
+    } catch(_){}
+  }
+  PART_ROSTER = roster;
+  __partRosterLoading = false;
+  try { renderPartRank(); } catch(_){}
+}
 function renderPartRank(){
   const el = document.getElementById('partRank');
   if (!el) return;
+  if (PART_ROSTER === null) loadPartRoster();
   const unit = (LANG==='ko')?'점':'pts';
   const PARTS = [
-    ['정육',   (LANG==='en'?'🥩 Meat':LANG==='es'?'🥩 Carne':'🥩 정육'),        '#d97706'],
-    ['스시',   (LANG==='en'?'🍣 Sushi':LANG==='es'?'🍣 Sushi':'🍣 스시'),       '#c026d3'],
-    ['K-Food', '🍙 K-Food',                                                      '#2563eb'],
-    ['Seafood',(LANG==='en'?'🐟 Seafood':LANG==='es'?'🐟 Mariscos':'🐟 해산물'), '#0891b2'],
+    ['정육',   (LANG==='en'?'🥩 Meat':LANG==='es'?'🥩 Carne':'🥩 정육'),         '#d97706'],
+    ['스시',   (LANG==='en'?'🍣 Sushi':LANG==='es'?'🍣 Sushi':'🍣 스시'),        '#c026d3'],
+    ['K-Food', '🍙 K-Food',                                                       '#2563eb'],
+    ['Seafood',(LANG==='en'?'🐟 Seafood':LANG==='es'?'🐟 Mariscos':'🐟 해산물'),  '#0891b2'],
     ['Produce',(LANG==='en'?'🥬 Produce':LANG==='es'?'🥬 Frutas/Verd.':'🥬 농산물'),'#16a34a'],
   ];
-  const agg = {}; PARTS.forEach(([c]) => agg[c] = {});
+  // 직원별 전체 완료 업무 점수 (카테고리·매장 무관)
+  const scoreByName = {};
   (TASKS || []).forEach(t => {
     if (!t || !t.completedAt || !t.completedBy) return;
-    if (!(t.category in agg)) return;
     const s = taskScore(t);
-    if (s > 0) agg[t.category][t.completedBy] = (agg[t.category][t.completedBy] || 0) + s;
+    if (s > 0){ const k = _norm(t.completedBy); scoreByName[k] = (scoreByName[k]||0) + s; }
   });
   const title = LANG==='en'?'🏅 Part rankings':LANG==='es'?'🏅 Ranking por parte':'🏅 파트별 순위';
-  const todayLbl = LANG==='en'?'(today)':LANG==='es'?'(hoy)':'(오늘)';
-  const emptyLbl = LANG==='en'?'No entries yet':LANG==='es'?'Sin registros aún':'아직 없음';
-  let html = `<div style="margin:14px 2px 8px;font-weight:800;font-size:1.02em;color:#1f2937">${title} <span style="font-size:.68em;color:#9ca3af;font-weight:600">${todayLbl}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
+  const sub = (PART_ROSTER===null) ? (LANG==='en'?'(loading…)':LANG==='es'?'(cargando…)':'(불러오는 중…)') : (LANG==='en'?'(today)':LANG==='es'?'(hoy)':'(오늘)');
+  const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal en horario':'스케줄에 명단 없음';
+  let html = `<div style="margin:14px 2px 8px;font-weight:800;font-size:1.02em;color:#1f2937">${title} <span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat, label, color]) => {
-    const ranked = Object.entries(agg[cat]).sort((a,b) => b[1]-a[1]);
+    const members = (PART_ROSTER||[]).filter(r => r.part === cat);
     let rows;
-    if (!ranked.length) {
+    if (!members.length) {
       rows = `<div style="font-size:.82em;color:#9ca3af;padding:3px 2px">${emptyLbl}</div>`;
     } else {
-      rows = ranked.map(([nm,s],i) => {
+      const ranked = members.map(m => ({ name:m.name, score: scoreByName[_norm(m.name)] || 0 }))
+        .sort((a,b) => b.score - a.score || String(a.name).localeCompare(String(b.name)));
+      rows = ranked.map((r,i) => {
         const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1);
-        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''}">
+        const dim = r.score===0 ? 'opacity:.5' : '';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''};${dim}">
           <span style="width:22px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span>
-          <span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(nm)}</span>
-          <span style="font-weight:900;color:${color};font-size:.92em">${s}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span>
+          <span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.name)}</span>
+          <span style="font-weight:900;color:${color};font-size:.92em">${r.score}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span>
         </div>`;
       }).join('');
     }
     html += `<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${color};border-radius:10px;padding:9px 12px">
-      <div style="font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label}</div>${rows}</div>`;
+      <div style="font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label} <span style="font-size:.78em;color:#9ca3af;font-weight:600">${members.length}${LANG==='ko'?'명':''}</span></div>${rows}</div>`;
   });
   html += `</div>`;
   el.innerHTML = html;
