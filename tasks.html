@@ -4420,11 +4420,12 @@ function _partOf(role, position){
 async function loadPartRoster(){
   if (__partRosterLoading) return;
   __partRosterLoading = true;
-  const roster = []; const seen = new Set();
+  const roster = []; const seen = new Set(); let empSeen = 0;
   for (const b of BRANCHES){
     try {
       const data = await fetch(`${FB_DB_URL}/schedules/${b.id}.json?cache=`+Date.now(), { cache:'no-store' }).then(r=>r.json());
       const emps = (data && Array.isArray(data.employees)) ? data.employees : [];
+      empSeen += emps.length;
       const shifts = (data && data.shifts) ? data.shifts : {};
       // 직원별 시프트 포지션 → 파트 빈도 집계 (empId@date)
       const posByEmp = {};
@@ -4449,7 +4450,7 @@ async function loadPartRoster(){
         parts.forEach(part => {                                                   // 겸업이면 여러 파트에 표시
           const key = part + '|' + nm;
           if (seen.has(key)) return; seen.add(key);
-          roster.push({ name: e.name, part });
+          roster.push({ name: e.name, branch: b.id, part });
         });
       });
     } catch(_){}
@@ -4461,8 +4462,15 @@ async function loadPartRoster(){
       if (!seen.has(key)) { seen.add(key); roster.push({ name: f.name, branch: f.branch || '', part }); }
     });
   });
-  PART_ROSTER = roster;
   __partRosterLoading = false;
+  if (empSeen === 0){
+    // 스케줄을 못 읽음(로그인 인증 준비 전 등) — 빈 명단을 캐시하지 말고 잠시 후 재시도
+    window.__partRetry = (window.__partRetry || 0) + 1;
+    if (window.__partRetry <= 12) setTimeout(loadPartRoster, 1500);
+    return;
+  }
+  window.__partRetry = 0;
+  PART_ROSTER = roster;
   try { renderPartRank(); } catch(_){}
 }
 function renderPartRank(){
