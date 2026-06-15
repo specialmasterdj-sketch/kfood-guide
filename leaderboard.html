@@ -489,9 +489,9 @@ const SCORE = {
   reaction:     0.2,   // 👍 받은 좋아요 (메시지 작성자) — 큰 보상
   reactionGiven:0.05,  // 👍 누른 좋아요 (응원자) — 2026-05-28 옵션 B: 적극 응원도 인정
   reply:        0.2,   // 💬 댓글 1개당
-  taskGiven:    0.5,   // 🆕 2026-06-08 업무 지시한 사람(발송자) — 완료된 task당 점수 (관리직 보너스).
-                       //    2026-06-10 전무님 지시: 1.0 → 0.5. 완료된 건만(completedAt/By 필수),
-                       //    본인 발송+본인 완료는 발송점수 제외(아래 _giver !== _tk) — 완료점수만 인정.
+  taskGiven:    0,     // 🚫 2026-06-15 사장님 전면 폐지: 업무 '발송/지시'한 사람에게 점수 안 줌.
+                       //    이유 — 형평성: 발송 권한 없는 일반직원이 출발부터 불리. task 발송은 매니저·
+                       //    관리자가 급여 받고 하는 당연한 책임 (집계·점수·배지·범례 전부 제거됨).
 };
 // 🆕 2026-06-14 전무님 지시: 부서(정육·스시·해산물·농산물·K-Food) 체크리스트는
 //    '체크한 항목 수'만큼 점수(항목당 1점). 그 외 task 는 기존 업무강도(points 1~3).
@@ -757,7 +757,7 @@ function isExcludedSender(name, branch){
 //   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, taskPointsByDay:{}, taskGiven:0, taskGivenByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionGiven:0, reply:0, bonus:0, score:0 });
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionByDay:{}, reactionGiven:0, reply:0, bonus:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -856,22 +856,9 @@ async function fetchTasks(agg, since, until){
               if (!agg[_tk].taskPointsByDay) agg[_tk].taskPointsByDay = {};
               agg[_tk].taskPointsByDay[_tday] = (agg[_tk].taskPointsByDay[_tday] || 0) + pts;
             }
-            // 🆕 업무 발송자(지시한 사람)에게 완료 1건당 +1pt. 발송자 = from/createdBy/assignedBy.
-            //    자기 자신에게 준 task 는 제외(완료 점수와 중복 방지).
-            // 🛡 2026-06-10 전무님 지시: 온도 일괄 발송 task 의 from 은 "이름 (온도 일괄 발송)"
-            //    형태라 본인과 다른 사람으로 분리돼 별도 줄로 떴음. 점수 집계 시 이 표시용
-            //    라벨을 떼서 본인(예: "Yonsu Lee") 점수에 합산. (task UI 의 from 라벨은 그대로 유지)
-            const _giver = String(t.from || t.createdBy || t.assignedBy || '')
-              .replace(/\s*\(온도 일괄 발송\)\s*$/, '').trim();
-            if (_giver && _giver !== _tk) {
-              bumpAgg(agg, _giver, br, 'taskGiven', 1);
-              if (agg[_giver]) {
-                const _gd = new Date(t.completedAt);
-                const _gday = _gd.getFullYear() + '-' + (_gd.getMonth()+1) + '-' + _gd.getDate();
-                if (!agg[_giver].taskGivenByDay) agg[_giver].taskGivenByDay = {};
-                agg[_giver].taskGivenByDay[_gday] = (agg[_giver].taskGivenByDay[_gday] || 0) + 1;
-              }
-            }
+            // 🚫 2026-06-15 사장님 전면 폐지: 업무 '발송(지시)' 점수 제거 — 발송자 집계 안 함.
+            //    (예전엔 발송자에게 완료 1건당 +0.5pt 줬으나 형평성 문제로 폐지. 이로써
+            //     "이름 (○○ 일괄 발송)" 형태의 유령 점수 행도 더 이상 생기지 않음.)
           }
         });
       });
@@ -941,6 +928,14 @@ async function fetchChat(agg, since, until){
                 // 받은 사람 (메시지 작성자) — 횟수 + 가중 점수 (2026-06-15부터 0.5)
                 bumpAgg(agg, m.sender, m.senderBranch || '', 'reaction', 1, m.color);
                 bumpAgg(agg, m.sender, m.senderBranch || '', 'reactionPts', cw.reaction, m.color);
+                // 🆕 2026-06-15 사장님 지시: 받은 좋아요 하루 최대 5개만 점수 인정(담합 방지).
+                //   컷오프 이후 받은 좋아요만 일별 카운트 → computeScores 에서 5 초과분 차감.
+                if (ts >= PHOTO_CAP_CUTOFF && agg[m.sender]) {
+                  const _rd = new Date(ts);
+                  const _rday = _rd.getFullYear()+'-'+(_rd.getMonth()+1)+'-'+_rd.getDate();
+                  if (!agg[m.sender].reactionByDay) agg[m.sender].reactionByDay = {};
+                  agg[m.sender].reactionByDay[_rday] = (agg[m.sender].reactionByDay[_rday]||0) + 1;
+                }
                 // 누른 사람 (응원자) — 적은 점수
                 bumpAgg(agg, displayName, '', 'reactionGiven', 1);
               }
@@ -1112,7 +1107,15 @@ function computeScores(agg){
     //   2026-06-15부터: 메시지 0.15·사진 0.05·답글 0.1, 받은좋아요 0.5 / 그 전은 옛 값(0.3·0.1·0.2·0.2).
     const chatRaw = r.chatPts || 0;
     const chatCapped = Math.min(chatRaw, chatCap);
-    const reactionScore = r.reactionPts || 0;                    // 받은 좋아요 (캡 없음, ts별 가중)
+    // 🆕 2026-06-15 사장님 지시: 받은 좋아요 하루 최대 5개만 인정 (담합/품앗이 방지).
+    //   컷오프(2026-06-15) 이후 받은 좋아요만 reactionByDay 에 일별 카운트 → 5 초과분(×0.5) 차감.
+    //   그 전(이미 반영분)은 무캡 유지 — 소급 변경 방지.
+    let reactionScore = r.reactionPts || 0;
+    if (r.reactionByDay) {
+      let _rExcess = 0;
+      for (const dk of Object.keys(r.reactionByDay)) _rExcess += Math.max(0, r.reactionByDay[dk] - 5);
+      reactionScore -= _rExcess * 0.5;
+    }
     const reactionGivenScore = (r.reactionGiven||0) * SCORE.reactionGiven;  // 누른 좋아요 (캡 없음, 0.05/개)
     // 💎 task 점수 — 완료일(day)별로 TASK_DAILY_CAP 적용 후 합산. 하루에 몰아주기/쪼개기
     //    해도 그날치는 cap 까지만. taskPoints(raw) 는 배지 표시용으로 그대로 둠.
@@ -1123,22 +1126,14 @@ function computeScores(agg){
     for (const dk of tDays) { _postRaw += r.taskPointsByDay[dk]; _postCapped += Math.min(r.taskPointsByDay[dk], TASK_DAILY_CAP); }
     const _preCutoff = (r.taskPoints || 0) - _postRaw;   // 컷오프 이전 완료분 (무캡)
     const taskCapped = _preCutoff + _postCapped;
-    // 🆕 발송자(업무 지시) 점수 — 완료일별 GIVE_DAILY_CAP 적용. taskGiven 1건당 1pt.
-    let giveCapped = 0;
-    const gDays = r.taskGivenByDay ? Object.keys(r.taskGivenByDay) : [];
-    if (gDays.length) {
-      for (const dk of gDays) giveCapped += Math.min(r.taskGivenByDay[dk] * SCORE.taskGiven, GIVE_DAILY_CAP);
-    } else {
-      giveCapped = (r.taskGiven || 0) * SCORE.taskGiven;
-    }
+    // 🚫 2026-06-15 사장님 전면 폐지: 발송자(업무 지시) 점수 제거 — 점수 합산에서 완전히 빠짐.
     r.score =
       r.expiryAdd     * _eAdd
     + r.expiryCheck   * _eChk
     + r.expiryDiscard * _eDis
     + taskCapped      // 일별 cap 적용된 task 완료 점수
-    + giveCapped      // 일별 cap 적용된 업무 발송 점수
     + chatCapped      // 채팅 cap 적용된 점수
-    + reactionScore   // 받은 좋아요 점수 (캡 없음, 0.2/개)
+    + reactionScore   // 받은 좋아요 점수 (2026-06-15부터 하루 5개 캡)
     + reactionGivenScore  // 누른 좋아요 점수 (캡 없음, 0.05/개) — 옵션 B
     + (r.bonus || 0)   // 🎖 매니저 보너스 (가중치 1.0, 캡 없음 — 주간 한도로 통제, 화면 표시됨)
     + (r.omerit || 0); // ⭐ 사장님 상점 (점수엔 합산, 출처/표시는 숨김 — 배지·보너스트랙 비표시)
@@ -1165,7 +1160,7 @@ function branchLabel(id){
 function escHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // 📊 2026-06-14 — 점수 내역 배지 (포디움·리스트 공용). 활동별 횟수:
-//   📦유통기한등록 ✅체크 ❌폐기 · 📋완료(⭐=점수합) · 📤업무발송(지시) ·
+//   📦유통기한등록 ✅체크 ❌폐기 · 📋완료(⭐=점수합) ·
 //   💬채팅 📷사진 ↩️답글 · 👍받은좋아요 · 🎖보너스. (사장님이 1~3위도 감사 가능하게)
 function _bdBadges(r){
   const bd = [];
@@ -1173,7 +1168,6 @@ function _bdBadges(r){
   if (r.expiryCheck)   bd.push(`✅${r.expiryCheck}`);
   if (r.expiryDiscard) bd.push(`❌${r.expiryDiscard}`);
   if (r.taskComplete)  bd.push(`📋${r.taskComplete}${r.taskPoints && r.taskPoints !== r.taskComplete ? '⭐'+r.taskPoints : ''}`);
-  if (r.taskGiven)     bd.push(`📤${r.taskGiven}`);
   if (r.chatMsg)       bd.push(`💬${r.chatMsg}`);
   if (r.chatPhoto)     bd.push(`📷${r.chatPhoto}`);
   if (r.reply)         bd.push(`↩️${r.reply}`);
@@ -1215,7 +1209,6 @@ function renderRows(rest){
       if (r.expiryCheck)   bd.push(`✅${r.expiryCheck}`);
       if (r.expiryDiscard) bd.push(`❌${r.expiryDiscard}`);
       if (r.taskComplete)  bd.push(`📋${r.taskComplete}${r.taskPoints && r.taskPoints !== r.taskComplete ? '⭐'+r.taskPoints : ''}`);
-      if (r.taskGiven)     bd.push(`📤${r.taskGiven}`);
       if (r.chatMsg)       bd.push(`💬${r.chatMsg}`);
       if (r.chatPhoto)     bd.push(`📷${r.chatPhoto}`);
       if (r.reply)         bd.push(`↩️${r.reply}`);
@@ -1385,7 +1378,7 @@ function renderLegend(){
     <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:9px 11px;margin-bottom:10px;color:#92400e;font-weight:800;line-height:1.5">${escHtml(t('legBonusAttend'))}</div>
     <b>${escHtml(t('legendHd'))}</b><br>
     📦 ${escHtml(t('legExpAdd'))} <code>+0.2</code> ${escHtml(t('legExpAddNote'))} · ✅ ${escHtml(t('legExpCheck'))} <code>+0.1</code> · ❌ ${escHtml(t('legExpDisc'))} <code>+0.1</code><br>
-    📋 ${escHtml(t('legTask'))} <code>+1~+3</code> ${escHtml(t('legTaskNote'))} · 📤 ${escHtml(t('legTaskGiven'))} <code>+1</code> ${escHtml(t('legTaskGivenNote'))}<br>
+    📋 ${escHtml(t('legTask'))} <code>+1~+3</code> ${escHtml(t('legTaskNote'))}<br>
     🎖 ${escHtml(_bt('보너스 (매니저·오너 부여, 이유 기록)','Bonus (manager/owner, with reason)','Bono (gerente/dueño, con motivo)'))} <code>+2~+5</code><br>
     💬 ${escHtml(t('legChatMsg'))} <code>+0.15</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.05</code><br>
     ↩️ ${escHtml(t('legReply'))} <code>+0.1</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.5</code><br>
