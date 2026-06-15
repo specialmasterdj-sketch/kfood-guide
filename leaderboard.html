@@ -510,6 +510,14 @@ function _taskScore(t){
 const PHOTO_CAP_NEW = 10, PHOTO_CAP_OLD = 20;
 const PHOTO_CAP_CUTOFF = new Date(2026, 5, 15).getTime();   // 2026-06-15 00:00 로컬
 function photoCapFor(ts){ return (ts || 0) >= PHOTO_CAP_CUTOFF ? PHOTO_CAP_NEW : PHOTO_CAP_OLD; }
+// 💬 채팅 점수 가중치 — 2026-06-15 사장님 지시: 양치기(메시지·사진·답글)는 절반으로,
+//   '받은 좋아요'(남이 눌러줘야 받음 = 질 신호)는 0.2→0.5 로 인상. 메시지/답글 ts 기준 분기
+//   (사진 캡과 동일 컷오프). 그 전(이미 점수·지급분) 메시지는 옛 가중치 유지 — 소급 변경 방지.
+function chatWeightsFor(ts){
+  return ((ts || 0) >= PHOTO_CAP_CUTOFF)
+    ? { msg:0.15, photo:0.05, reply:0.1, reaction:0.5 }
+    : { msg:0.30, photo:0.10, reply:0.2, reaction:0.2 };
+}
 // 🆕 옵션 B — 채팅 농사 방지. 1인당 1일 채팅 관련 점수 최대 10pt.
 // 윈도우 길이 비례 (today=10, week=70, month=300, all=거의 무제한).
 // 채팅 메시지 + 사진 + 반응 + 댓글 점수 합쳐 이 cap 이상 안 넘게.
@@ -749,7 +757,7 @@ function isExcludedSender(name, branch){
 //   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, taskPointsByDay:{}, taskGiven:0, taskGivenByDay:{}, chatMsg:0, chatPhoto:0, reaction:0, reactionGiven:0, reply:0, bonus:0, score:0 });
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, taskPointsByDay:{}, taskGiven:0, taskGivenByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionGiven:0, reply:0, bonus:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -896,6 +904,7 @@ async function fetchChat(agg, since, until){
         const branchOk = (CUR_BRANCH === 'ALL') || !m.senderBranch || (m.senderBranch === CUR_BRANCH);
 
         if (inWindow && branchOk && m.sender) {
+          const cw = chatWeightsFor(ts);   // 채팅 가중치(메시지 ts 기준) — 2026-06-15 이후 새 값
           // 🛡️ 2026-06-10 전무님 지시: 자동 완료/보고 메시지(업무완료·일일/온도 보고)는
           //   채팅 활동 점수(메시지·사진)에서 제외. 업무 점수는 task 기준으로 따로 1회만
           //   집계되므로, 같은 보고가 채팅에 여러 번 올라와도 점수 중복(부풀리기) 0.
@@ -903,12 +912,15 @@ async function fetchChat(agg, since, until){
           const __isAutoReport = !!(m._dailyReport || m._tempReport ||
             (m.meta && (m.meta.kind === 'task_complete' || m.meta.kind === 'temp_daily_summary')));
           if (!__isAutoReport) {
-            bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);
+            bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);          // 횟수(배지용)
+            bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPts', cw.msg, m.color);     // 점수(ts별 가중)
             // 한 메시지 사진 점수 상한(photoCapFor) — 2026-06-15 이후 10장, 그 전 20장.
-            // 초과분은 0점 처리해 사진 남발/부풀리기 방지.
             const phRaw = (m.photos && m.photos.length) || 0;
             const ph = Math.min(phRaw, photoCapFor(ts));
-            if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
+            if (ph > 0) {
+              bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);     // 횟수
+              bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPts', ph * cw.photo, m.color); // 점수
+            }
           }
 
           // 👍 Reactions — 2026-05-28 옵션 B (전무님 지시):
@@ -922,8 +934,9 @@ async function fetchChat(agg, since, until){
               for (const [, displayName] of Object.entries(usersMap)) {
                 if (!displayName) continue;
                 if (displayName === m.sender) continue;  // self-react 제외
-                // 받은 사람 (메시지 작성자)
+                // 받은 사람 (메시지 작성자) — 횟수 + 가중 점수 (2026-06-15부터 0.5)
                 bumpAgg(agg, m.sender, m.senderBranch || '', 'reaction', 1, m.color);
+                bumpAgg(agg, m.sender, m.senderBranch || '', 'reactionPts', cw.reaction, m.color);
                 // 누른 사람 (응원자) — 적은 점수
                 bumpAgg(agg, displayName, '', 'reactionGiven', 1);
               }
@@ -941,7 +954,8 @@ async function fetchChat(agg, since, until){
             if (rts < since || rts >= until) continue;
             if (CUR_BRANCH !== 'ALL' && r.senderBranch && r.senderBranch !== CUR_BRANCH) continue;
             if (!r.sender) continue;
-            bumpAgg(agg, r.sender, r.senderBranch || '', 'reply', 1);
+            bumpAgg(agg, r.sender, r.senderBranch || '', 'reply', 1);                          // 횟수
+            bumpAgg(agg, r.sender, r.senderBranch || '', 'chatPts', chatWeightsFor(rts).reply); // 점수(답글 ts 기준)
           }
         }
       });
@@ -1090,11 +1104,11 @@ function computeScores(agg){
     // 채팅 관련 점수 (메시지·사진·댓글) → cap 적용
     // 2026-05-27 전무님 지시: reaction (받은 좋아요) 은 캡에서 제외 — 받는 사람이
     // 직접 조작 못 함 (남이 줘야 받음) → 어뷰징 위험 낮음 → 무제한 누적 OK.
-    const chatRaw = r.chatMsg     * SCORE.chatMessage
-                  + r.chatPhoto   * SCORE.chatPhoto
-                  + r.reply       * SCORE.reply;
+    // 채팅 점수는 fetchChat 에서 메시지별 ts 가중치(chatWeightsFor)로 이미 합산됨(chatPts).
+    //   2026-06-15부터: 메시지 0.15·사진 0.05·답글 0.1, 받은좋아요 0.5 / 그 전은 옛 값(0.3·0.1·0.2·0.2).
+    const chatRaw = r.chatPts || 0;
     const chatCapped = Math.min(chatRaw, chatCap);
-    const reactionScore = r.reaction * SCORE.reaction;           // 받은 좋아요 (캡 없음, 0.2/개)
+    const reactionScore = r.reactionPts || 0;                    // 받은 좋아요 (캡 없음, ts별 가중)
     const reactionGivenScore = (r.reactionGiven||0) * SCORE.reactionGiven;  // 누른 좋아요 (캡 없음, 0.05/개)
     // 💎 task 점수 — 완료일(day)별로 TASK_DAILY_CAP 적용 후 합산. 하루에 몰아주기/쪼개기
     //    해도 그날치는 cap 까지만. taskPoints(raw) 는 배지 표시용으로 그대로 둠.
@@ -1369,8 +1383,8 @@ function renderLegend(){
     📦 ${escHtml(t('legExpAdd'))} <code>+0.2</code> ${escHtml(t('legExpAddNote'))} · ✅ ${escHtml(t('legExpCheck'))} <code>+0.1</code> · ❌ ${escHtml(t('legExpDisc'))} <code>+0.1</code><br>
     📋 ${escHtml(t('legTask'))} <code>+1~+3</code> ${escHtml(t('legTaskNote'))} · 📤 ${escHtml(t('legTaskGiven'))} <code>+1</code> ${escHtml(t('legTaskGivenNote'))}<br>
     🎖 ${escHtml(_bt('보너스 (매니저·오너 부여, 이유 기록)','Bonus (manager/owner, with reason)','Bono (gerente/dueño, con motivo)'))} <code>+2~+5</code><br>
-    💬 ${escHtml(t('legChatMsg'))} <code>+0.3</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.1</code><br>
-    ↩️ ${escHtml(t('legReply'))} <code>+0.2</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.2</code><br>
+    💬 ${escHtml(t('legChatMsg'))} <code>+0.15</code> · 📷 ${escHtml(t('legChatPhoto'))} <code>+0.05</code><br>
+    ↩️ ${escHtml(t('legReply'))} <code>+0.1</code> · 👍 ${escHtml(t('legReaction'))} <code>+0.5</code><br>
     <span style="color:#92400e;font-weight:600;font-size:.95em">${escHtml(t('legChatCap'))}</span><br>
     <span style="color:#92400e;font-weight:600;font-size:.95em">${escHtml(t('legTaskCap'))}</span>
   </div>`;
