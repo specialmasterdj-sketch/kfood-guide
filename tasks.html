@@ -4329,6 +4329,45 @@ function renderScoreboard(){
 let PART_ROSTER = null;            // [{name, part}]
 let __partRosterLoading = false;
 function _partNorm(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
+// 기간(오늘/주간/월간) 점수 — 주간·월간은 전 지점 tasks 트리에서 completedAt 기준 합산(캐시).
+let PART_PERIOD = 'today';
+const PART_PERIOD_SCORES = {};   // period -> {name:score, __loaded:true}
+function _partPeriodSince(p){
+  const t = new Date(); t.setHours(0,0,0,0);
+  if (p === 'week')  return t.getTime() - 6*86400000;     // 최근 7일(오늘 포함)
+  if (p === 'month') { const m = new Date(); m.setDate(1); m.setHours(0,0,0,0); return m.getTime(); }
+  return t.getTime();                                      // today
+}
+async function loadPeriodScores(p){
+  if (PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loaded) return;
+  if (PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loading) return;
+  PART_PERIOD_SCORES[p] = { __loading:true };
+  const since = _partPeriodSince(p);
+  const sc = {};
+  for (const b of BRANCHES){
+    try {
+      const data = await fetch(`${FB_DB_URL}/tasks/${b.id}.json?cache=`+Date.now(), { cache:'no-store' }).then(r=>r.json());
+      if (!data) continue;
+      Object.values(data).forEach(day => {
+        if (!day || typeof day !== 'object') return;
+        Object.values(day).forEach(t => {
+          if (!t || !t.completedAt || !t.completedBy) return;
+          if (t.completedAt < since) return;
+          const s = taskScore(t);
+          if (s > 0){ const k = _partNorm(t.completedBy); sc[k] = (sc[k]||0) + s; }
+        });
+      });
+    } catch(_){}
+  }
+  sc.__loaded = true;
+  PART_PERIOD_SCORES[p] = sc;
+  if (PART_PERIOD === p) { try { renderPartRank(); } catch(_){} }
+}
+window.setPartPeriod = function(p){
+  PART_PERIOD = p;
+  if (p !== 'today' && !(PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loaded)) loadPeriodScores(p);
+  try { renderPartRank(); } catch(_){}
+};
 function _partOf(role, position){
   const s = (String(role||'') + ' ' + String(position||'')).toLowerCase();
   if (/sushi|스시|초밥/.test(s)) return '스시';
@@ -4387,17 +4426,26 @@ function renderPartRank(){
     ['Seafood',(LANG==='en'?'🐟 Seafood':LANG==='es'?'🐟 Mariscos':'🐟 해산물'),  '#0891b2'],
     ['Produce',(LANG==='en'?'🥬 Produce':LANG==='es'?'🥬 Frutas/Verd.':'🥬 농산물'),'#16a34a'],
   ];
-  // 직원별 전체 완료 업무 점수 (카테고리·매장 무관)
-  const scoreByName = {};
-  (TASKS || []).forEach(t => {
-    if (!t || !t.completedAt || !t.completedBy) return;
-    const s = taskScore(t);
-    if (s > 0){ const k = _partNorm(t.completedBy); scoreByName[k] = (scoreByName[k]||0) + s; }
-  });
+  // 기간별 직원 점수 — 오늘은 TASKS, 주간/월간은 기간 캐시(없으면 로드)
+  let scoreByName = {};
+  let periodLoading = false;
+  if (PART_PERIOD === 'today'){
+    (TASKS || []).forEach(t => {
+      if (!t || !t.completedAt || !t.completedBy) return;
+      const s = taskScore(t);
+      if (s > 0){ const k = _partNorm(t.completedBy); scoreByName[k] = (scoreByName[k]||0) + s; }
+    });
+  } else {
+    const c = PART_PERIOD_SCORES[PART_PERIOD];
+    if (c && c.__loaded){ scoreByName = c; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
+  }
   const title = LANG==='en'?'🏅 Part rankings':LANG==='es'?'🏅 Ranking por parte':'🏅 파트별 순위';
-  const sub = (PART_ROSTER===null) ? (LANG==='en'?'(loading…)':LANG==='es'?'(cargando…)':'(불러오는 중…)') : (LANG==='en'?'(today)':LANG==='es'?'(hoy)':'(오늘)');
+  const loading = (PART_ROSTER===null) || periodLoading;
+  const pLbl = { today:(LANG==='en'?'Today':LANG==='es'?'Hoy':'오늘'), week:(LANG==='en'?'7 days':LANG==='es'?'7 días':'주간'), month:(LANG==='en'?'This month':LANG==='es'?'Este mes':'월간') };
+  const sub = loading ? (LANG==='en'?'(loading…)':LANG==='es'?'(cargando…)':'(불러오는 중…)') : '';
+  const tabs = ['today','week','month'].map(p => `<button onclick="setPartPeriod('${p}')" style="background:${PART_PERIOD===p?'#1a5c3a':'#f1f5f9'};color:${PART_PERIOD===p?'#fff':'#475569'};border:0;border-radius:7px;padding:4px 11px;font-size:.8em;font-weight:700;cursor:pointer">${pLbl[p]}</button>`).join('');
   const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal en horario':'스케줄에 명단 없음';
-  let html = `<div style="margin:14px 2px 8px;font-weight:800;font-size:1.02em;color:#1f2937">${title} <span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
+  let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat, label, color]) => {
     const members = (PART_ROSTER||[]).filter(r => r.part === cat);
     let rows;
