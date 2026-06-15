@@ -1475,9 +1475,14 @@ function _partNorm(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,
 const PART_OVERRIDES = { 'erika garcia':'K-Food', 'anderson godoy':['정육','Seafood'], 'limberkin aparicio':['정육','Seafood'], 'rolando':['스시','K-Food'], 'neall':'스시', 'miriam':'스시', 'ysabel':'K-Food' };   // 보정 + 겸업 + 헐리우드 스시/주방 분리
 // 스케줄 명단에 없어도 파트 순위에 강제로 넣을 직원 (이름은 점수의 completedBy 와 동일해야 합산)
 const PART_FORCE = [
-  { name: 'Rolando Ag',   parts: ['스시','K-Food'] },   // 마이애미
-  { name: 'Mynor Rivera', parts: ['Produce'] },          // 마이애미 — 농산물
+  { name: 'Rolando Ag',   parts: ['스시','K-Food'], branch: 'MIAMI' },   // 마이애미
+  { name: 'Mynor Rivera', parts: ['Produce'],        branch: 'MIAMI' },   // 마이애미 — 농산물
 ];
+function _branchShort(id){
+  const ko = { MIAMI:'마이애미', HOLLYWOOD:'헐리우드', CORAL_SPRINGS:'코럴', LASOLAS:'라스올라스', PEMBROKE_PINES:'펨브로크' };
+  const en = { MIAMI:'Miami', HOLLYWOOD:'Hollywood', CORAL_SPRINGS:'Coral', LASOLAS:'Las Olas', PEMBROKE_PINES:'Pembroke' };
+  return ((typeof LANG!=='undefined' && LANG==='ko') ? ko[id] : en[id]) || id || '';
+}
 // 이름 정확 일치 우선, 없으면 한 단어 키(이름)는 토큰 포함으로 매칭(풀네임 몰라도 OK)
 function _partOverride(nm){
   if (PART_OVERRIDES[nm]) return PART_OVERRIDES[nm];
@@ -1520,7 +1525,7 @@ async function loadLBPartRoster(){
       });
     } catch(_){}
   }
-  PART_FORCE.forEach(f => { f.parts.forEach(part => { const key = part + '|' + _partNorm(f.name); if (!seen.has(key)) { seen.add(key); roster.push({ name:f.name, branch:'', part }); } }); });
+  PART_FORCE.forEach(f => { f.parts.forEach(part => { const key = part + '|' + _partNorm(f.name); if (!seen.has(key)) { seen.add(key); roster.push({ name:f.name, branch:f.branch||'', part }); } }); });
   LB_PART_ROSTER = roster; __lbRosterLoading = false;
   try { renderPartRankLB(window.__lbLastRows || []); } catch(_){}
 }
@@ -1542,8 +1547,8 @@ function renderPartRankLB(rows){
     let body;
     if (!members.length){ body = `<div style="font-size:.82em;color:#9ca3af;padding:3px 2px">${emptyLbl}</div>`; }
     else {
-      const ranked = members.map(m => ({ name:m.name, score: scoreMap[_partNorm(m.name)] || 0 })).sort((a,b)=>b.score-a.score || String(a.name).localeCompare(String(b.name)));
-      body = ranked.map((r,i) => { const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1); const dim=r.score===0?'opacity:.5':''; return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''};${dim}"><span style="width:22px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span><span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.name)}</span><span style="font-weight:900;color:${color};font-size:.92em">${r.score}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span></div>`; }).join('');
+      const ranked = members.map(m => ({ name:m.name, branch:m.branch, score: scoreMap[_partNorm(m.name)] || 0 })).sort((a,b)=>b.score-a.score || String(a.name).localeCompare(String(b.name)));
+      body = ranked.map((r,i) => { const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1); const dim=r.score===0?'opacity:.5':''; const bl=r.branch?`<span style="font-size:.7em;color:#94a3b8;font-weight:500;margin-left:6px;flex-shrink:0">${_branchShort(r.branch)}</span>`:''; return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''};${dim}"><span style="width:22px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span><span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.name)}${bl}</span><span style="font-weight:900;color:${color};font-size:.92em">${r.score}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span></div>`; }).join('');
     }
     html += `<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${color};border-radius:10px;padding:9px 12px"><div style="font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label} <span style="font-size:.78em;color:#9ca3af;font-weight:600">${members.length}${LANG==='ko'?'명':''}</span></div>${body}</div>`;
   });
