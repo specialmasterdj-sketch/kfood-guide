@@ -4329,6 +4329,11 @@ function renderScoreboard(){
 let PART_ROSTER = null;            // [{name, part}]
 let __partRosterLoading = false;
 function _partNorm(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
+// 파트 수동 보정 — 자동 분류(시프트 포지션/역할)가 틀린 직원을 강제 지정. 이름(정규화) → 파트.
+const PART_OVERRIDES = {
+  'erika garcia': 'K-Food',     // 스시→K-Food (전무님 2026-06-14)
+  'anderson godoy': '정육',     // 시니어 슈퍼바이저(헐리우드) → 정육
+};
 // 기간(오늘/주간/월간) 점수 — 주간·월간은 전 지점 tasks 트리에서 completedAt 기준 합산(캐시).
 let PART_PERIOD = 'today';
 const PART_PERIOD_SCORES = {};   // period -> {name:score, __loaded:true}
@@ -4399,10 +4404,12 @@ async function loadPartRoster(){
       });
       emps.forEach(e => {
         if (!e || !e.name) return;
-        let part = null;
-        const counts = (e.id != null) ? posByEmp[e.id] : null;
-        if (counts) part = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];   // 가장 많이 한 포지션
-        if (!part) part = _partOf(e.role, '');                                    // 포지션 없으면 역할로
+        let part = PART_OVERRIDES[_partNorm(e.name)] || null;                     // 수동 보정 최우선
+        if (!part){
+          const counts = (e.id != null) ? posByEmp[e.id] : null;
+          if (counts) part = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0]; // 가장 많이 한 포지션
+          if (!part) part = _partOf(e.role, '');                                  // 포지션 없으면 역할로
+        }
         if (!part) return;                                                        // 캐셔/매니저/델리 등 — 5파트 아님
         const key = part + '|' + _partNorm(e.name);
         if (seen.has(key)) return; seen.add(key);
