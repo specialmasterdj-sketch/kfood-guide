@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>채팅 감사 — Kimchi Mart (오너 전용)</title>
+<script type="module" src="./auth-gate.js?v=4"></script>
+<style>
+  :root{ --green:#1a5c3a; --line:#e5e7eb; --muted:#6b7280; --work:#0f6e56; --gen:#b45309; }
+  *{ box-sizing:border-box; }
+  body{ font-family:"Segoe UI","Malgun Gothic",system-ui,Arial,sans-serif; margin:0; background:#f5f7fa; color:#1f2937; }
+  .wrap{ max-width:920px; margin:0 auto; padding:16px 14px 60px; }
+  .top{ display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+  .top a{ color:var(--green); text-decoration:none; font-size:.9em; font-weight:600; }
+  h1{ font-size:1.35em; color:var(--green); margin:6px 0 2px; }
+  .sub{ color:var(--muted); font-size:.85em; margin-bottom:14px; }
+  .tabs{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .tabs button{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:7px 13px; font-size:.85em; font-weight:600; color:#374151; cursor:pointer; }
+  .tabs button.on{ background:var(--green); color:#fff; border-color:var(--green); }
+  .tools{ display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+  .tools button{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:7px 13px; font-size:.85em; font-weight:600; color:#374151; cursor:pointer; }
+  .status{ background:#eef2ff; border:1px solid #c7d2fe; color:#3730a3; border-radius:10px; padding:10px 13px; font-size:.85em; font-weight:600; margin-bottom:14px; }
+  .stat-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-bottom:16px; }
+  .stat{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:11px 13px; }
+  .stat .l{ font-size:.74em; color:var(--muted); }
+  .stat .v{ font-size:1.3em; font-weight:800; color:var(--green); }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:6px 4px; margin-bottom:18px; overflow-x:auto; }
+  .card h2{ font-size:1.0em; margin:10px 12px 8px; color:#111827; }
+  table{ width:100%; border-collapse:collapse; font-size:.82em; }
+  th,td{ padding:7px 9px; text-align:right; white-space:nowrap; }
+  th{ color:var(--muted); font-weight:600; border-bottom:1px solid var(--line); font-size:.92em; }
+  td.l,th.l{ text-align:left; }
+  tbody tr{ border-bottom:1px solid #f1f3f5; }
+  tbody tr:last-child{ border-bottom:0; }
+  .nm{ font-weight:700; color:#111827; }
+  .br{ color:var(--muted); font-size:.92em; }
+  .work{ color:var(--work); font-weight:700; }
+  .gen{ color:var(--gen); font-weight:700; }
+  .warn-pill{ background:#fef2f2; color:#b91c1c; border-radius:6px; padding:1px 6px; font-size:.85em; font-weight:700; }
+  .note{ font-size:.8em; color:var(--muted); line-height:1.6; margin-top:10px; }
+  .denied{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:30px 20px; text-align:center; color:#b91c1c; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><a href="./apps.html">← 앱 목록</a></div>
+  <h1>🔍 채팅 감사 <span style="font-size:.6em;color:var(--muted);font-weight:600;">오너 전용</span></h1>
+  <div class="sub">누가 어느 방(작업 평가방 vs 일반방)에 글·사진을 얼마나 올렸나 — 채팅 점수 출처 분석</div>
+  <div class="tabs" id="tabs">
+    <button data-p="today">오늘</button>
+    <button data-p="week">이번 주</button>
+    <button data-p="month" class="on">이번 달</button>
+    <button data-p="lastmonth">지난 달</button>
+    <button data-p="all">전체</button>
+  </div>
+  <div class="tools">
+    <button id="refresh">↻ 새로고침</button>
+  </div>
+  <div class="status" id="status">로그인 확인 중…</div>
+  <div id="content"></div>
+</div>
+
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  window.__caAuth = getAuth(app);
+</script>
+
+<script>
+const DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const PHOTO_CAP_NEW = 10, PHOTO_CAP_OLD = 20;          // leaderboard 와 동일 — 2026-06-15 부터 10장
+const PHOTO_CAP_CUTOFF = new Date(2026, 5, 15).getTime();
+const photoCapFor = ts => (ts || 0) >= PHOTO_CAP_CUTOFF ? PHOTO_CAP_NEW : PHOTO_CAP_OLD;
+const SCORE_MSG = 0.3, SCORE_PHOTO = 0.1;
+const OWNER_EMAILS = ['specialmasterdj@gmail.com','byhoki64@gmail.com','kdaisy81@yahoo.com'];
+// 방 분류 — chat.html DEFAULT_ROOMS 기준. work=작업 평가/보고방, general=일반/소통, auto=자동보고(점수제외)
+const ROOMS = {
+  meat_evalution_room:['🥩 정육 평가','work'], seafood_evalution_room:['🐟 해산물 평가','work'],
+  produce:['🥬 농산 평가','work'], grocery_eval:['🛒 그로서리 평가','work'],
+  kfood_eval:['🍚 K-Food 평가','work'], sushi:['🍱 스시 평가','work'],
+  closing:['🌙 마감','work'], expired:['⚠️ 유통기한/파손','work'],
+  need_overstock:['📦 재고부족/과다','work'], supply_req:['🧺 비품요청','work'],
+  managers:['👔 매니저 룸','general'], general:['📢 일반','general'],
+  hr_inquiries:['📨 HR','general'], kimchi_mart_app_lab:['🧪 앱랩','general'],
+  temp_eval:['🧊 온도(자동)','auto']
+};
+const roomName = id => ROOMS[id] ? ROOMS[id][0] : ('💬 ' + id);
+const roomCat  = id => ROOMS[id] ? ROOMS[id][1] : 'general';
+const R1 = n => Math.round(n*10)/10;
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let CUR = 'month';
+let BUSY = false;
+
+function periodWindow(p){
+  const n = new Date(); n.setHours(0,0,0,0);
+  let since = 0, until = Infinity;
+  if (p === 'today') since = n.getTime();
+  else if (p === 'week'){ const d = (n.getDay()+6)%7; since = n.getTime() - d*86400000; }
+  else if (p === 'month') since = new Date(n.getFullYear(), n.getMonth(), 1).getTime();
+  else if (p === 'lastmonth'){ since = new Date(n.getFullYear(), n.getMonth()-1, 1).getTime(); until = new Date(n.getFullYear(), n.getMonth(), 1).getTime(); }
+  return { since, until };
+}
+
+async function authParam(){
+  const u = window.__caAuth && window.__caAuth.currentUser;
+  if (!u) return '';
+  try { const t = await u.getIdToken(); return t ? ('?auth=' + encodeURIComponent(t)) : ''; }
+  catch(_) { return ''; }
+}
+
+function fetchT(url, ms){
+  ms = ms || 25000;
+  const c = new AbortController();
+  const to = setTimeout(() => c.abort(), ms);
+  return fetch(url, { signal: c.signal, cache: 'no-store' })
+    .then(r => { clearTimeout(to); return r; }, e => { clearTimeout(to); throw e; });
+}
+
+async function getRooms(aq){
+  try {
+    const r = await fetchT(DB + '/chat/rooms.json' + aq, 15000);
+    if (!r.ok) return { error: 'http ' + r.status };
+    const d = await r.json();
+    return { rooms: d ? Object.keys(d) : [] };
+  } catch(e){ return { error: String((e && e.message) || e) }; }
+}
+
+async function fetchRoom(room, since, until, aq){
+  try {
+    const extra = 'orderBy=%22%24key%22&limitToLast=2500';
+    const url = DB + '/chat/messages/' + encodeURIComponent(room) + '.json' + (aq ? aq + '&' : '?') + extra;
+    const r = await fetchT(url, 25000);
+    if (!r.ok) return { room, error: 'http ' + r.status };
+    const d = await r.json();
+    if (!d) return { room, rows: {}, n: 0 };
+    const ids = Object.keys(d);
+    const rows = {};
+    let n = 0;
+    for (const id of ids){
+      const m = d[id];
+      if (!m || typeof m !== 'object') continue;
+      const ts = m.ts || 0;
+      if (ts < since || ts >= until) continue;
+      const auto = m._dailyReport || m._tempReport || (m.meta && (m.meta.kind === 'task_complete' || m.meta.kind === 'temp_daily_summary'));
+      if (auto) continue;
+      const s = String(m.sender || '').trim();
+      if (!s) continue;
+      if (!rows[s]) rows[s] = { msg: 0, photoRaw: 0, photoCap: 0, branch: m.senderBranch || '' };
+      rows[s].msg++;
+      const ph = (m.photos && m.photos.length) || 0;
+      rows[s].photoRaw += ph;
+      rows[s].photoCap += Math.min(ph, photoCapFor(ts));
+      if (!rows[s].branch && m.senderBranch) rows[s].branch = m.senderBranch;
+      n++;
+    }
+    return { room, rows, n, trunc: ids.length >= 2500 };
+  } catch(e){ return { room, error: String((e && e.message) || e) }; }
+}
+
+function setStatus(html){ document.getElementById('status').innerHTML = html; }
+
+function getProfile(){
+  if (window.__currentUser) return window.__currentUser;
+  if (window.__authGate && typeof window.__authGate.getCurrentUser === 'function') return window.__authGate.getCurrentUser();
+  return null;
+}
+function isOwner(p){
+  if (!p) return false;
+  if (p.role === 'OWNER' || p.role === 'EXECUTIVE') return true;
+  return OWNER_EMAILS.includes(String(p.email || '').toLowerCase());
+}
+function waitReady(){
+  return new Promise(res => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const tokReady = window.__caAuth && window.__caAuth.currentUser;
+      const p = getProfile();
+      if ((tokReady && p) || Date.now() - t0 > 9000){ clearInterval(iv); res(); }
+    }, 150);
+  });
+}
+
+async function runAudit(){
+  if (BUSY) return;
+  BUSY = true;
+  const content = document.getElementById('content');
+  setStatus('로그인 확인 중…');
+  await waitReady();
+
+  const prof = getProfile();
+  if (!isOwner(prof)){
+    setStatus('🔒 접근 제한');
+    content.innerHTML = '<div class="denied">이 페이지는 <b>오너/임원 전용</b>입니다.<br>현재 계정: ' + esc((prof && (prof.name || prof.email)) || '미확인') + '</div>';
+    BUSY = false; return;
+  }
+
+  const aq = await authParam();
+  const { since, until } = periodWindow(CUR);
+
+  setStatus('채팅방 목록 불러오는 중…');
+  const rl = await getRooms(aq);
+  if (rl.error){
+    setStatus('❌ 데이터 접근 실패 (' + esc(rl.error) + ') — 로그인이 풀렸을 수 있습니다. 새로고침 해보세요.');
+    BUSY = false; return;
+  }
+  const rooms = rl.rooms;
+  if (!rooms.length){ setStatus('채팅방이 없습니다.'); BUSY = false; return; }
+
+  const results = [];
+  for (let i = 0; i < rooms.length; i++){
+    setStatus('채팅방 ' + (i+1) + '/' + rooms.length + ' 불러오는 중… (' + esc(roomName(rooms[i])) + ')');
+    results.push(await fetchRoom(rooms[i], since, until, aq));
+  }
+
+  // 집계
+  const agg = {};       // sender -> {workMsg,workPhotoRaw,workPhotoCap,genMsg,genPhotoRaw,genPhotoCap,branch,byRoom}
+  const roomTot = {};   // room -> {msg,photo,cat}
+  const skipped = [];
+  const trunc = [];
+  for (const res of results){
+    if (res.error){ skipped.push(roomName(res.room) + ' (' + res.error + ')'); continue; }
+    if (res.trunc) trunc.push(roomName(res.room));
+    const c = roomCat(res.room);
+    if (c === 'auto') continue;               // 자동보고방 = 점수 제외
+    let rm = 0, rp = 0;
+    for (const s in res.rows){
+      const v = res.rows[s];
+      rm += v.msg; rp += v.photoRaw;
+      if (!agg[s]) agg[s] = { workMsg:0, workPhotoRaw:0, workPhotoCap:0, genMsg:0, genPhotoRaw:0, genPhotoCap:0, branch:'', byRoom:{} };
+      if (c === 'work'){ agg[s].workMsg += v.msg; agg[s].workPhotoRaw += v.photoRaw; agg[s].workPhotoCap += v.photoCap; }
+      else { agg[s].genMsg += v.msg; agg[s].genPhotoRaw += v.photoRaw; agg[s].genPhotoCap += v.photoCap; }
+      if (!agg[s].branch && v.branch) agg[s].branch = v.branch;
+      agg[s].byRoom[res.room] = v;
+    }
+    roomTot[res.room] = { msg: rm, photo: rp, cat: c };
+  }
+
+  const list = Object.entries(agg).map(([name, v]) => {
+    const msg = v.workMsg + v.genMsg;
+    const photoRaw = v.workPhotoRaw + v.genPhotoRaw;
+    const pts = (v.workMsg + v.genMsg)*SCORE_MSG + (v.workPhotoCap + v.genPhotoCap)*SCORE_PHOTO;
+    const workPts = v.workMsg*SCORE_MSG + v.workPhotoCap*SCORE_PHOTO;
+    const genPts = v.genMsg*SCORE_MSG + v.genPhotoCap*SCORE_PHOTO;
+    return { name, ...v, msg, photoRaw, pts, workPts, genPts };
+  }).sort((a,b) => b.pts - a.pts);
+
+  // 요약
+  const totMsg = list.reduce((a,b)=>a+b.msg,0);
+  const totPhoto = list.reduce((a,b)=>a+b.photoRaw,0);
+  const totPts = list.reduce((a,b)=>a+b.pts,0);
+
+  let html = '<div class="stat-grid">'
+    + stat('활동 인원', list.length + '명')
+    + stat('총 메시지', totMsg.toLocaleString())
+    + stat('총 사진', totPhoto.toLocaleString())
+    + stat('총 채팅점수', R1(totPts))
+    + '</div>';
+
+  // 인원별 표
+  html += '<div class="card"><h2>👥 채팅 점수 순위 — 작업방 vs 일반방</h2><table>'
+    + '<thead><tr><th class="l">#</th><th class="l">이름</th><th>채팅점수</th>'
+    + '<th>작업방 글/사진</th><th>작업점수</th><th>일반방 글/사진</th><th>일반점수</th><th>일반 비중</th></tr></thead><tbody>';
+  list.slice(0, 40).forEach((p, i) => {
+    const genShare = p.pts > 0 ? Math.round(p.genPts / p.pts * 100) : 0;
+    const sharePill = genShare >= 50 ? '<span class="warn-pill">' + genShare + '%</span>' : (genShare + '%');
+    html += '<tr>'
+      + '<td class="l">' + (i+1) + '</td>'
+      + '<td class="l"><span class="nm">' + esc(p.name) + '</span>' + (p.branch ? ' <span class="br">' + esc(p.branch) + '</span>' : '') + '</td>'
+      + '<td><b>' + R1(p.pts) + '</b></td>'
+      + '<td class="work">' + p.workMsg + ' / ' + p.workPhotoRaw + '</td>'
+      + '<td>' + R1(p.workPts) + '</td>'
+      + '<td class="gen">' + p.genMsg + ' / ' + p.genPhotoRaw + '</td>'
+      + '<td>' + R1(p.genPts) + '</td>'
+      + '<td>' + sharePill + '</td>'
+      + '</tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // 방별 표
+  const roomRows = Object.entries(roomTot).sort((a,b)=>(b[1].msg+b[1].photo)-(a[1].msg+a[1].photo));
+  html += '<div class="card"><h2>🏠 방별 활동량</h2><table>'
+    + '<thead><tr><th class="l">방</th><th class="l">분류</th><th>메시지</th><th>사진</th></tr></thead><tbody>';
+  roomRows.forEach(([room, v]) => {
+    html += '<tr><td class="l">' + esc(roomName(room)) + '</td>'
+      + '<td class="l">' + (v.cat === 'work' ? '<span class="work">작업</span>' : '<span class="gen">일반</span>') + '</td>'
+      + '<td>' + v.msg.toLocaleString() + '</td><td>' + v.photo.toLocaleString() + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // 안내
+  html += '<div class="note">'
+    + '• <b>채팅점수</b> = 메시지×0.3 + 사진×0.1 (사진은 한 메시지당 2026-06-15부터 10장·그 전 20장까지만 인정). 받은좋아요·답글은 이 화면에 미포함(소액).<br>'
+    + '• <b>작업방</b> = 부서 평가/보고방(정육·해산물·농산·그로서리·K-Food·스시·마감·유통기한 등) — 작업 사진 보고. <b>일반방</b> = 매니저룸·일반·HR 등 소통.<br>'
+    + '• <b>일반 비중 50%+</b>(빨강)는 채팅 점수의 절반 이상을 일반 소통방에서 얻은 직원 — 작업 보고보다 잡담 비중이 큼.<br>'
+    + '• 자동 보고(업무완료·온도/일일 자동메시지)는 제외. 온도(자동)방도 점수 집계에서 제외.';
+  if (trunc.length) html += '<br>• ⚠️ <b>' + esc(trunc.join(', ')) + '</b> 방은 최근 2,500건만 집계(그 이상은 누락 — 표시값은 최소치).';
+  if (skipped.length) html += '<br>• ⏭️ 불러오기 실패(건너뜀): ' + esc(skipped.join(', '));
+  html += '</div>';
+
+  content.innerHTML = html;
+  setStatus('완료 ✓ — ' + ({today:'오늘',week:'이번 주',month:'이번 달',lastmonth:'지난 달',all:'전체'}[CUR]) + ' 기준');
+  BUSY = false;
+}
+
+function stat(l, v){ return '<div class="stat"><div class="l">' + l + '</div><div class="v">' + v + '</div></div>'; }
+
+document.getElementById('tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-p]');
+  if (!b || BUSY) return;
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  CUR = b.dataset.p;
+  runAudit();
+});
+document.getElementById('refresh').addEventListener('click', () => { if (!BUSY) runAudit(); });
+
+runAudit();
+</script>
+</body>
+</html>

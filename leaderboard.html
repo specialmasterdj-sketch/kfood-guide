@@ -505,8 +505,11 @@ function _taskScore(t){
   }
   return (typeof (t&&t.points) === 'number' && t.points >= 1 && t.points <= 5) ? t.points : 1;
 }
-// 사진 남발 방지 — 한 번에 100장 올려도 점수는 최대 10장까지만 인정. (2026-06-15 사장님 지시: 20→10)
-const MAX_PHOTOS_PER_MSG = 10;
+// 사진 남발 방지 — 한 메시지당 사진 점수 상한. 2026-06-15 사장님 지시: 그날 이후 올린 사진은
+// 10장까지만 인정, 그 전(이미 점수·보너스 반영분)은 20장 그대로 — 소급 변경 방지.
+const PHOTO_CAP_NEW = 10, PHOTO_CAP_OLD = 20;
+const PHOTO_CAP_CUTOFF = new Date(2026, 5, 15).getTime();   // 2026-06-15 00:00 로컬
+function photoCapFor(ts){ return (ts || 0) >= PHOTO_CAP_CUTOFF ? PHOTO_CAP_NEW : PHOTO_CAP_OLD; }
 // 🆕 옵션 B — 채팅 농사 방지. 1인당 1일 채팅 관련 점수 최대 10pt.
 // 윈도우 길이 비례 (today=10, week=70, month=300, all=거의 무제한).
 // 채팅 메시지 + 사진 + 반응 + 댓글 점수 합쳐 이 cap 이상 안 넘게.
@@ -901,10 +904,10 @@ async function fetchChat(agg, since, until){
             (m.meta && (m.meta.kind === 'task_complete' || m.meta.kind === 'temp_daily_summary')));
           if (!__isAutoReport) {
             bumpAgg(agg, m.sender, m.senderBranch || '', 'chatMsg', 1, m.color);
-            // 한 메시지에 사진 11장 이상 올려도 점수는 10장까지만 — 11번째부터는
-            // 보너스 0점으로 처리해서 점수 부풀리기 방지.
+            // 한 메시지 사진 점수 상한(photoCapFor) — 2026-06-15 이후 10장, 그 전 20장.
+            // 초과분은 0점 처리해 사진 남발/부풀리기 방지.
             const phRaw = (m.photos && m.photos.length) || 0;
-            const ph = Math.min(phRaw, MAX_PHOTOS_PER_MSG);
+            const ph = Math.min(phRaw, photoCapFor(ts));
             if (ph > 0) bumpAgg(agg, m.sender, m.senderBranch || '', 'chatPhoto', ph, m.color);
           }
 
@@ -1006,7 +1009,7 @@ async function fetchBonusChat(since, until){
         // — 매니저 룸: 작성한 메시지/사진 활동 점수
         if (isMgr && inWindow && m.sender) {
           _bonusMgrBump(m.sender, m.senderBranch || '', 'mgrRoomActivity', 1);
-          const ph = Math.min((m.photos && m.photos.length) || 0, MAX_PHOTOS_PER_MSG);
+          const ph = Math.min((m.photos && m.photos.length) || 0, photoCapFor(m.ts));
           if (ph) _bonusMgrBump(m.sender, m.senderBranch || '', 'mgrRoomActivity', ph * 0.5);
         }
 
