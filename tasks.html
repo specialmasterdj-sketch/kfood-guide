@@ -4380,34 +4380,52 @@ function _partPeriodSince(p){
   if (p === 'month') { const m = new Date(); m.setDate(1); m.setHours(0,0,0,0); return m.getTime(); }
   return t.getTime();                                      // today
 }
+function _dayKeyFromMs(ms){ const d = new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+// 🔧 2026-06-16 — 매장 task 트리를 통째로 받으면 데이터 큰 매장(헐리우드)이 타임아웃→조용히 누락됐음
+//   (헐리우드 전원 0의 원인). 필요한 날짜만($key 쿼리, 윈도우 7일 전부터 — 생성일↔완료일 경계 대비)
+//   받아 페이로드 축소 + 실패 시 재시도. 반환: 객체 / null(빈 매장) / undefined(로드 실패 — 0으로 묻지 말 것).
+async function _fetchBranchTasksSince(branchId, sinceMs){
+  const startKey = _dayKeyFromMs(sinceMs - 7*86400000);
+  const url = `${FB_DB_URL}/tasks/${branchId}.json?orderBy=${encodeURIComponent('"$key"')}&startAt=${encodeURIComponent('"'+startKey+'"')}&cache=`+Date.now();
+  for (let i=0;i<3;i++){
+    try { const r = await fetch(url, { cache:'no-store' }); if (r.ok){ return await r.json(); } } catch(_){}
+  }
+  return undefined;   // 3회 실패
+}
 async function loadPeriodScores(p){
-  if (PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loaded) return;
-  if (PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loading) return;
+  if (PART_PERIOD_SCORES[p] && (PART_PERIOD_SCORES[p].__loaded || PART_PERIOD_SCORES[p].__loading)) return;
   PART_PERIOD_SCORES[p] = { __loading:true };
   const since = _partPeriodSince(p);
-  const sc = {};
+  const sc = {}; const failed = [];
   for (const b of BRANCHES){
-    try {
-      const data = await fetch(`${FB_DB_URL}/tasks/${b.id}.json?cache=`+Date.now(), { cache:'no-store' }).then(r=>r.json());
-      if (!data) continue;
-      Object.values(data).forEach(day => {
-        if (!day || typeof day !== 'object') return;
-        Object.values(day).forEach(t => {
-          if (!t || !t.completedAt || !t.completedBy) return;
-          if (t.completedAt < since) return;
-          const s = taskScore(t);
-          if (s > 0){ const k = _partNorm(t.completedBy); sc[k] = (sc[k]||0) + s; }
-        });
+    const data = await _fetchBranchTasksSince(b.id, since);
+    if (data === undefined){ failed.push(b.id); continue; }   // 로드 실패 — 기록(0으로 묻지 않음)
+    if (!data) continue;                                       // 정상 응답인데 해당 기간 데이터 없음
+    Object.values(data).forEach(day => {
+      if (!day || typeof day !== 'object') return;
+      Object.values(day).forEach(t => {
+        if (!t || !t.completedAt || !t.completedBy) return;
+        if (t.completedAt < since) return;
+        const s = taskScore(t);
+        if (s > 0){ const k = _partNorm(t.completedBy); sc[k] = (sc[k]||0) + s; }
       });
-    } catch(_){}
+    });
   }
   sc.__loaded = true;
+  sc.__failed = failed;
+  if (failed.length) console.warn('[파트별 순위] 매장 데이터 로드 실패:', failed.map(_branchShort));
   PART_PERIOD_SCORES[p] = sc;
   if (PART_PERIOD === p) { try { renderPartRank(); } catch(_){} }
 }
 window.setPartPeriod = function(p){
   PART_PERIOD = p;
   if (p !== 'today' && !(PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loaded)) loadPeriodScores(p);
+  try { renderPartRank(); } catch(_){}
+};
+// 일부 매장 로드 실패 시 재시도(캐시 비우고 다시 받기)
+window.retryPartPeriod = function(){
+  delete PART_PERIOD_SCORES[PART_PERIOD];
+  if (PART_PERIOD !== 'today') loadPeriodScores(PART_PERIOD);
   try { renderPartRank(); } catch(_){}
 };
 function _partOf(role, position){
@@ -4497,7 +4515,7 @@ function _resolvePartScores(scoreByName){
   const rosterToks = rosterNorms.map(n => ({ n, toks: n.split(' ').filter(Boolean) }));
   const resolved = {}, orphans = [];
   Object.keys(scoreByName).forEach(c => {
-    if (c === '__loaded' || c === '__loading') return;
+    if (c === '__loaded' || c === '__loading' || c === '__failed') return;
     const pts = scoreByName[c];
     if (!(pts > 0)) return;
     let target = null;
@@ -4550,6 +4568,11 @@ function renderPartRank(){
       console.warn('[파트별 순위] 명단과 이름이 안 맞아 점수가 안 붙은 완료자(고아). COMPLETEDBY_ALIASES 에 매핑 추가하면 해결:', rr.orphans);
     }
   }
+  // ⚠️ 일부 매장 데이터 로드 실패 시 — 조용히 0으로 두지 말고 경고+다시시도
+  const failedBranches = (scoreByName && Array.isArray(scoreByName.__failed)) ? scoreByName.__failed : [];
+  const warnHtml = failedBranches.length
+    ? `<div style="font-size:.76em;color:#9a3412;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:7px 10px;margin:0 2px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">⚠️ ${failedBranches.map(_branchShort).join(', ')} ${LANG==='en'?'data failed to load — scores may be missing.':LANG==='es'?'no se pudo cargar — faltan puntos.':'데이터를 못 불러왔어요 — 점수가 빠졌을 수 있습니다.'}<button onclick="retryPartPeriod()" style="background:#ea580c;color:#fff;border:0;border-radius:6px;padding:3px 10px;font-size:.95em;font-weight:700;cursor:pointer">${LANG==='en'?'Retry':LANG==='es'?'Reintentar':'다시 시도'}</button></div>`
+    : '';
   const title = LANG==='en'?'🏅 Part rankings':LANG==='es'?'🏅 Ranking por parte':'🏅 파트별 순위';
   const loading = (PART_ROSTER===null) || periodLoading;
   const pLbl = { today:(LANG==='en'?'Today':LANG==='es'?'Hoy':'오늘'), week:(LANG==='en'?'7 days':LANG==='es'?'7 días':'주간'), month:(LANG==='en'?'This month':LANG==='es'?'Este mes':'월간') };
@@ -4560,7 +4583,7 @@ function renderPartRank(){
   const noteTxt = LANG==='en' ? 'ℹ️ Part ranking score = task completion points only (overall total is on the leaderboard).'
                 : LANG==='es' ? 'ℹ️ Puntaje por parte = solo puntos de tareas completadas (el total está en el leaderboard).'
                 :               'ℹ️ 파트별 순위 점수 = 업무(task) 완료 점수만입니다. (전체 점수는 leaderboard 참고)';
-  let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 10px">${noteTxt}</div><div style="display:flex;flex-direction:column;gap:10px">`;
+  let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 10px">${noteTxt}</div>${warnHtml}<div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat, label, color]) => {
     const members = (PART_ROSTER||[]).filter(r => r.part === cat);
     let rows;
