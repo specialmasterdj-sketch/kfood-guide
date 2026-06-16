@@ -4476,6 +4476,43 @@ async function loadPartRoster(){
   PART_ROSTER = roster;
   try { renderPartRank(); } catch(_){}
 }
+// 🔧 2026-06-16 — 완료자(completedBy) 표기가 스케줄 명단과 달라도(예: "Anderson" / "Anderson G"
+//   ↔ 명단 "Anderson Godoy") 점수가 제대로 붙도록 느슨한 이름 매칭. 첫 이름(토큰)부터 호환되고
+//   C(완료자)의 모든 토큰이 R(명단)에 대응될 때만, 그리고 후보 명단이 "유일"할 때만 매칭(모호하면
+//   오배정 막으려 미매칭→고아). 콕 집어 강제할 변형은 아래 별칭표에 추가.
+const COMPLETEDBY_ALIASES = {
+  // '정규화된 완료자표기': '정규화된 명단이름',   예) 'andy g': 'anderson godoy'
+};
+function _tokMatch(a, b){ return a === b || a.startsWith(b) || b.startsWith(a); }      // 이니셜/접두사 허용
+function _looseNameMatch(cToks, rToks){
+  if (!cToks.length || !rToks.length) return false;
+  if (!_tokMatch(cToks[0], rToks[0])) return false;                                    // 이름(첫 토큰)부터 호환
+  return cToks.every(ct => rToks.some(rt => _tokMatch(ct, rt)));                       // C의 모든 토큰이 R에 대응
+}
+// scoreByName(정규화 완료자→점수) 를 명단 표준이름 기준으로 재배분. {resolved, orphans} 반환.
+function _resolvePartScores(scoreByName){
+  const roster = PART_ROSTER || [];
+  const rosterNorms = [...new Set(roster.map(r => _partNorm(r.name)).filter(Boolean))];
+  const rosterSet = new Set(rosterNorms);
+  const rosterToks = rosterNorms.map(n => ({ n, toks: n.split(' ').filter(Boolean) }));
+  const resolved = {}, orphans = [];
+  Object.keys(scoreByName).forEach(c => {
+    if (c === '__loaded' || c === '__loading') return;
+    const pts = scoreByName[c];
+    if (!(pts > 0)) return;
+    let target = null;
+    if (rosterSet.has(c)) target = c;                                                 // ① 완전일치
+    else if (COMPLETEDBY_ALIASES[c] && rosterSet.has(COMPLETEDBY_ALIASES[c])) target = COMPLETEDBY_ALIASES[c];  // ② 수동 별칭
+    else {                                                                            // ③ 느슨한 토큰 매칭(유일할 때만)
+      const cToks = c.split(' ').filter(Boolean);
+      const cand = rosterToks.filter(r => _looseNameMatch(cToks, r.toks));
+      if (cand.length === 1) target = cand[0].n;
+    }
+    if (target) resolved[target] = (resolved[target] || 0) + pts;
+    else orphans.push({ name: c, score: pts });
+  });
+  return { resolved, orphans };
+}
 function renderPartRank(){
   const el = document.getElementById('partRank');
   if (!el) return;
@@ -4501,6 +4538,18 @@ function renderPartRank(){
     const c = PART_PERIOD_SCORES[PART_PERIOD];
     if (c && c.__loaded){ scoreByName = c; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
   }
+  // 🔧 완료자 표기 차이 보정 — 명단 기준으로 점수 재배분. 명단 미로딩이면 기존(완전일치) 그대로.
+  let resolvedScore = scoreByName;
+  if (PART_ROSTER && PART_ROSTER.length){
+    const rr = _resolvePartScores(scoreByName);
+    resolvedScore = rr.resolved;
+    window.__partOrphans = rr.orphans;
+    const sig = PART_PERIOD + '|' + rr.orphans.map(o=>o.name+':'+o.score).sort().join(',');
+    if (rr.orphans.length && window.__partOrphanSig !== sig){
+      window.__partOrphanSig = sig;
+      console.warn('[파트별 순위] 명단과 이름이 안 맞아 점수가 안 붙은 완료자(고아). COMPLETEDBY_ALIASES 에 매핑 추가하면 해결:', rr.orphans);
+    }
+  }
   const title = LANG==='en'?'🏅 Part rankings':LANG==='es'?'🏅 Ranking por parte':'🏅 파트별 순위';
   const loading = (PART_ROSTER===null) || periodLoading;
   const pLbl = { today:(LANG==='en'?'Today':LANG==='es'?'Hoy':'오늘'), week:(LANG==='en'?'7 days':LANG==='es'?'7 días':'주간'), month:(LANG==='en'?'This month':LANG==='es'?'Este mes':'월간') };
@@ -4518,7 +4567,7 @@ function renderPartRank(){
     if (!members.length) {
       rows = `<div style="font-size:.82em;color:#9ca3af;padding:3px 2px">${emptyLbl}</div>`;
     } else {
-      const ranked = members.map(m => ({ name:m.name, branch:m.branch, score: scoreByName[_partNorm(m.name)] || 0 }))
+      const ranked = members.map(m => ({ name:m.name, branch:m.branch, score: resolvedScore[_partNorm(m.name)] || 0 }))
         .sort((a,b) => b.score - a.score || String(a.name).localeCompare(String(b.name)));
       rows = ranked.map((r,i) => {
         const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1);
