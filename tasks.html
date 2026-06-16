@@ -4872,7 +4872,20 @@ window.dashAction = dashAction;
 if (window.kmBack) kmBack.attachView(() => CUR_TAB === 'emp', () => switchTab('emp'));
 
 // ================= FIREBASE =================
-let unsub = null;
+// 🔴 2026-06-16 CRASH FIX — 폰에서 "A problem repeatedly occurred on this page".
+//   원인: subscribeTasks() 가 한 번 로드에 여러 번 호출됨(아래 boot 경로 + storage +
+//   fb-ready ×2). 매니저/오너는 5개 지점 onValue 를 거는데, 예전엔 그 구독 핸들을
+//   버려서(반환값 미저장) 호출마다 5개씩 리스너가 쌓였다. 데이터가 바뀔 때마다
+//   쌓인 리스너 전부가 renderAllNow()(전체 DOM 재구성)를 호출 → 메모리/CPU 폭증 →
+//   렌더러 크래시 루프. 이제 모든 onValue 핸들을 taskUnsubs 에 모아 재구독 전 전부 해제.
+let unsub = null;          // (레거시) 단일 지점 핸들 — 호환 위해 유지
+let taskUnsubs = [];       // 🔴 모든 task onValue 핸들 (지점별 포함) 추적 → 누수 차단
+function _clearTaskSubs(){
+  if (unsub) { try{unsub();}catch(e){} unsub=null; }
+  taskUnsubs.forEach(u => { try{ u && u(); }catch(e){} });
+  taskUnsubs = [];
+}
+let geoUnsub = null;       // 🔴 branchGeo 구독도 동일 누수 → 추적
 let SEEN_IDS = new Set();   // task ids already known — used to detect new arrivals
 let SEEN_INIT = false;       // skip notifications on first snapshot (initial load)
 
@@ -5798,7 +5811,7 @@ async function autoMigrateTaskPoints(taskList){
 function subscribeTasks(){
   if (!me) return;
   if (!window.__fb) { setTimeout(subscribeTasks, 500); return; }
-  if (unsub) { try{unsub();}catch(e){} unsub=null; }
+  _clearTaskSubs();   // 🔴 재구독 전 이전 onValue 전부 해제 (지점별 포함) — 리스너 누수/크래시 차단
   SEEN_IDS = new Set();
   SEEN_INIT = false;
   // 정육 일일 보고 자동 생성은 비활성화 — 매니저가 '🥩 정육 일괄 발송'
@@ -5812,7 +5825,7 @@ function subscribeTasks(){
     let firstByBranch = {};
     BRANCHES.forEach(b => {
       const r = window.__fb.ref(window.__fb.db, 'tasks/'+b.id+'/'+todayStr());
-      window.__fb.onValue(r, snap => {
+      taskUnsubs.push(window.__fb.onValue(r, snap => {   // 🔴 핸들 저장 → 재구독 시 해제
         const v = snap.val() || {};
         TASKS = TASKS.filter(t => t.branchId !== b.id);
         Object.entries(v).forEach(([id, t]) => TASKS.push(Object.assign({id, branchId:b.id, branchName:b.ko}, t)));
@@ -5821,7 +5834,7 @@ function subscribeTasks(){
         renderAll();
         autoMigrateProduceTasks(TASKS);
         autoMigrateTaskPoints(TASKS);
-      });
+      }));
     });
   } else {
     // 🔧 2026-05-30 — 직원 매장 해석.
@@ -5843,18 +5856,19 @@ function subscribeTasks(){
         renderAll();
         autoMigrateProduceTasks(TASKS);
       });
+      taskUnsubs.push(unsub);   // 🔴 배열로도 추적 (일관 해제)
     } else {
       // 매장 미상 → 전 지점 구독 (직원이 절대 빈 화면으로 막히지 않게).
       // renderEmp 의 isAssignedToMe 가 이름 매칭 + '*' 로 본인 업무만 추려냄.
       TASKS = [];
       BRANCHES.forEach(b => {
         const r = window.__fb.ref(window.__fb.db, 'tasks/'+b.id+'/'+todayStr());
-        window.__fb.onValue(r, snap => {
+        taskUnsubs.push(window.__fb.onValue(r, snap => {   // 🔴 핸들 저장 → 재구독 시 해제
           const v = snap.val() || {};
           TASKS = TASKS.filter(t => t.branchId !== b.id);
           Object.entries(v).forEach(([id, t]) => TASKS.push(Object.assign({id, branchId:b.id}, t)));
           renderAll();
-        });
+        }));
       });
       _recoverMyBranchFromSchedules();
     }
@@ -5891,8 +5905,9 @@ function slug(s){ return String(s||'').replace(/[^a-zA-Z0-9가-힣]/g,'_'); }
 function branchKo(id){ return (BRANCHES.find(b=>b.id===id)||{}).ko || id; }
 function subscribeBranchGeo(){
   if (!window.__fb) return;
+  if (geoUnsub) { try{geoUnsub();}catch(e){} geoUnsub=null; }   // 🔴 중복 구독 방지 (boot 가 여러 번 호출됨)
   const r = window.__fb.ref(window.__fb.db, BRANCH_GEO_PATH);
-  window.__fb.onValue(r, snap => { BRANCH_GEO = snap.val() || {}; renderClockIn(); });
+  geoUnsub = window.__fb.onValue(r, snap => { BRANCH_GEO = snap.val() || {}; renderClockIn(); });
 }
 let attendUnsub = null;
 function subscribeMyAttendance(){
@@ -10576,7 +10591,8 @@ function renderAll(){
   renderAllNow();
 }
 window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); subscribeMyAttendance(); tickLocation(); } });
-window.addEventListener('fb-ready', () => subscribeTasks());
+// (이전엔 여기서 fb-ready → subscribeTasks 를 한 번 더 걸어 bootFb 와 중복 호출됐다.
+//  bootFb 가 이미 subscribeTasks 를 호출하므로 중복 리스너 제거 — 불필요한 재구독 방지.)
 
 // expose
 window.switchTab = switchTab;
@@ -10635,7 +10651,13 @@ window.addEventListener('storage', e => {
     }
   }
 });
+let __bootedFb = false;
 function bootFb(){
+  // window.__fb 가 인라인으로 즉시 세팅되면 아래 직접 호출 + fb-ready 이벤트가
+  // 둘 다 발화해 bootFb 가 두 번 돌 수 있다. 1회만 구독하도록 가드.
+  // (구독 함수들은 자체적으로도 재구독 시 이전 핸들을 해제하므로 이중 안전망.)
+  if (__bootedFb) return;
+  __bootedFb = true;
   subscribeTasks();
   subscribeBranchGeo();
   subscribeMyAttendance();
