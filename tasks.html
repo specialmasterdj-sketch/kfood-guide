@@ -4388,9 +4388,37 @@ async function _fetchBranchTasksSince(branchId, sinceMs){
   const startKey = _dayKeyFromMs(sinceMs - 7*86400000);
   const url = `${FB_DB_URL}/tasks/${branchId}.json?orderBy=${encodeURIComponent('"$key"')}&startAt=${encodeURIComponent('"'+startKey+'"')}&cache=`+Date.now();
   for (let i=0;i<3;i++){
-    try { const r = await fetch(url, { cache:'no-store' }); if (r.ok){ return await r.json(); } } catch(_){}
+    try {
+      const r = await fetch(url, { cache:'no-store' });
+      if (r.ok) return await r.json();
+      if (r.status === 413) return await _fetchBranchByDay(branchId, startKey);   // 응답이 너무 큼(헐리우드) → 하루씩 분할
+    } catch(_){}
   }
   return undefined;   // 3회 실패
+}
+// 매장 데이터가 한 번에 받기엔 너무 클 때(413 Payload too large) — 날짜 키 목록(shallow, 작음)만
+// 먼저 받고, 기간 내 각 날짜를 개별 fetch해서 병합. 각 요청이 작아져 한도를 안 넘김.
+async function _fetchBranchByDay(branchId, startKey){
+  let keys;
+  try {
+    const r = await fetch(`${FB_DB_URL}/tasks/${branchId}.json?shallow=true&cache=`+Date.now(), { cache:'no-store' });
+    if (!r.ok) return undefined;
+    const obj = await r.json();
+    keys = obj ? Object.keys(obj).filter(k => k >= startKey) : [];
+  } catch(_){ return undefined; }
+  const merged = {}; const CONC = 6;
+  for (let i=0;i<keys.length;i+=CONC){
+    await Promise.all(keys.slice(i, i+CONC).map(async k => {
+      for (let a=0;a<2;a++){
+        try {
+          const r = await fetch(`${FB_DB_URL}/tasks/${branchId}/${encodeURIComponent(k)}.json?cache=`+Date.now(), { cache:'no-store' });
+          if (r.ok){ merged[k] = await r.json(); return; }
+          if (r.status === 413){ merged[k] = null; return; }   // 그 하루조차 너무 큼 — 스킵(아주 드묾)
+        } catch(_){}
+      }
+    }));
+  }
+  return merged;
 }
 async function loadPeriodScores(p){
   if (PART_PERIOD_SCORES[p] && (PART_PERIOD_SCORES[p].__loaded || PART_PERIOD_SCORES[p].__loading)) return;
