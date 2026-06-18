@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_09_champions_lasolas';   // 🏆 이달의 챔피언 슬라이드 — 라스올라스(ALFONSO/LIZBETH) 추가
+    var BUST = 'tasks_2026_06_18_photo_memfix';   // 🆕 사진 메모리 크래시 수정(createImageBitmap) + 매니저 본인지점 구독
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -5924,9 +5924,10 @@ function subscribeTasks(){
   // 정육 일일 보고 자동 생성은 비활성화 — 매니저가 '🥩 정육 일괄 발송'
   // 버튼으로 직접 트리거 (sendMeatDailyAll). 비활성 이유: 모든 직원에게
   // 자동 생성되면 정육 부서 아닌 직원 화면에도 task 가 떠 어수선했음.
-  // Owner/B.H.K + 매니저/슈퍼바이저 모두 ALL branches subscribe — 다른 지점 진행
-  // 상황 참고용으로 보기. 일반 직원은 본인 매장만.
-  if (isOwner() || isManager(me.role)) {
+  // 🆕 2026-06-18 메모리 크래시 수정: 오너/임원만 전 지점 구독. 일반 매니저·슈퍼바이저는
+  //   본인 지점만 → 약한 아이폰에서 5지점 데이터로 메모리 터지던 크래시 차단 + 지점 단위
+  //   접근 원칙과 일치. (전엔 isManager 포함이라 슈퍼바이저까지 5지점 다 받아 OOM.)
+  if (isOwner()) {
     // subscribe to today across all branches and merge
     TASKS = [];
     let firstByBranch = {};
@@ -7744,7 +7745,35 @@ async function compressImage(file, maxSide = 1024, quality = 0.78) {
   // RGBA 4MB+가 GPU/CPU 메모리에 잡혀 3번째 촬영 시 OOM 으로 페이지 reload.
   // 모바일 감지하면 maxSide 더 줄임.
   const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-  if (isMobile && maxSide > 900) maxSide = 900;
+  if (isMobile && maxSide > 720) maxSide = 720;   // 🆕 2026-06-18 720(was 900) — iOS 메모리 추가 절감
+
+  // 🆕 2026-06-18 1순위: createImageBitmap — 디코드 결과를 .close()로 즉시 해제해
+  //   iOS GC 지연 OOM("사진 찍을 때마다 페이지 크래시") 회피. EXIF는 imageOrientation 로 보존.
+  //   미지원/실패 시 아래 <img> 폴백 — 출력 동작 동일.
+  try {
+    if (typeof createImageBitmap === 'function') {
+      let bmp = null, bcanvas = null;
+      try {
+        bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        const bw = bmp.width, bh = bmp.height;
+        if (bw <= maxSide && bh <= maxSide && file.size < 350 * 1024) return file;
+        const br = Math.min(maxSide / bw, maxSide / bh, 1);
+        const nw = Math.round(bw * br), nh = Math.round(bh * br);
+        bcanvas = document.createElement('canvas');
+        bcanvas.width = nw; bcanvas.height = nh;
+        bcanvas.getContext('2d').drawImage(bmp, 0, 0, nw, nh);
+        const bblob = await new Promise(res => bcanvas.toBlob(b => res(b), 'image/jpeg', quality));
+        if (bblob && bblob.size <= file.size) {
+          return new File([bblob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+        }
+        return file;
+      } finally {
+        try { if (bmp) bmp.close(); } catch(_){}
+        try { if (bcanvas) { bcanvas.width = 0; bcanvas.height = 0; } } catch(_){}
+      }
+    }
+  } catch(e) { console.warn('[compress] createImageBitmap 실패 → img 폴백', e); }
+
   let url = null, img = null, canvas = null;
   try {
     url = URL.createObjectURL(file);
