@@ -3631,8 +3631,14 @@ async function translate(text, target) {
   if (TR_CACHE.has(key)) return TR_CACHE.get(key);
   try {
     const u = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
-    const r = await fetch(u);
-    if (!r.ok) throw 0;
+    // ⏱️ 2026-06-19 타임아웃 — 번역 API가 응답을 멈추면(폰 네트워크·차단·과부하) await 가
+    //   영원히 안 끝나 발송이 "번역 중"에서 무한 정지하던 문제. 7초 후 중단하고 원문으로 진행.
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch(_){} }, 7000) : null;
+    let r;
+    try { r = await fetch(u, ctrl ? { signal: ctrl.signal } : {}); }
+    finally { if (timer) clearTimeout(timer); }
+    if (!r || !r.ok) throw 0;
     const j = await r.json();
     const out = (j && j[0]) ? j[0].map(seg => seg[0]).join('') : text;
     TR_CACHE.set(key, out);
