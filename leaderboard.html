@@ -853,6 +853,44 @@ async function fetchExpiry(agg, since, until){
   }));
 }
 
+// 🔧 2026-06-19 — 매장 task 트리를 통째로 받으면 데이터 큰 매장(헐리우드)이 Firebase REST
+//   413 "Payload too large" 로 거부됨 → 통째 fetch 실패 → CORE_FAILS++ → "일부 지점 로드 실패"
+//   경고 + 헐리우드 전원 누락(0점). tasks.html(커밋 b6008ae) 의 검증된 우회를 그대로 이식:
+//   413 이면 ?shallow=true 로 날짜키만 받고 기간 내 각 날짜를 개별 fetch(동시성 6)해 병합 —
+//   각 요청이 작아 한도 통과. 반환: 트리객체 / null(빈 매장) / undefined(진짜 실패 → CORE_FAIL).
+async function _lbFetchBranchTree(br, aq, _extra, _sk){
+  const url = _fbq(`${FB_DB}/tasks/${br}.json`, aq, _extra);
+  for (let i=0;i<2;i++){
+    try {
+      const r = await fetchT(url, { cache:'no-store' }, 9000);
+      if (r && r.ok) return await r.json();
+      if (r && r.status === 413) return await _lbFetchBranchByDay(br, aq, _sk);   // 너무 큼(헐리우드) → 분할
+    } catch(_){ /* 타임아웃/네트워크 → 재시도 */ }
+  }
+  return undefined;   // 2회 실패 → 진짜 로드 실패
+}
+async function _lbFetchBranchByDay(br, aq, _sk){
+  let keys;
+  try {
+    const r = await fetchT(_fbq(`${FB_DB}/tasks/${br}.json`, aq, 'shallow=true'), { cache:'no-store' }, 9000);
+    if (!r || !r.ok) return undefined;
+    const obj = await r.json();
+    keys = obj ? Object.keys(obj).filter(k => !_sk || k >= _sk) : [];   // 'all'(_sk 없음)이면 전체 날짜
+  } catch(_){ return undefined; }
+  const merged = {}; const CONC = 6;
+  for (let i=0;i<keys.length;i+=CONC){
+    await Promise.all(keys.slice(i, i+CONC).map(async k => {
+      for (let a=0;a<2;a++){
+        try {
+          const r = await fetchT(_fbq(`${FB_DB}/tasks/${br}/${encodeURIComponent(k)}.json`, aq), { cache:'no-store' }, 8000);
+          if (r && r.ok){ merged[k] = await r.json(); return; }
+          if (r && r.status === 413){ merged[k] = null; return; }   // 그 하루조차 너무 큼 — 스킵(아주 드묾)
+        } catch(_){}
+      }
+    }));
+  }
+  return merged;
+}
 // Tasks live at /tasks/{branch}/{YYYY-MM-DD}/{taskId}. Each completed
 // task awards +1.0 to t.completedBy. We walk every branch's full
 // year-bucket tree so any task completed in the time window counts.
@@ -864,10 +902,9 @@ async function fetchTasks(agg, since, until){
       // ⚡ 기간 한정 — 시작 날짜키 이후 버킷만 (orderBy $key, index 불필요). 'all' 은 전체.
       const _sk = tasksStartKey();
       const _extra = _sk ? ('orderBy=' + encodeURIComponent('"$key"') + '&startAt=' + encodeURIComponent('"'+_sk+'"')) : '';
-      const r = await fetchTR(_fbq(`${FB_DB}/tasks/${br}.json`, aq, _extra), { cache:'no-store' }, 9000);
-      if (!r) return;
-      const tree = await r.json();
-      if (!tree) return;
+      const tree = await _lbFetchBranchTree(br, aq, _extra, _sk);
+      if (tree === undefined){ CORE_FAILS++; return; }   // 🔴 진짜 로드 실패 — 경고+재시도 (조용히 0 금지)
+      if (!tree) return;                                  // 정상 응답인데 해당 기간 데이터 없음
       // tree is { dateString: { taskId: taskObj } }
       Object.values(tree).forEach(dayBucket => {
         if (!dayBucket || typeof dayBucket !== 'object') return;
