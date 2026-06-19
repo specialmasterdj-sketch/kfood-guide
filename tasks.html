@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_19_partrank_off';   // 🆕 파트별 순위 업무앱서 제거(폰 크래시 방지) + 발송 번역 비차단
+    var BUST = 'tasks_2026_06_19_gentle_reload';   // 🆕 사용 중 강제 리로드 금지(작업 중단 방지) + 파트별 순위 제거 + 발송 번역 비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -22,18 +22,37 @@
         return;
       }
     } catch(e){}
-    // 폴링 — 이미 열린 페이지를 위한 자동 업데이트
+    // 폴링 — 새 버전 감지. ⚠️ 2026-06-19 시리아 아이폰: 업무 작성 중에 5분 폴링이 location.reload()
+    //   를 호출해 화면이 갑자기 넘어가 작업이 끊기던 문제. 이제 사용 중(화면 보이는 중)엔 절대
+    //   강제 리로드 안 함 — 새 버전은 '대기'만 하고, ① 앱을 벗어날 때(백그라운드) 조용히 적용
+    //   또는 ② 작은 '업데이트' 배너를 탭할 때만 적용. (작업 중단·데이터 손실 방지)
+    var __pendingReload = false;
+    function showUpdateBanner(){
+      if (document.getElementById('__kmUpd')) return;
+      var b = document.createElement('div');
+      b.id = '__kmUpd';
+      b.textContent = '🔄 새 버전 준비됨 — 탭하여 업데이트';
+      b.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#1a5c3a;color:#fff;padding:10px 18px;border-radius:24px;font-size:.85em;font-weight:700;z-index:99999;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer;font-family:inherit;max-width:90vw';
+      b.onclick = function(){ try { location.reload(); } catch(e){} };
+      document.body.appendChild(b);
+    }
     function pollBust(){
       fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
         .then(function(r){ return r.text(); })
         .then(function(t){
           var m = t.match(/var BUST = '([^']+)'/);
-          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+          if (m && m[1] !== BUST && !__pendingReload) {
+            console.log('[bust-poll] 새 버전 대기:', m[1], '— 사용 중엔 강제 리로드 안 함');
+            __pendingReload = true;
+            try { showUpdateBanner(); } catch(e){}
+          }
         }).catch(function(){});
     }
     setInterval(pollBust, 5 * 60 * 1000);
     document.addEventListener('visibilitychange', function(){
-      if (document.visibilityState === 'visible') pollBust();
+      // 앱을 벗어날 때(백그라운드)만 대기 중 업데이트를 조용히 적용 → 돌아오면 새 버전(중단 없음).
+      if (document.visibilityState === 'hidden') { if (__pendingReload) { try { location.reload(); } catch(e){} } }
+      else { pollBust(); }
     });
     window.addEventListener('focus', pollBust);
   })();
