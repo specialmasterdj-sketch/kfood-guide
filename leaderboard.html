@@ -532,6 +532,11 @@ const CHAT_DAILY_CAP = 10;
 // 어느 하루든 그날 완료한 task 점수 합이 이 값을 넘으면 초과분은 0점 처리.
 // (업무를 잘게 쪼개 한 사람에게 몰아줘도 하루 20pt 이상 못 받게.) 숫자만 바꾸면 튜닝 가능.
 const TASK_DAILY_CAP = 20;   // 2026-06-14 전무님 지시: 10→20 (바쁜 직원 손해 방지, 쪼개기 방지 캡은 유지)
+// 🆕 2026-06-19 전무님 지시: 유통기한 점수 farming 차단. ① 1인 1일 유통기한 점수 캡(EXPIRY_DAILY_CAP),
+//   ② 같은 물건은 사람당 1회만(add/check/discard 중복 합산 제외 — fetchExpiry 에서 처리).
+//   코럴·펨브록·헐리우드에서 무더기 체크/폐기로 점수 부풀던 문제(Yonsu 체크112/폐기111, Mirna 122/121 등).
+//   숫자만 바꾸면 튜닝 가능. 지난달(정산 완료)은 옛 방식 보존(소급 변경 방지).
+const EXPIRY_DAILY_CAP = 10;
 // (🚫 2026-06-15 GIVE_DAILY_CAP 삭제 — 발송자 점수 영구 폐지로 불필요. 재발 씨앗 제거.)
 // 🆕 2026-06-08 (3) 사장님 지시: 새 규칙(task 일일 캡)은 '아직 정산 안 된'
 // 2026-06-01 00:00 이후 완료된 업무에만 적용. 그 이전(이미 보너스 지급 끝난 5월 등)은
@@ -799,7 +804,7 @@ function isExcludedSender(name, branch){
 //   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionByDay:{}, reactionGiven:0, reply:0, bonus:0, score:0 });
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, expiryPtsByDay:{}, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionByDay:{}, reactionGiven:0, reply:0, bonus:0, score:0 });
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
   const k = name.trim();
@@ -831,22 +836,39 @@ async function fetchExpiry(agg, since, until){
       if (!r) return;
       const d = await r.json();
       if (!d) return;
+      const _isLM = (CUR_RANGE === 'lastmonth');   // 지난달(정산 완료)은 옛 방식 보존
       Object.values(d).forEach(p => {
         if (!p || typeof p !== 'object') return;
-        // Add event — 사진 첨부 시에만 점수 인정 (사진 1장당 0.3)
-        if ((p.addedAt || 0) >= since && (p.addedAt || 0) < until && p.addedBy && p.photo) {
-          bumpAgg(agg, p.addedBy, br, 'expiryAdd', 1);
+        const addOK = (p.addedAt || 0) >= since && (p.addedAt || 0) < until && p.addedBy && p.photo;
+        const chkOK = (p.lastCheckedAt || 0) >= since && (p.lastCheckedAt || 0) < until && p.lastCheckedBy && (p.lastCheckedAt !== p.addedAt);
+        const _disTs = p.discardedAt || p.lastCheckedAt || p.addedAt || 0;
+        const disOK = (p.status === 'discarded') && _disTs >= since && _disTs < until;
+        if (_isLM) {
+          // 옛 동작 그대로(중복·무캡 유지 — 소급 변경 방지)
+          if (addOK) bumpAgg(agg, p.addedBy, br, 'expiryAdd', 1);
+          if (chkOK) bumpAgg(agg, p.lastCheckedBy, br, 'expiryCheck', 1);
+          if (disOK) bumpAgg(agg, p.lastCheckedBy || p.addedBy, br, 'expiryDiscard', 1);
+          return;
         }
-        // Check event (separate from add — counts re-checks)
-        if ((p.lastCheckedAt || 0) >= since && (p.lastCheckedAt || 0) < until && p.lastCheckedBy
-            && (p.lastCheckedAt !== p.addedAt)) {
-          bumpAgg(agg, p.lastCheckedBy, br, 'expiryCheck', 1);
-        }
-        // Discard event — using discardedAt if present; otherwise count
-        // any record currently 'discarded' added/checked in window
-        if (p.status === 'discarded') {
-          const ts = p.discardedAt || p.lastCheckedAt || p.addedAt || 0;
-          if (ts >= since && ts < until) bumpAgg(agg, p.lastCheckedBy || p.addedBy, br, 'expiryDiscard', 1);
+        // 🆕 같은 물건 = 사람당 1회만 (add/check/discard 중 최고 가중치 1개). 반복/중복 점수 차단.
+        const perPerson = {};   // who -> { kind, w, ptW, ts }
+        const consider = (who, kind, w, ptW, ts) => {
+          if (!who) return;
+          if (!perPerson[who] || w > perPerson[who].w) perPerson[who] = { kind, w, ptW, ts };
+        };
+        if (addOK) consider(p.addedBy, 'expiryAdd', 2, SCORE.expiryAdd, p.addedAt);
+        if (chkOK) consider(p.lastCheckedBy, 'expiryCheck', 1, SCORE.expiryCheck, p.lastCheckedAt);
+        if (disOK) consider(p.lastCheckedBy || p.addedBy, 'expiryDiscard', 1, SCORE.expiryDiscard, _disTs);
+        for (const who of Object.keys(perPerson)) {
+          const e = perPerson[who];
+          bumpAgg(agg, who, br, e.kind, 1);              // 배지용 카운트
+          const _k = String(who).trim();                 // 일별 캡 버킷에 가중 점수 누적
+          if (agg[_k]) {
+            const _d = new Date(e.ts);
+            const _dk = _d.getFullYear() + '-' + (_d.getMonth()+1) + '-' + _d.getDate();
+            if (!agg[_k].expiryPtsByDay) agg[_k].expiryPtsByDay = {};
+            agg[_k].expiryPtsByDay[_dk] = (agg[_k].expiryPtsByDay[_dk] || 0) + e.ptW;
+          }
         }
       });
     } catch(e) { console.warn('[lb] expiry', br, e); }
@@ -1211,11 +1233,19 @@ function computeScores(agg){
     for (const dk of tDays) { _postRaw += r.taskPointsByDay[dk]; _postCapped += Math.min(r.taskPointsByDay[dk], TASK_DAILY_CAP); }
     const _preCutoff = (r.taskPoints || 0) - _postRaw;   // 컷오프 이전 완료분 (무캡)
     const taskCapped = _preCutoff + _postCapped;
+    // 🆕 2026-06-19 유통기한 점수 = 1일 캡(EXPIRY_DAILY_CAP) 적용. fetchExpiry 가 '같은 물건 사람당
+    //   1회'로 expiryPtsByDay(가중 점수)를 일별 누적 → 여기서 하루치 합을 캡까지만 인정. expiryPtsByDay
+    //   없으면(지난달=정산 보존) 옛 방식(카운트×가중치, 무캡).
+    let expiryScore;
+    if (r.expiryPtsByDay && Object.keys(r.expiryPtsByDay).length) {
+      expiryScore = 0;
+      for (const _dk in r.expiryPtsByDay) expiryScore += Math.min(r.expiryPtsByDay[_dk], EXPIRY_DAILY_CAP);
+    } else {
+      expiryScore = r.expiryAdd * _eAdd + r.expiryCheck * _eChk + r.expiryDiscard * _eDis;
+    }
     // 🚫 2026-06-15 사장님 전면 폐지: 발송자(업무 지시) 점수 제거 — 점수 합산에서 완전히 빠짐.
     r.score =
-      r.expiryAdd     * _eAdd
-    + r.expiryCheck   * _eChk
-    + r.expiryDiscard * _eDis
+      expiryScore
     + taskCapped      // 일별 cap 적용된 task 완료 점수
     + chatCapped      // 채팅 cap 적용된 점수
     + reactionScore   // 받은 좋아요 점수 (2026-06-15부터 하루 5개 캡)
