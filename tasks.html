@@ -4427,25 +4427,70 @@ async function _fetchBranchByDay(branchId, startKey){
   }
   return merged;
 }
+// 🆕 2026-06-19 전무님 지시 — 파트별 순위 점수를 '종합 취득 점수'로:
+//   업무(전 파트 완료) + 유통기한(등록·체크·폐기) + 보너스 합산. 슈퍼바이저·매니저 포함 전원
+//   (차단 없음). 같은 이름은 모든 파트 카드에서 동일 종합점수. leaderboard 와 가중치 일치
+//   (유통 등록0.2·체크0.1·폐기0.1, 업무 일일캡 20pt, 보너스 1.0).
+//   ⚠️ 채팅 점수는 제외 — tasks.html 은 폰 메인 업무앱이라 채팅(사진 base64 다량) 전체 fetch 는
+//     iOS 메모리 크래시·느려짐 주범. 채팅은 1일 10pt 캡으로 작아 순위 영향 미미.
+//   기간(오늘/주간/월간)은 모두 2026-06-01 이후라 옛 규칙 컷오프 분기 불필요.
+const PART_TASK_DAILY_CAP = 20;
+const PART_EXPIRY_W = { add:0.2, check:0.1, discard:0.1 };
+function _partDayKey(ms){ const d=new Date(ms); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+async function _partFetchJson(path){   // fb-auth-fetch.js 가 토큰 자동 첨부 → plain fetch OK
+  try { const r = await fetch(`${FB_DB_URL}/${path}.json?cache=`+Date.now(), { cache:'no-store' });
+        if (!r.ok) return undefined; return await r.json(); }
+  catch(_){ return undefined; }
+}
 async function loadPeriodScores(p){
   if (PART_PERIOD_SCORES[p] && (PART_PERIOD_SCORES[p].__loaded || PART_PERIOD_SCORES[p].__loading)) return;
   PART_PERIOD_SCORES[p] = { __loading:true };
   const since = _partPeriodSince(p);
-  const sc = {}; const failed = [];
-  for (const b of BRANCHES){
+  const taskDay = {};   // 정규화이름 -> { dayKey: 업무점수합 } (일일 캡용)
+  const extra   = {};   // 정규화이름 -> 유통기한+보너스 점수합
+  const failed  = [];
+  const _add = (obj, name, n) => { if (!name || !(n > 0)) return; const k = _partNorm(name); obj[k] = (obj[k]||0) + n; };
+  await Promise.all(BRANCHES.map(async b => {
+    // ① 업무(task) — 413 안전 fetch(헐리우드 분할). 실패는 0으로 묻지 않고 failed 기록.
     const data = await _fetchBranchTasksSince(b.id, since);
-    if (data === undefined){ failed.push(b.id); continue; }   // 로드 실패 — 기록(0으로 묻지 않음)
-    if (!data) continue;                                       // 정상 응답인데 해당 기간 데이터 없음
-    Object.values(data).forEach(day => {
-      if (!day || typeof day !== 'object') return;
-      Object.values(day).forEach(t => {
-        if (!t || !t.completedAt || !t.completedBy) return;
-        if (t.completedAt < since) return;
-        const s = taskScore(t);
-        if (s > 0){ const k = _partNorm(t.completedBy); sc[k] = (sc[k]||0) + s; }
+    if (data === undefined){ failed.push(b.id); }
+    else if (data){
+      Object.values(data).forEach(day => {
+        if (!day || typeof day !== 'object') return;
+        Object.values(day).forEach(t => {
+          if (!t || !t.completedAt || !t.completedBy) return;
+          if (t.completedAt < since) return;
+          const s = taskScore(t);
+          if (s > 0){ const k = _partNorm(t.completedBy); (taskDay[k] = taskDay[k] || {}); const dk = _partDayKey(t.completedAt); taskDay[k][dk] = (taskDay[k][dk]||0) + s; }
+        });
       });
-    });
-  }
+    }
+    // ② 유통기한 — 등록(사진 첨부 시)·체크·폐기
+    const ex = await _partFetchJson(`expiry/${b.id}/products`);
+    if (ex && typeof ex === 'object'){
+      Object.values(ex).forEach(pr => {
+        if (!pr || typeof pr !== 'object') return;
+        if ((pr.addedAt||0) >= since && pr.addedBy && pr.photo) _add(extra, pr.addedBy, PART_EXPIRY_W.add);
+        if ((pr.lastCheckedAt||0) >= since && pr.lastCheckedBy && pr.lastCheckedAt !== pr.addedAt) _add(extra, pr.lastCheckedBy, PART_EXPIRY_W.check);
+        if (pr.status === 'discarded'){ const ts = pr.discardedAt || pr.lastCheckedAt || pr.addedAt || 0; if (ts >= since) _add(extra, pr.lastCheckedBy || pr.addedBy, PART_EXPIRY_W.discard); }
+      });
+    }
+    // ③ 매니저/오너 보너스 (가중치 1.0)
+    const bo = await _partFetchJson(`mgrBonus/${b.id}`);
+    if (bo && typeof bo === 'object'){
+      Object.values(bo).forEach(a => {
+        if (!a || typeof a !== 'object' || !a.to) return;
+        if ((a.ts||0) < since) return;
+        const pts = (typeof a.points === 'number') ? a.points : 0;
+        if (pts > 0) _add(extra, a.to, pts);
+      });
+    }
+  }));
+  // 업무 일일 캡(20pt) 적용 후 종합 합산
+  const sc = {};
+  for (const k in taskDay){ let s = 0; for (const dk in taskDay[k]) s += Math.min(taskDay[k][dk], PART_TASK_DAILY_CAP); sc[k] = (sc[k]||0) + s; }
+  for (const k in extra){ sc[k] = (sc[k]||0) + extra[k]; }
+  for (const k in sc){ sc[k] = Math.round(sc[k]*10)/10; }
   sc.__loaded = true;
   sc.__failed = failed;
   if (failed.length) console.warn('[파트별 순위] 매장 데이터 로드 실패:', failed.map(_branchShort));
@@ -4580,18 +4625,11 @@ function renderPartRank(){
     ['기타',   (LANG==='en'?'🧺 Others':LANG==='es'?'🧺 Otros':'🧺 기타'),           '#64748b'],   // 🆕 부서(정육·스시·K-Food·해산·농산) 외 나머지 직원
   ];
   // 기간별 직원 점수 — 오늘은 TASKS, 주간/월간은 기간 캐시(없으면 로드)
+  // 🆕 종합 점수 — 오늘/주간/월간 모두 동일 경로(loadPeriodScores 캐시). 업무+유통기한+보너스.
   let scoreByName = {};
   let periodLoading = false;
-  if (PART_PERIOD === 'today'){
-    (TASKS || []).forEach(t => {
-      if (!t || !t.completedAt || !t.completedBy) return;
-      const s = taskScore(t);
-      if (s > 0){ const k = _partNorm(t.completedBy); scoreByName[k] = (scoreByName[k]||0) + s; }
-    });
-  } else {
-    const c = PART_PERIOD_SCORES[PART_PERIOD];
-    if (c && c.__loaded){ scoreByName = c; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
-  }
+  const _pc = PART_PERIOD_SCORES[PART_PERIOD];
+  if (_pc && _pc.__loaded){ scoreByName = _pc; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
   // 🔧 완료자 표기 차이 보정 — 명단 기준으로 점수 재배분. 명단 미로딩이면 기존(완전일치) 그대로.
   let resolvedScore = scoreByName;
   if (PART_ROSTER && PART_ROSTER.length){
@@ -4616,9 +4654,9 @@ function renderPartRank(){
   const tabs = ['today','week','month'].map(p => `<button onclick="setPartPeriod('${p}')" style="background:${PART_PERIOD===p?'#1a5c3a':'#f1f5f9'};color:${PART_PERIOD===p?'#fff':'#475569'};border:0;border-radius:7px;padding:4px 11px;font-size:.8em;font-weight:700;cursor:pointer">${pLbl[p]}</button>`).join('');
   const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal en horario':'스케줄에 명단 없음';
   // 🆕 2026-06-15 사장님 지시: 파트별 순위 점수 = 업무(task) 완료 점수만임을 명시 (전체 점수는 leaderboard 별도).
-  const noteTxt = LANG==='en' ? 'ℹ️ Part ranking score = task completion points only (overall total is on the leaderboard).'
-                : LANG==='es' ? 'ℹ️ Puntaje por parte = solo puntos de tareas completadas (el total está en el leaderboard).'
-                :               'ℹ️ 파트별 순위 점수 = 업무(task) 완료 점수만입니다. (전체 점수는 leaderboard 참고)';
+  const noteTxt = LANG==='en' ? 'ℹ️ Score = total activity (tasks across all parts + expiry + bonus). Helping other parts counts too. (Chat points are on the leaderboard.)'
+                : LANG==='es' ? 'ℹ️ Puntaje = actividad total (tareas de todas las partes + caducidad + bono). Ayudar en otras partes también cuenta. (El chat está en el leaderboard.)'
+                :               'ℹ️ 점수 = 종합 활동 점수 (전 파트 업무 + 유통기한 + 보너스). 다른 파트 일을 도와도 점수에 합산됩니다. (채팅 점수는 leaderboard 참고)';
   let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 10px">${noteTxt}</div>${warnHtml}<div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat, label, color]) => {
     const members = (PART_ROSTER||[]).filter(r => r.part === cat);
