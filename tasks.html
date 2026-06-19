@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_18_photo_memfix_v2';   // 🆕 사진 메모리 크래시 수정(createImageBitmap) + 매니저 본인지점 구독
+    var BUST = 'tasks_2026_06_19_partrank_optin';   // 🆕 파트별 점수 opt-in(폰 메모리 크래시 방지) + 발송 번역 비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -4485,13 +4485,20 @@ async function loadPeriodScores(p){
 }
 window.setPartPeriod = function(p){
   PART_PERIOD = p;
-  if (p !== 'today' && !(PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loaded)) loadPeriodScores(p);
+  // 점수를 한 번이라도 불러온(opt-in) 경우에만 기간 전환 시 자동 로드. 아니면 버튼으로 유도.
+  if (window.__partScoresOn && !(PART_PERIOD_SCORES[p] && PART_PERIOD_SCORES[p].__loaded)) loadPeriodScores(p);
   try { renderPartRank(); } catch(_){}
 };
 // 일부 매장 로드 실패 시 재시도(캐시 비우고 다시 받기)
 window.retryPartPeriod = function(){
   delete PART_PERIOD_SCORES[PART_PERIOD];
-  if (PART_PERIOD !== 'today') loadPeriodScores(PART_PERIOD);
+  loadPeriodScores(PART_PERIOD);
+  try { renderPartRank(); } catch(_){}
+};
+// 🛡️ 사용자가 '점수 불러오기' 탭 → 이때만 전 매장 점수 로드(폰 메모리 보호 opt-in).
+window.loadPartScoresNow = function(){
+  window.__partScoresOn = true;
+  try { loadPeriodScores(PART_PERIOD); } catch(_){}
   try { renderPartRank(); } catch(_){}
 };
 function _partOf(role, position){
@@ -4610,11 +4617,17 @@ function renderPartRank(){
     ['Produce',(LANG==='en'?'🥬 Produce':LANG==='es'?'🥬 Frutas/Verd.':'🥬 농산물'),'#16a34a'],
     ['기타',   (LANG==='en'?'🧺 Others':LANG==='es'?'🧺 Otros':'🧺 기타'),           '#64748b'],   // 🆕 부서(정육·스시·K-Food·해산·농산) 외 나머지 직원
   ];
-  // 기간별 직원 종합 점수(업무+보너스) — 오늘/주간/월간 모두 동일 캐시 경로(없으면 로드).
+  // 🛡️ 2026-06-19 폰 메모리 보호 — 종합 점수는 전 매장 task 트리(사진 base64 포함)를 받아야
+  //   해서, 약한 헐리우드 아이폰이 대시보드 열 때마다 자동 로드하다 크래시했음
+  //   ("A problem repeatedly occurred" 반복 크래시). 이제 자동 로드 안 하고, 사용자가
+  //   '점수 불러오기'를 탭했을 때만(window.__partScoresOn) 로드 → 앱 핵심기능은 항상 가볍게.
   let scoreByName = {};
   let periodLoading = false;
+  let scoresNeedTap = false;
   const _pc = PART_PERIOD_SCORES[PART_PERIOD];
-  if (_pc && _pc.__loaded){ scoreByName = _pc; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
+  if (_pc && _pc.__loaded){ scoreByName = _pc; }
+  else if (window.__partScoresOn){ periodLoading = true; loadPeriodScores(PART_PERIOD); }
+  else { scoresNeedTap = true; }
   // 🔧 완료자 표기 차이 보정 — 명단 기준으로 점수 재배분. 명단 미로딩이면 기존(완전일치) 그대로.
   let resolvedScore = scoreByName;
   if (PART_ROSTER && PART_ROSTER.length){
@@ -4642,7 +4655,11 @@ function renderPartRank(){
   const noteTxt = LANG==='en' ? 'ℹ️ Score = tasks (all parts) + bonus. Helping other parts counts too. (Expiry & chat points are on the leaderboard.)'
                 : LANG==='es' ? 'ℹ️ Puntaje = tareas (todas las partes) + bono. Ayudar en otras partes también cuenta. (Caducidad y chat están en el leaderboard.)'
                 :               'ℹ️ 점수 = 업무(전 파트) + 보너스. 다른 파트 일을 도와도 합산됩니다. (유통기한·채팅 점수는 leaderboard 참고)';
-  let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 10px">${noteTxt}</div>${warnHtml}<div style="display:flex;flex-direction:column;gap:10px">`;
+  // 🛡️ 폰 메모리 보호 — 점수 미로드 상태면 자동 fetch 대신 '점수 불러오기' 버튼만(탭=opt-in).
+  const scoreBtnHtml = scoresNeedTap
+    ? `<div style="margin:0 2px 10px"><button onclick="loadPartScoresNow()" style="width:100%;background:#1a5c3a;color:#fff;border:0;border-radius:9px;padding:11px;font-weight:800;font-size:.92em;cursor:pointer">📊 ${LANG==='en'?'Load scores':LANG==='es'?'Ver puntajes':'점수 불러오기'}</button><div style="font-size:.68em;color:#9ca3af;text-align:center;margin-top:5px">${LANG==='en'?'(off by default to protect phone memory — tap to load)':LANG==='es'?'(desactivado para proteger memoria — toque para cargar)':'(폰 메모리 보호 — 탭하면 전 매장 점수를 불러옵니다)'}</div></div>`
+    : '';
+  let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 10px">${noteTxt}</div>${scoreBtnHtml}${warnHtml}<div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat, label, color]) => {
     const members = (PART_ROSTER||[]).filter(r => r.part === cat);
     let rows;
