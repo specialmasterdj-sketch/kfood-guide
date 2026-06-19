@@ -4427,25 +4427,50 @@ async function _fetchBranchByDay(branchId, startKey){
   }
   return merged;
 }
+// 🆕 2026-06-19 전무님 지시 — 파트별 순위 점수를 '종합 취득 점수'로 (폰-안전 버전):
+//   업무(전 파트 완료) + 보너스. 슈퍼바이저·매니저 포함 전원(차단 없음), 같은 이름 동일 점수.
+//   ⚠️ 유통기한·채팅은 제외 — 둘 다 사진을 '거대한 base64(data:)'로 저장할 수 있어
+//     (expiry.html:1045 확인) 전 매장치를 폰에 받으면 메모리 크래시(헐리우드 아이폰 입장불가
+//     사건의 원인, 커밋 81c2312→edc95fb 되돌림). mgrBonus 는 사진 없는 작은 데이터라 안전.
+//     전체 종합(유통·채팅 포함)은 별도 페이지 leaderboard.html 에서 확인.
+async function _partFetchJson(path){   // fb-auth-fetch.js 가 토큰 자동 첨부 → plain fetch OK
+  try { const r = await fetch(`${FB_DB_URL}/${path}.json?cache=`+Date.now(), { cache:'no-store' });
+        if (!r.ok) return undefined; return await r.json(); }
+  catch(_){ return undefined; }
+}
 async function loadPeriodScores(p){
   if (PART_PERIOD_SCORES[p] && (PART_PERIOD_SCORES[p].__loaded || PART_PERIOD_SCORES[p].__loading)) return;
   PART_PERIOD_SCORES[p] = { __loading:true };
   const since = _partPeriodSince(p);
   const sc = {}; const failed = [];
+  const _add = (name, n) => { if (!name || !(n > 0)) return; const k = _partNorm(name); sc[k] = (sc[k]||0) + n; };
+  // 순차 처리(메모리 스파이크 방지). 각 매장: 업무(413-안전) + 보너스(작은 데이터).
   for (const b of BRANCHES){
+    // ① 업무(task) — 413 안전 fetch(헐리우드 분할). 실패는 0으로 묻지 않고 기록.
     const data = await _fetchBranchTasksSince(b.id, since);
-    if (data === undefined){ failed.push(b.id); continue; }   // 로드 실패 — 기록(0으로 묻지 않음)
-    if (!data) continue;                                       // 정상 응답인데 해당 기간 데이터 없음
-    Object.values(data).forEach(day => {
-      if (!day || typeof day !== 'object') return;
-      Object.values(day).forEach(t => {
-        if (!t || !t.completedAt || !t.completedBy) return;
-        if (t.completedAt < since) return;
-        const s = taskScore(t);
-        if (s > 0){ const k = _partNorm(t.completedBy); sc[k] = (sc[k]||0) + s; }
+    if (data === undefined){ failed.push(b.id); }
+    else if (data){
+      Object.values(data).forEach(day => {
+        if (!day || typeof day !== 'object') return;
+        Object.values(day).forEach(t => {
+          if (!t || !t.completedAt || !t.completedBy) return;
+          if (t.completedAt < since) return;
+          _add(t.completedBy, taskScore(t));
+        });
       });
-    });
+    }
+    // ② 매니저/오너 보너스 (가중치 1.0, 사진 없음 → 폰 안전). 유통기한·채팅은 제외(거대 사진).
+    const bo = await _partFetchJson(`mgrBonus/${b.id}`);
+    if (bo && typeof bo === 'object'){
+      Object.values(bo).forEach(a => {
+        if (!a || typeof a !== 'object' || !a.to) return;
+        if ((a.ts||0) < since) return;
+        const pts = (typeof a.points === 'number') ? a.points : 0;
+        _add(a.to, pts);
+      });
+    }
   }
+  for (const k in sc) sc[k] = Math.round(sc[k]*10)/10;
   sc.__loaded = true;
   sc.__failed = failed;
   if (failed.length) console.warn('[파트별 순위] 매장 데이터 로드 실패:', failed.map(_branchShort));
@@ -4579,19 +4604,11 @@ function renderPartRank(){
     ['Produce',(LANG==='en'?'🥬 Produce':LANG==='es'?'🥬 Frutas/Verd.':'🥬 농산물'),'#16a34a'],
     ['기타',   (LANG==='en'?'🧺 Others':LANG==='es'?'🧺 Otros':'🧺 기타'),           '#64748b'],   // 🆕 부서(정육·스시·K-Food·해산·농산) 외 나머지 직원
   ];
-  // 기간별 직원 점수 — 오늘은 TASKS, 주간/월간은 기간 캐시(없으면 로드)
+  // 기간별 직원 종합 점수(업무+보너스) — 오늘/주간/월간 모두 동일 캐시 경로(없으면 로드).
   let scoreByName = {};
   let periodLoading = false;
-  if (PART_PERIOD === 'today'){
-    (TASKS || []).forEach(t => {
-      if (!t || !t.completedAt || !t.completedBy) return;
-      const s = taskScore(t);
-      if (s > 0){ const k = _partNorm(t.completedBy); scoreByName[k] = (scoreByName[k]||0) + s; }
-    });
-  } else {
-    const c = PART_PERIOD_SCORES[PART_PERIOD];
-    if (c && c.__loaded){ scoreByName = c; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
-  }
+  const _pc = PART_PERIOD_SCORES[PART_PERIOD];
+  if (_pc && _pc.__loaded){ scoreByName = _pc; } else { periodLoading = true; loadPeriodScores(PART_PERIOD); }
   // 🔧 완료자 표기 차이 보정 — 명단 기준으로 점수 재배분. 명단 미로딩이면 기존(완전일치) 그대로.
   let resolvedScore = scoreByName;
   if (PART_ROSTER && PART_ROSTER.length){
@@ -4616,9 +4633,9 @@ function renderPartRank(){
   const tabs = ['today','week','month'].map(p => `<button onclick="setPartPeriod('${p}')" style="background:${PART_PERIOD===p?'#1a5c3a':'#f1f5f9'};color:${PART_PERIOD===p?'#fff':'#475569'};border:0;border-radius:7px;padding:4px 11px;font-size:.8em;font-weight:700;cursor:pointer">${pLbl[p]}</button>`).join('');
   const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal en horario':'스케줄에 명단 없음';
   // 🆕 2026-06-15 사장님 지시: 파트별 순위 점수 = 업무(task) 완료 점수만임을 명시 (전체 점수는 leaderboard 별도).
-  const noteTxt = LANG==='en' ? 'ℹ️ Part ranking score = task completion points only (overall total is on the leaderboard).'
-                : LANG==='es' ? 'ℹ️ Puntaje por parte = solo puntos de tareas completadas (el total está en el leaderboard).'
-                :               'ℹ️ 파트별 순위 점수 = 업무(task) 완료 점수만입니다. (전체 점수는 leaderboard 참고)';
+  const noteTxt = LANG==='en' ? 'ℹ️ Score = tasks (all parts) + bonus. Helping other parts counts too. (Expiry & chat points are on the leaderboard.)'
+                : LANG==='es' ? 'ℹ️ Puntaje = tareas (todas las partes) + bono. Ayudar en otras partes también cuenta. (Caducidad y chat están en el leaderboard.)'
+                :               'ℹ️ 점수 = 업무(전 파트) + 보너스. 다른 파트 일을 도와도 합산됩니다. (유통기한·채팅 점수는 leaderboard 참고)';
   let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px"><span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span><span style="font-size:.68em;color:#9ca3af;font-weight:600">${sub}</span><span style="margin-left:auto;display:flex;gap:5px">${tabs}</span></div><div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 10px">${noteTxt}</div>${warnHtml}<div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat, label, color]) => {
     const members = (PART_ROSTER||[]).filter(r => r.part === cat);
