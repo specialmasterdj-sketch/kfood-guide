@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_20_scroll_defer';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
+    var BUST = 'tasks_2026_06_20_sdk_upload';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -7308,18 +7308,28 @@ function renderChecklistInline(task){
 // Per-item photo attachment — multi-select. Each pick gets compressed,
 // uploaded to Storage (REST) or saved as base64 fallback, then APPENDED to
 // item.photos[] so a checklist row can carry several proof shots.
+// 🆕 2026-06-20 사진 업로드를 Firebase Storage SDK 로 — 수동 REST 는 인증헤더 누락/만료로 자주
+//   실패했음. 특히 이 uploadOnePhoto(체크리스트 사진)는 Authorization 헤더가 아예 없어 Storage
+//   규칙이 인증 요구 시 매번 401 → 무거운 base64 로 떨어져 "사진 안 올라감"의 핵심 원인이었음.
+//   SDK(uploadBytes)는 로그인 토큰 자동 첨부 + 재시도 내장이라 훨씬 안정적. 반환: 다운로드 URL /
+//   null(실패 → 호출부가 base64 폴백). 25초 타임아웃으로 무한 대기 방지.
+async function _uploadPhotoSmart(file, path, ms){
+  const fb = window.__fb;
+  if (fb && fb.st && fb.sRef && fb.uploadBytes && fb.getDownloadURL){
+    try {
+      const ref = fb.sRef(fb.st, path);
+      const up = fb.uploadBytes(ref, file, { contentType: 'image/jpeg' }).then(snap => fb.getDownloadURL(snap.ref));
+      return await Promise.race([ up, new Promise((_,rej)=>setTimeout(()=>rej(new Error('upload-timeout')), ms||25000)) ]);
+    } catch(e){ console.warn('[upload] Storage SDK 실패 → base64 폴백:', (e&&e.message)||e); }
+  }
+  return null;
+}
 async function uploadOnePhoto(file, basePath){
   const compressed = await compressImage(file);
   const path = basePath + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '.jpg';
-  try {
-    const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
-      method:'POST', headers:{'Content-Type':'image/jpeg'}, body: compressed
-    });
-    if (r.ok) {
-      const meta = await r.json();
-      return FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
-    }
-  } catch(e){}
+  const url = await _uploadPhotoSmart(compressed, path);
+  if (url) return url;
+  // 폴백 — Storage 실패 시에만 base64 (더 작게)
   const small = await compressImage(compressed, 720, 0.55);
   return await readDataUrl(small);
 }
@@ -8033,28 +8043,10 @@ async function finishTask(){
       btn.textContent = '사진 업로드 중… (' + (i+1) + '/' + DONE_PHOTOS.length + ')';
       const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
       let url = null;
-      // 1) Try Firebase Storage REST upload (with auth) — ⏱️ 2026-06-19 타임아웃 20초 + 1회 재시도.
-      //   헐리우드 폰 느린 네트워크에서 업로드가 타임아웃 없이 "사진 업로드 중…"에 멈추던 문제.
+      // 1) Firebase Storage SDK 업로드 — 로그인 토큰 자동 첨부 + 재시도 내장 + 25초 타임아웃.
+      //   수동 REST(인증헤더 누락/만료로 실패)보다 안정적. 실패하면 아래 base64 폴백.
       stage = 'storage-upload';
-      for (let _att = 0; _att < 2 && !url; _att++) {
-        const _sc = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-        const _st = _sc ? setTimeout(() => { try { _sc.abort(); } catch(_){} }, 20000) : null;
-        try {
-          const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', Object.assign({
-            method: 'POST',
-            headers: Object.assign({ 'Content-Type': 'image/jpeg' }, authHeader),
-            body: p.file
-          }, _sc ? { signal: _sc.signal } : {}));
-          if (r.ok) {
-            const meta = await r.json();
-            url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
-          } else {
-            console.warn('[doneUpload] storage', r.status, (await r.text()).slice(0, 200));
-            break;   // 권한/규칙 오류면 재시도 무의미 → base64 폴백으로
-          }
-        } catch(e) { console.warn('[doneUpload] storage attempt '+_att, e); /* 타임아웃/네트워크 → 한 번 더 */ }
-        finally { if (_st) clearTimeout(_st); }
-      }
+      url = await _uploadPhotoSmart(p.file, path);
       // 2) Fallback: re-compress smaller and embed as base64 dataURL in RTDB
       if (!url) {
         stage = 'fallback-compress';
