@@ -50,13 +50,15 @@ export const authReady = new Promise(res => { _authReadyResolve = res; });
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) {
-    // auth.html (명시적 로그인 페이지) 외에는 익명 가입 fallback —
-    // 안 그러면 Firebase SDK 의 RTDB 호출이 토큰 없이 발사돼서 401 silent fail.
-    const p = (location.pathname || '').toLowerCase();
-    if (!p.endsWith('/auth.html')) {
-      try { await signInAnonymously(auth); }
-      catch (e) { console.warn('[km-fb] anon sign-in failed', e); }
-    }
+    // 🚫 2026-06-20 익명 가입 fallback 제거 — Anonymous Auth 가 켜지면 이 폴백이 익명 user 를
+    //   만들고, auth-gate 가 익명 user 를 즉시 로그아웃+로그인화면으로 쫓아내 무한 튕김 루프 +
+    //   익명 사용자 폭증 + RTDB 401 발생(2026-06-20 전 직원 로그인 마비). 익명 토큰은 어차피
+    //   규칙이 거부(쓸모 없음)라 폴백 자체를 제거. user 없으면 호출부가 로그인 페이지로 유도.
+    //   (되살리려면 아래 2줄 주석 해제 — 단 Firebase 에서 Anonymous 끄지 않으면 또 터짐.)
+    // const p = (location.pathname || '').toLowerCase();
+    // if (!p.endsWith('/auth.html')) {
+    //   try { await signInAnonymously(auth); } catch (e) { console.warn('[km-fb] anon sign-in failed', e); }
+    // }
   }
   if (_authReadyResolve) { _authReadyResolve(auth.currentUser); _authReadyResolve = null; }
 });
