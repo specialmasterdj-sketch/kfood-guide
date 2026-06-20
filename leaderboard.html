@@ -1707,7 +1707,12 @@ function _openBonusModal(){
       o.textContent=e.name+' · '+branchLabel(e.branch); sel.appendChild(o); });
   const pr=document.getElementById('bonusPresets');
   pr.innerHTML = BONUS_PRESETS.map((b,i)=>`<button type="button" class="bonus-preset${i===0?' on':''}" data-p="${b.p}">+${b.p}<small>${escHtml(_bt(b.ko,b.en,b.es))}</small></button>`).join('');
-  pr.querySelectorAll('.bonus-preset').forEach(btn=>btn.addEventListener('click',()=>{ pr.querySelectorAll('.bonus-preset').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); }));
+  pr.querySelectorAll('.bonus-preset').forEach(btn=>btn.addEventListener('click',()=>{ pr.querySelectorAll('.bonus-preset').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); const ci=document.getElementById('bonusCustom'); if(ci) ci.value=''; }));
+  // 🆕 2026-06-20 직접 입력(자유 점수) — 권한있는 오너(무제한)에게만 표시. 매니저는 프리셋만(주간 한도).
+  const _cr=document.getElementById('bonusCustomRow'); const _ci=document.getElementById('bonusCustom');
+  if(_ci) _ci.value='';
+  if(_cr) _cr.style.display = _isUnlimitedAwarder() ? '' : 'none';
+  if(_ci && !_ci._wired){ _ci._wired=true; _ci.addEventListener('input',()=>{ if(_ci.value.trim()!=='') pr.querySelectorAll('.bonus-preset').forEach(x=>x.classList.remove('on')); }); }
   document.getElementById('bonusReason').value='';
   const bd=document.getElementById('bonusBudget');
   if(_isUnlimitedAwarder()){ bd.textContent=_bt('한도 없음 (오너)','No limit (owner)','Sin límite (dueño)'); }
@@ -1720,7 +1725,16 @@ async function _submitBonus(){
   if(!_canAward()) return;
   const sel=document.getElementById('bonusEmp'); const to=sel.value;
   const branch=(sel.selectedOptions[0] && sel.selectedOptions[0].dataset.branch) || '';
-  const onBtn=document.querySelector('#bonusPresets .bonus-preset.on'); const points=onBtn?+onBtn.dataset.p:0;
+  const onBtn=document.querySelector('#bonusPresets .bonus-preset.on'); let points=onBtn?+onBtn.dataset.p:0;
+  // 🆕 오너 직접 입력(자유 점수) 우선 — 입력칸은 _isUnlimitedAwarder(오너)에게만 보임.
+  const _ci=document.getElementById('bonusCustom');
+  if(_isUnlimitedAwarder() && _ci && _ci.value.trim()!==''){
+    const _cv=Math.floor(Number(_ci.value));
+    if(!(_cv>=1)){ alert(_bt('점수는 1 이상 숫자로 입력하세요','Enter a number ≥1','Número ≥1')); _ci.focus(); return; }
+    if(_cv>200){ alert(_bt('한 번에 최대 200점까지','Max 200 at once','Máx 200')); return; }
+    if(_cv>30 && !confirm(_bt(`${to||''} 에게 +${_cv}점을 주시겠어요? (큰 점수 확인)`,`Give +${_cv} to ${to}?`,`¿+${_cv}?`))) return;
+    points=_cv;
+  }
   const reason=document.getElementById('bonusReason').value.trim();
   if(!to){ alert(_bt('직원을 선택하세요','Select an employee','Selecciona un empleado')); return; }
   if(!points){ alert(_bt('점수를 선택하세요','Select points','Selecciona puntos')); return; }
@@ -1776,7 +1790,9 @@ function initBonusUI(){
       +'<label style="display:block;font-size:.82em;font-weight:700;color:#374151;margin-bottom:4px">'+escHtml(_bt('직원','Employee','Empleado'))+'</label>'
       +'<select id="bonusEmp" style="width:100%;padding:9px 10px;border:1px solid #d1d5db;border-radius:8px;font-family:inherit;font-size:.9em;margin-bottom:12px"></select>'
       +'<label style="display:block;font-size:.82em;font-weight:700;color:#374151;margin-bottom:4px">'+escHtml(_bt('점수','Points','Puntos'))+'</label>'
-      +'<div id="bonusPresets" style="display:flex;gap:6px;margin-bottom:12px"></div>'
+      +'<div id="bonusPresets" style="display:flex;gap:6px;margin-bottom:10px"></div>'
+      +'<div id="bonusCustomRow" style="display:none;margin-bottom:12px"><label style="display:block;font-size:.78em;font-weight:700;color:#92400e;margin-bottom:4px">'+escHtml(_bt('또는 직접 입력 (오너 — 자유 점수)','Or custom amount (owner)','O cantidad libre (dueño)'))+'</label>'
+      +'<input id="bonusCustom" type="number" min="1" max="200" inputmode="numeric" placeholder="'+escHtml(_bt('예: 10','e.g. 10','ej: 10'))+'" style="width:100%;padding:9px 10px;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.95em;font-weight:800;color:#92400e"></div>'
       +'<label style="display:block;font-size:.82em;font-weight:700;color:#374151;margin-bottom:4px">'+escHtml(_bt('이유 (필수)','Reason (required)','Motivo (obligatorio)'))+'</label>'
       +'<input id="bonusReason" type="text" maxlength="60" placeholder="'+escHtml(_bt('예: 마감 청소 완벽','e.g. perfect closing','ej: cierre perfecto'))+'" style="width:100%;padding:9px 10px;border:1px solid #d1d5db;border-radius:8px;font-family:inherit;font-size:.9em;margin-bottom:8px">'
       +'<div id="bonusBudget" style="font-size:.8em;color:#92400e;font-weight:700;margin-bottom:14px">…</div>'
