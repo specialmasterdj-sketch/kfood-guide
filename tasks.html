@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_19_photo_min1';   // 🆕 완료 사진 필수 1장 + 수상자 배너 제거 + 사용중 강제리로드 금지 + 파트별순위 제거 + 발송 번역 비차단
+    var BUST = 'tasks_2026_06_19_upload_robust';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -7819,7 +7819,7 @@ async function compressImage(file, maxSide = 1024, quality = 0.78) {
   // RGBA 4MB+가 GPU/CPU 메모리에 잡혀 3번째 촬영 시 OOM 으로 페이지 reload.
   // 모바일 감지하면 maxSide 더 줄임.
   const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-  if (isMobile && maxSide > 720) maxSide = 720;   // 🆕 2026-06-18 720(was 900) — iOS 메모리 추가 절감
+  if (isMobile && maxSide > 640) maxSide = 640;   // 🆕 2026-06-19 640(was 720) — 헐리우드 약한폰 업로드 메모리·속도 추가 절감(증빙엔 충분)
 
   // 🆕 2026-06-18 1순위: createImageBitmap — 디코드 결과를 .close()로 즉시 해제해
   //   iOS GC 지연 OOM("사진 찍을 때마다 페이지 크래시") 회피. EXIF는 imageOrientation 로 보존.
@@ -8033,21 +8033,28 @@ async function finishTask(){
       btn.textContent = '사진 업로드 중… (' + (i+1) + '/' + DONE_PHOTOS.length + ')';
       const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.jpg';
       let url = null;
-      // 1) Try Firebase Storage REST upload (with auth)
+      // 1) Try Firebase Storage REST upload (with auth) — ⏱️ 2026-06-19 타임아웃 20초 + 1회 재시도.
+      //   헐리우드 폰 느린 네트워크에서 업로드가 타임아웃 없이 "사진 업로드 중…"에 멈추던 문제.
       stage = 'storage-upload';
-      try {
-        const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', {
-          method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'image/jpeg' }, authHeader),
-          body: p.file
-        });
-        if (r.ok) {
-          const meta = await r.json();
-          url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
-        } else {
-          console.warn('[doneUpload] storage', r.status, (await r.text()).slice(0, 200));
-        }
-      } catch(e) { console.warn('[doneUpload] storage exception', e); }
+      for (let _att = 0; _att < 2 && !url; _att++) {
+        const _sc = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const _st = _sc ? setTimeout(() => { try { _sc.abort(); } catch(_){} }, 20000) : null;
+        try {
+          const r = await fetch(FB_STORAGE_URL+'?name='+encodeURIComponent(path)+'&uploadType=media', Object.assign({
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'image/jpeg' }, authHeader),
+            body: p.file
+          }, _sc ? { signal: _sc.signal } : {}));
+          if (r.ok) {
+            const meta = await r.json();
+            url = FB_STORAGE_URL+'/'+encodeURIComponent(meta.name)+'?alt=media&token='+(meta.downloadTokens||'');
+          } else {
+            console.warn('[doneUpload] storage', r.status, (await r.text()).slice(0, 200));
+            break;   // 권한/규칙 오류면 재시도 무의미 → base64 폴백으로
+          }
+        } catch(e) { console.warn('[doneUpload] storage attempt '+_att, e); /* 타임아웃/네트워크 → 한 번 더 */ }
+        finally { if (_st) clearTimeout(_st); }
+      }
       // 2) Fallback: re-compress smaller and embed as base64 dataURL in RTDB
       if (!url) {
         stage = 'fallback-compress';
@@ -8082,7 +8089,13 @@ async function finishTask(){
     } else {
       upd.workDurationMin = _durationMin;   // 통계용 (1시간 이상이면 그대로 점수 유지)
     }
-    await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+    // ⏱️ 2026-06-19 저장 타임아웃 15초 — window.__fb.update 가 응답 없으면 "저장 중…"에 무한 정지하던
+    //   문제(헐리우드 느린 네트워크). 느리면 명확히 알리고, 사진은 보존(catch 가 DONE_PHOTOS 안 비움)해 재시도 쉽게.
+    {
+      const _wp = window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
+      const _res = await Promise.race([ _wp.then(() => 'ok', e => { throw e; }), new Promise(r => setTimeout(() => r('slow'), 15000)) ]);
+      if (_res === 'slow') throw new Error('네트워크가 느려 저장이 지연됩니다. 잠시 후 ✅ 완료 보고를 다시 눌러주세요. (사진은 그대로 있습니다)');
+    }
     // Cross-post the completion into the matching chat room. Failures
     // here are non-fatal — the task itself was already saved above.
     // Skip when task carries noAutoChat (e.g. 정육 일일 — each branch's
@@ -8106,11 +8119,14 @@ async function finishTask(){
       catch(e) { console.warn('[task→chat]', e); }
     }
     closeOv('doneOv');
+    DONE_PHOTOS = [];   // ✅ 성공했을 때만 사진 비움
+    try { renderDonePreviews(); } catch(_){}
   } catch(e) {
     console.error('[finishTask] failed at stage', stage, e);
-    alert('완료 보고 실패 (' + stage + ')\n\n' + (e && e.message || e) + '\n\n다시 시도하거나 매니저에게 문의하세요.');
+    // 실패 시 사진(DONE_PHOTOS) 안 비움 + 모달 그대로 → 사진 다시 안 찍고 바로 재시도 가능.
+    alert('완료 보고 실패 (' + stage + ')\n\n' + (e && e.message || e) + '\n\n📷 사진은 그대로 있습니다 — 잠시 후 ✅ 완료 보고를 다시 눌러주세요.');
   }
-  finally { btn.disabled = false; btn.textContent = '✅ 완료 보고'; DONE_PHOTOS = []; }
+  finally { btn.disabled = false; btn.textContent = '✅ 완료 보고'; }
 }
 
 // Send a completion summary into the matching evaluation chat room.
