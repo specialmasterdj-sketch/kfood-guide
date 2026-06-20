@@ -1724,14 +1724,23 @@ async function _submitBonus(){
   const award={ to, points, reason, by:(me&&me.name)||'', byRole:(me&&me.role)||'', branch, ts: Date.now() };
   const aq=await authParam();
   const btn=document.getElementById('bonusSubmit'); btn.disabled=true; const _orig=btn.textContent; btn.textContent='…';
+  // ⏱️ 2026-06-19 타임아웃 — 저장이 응답을 못 받으면 "···"에서 무한정 멈춰(점수 안 더해짐) 원인을
+  //   못 보던 문제. 10초 후 중단하고 명확한 에러 표시. 성공/실패가 항상 화면에 뜸.
+  const _ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+  const _timer=_ctrl?setTimeout(()=>{try{_ctrl.abort();}catch(_){}} ,10000):null;
   try{
-    const r=await fetch(`${FB_DB}/mgrBonus/${branch}.json${aq}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(award) });
+    const r=await fetch(`${FB_DB}/mgrBonus/${branch}.json${aq}`, Object.assign({ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(award) }, _ctrl?{signal:_ctrl.signal}:{}));
+    if(_timer) clearTimeout(_timer);
     if(!r.ok) throw new Error('HTTP '+r.status+' '+(await r.text()).slice(0,140));
     _closeBonusModal();
     alert(_bt(`✅ ${to} 에게 +${points}pt 부여`,`✅ +${points}pt to ${to}`,`✅ +${points}pt a ${to}`));
     loadAll(true);
   }catch(e){
-    alert(_bt('저장 실패 — Firebase 규칙에 mgrBonus 쓰기 허용이 필요할 수 있습니다.\n','Save failed — RTDB rules may need mgrBonus write.\n','Error al guardar.\n')+e.message);
+    if(_timer) clearTimeout(_timer);
+    const _to=(e&&e.name==='AbortError');
+    alert(_to
+      ? _bt('⏱️ 저장 시간 초과(10초) — 네트워크 확인 후 다시 시도하세요. (중복 저장 안 됨)','⏱️ Save timed out (10s) — check network and retry.','⏱️ Tiempo agotado (10s) — revisa la red.')
+      : _bt('저장 실패 — Firebase 규칙에 mgrBonus 쓰기 허용이 필요할 수 있습니다.\n','Save failed — RTDB rules may need mgrBonus write.\n','Error al guardar.\n')+(e&&e.message||e));
   }finally{ btn.disabled=false; btn.textContent=_orig; }
 }
 
