@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_06_03_403fix';   // base64 사진 lazy load (IntersectionObserver) — 육류평가방 사진 안 보임 해결 + 직원이름 로스터 선택
+    var BUST = 'chat_2026_06_20_bhk_dedup';   // 본인정보 목록 B.H.K 전무/MANAGER 중복 제거 + _execRole 정규화 강화
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1150,8 +1150,10 @@ function _ownerRole(name){
 // 🆕 2026-06-08 전무님: 임원(B.H.K)이 헐리우드·마이애미 등 스케줄에 MANAGER 로 등록돼
 // 있어도 본인 정보 선택지에서 역할·표시는 '전무'로 — 어느 매장에서든 전무로 등록 가능.
 function _execRole(name, role){
-  const nm = String(name||'').replace(/\s+/g,'').replace(/\./g,'').toUpperCase();
-  const isExec = ['B.H.K','BHK','비에이치케이'].some(s => s.replace(/\s+/g,'').replace(/\./g,'').toUpperCase() === nm);
+  // 🔧 2026-06-20 정규화 강화 — 풀와이드 점('．')·공백·기타 기호 포함 B.H.K 변형도 전무로 인식.
+  //   (스케줄에 B.H.K 가 MANAGER 로 떠 본인정보 목록에 '전무'+'MANAGER' 중복되던 문제.)
+  const nm = String(name||'').toUpperCase().replace(/[^A-Z0-9가-힣]/g,'');
+  const isExec = ['BHK','비에이치케이'].includes(nm);
   return isExec ? '전무' : (role||'');
 }
 function renderMeNames(){
@@ -1212,8 +1214,14 @@ function renderMeNamesList(employees, branchId){
   const firstOpt = hasRoster
     ? '<option value="">— 이름을 선택하세요 —</option>'
     : '<option value="">— 직접 입력 —</option>';
+  // 🆕 2026-06-20 전무님 지시: 같은 사람 중복 제거 (B.H.K 가 '전무'+'MANAGER' 둘로 뜨던 문제).
+  //   정규화 이름 기준 1개만 — globalOwners 가 앞이라 'B.H.K(전무)' 가 먼저 들어가고, 뒤의 스케줄
+  //   중복(B.H.K MANAGER 등)은 스킵됨. 서로 다른 사람은 정규화 이름이 달라 안 합쳐짐.
+  const _nk = s => String(s||'').toUpperCase().replace(/[^A-Z0-9가-힣]/g,'');
+  const _seen = new Set(); const _list = [];
+  (employees||[]).forEach(e => { if (!e || !e.name) return; const k=_nk(e.name); if(!k || _seen.has(k)) return; _seen.add(k); _list.push(e); });
   sel.innerHTML = firstOpt +
-    employees.map(e => { const _r = _execRole(e.name, e.role); return `<option value="${e.name}" data-role="${_r}" ${me?.name===e.name?'selected':''}>${e.name} (${_r})${isManagerRole(_r)?' 👔':''}</option>`; }).join('');
+    _list.map(e => { const _r = _execRole(e.name, e.role); return `<option value="${e.name}" data-role="${_r}" ${me?.name===e.name?'selected':''}>${e.name} (${_r})${isManagerRole(_r)?' 👔':''}</option>`; }).join('');
   sel.onchange = () => {
     if (sel.value) document.getElementById('meCustom').value = sel.value;
     const role = sel.options[sel.selectedIndex]?.dataset.role || '';
