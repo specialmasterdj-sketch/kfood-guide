@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_20_sdk_upload';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
+    var BUST = 'tasks_2026_06_20_resize_decode';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -7831,23 +7831,23 @@ async function compressImage(file, maxSide = 1024, quality = 0.78) {
   const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
   if (isMobile && maxSide > 640) maxSide = 640;   // 🆕 2026-06-19 640(was 720) — 헐리우드 약한폰 업로드 메모리·속도 추가 절감(증빙엔 충분)
 
-  // 🆕 2026-06-18 1순위: createImageBitmap — 디코드 결과를 .close()로 즉시 해제해
-  //   iOS GC 지연 OOM("사진 찍을 때마다 페이지 크래시") 회피. EXIF는 imageOrientation 로 보존.
-  //   미지원/실패 시 아래 <img> 폴백 — 출력 동작 동일.
+  // 이미 작은 파일(저화소)은 디코드 자체를 건너뜀 — 약한폰 메모리 절약.
+  if (file.size < 300 * 1024) return file;
+  // 🆕 2026-06-20 핵심: createImageBitmap 에 resizeWidth 를 줘서 '디코드하면서 바로 축소' —
+  //   원본 풀해상도(삼성 1200만화소 ≈ 48MB RGBA)를 메모리에 아예 안 올림 → OOM 크래시
+  //   ("사진 올리자마자 팅김") 방지. Chromium 은 resizeWidth 만 줘도 비율 유지(세로사진은 높이만
+  //   약간 큼, 메모리는 충분히 작음). EXIF 방향은 imageOrientation 로 보존. .close()로 즉시 해제.
   try {
     if (typeof createImageBitmap === 'function') {
       let bmp = null, bcanvas = null;
       try {
-        bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-        const bw = bmp.width, bh = bmp.height;
-        if (bw <= maxSide && bh <= maxSide && file.size < 350 * 1024) return file;
-        const br = Math.min(maxSide / bw, maxSide / bh, 1);
-        const nw = Math.round(bw * br), nh = Math.round(bh * br);
+        bmp = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: maxSide, resizeQuality: 'medium' });
+        const nw = bmp.width, nh = bmp.height;   // 이미 축소된 크기(원본 아님)
         bcanvas = document.createElement('canvas');
         bcanvas.width = nw; bcanvas.height = nh;
         bcanvas.getContext('2d').drawImage(bmp, 0, 0, nw, nh);
         const bblob = await new Promise(res => bcanvas.toBlob(b => res(b), 'image/jpeg', quality));
-        if (bblob && bblob.size <= file.size) {
+        if (bblob && bblob.size > 0 && bblob.size <= file.size) {
           return new File([bblob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
         }
         return file;
@@ -7856,7 +7856,7 @@ async function compressImage(file, maxSide = 1024, quality = 0.78) {
         try { if (bcanvas) { bcanvas.width = 0; bcanvas.height = 0; } } catch(_){}
       }
     }
-  } catch(e) { console.warn('[compress] createImageBitmap 실패 → img 폴백', e); }
+  } catch(e) { console.warn('[compress] createImageBitmap resize 실패 → img 폴백', e); }
 
   let url = null, img = null, canvas = null;
   try {
