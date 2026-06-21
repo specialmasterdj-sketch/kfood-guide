@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_20_save30s';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
+    var BUST = 'tasks_2026_06_20_render_debounce';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -10833,12 +10833,21 @@ function isUserScrolling(){ return Date.now() < __scrollingUntil; }
 // renderAll wrapper — 입력 중 / 사진 업로드 중 / 스크롤 중이면 deferred 로 표시하고
 //   실제 render 는 안전할 때(focusout · 업로드 끝 · 스크롤 멈춤) 실행.
 //   핵심: 모바일 키보드 보존 + iOS 사진 안 튕기게 + 스크롤 끊김 방지.
+// 🆕 2026-06-20 디바운스 — 오너 폰은 전 매장(6개) onValue 가 거의 동시에 발화해 renderAll 이
+//   짧은 시간에 6번 호출됨 → 화면을 6번 통째로 다시 그려 멈춤("열면 프로즌", "다음 화면 멈춤").
+//   120ms 안의 연속 호출을 1번 렌더로 합쳐 부하를 1/6로. 입력/사진/스크롤 가드는 그대로.
+let __renderDebounce = null;
 function renderAll(){
   if (isUserTyping() || window.__PHOTO_UPLOADING > 0 || isUserScrolling()) {
     __RENDER_DEFERRED = true;
     return;
   }
-  renderAllNow();
+  if (__renderDebounce) clearTimeout(__renderDebounce);
+  __renderDebounce = setTimeout(() => {
+    __renderDebounce = null;
+    if (isUserTyping() || window.__PHOTO_UPLOADING > 0 || isUserScrolling()) { __RENDER_DEFERRED = true; return; }
+    try { renderAllNow(); } catch(_){}
+  }, 120);
 }
 window.addEventListener('storage', e => { if (e.key === 'chat.me') { refreshMe(); subscribeTasks(); subscribeMyAttendance(); tickLocation(); } });
 // (이전엔 여기서 fb-ready → subscribeTasks 를 한 번 더 걸어 bootFb 와 중복 호출됐다.
