@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_06_20_render_debounce';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
+    var BUST = 'tasks_2026_06_20_exec_norank';   // 🆕 사진 업로드/저장 타임아웃+재시도+실패시 사진보존+640px경량 + 필수1장 + 수상자배너제거 + 사용중강제리로드금지 + 파트순위제거 + 발송번역비차단
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3722,6 +3722,16 @@ function isOwner(){ if(!me)return false; const nm=(me.name||'').replace(/\s+/g,'
 // ⭐ 사장님 상점(Owner Merit) — '나만(DJ)' 전용 식별. 사장님 지시: 본인 외 아무도(전무·다른 오너 포함) 안 보임.
 //   다른 사람도 포함하려면 아래 이메일/이름을 추가.
 function isMeritAdmin(){ if(typeof isOwner!=='function'||!isOwner())return false; const em=(me&&me.email?String(me.email).toLowerCase().trim():''); const nm=(me&&me.name?String(me.name).trim().toUpperCase():''); return em==='specialmasterdj@gmail.com'||nm==='DJ'; }
+// 🆕 2026-06-20 오너·임원(전무 B.H.K·Sun Kim·사장 DJ)은 직원 활동 순위에서 제외 — 앱 장애로
+//   막힌 업무를 임원이 직접 눌러 완료 처리하면 그 점수가 임원에게 쌓여 1위로 잡히는 문제(전무님
+//   61pt). 업무 완료 기록은 그대로 두고 "순위 집계"에서만 빠짐. 매니저/슈퍼바이저는 영향 없음.
+function _isLeadershipName(nm){
+  const k = String(nm||'').replace(/\s+/g,'').toUpperCase();
+  if (!k) return false;
+  if (EXECUTIVE_NAMES.some(n => n.replace(/\s+/g,'').toUpperCase() === k)) return true;
+  if (k === 'DJ' || k === 'DAEGIL') return true;   // 사장님(오너)
+  return false;
+}
 // 🆕 2026-06-13 전무님 지시: 새 지시(task 발송) 권한을 "슈퍼바이저 이상"으로 확대.
 //   기본 허용: SUPERVISOR(60) · SENIOR SUPERVISOR(70) · ASSISTANT MANAGER(80) ·
 //             STORE/HR MANAGER(90) (= _roleRank>=60) + OWNER / 임원(B.H.K, SUN KIM).
@@ -4091,6 +4101,7 @@ function renderTeamRank(){
     if (!isMgr && myBranch && t.branchId && t.branchId !== myBranch) return;
     const who = t.completedBy || t.assignedTo || t.assigneeName || '';
     if (!who || who === '*') return;
+    if (_isLeadershipName(who)) return;   // 🆕 오너·임원은 활동 순위 제외
     const k = _norm(who);
     if (!k) return;
     const pts = taskScore(t);
@@ -4105,6 +4116,7 @@ function renderTeamRank(){
   // 🌟 사장님 상점(mgrBonus, kind:'owner') — 점수에만 합산(전원에게), 출처 표시는 없음
   (window.MGR_BONUS || []).forEach(a => {
     if (!a || !a.to || a.kind !== 'owner') return;
+    if (_isLeadershipName(a.to)) return;   // 🆕 오너·임원은 활동 순위 제외
     if ((a.ts || 0) < startMs) return;
     if (!isMgr && myBranch && a.branch && a.branch !== myBranch) return;
     const bpts = (typeof a.points === 'number') ? a.points : 0;
