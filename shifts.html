@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'shifts_2026_06_23_backup';
+    var BUST = 'shifts_2026_06_24_savefix';
     var KEY = 'kmtools_bust_shifts';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -870,11 +870,19 @@ function loadBranchData(){
 }
 let __suppressFbWrite = false;
 function saveBranchData(d, opts){
-  try { _schedBackupRing(d, 'edit'); } catch(_){}   // 🛡️ 모든 저장 직전 로컬 백업(손실 복구용)
   d.lastChangedAt = (opts && opts.skipDirty) ? d.lastChangedAt : Date.now();
-  localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d));
-  if (!__suppressFbWrite) syncPushBranch();
+  // ⚠️ 2026-06-24 회귀 수정 — 본 저장(로컬+클라우드)을 먼저, 백업/용량 때문에 절대 막히지 않게.
+  //   백업 링이 localStorage 를 채워 본 저장이 QuotaExceeded 로 던지면 그 뒤 syncPushBranch(클라우드)
+  //   가 실행 안 돼 "인원 추가/시프트가 저장 안 됨"(마이애미 큰 지점). 본 저장 try/catch + 실패 시
+  //   백업 비우고 재시도, 클라우드 저장은 무조건 실행, 백업은 맨 마지막(저장을 막지 않음).
+  try {
+    localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d));
+  } catch(e){
+    try { localStorage.removeItem('shifts.bak.' + BRANCH); localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); } catch(_){}
+  }
+  if (!__suppressFbWrite) syncPushBranch();   // 클라우드 저장 — 항상 실행(로컬 용량과 무관)
   updateSyncDot('local');
+  try { _schedBackupRing(d, 'edit'); } catch(_){}   // 백업은 맨 마지막 — 절대 본 저장을 막지 않음
 }
 let DATA = loadBranchData();
 
@@ -2703,7 +2711,8 @@ function applyRemote(remote){
     }
     __suppressFbWrite = true;
     DATA = Object.assign(emptyData(), remote);
-    localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
+    try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA)); }
+    catch(e){ try { localStorage.removeItem('shifts.bak.' + BRANCH); localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA)); } catch(_){} }
     __suppressFbWrite = false;
     __lastFbSnapshot = sig;
     render();
@@ -2724,9 +2733,9 @@ function _schedBackupRing(d, tag){
     var json = JSON.stringify(d);
     if (ring.length && ring[ring.length-1].json === json) return;    // 동일 상태 중복 백업 skip
     ring.push({ ts: Date.now(), tag: tag || '', json: json });
-    while (ring.length > 10) ring.shift();                           // 최근 10개만(용량 보호)
+    while (ring.length > 5) ring.shift();                            // 최근 5개만(용량 보호 — 2026-06-24 10→5)
     try { localStorage.setItem(key, JSON.stringify(ring)); }
-    catch(_){ ring = ring.slice(-4); try { localStorage.setItem(key, JSON.stringify(ring)); } catch(__){} }
+    catch(_){ ring = ring.slice(-2); try { localStorage.setItem(key, JSON.stringify(ring)); } catch(__){ try { localStorage.removeItem(key); } catch(___){} } }
   } catch(_){}
 }
 function _schedRecoverLatest(){
