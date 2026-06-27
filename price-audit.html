@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'priceaudit_2026_06_27_v3';
+  var BUST = 'priceaudit_2026_06_27_v4';
   try {
     var KEY='priceaudit.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -103,19 +103,19 @@ input[type=text],input[type=number]{width:100%;border:1.5px solid #d1d5db;border
     </div>
 
     <div class="card">
-      <div style="font-weight:800;margin-bottom:4px">⚠️ 문제 등록</div>
-      <div class="muted" style="margin-bottom:10px">여러 개가 틀리면 → <b>개수 늘리고 사진 여러 장</b> 찍어 한 번에 등록</div>
-      <div class="muted" style="margin-bottom:6px">유형</div>
+      <div style="font-weight:800;margin-bottom:4px">🔧 수정 기록 (고친 것)</div>
+      <div class="muted" style="margin-bottom:10px">틀린 가격표를 POS로 출력·교체한 뒤 → <b>몇 개 고쳤는지 + 사진</b>으로 한 번에 수정완료</div>
+      <div class="muted" style="margin-bottom:6px">유형 (선택)</div>
       <div id="typeChips" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px"></div>
-      <input type="text" id="iProduct" placeholder="품목/메모 (예: 신라면 멀티팩 — 또는 '라면 윗칸 가격변경')">
+      <input type="text" id="iProduct" placeholder="품목/메모 (예: 신라면 멀티팩 — 또는 '라면 윗칸')">
       <div style="display:flex;gap:8px;margin:10px 0">
-        <input type="number" id="iCount" value="1" min="1" style="flex:1" placeholder="개수">
+        <input type="number" id="iCount" value="1" min="1" style="flex:1" placeholder="고친 개수">
         <input type="text" id="iCorrect" style="flex:2" placeholder="올바른 가격 (선택)">
       </div>
-      <div class="muted" style="margin-bottom:6px">📷 전 사진 (틀린 것들 — 여러 장 가능, 최소 1장)</div>
+      <div class="muted" style="margin-bottom:6px">📷 사진 (고친 결과·틀렸던 것 — 여러 장, 최소 1장)</div>
       <div id="beforeThumbs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
       <label class="lbl-btn" style="background:#374151;margin-bottom:12px" id="beforeBtn">📷 사진 추가<input type="file" accept="image/*" capture="environment" onchange="onPickBefore(this)" style="display:none"></label>
-      <button class="btn btn-issue" id="addIssueBtn" onclick="addIssue()">➕ 문제 등록</button>
+      <button class="btn btn-ok" id="addIssueBtn" onclick="addIssue()">🔧 수정완료 기록</button>
     </div>
 
     <div id="issueList"></div>
@@ -211,8 +211,8 @@ function renderList(){
     const ic=st==='issue'?'⚠️':(st==='done'?'✅':'⬜');
     const iss=rec&&rec.issues?Object.keys(rec.issues):[];
     let sub;
-    if(st==='issue')sub='미수정 문제 '+iss.filter(k=>!rec.issues[k].fixed).length+'건';
-    else if(st==='done')sub=iss.length?('문제 '+iss.length+'건 모두 수정완료'):('이상 없음 · '+esc(rec.by||''));
+    if(st==='issue')sub='미수정 '+iss.filter(k=>!rec.issues[k].fixed).length+'건 (후 사진 필요)';
+    else if(st==='done')sub=iss.length?('수정완료 '+iss.reduce((s,k)=>s+(rec.issues[k].count||1),0)+'개'):('이상 없음 · '+esc(rec.by||''));
     else sub=z.sub?esc(z.sub.slice(0,40)):'미점검';
     return `<div class="zone ${cls}" onclick="openAudit('${z.id}')"><div class="ic">${ic}</div><div class="mid"><div class="nm">${esc(z.label)}${z.num?` <span class="muted">(${esc(String(z.num))})</span>`:''}</div><div class="sub">${sub}</div></div><div class="go">${rec?'열기':'감사 ›'}</div></div>`;
   }).join('');
@@ -256,23 +256,23 @@ async function onPickBefore(inp){
 }
 async function addIssue(){
   if(!CUR_ZONE||!window.__fb){toast('연결 대기 중…');return;}
-  if(!selType){alert('문제 유형을 선택하세요.');return;}
-  if(!pendingBefores.length){alert('전(前) 사진을 최소 1장 찍어주세요 — 현장 증명.');return;}
+  if(!pendingBefores.length){alert('사진을 최소 1장 찍어주세요 — 현장 증명.');return;}
   let count=parseInt(document.getElementById('iCount').value,10);if(!(count>=1))count=1;
-  const issue={type:selType,product:document.getElementById('iProduct').value.trim(),count:count,
+  const now=Date.now();
+  const issue={type:selType||'wrong',product:document.getElementById('iProduct').value.trim(),count:count,
     correctPrice:document.getElementById('iCorrect').value.trim(),beforePhotos:pendingBefores.slice(),afterPhotos:[],
-    fixed:false,by:meName(),at:Date.now()};
-  const btn=document.getElementById('addIssueBtn');btn.disabled=true;btn.textContent='등록 중…';
+    fixed:true,by:meName(),at:now,fixedBy:meName(),fixedAt:now};
+  const btn=document.getElementById('addIssueBtn');btn.disabled=true;btn.textContent='저장 중…';
   try{
     const {db,ref,push,set,update}=window.__fb;
     const base='priceAudit/'+BRANCH+'/'+dateKey()+'/'+CUR_ZONE.id;
     const k=push(ref(db,base+'/issues')).key;
     await set(ref(db,base+'/issues/'+k),issue);
-    await update(ref(db,base),{status:'issues',by:meName(),at:Date.now()});
-    toast('⚠️ 문제 등록됨 ('+count+'개) — POS 출력·부착 후 [후 사진]으로 완료');
+    await update(ref(db,base),{status:'fixed',by:meName(),at:now});
+    toast('✅ '+count+'개 수정완료 기록됨 (+'+Math.min(count,10)+'점)');
     resetIssueForm();
-  }catch(e){alert('등록 실패: '+(e&&e.message||e));}
-  btn.disabled=false;btn.textContent='➕ 문제 등록';
+  }catch(e){alert('저장 실패: '+(e&&e.message||e));}
+  btn.disabled=false;btn.textContent='🔧 수정완료 기록';
 }
 async function onPickAfter(inp,issueId){
   const f=inp.files&&inp.files[0];if(!f)return;
@@ -304,7 +304,7 @@ function renderIssues(){
   const keys=Object.keys(iss).sort((a,b)=>(iss[a].at||0)-(iss[b].at||0));
   document.getElementById('okCard').style.display=keys.length?'none':'block';
   if(!keys.length){el.innerHTML='';return;}
-  el.innerHTML='<div style="font-weight:800;margin:4px 2px 8px">이 구역 문제 '+keys.length+'건</div>'+keys.map(k=>{
+  el.innerHTML='<div style="font-weight:800;margin:4px 2px 8px">이 구역 수정 기록 '+keys.length+'건</div>'+keys.map(k=>{
     const i=iss[k];
     const befores=Array.isArray(i.beforePhotos)?i.beforePhotos:(i.beforePhoto?[i.beforePhoto]:[]);
     const afters=Array.isArray(i.afterPhotos)?i.afterPhotos:(i.afterPhoto?[i.afterPhoto]:[]);
