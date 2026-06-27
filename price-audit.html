@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'priceaudit_2026_06_27_v10_qrlang';
+  var BUST = 'priceaudit_2026_06_27_v11_zonelang';
   try {
     var KEY='priceaudit.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -217,7 +217,7 @@ function applyLang(){
   document.documentElement.lang=LANG;
   // 동적 영역 다시 그리기 (JS 로 그린 부분은 data-i18n 으로 안 바뀜)
   try{ renderBranchSel(); renderList(); }catch(e){}
-  if(CUR_ZONE){ try{ document.getElementById('aBranch').textContent=branchName(BRANCH); renderBeforeThumbs(); renderIssues(); }catch(e){} }
+  if(CUR_ZONE){ try{ document.getElementById('aBranch').textContent=branchName(BRANCH); document.getElementById('aZone').textContent=zoneName(CUR_ZONE)+(CUR_ZONE.num?' ('+CUR_ZONE.num+')':''); document.getElementById('aZoneSub').textContent=zoneAlt(CUR_ZONE)||''; renderBeforeThumbs(); renderIssues(); }catch(e){} }
   try{ if(document.getElementById('qrPage').style.display==='block') openQrSheet(); }catch(e){}
 }
 window.setLang=setLang;
@@ -232,6 +232,20 @@ function toast(msg){const el=document.getElementById('toast');el.textContent=msg
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function getParam(k){return new URLSearchParams(location.search).get(k);}
 function fixLabel(t){const e=ZONE_FIX_LABEL[t];return e?(e[LANG]||e.ko):t;}
+// 구역 이름 — 도면 label/sub 중 현재 언어에 맞는 쪽 선택(EN=라틴 우선, KO=한글 우선). 영어권 직원 다수 대응.
+function _hasLatin(s){return /[A-Za-z]/.test(String(s||''));}
+function _hasHangul(s){return /[가-힣]/.test(String(s||''));}
+function zoneName(z){
+  const a=String(z.label||'').trim(), b=String(z.sub||'').replace(/\n/g,' ').trim();
+  if(LANG==='ko'){ if(_hasHangul(a))return a; if(_hasHangul(b))return b; return a||b; }
+  if(_hasLatin(a)&&!_hasHangul(a))return a;
+  if(_hasLatin(b)&&!_hasHangul(b))return b;
+  if(_hasLatin(a))return a; if(_hasLatin(b))return b; return a||b;
+}
+function zoneAlt(z){
+  const a=String(z.label||'').trim(), b=String(z.sub||'').replace(/\n/g,' ').trim(), p=zoneName(z);
+  const o=(p===a)?b:(p===b?a:b); return (o&&o!==p)?o:'';
+}
 
 async function compressImage(file,maxSide,q){
   try{
@@ -298,8 +312,8 @@ function renderList(){
     else if(st==='done'){
       if(iss.length){const tot=iss.reduce((s,k)=>s+(rec.issues[k].count||1),0); sub=(LANG==='en'?tot+' fixed':LANG==='es'?tot+' corregidos':'수정완료 '+tot+'개');}
       else sub=t('allOk')+' · '+esc(rec.by||'');
-    } else sub=z.sub?esc(z.sub.slice(0,40)):t('notAudited');
-    return `<div class="zone ${cls}" onclick="openAudit('${z.id}')"><div class="ic">${ic}</div><div class="mid"><div class="nm">${esc(z.label)}${z.num?` <span class="muted">(${esc(String(z.num))})</span>`:''}</div><div class="sub">${sub}</div></div><div class="go">${rec?t('open'):t('audit')}</div></div>`;
+    } else sub=zoneAlt(z)||t('notAudited');
+    return `<div class="zone ${cls}" onclick="openAudit('${z.id}')"><div class="ic">${ic}</div><div class="mid"><div class="nm">${esc(zoneName(z))}${z.num?` <span class="muted">(${esc(String(z.num))})</span>`:''}</div><div class="sub">${sub}</div></div><div class="go">${rec?t('open'):t('audit')}</div></div>`;
   }).join('');
 }
 
@@ -310,8 +324,8 @@ function openAudit(zoneId){
   document.getElementById('qrPage').style.display='none';
   document.getElementById('auditPage').style.display='block';
   document.getElementById('aBranch').textContent=branchName(BRANCH);
-  document.getElementById('aZone').textContent=CUR_ZONE.label+(CUR_ZONE.num?' ('+CUR_ZONE.num+')':'');
-  document.getElementById('aZoneSub').textContent=CUR_ZONE.sub||'';
+  document.getElementById('aZone').textContent=zoneName(CUR_ZONE)+(CUR_ZONE.num?' ('+CUR_ZONE.num+')':'');
+  document.getElementById('aZoneSub').textContent=zoneAlt(CUR_ZONE)||'';
   resetIssueForm();renderIssues();window.scrollTo(0,0);
 }
 function resetIssueForm(){
@@ -458,7 +472,7 @@ function openQrSheet(){
   document.getElementById('qrGrid').innerHTML=ZONES.map(z=>{
     const url=base+'?b='+encodeURIComponent(BRANCH)+'&z='+encodeURIComponent(z.id);
     const img='https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=6&data='+encodeURIComponent(url);
-    return `<div class="qr-cell"><div class="qtag">🏷️ ${esc(t('title'))}</div><img src="${img}" alt="QR"><div class="id">${esc(z.label)}</div>${z.sub?`<div class="bn" style="color:#374151">${esc(z.sub.replace(/\n/g,' '))}</div>`:''}<div class="bn">${esc(branchName(BRANCH))}${z.num?' · '+esc(String(z.num)):''}</div></div>`;
+    return `<div class="qr-cell"><div class="qtag">🏷️ ${esc(t('title'))}</div><img src="${img}" alt="QR"><div class="id">${esc(zoneName(z))}</div>${zoneAlt(z)?`<div class="bn" style="color:#374151">${esc(zoneAlt(z))}</div>`:''}<div class="bn">${esc(branchName(BRANCH))}${z.num?' · '+esc(String(z.num)):''}</div></div>`;
   }).join('');
   window.scrollTo(0,0);
 }
