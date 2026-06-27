@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'priceaudit_2026_06_27_v6';
+  var BUST = 'priceaudit_2026_06_27_v7';
   try {
     var KEY='priceaudit.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -262,7 +262,9 @@ async function addIssue(){
   if(count<1){alert('고친 개수를 하나 이상 입력하세요 (유형별).');return;}
   if(!pendingBefores.length){alert('사진을 최소 1장 찍어주세요 — 현장 증명.');return;}
   const now=Date.now();
-  const issue={counts:counts,count:count,product:document.getElementById('iProduct').value.trim(),
+  const fixPts=Math.min(5,Math.floor(count/10));   // 수정 10개당 +1점, 최대 +5
+  const score=1+fixPts;                            // 점검 +1 + 수정 점수
+  const issue={counts:counts,count:count,score:score,product:document.getElementById('iProduct').value.trim(),
     beforePhotos:pendingBefores.slice(),afterPhotos:[],fixed:true,by:meName(),at:now,fixedBy:meName(),fixedAt:now};
   const btn=document.getElementById('addIssueBtn');btn.disabled=true;btn.textContent='저장 중…';
   try{
@@ -271,7 +273,11 @@ async function addIssue(){
     const k=push(ref(db,base+'/issues')).key;
     await set(ref(db,base+'/issues/'+k),issue);
     await update(ref(db,base),{status:'fixed',by:meName(),at:now});
-    toast('✅ '+count+'개 수정완료 기록됨 (+'+Math.min(count,10)+'점)');
+    const bd=issueBreakdown(counts), zn=CUR_ZONE.label+(CUR_ZONE.num?' ('+CUR_ZONE.num+')':'');
+    postEval('🏷️ 가격표 감사 — '+branchKo(BRANCH)+' · '+zn+'\n🔧 수정완료 '+count+'개'+(bd?' ('+bd+')':'')+' · '+meName()+' (+'+score+'점)',
+      {en:'🏷️ Price audit — '+branchKo(BRANCH)+' · '+zn+'\n🔧 Fixed '+count+(bd?' ('+bd+')':'')+' · '+meName()+' (+'+score+'pt)',
+       es:'🏷️ Auditoría — '+branchKo(BRANCH)+' · '+zn+'\n🔧 Corregidos '+count+' · '+meName()+' (+'+score+'pt)'}, issue.beforePhotos);
+    toast('✅ '+count+'개 수정완료 기록됨 (+'+score+'점)');
     resetIssueForm();
   }catch(e){alert('저장 실패: '+(e&&e.message||e));}
   btn.disabled=false;btn.textContent='🔧 수정완료 기록';
@@ -333,11 +339,31 @@ function renderIssues(){
   }).join('');
 }
 
+function issueBreakdown(c){
+  const L={missing:'가격표없음',wrong:'가격틀림',damaged:'라벨손상',misplaced:'위치바뀜'};
+  return Object.keys(L).filter(t=>c&&c[t]>0).map(t=>L[t]+' '+c[t]).join(' · ');
+}
+// 🔔 "가격표 평가" 채팅방 자동 보고 (chat.html DEFAULT_ROOMS 의 price_audit_eval)
+async function postEval(text, textTr, photos){
+  if(!window.__fb) return;
+  try{
+    const {db,ref,set,update}=window.__fb;
+    const ts=Date.now(), msgId='m'+ts+Math.floor(Math.random()*900);
+    const tr=Object.assign({ko:text}, textTr||{});
+    const msg={sender:meName(),ts:ts,text:text,textTr:tr,photos:Array.isArray(photos)?photos.slice(0,12):[],meta:{kind:'price_audit',branch:BRANCH}};
+    await set(ref(db,'chat/messages/price_audit_eval/'+msgId), msg);
+    update(ref(db,'chat/rooms/price_audit_eval'),{lastMsg:text.split('\n')[0].slice(0,32),lastTs:ts,lastSender:meName()}).catch(()=>{});
+  }catch(e){console.warn('[price-audit→chat]',e);}
+}
 async function submitOk(){
   if(!CUR_ZONE||!window.__fb){toast('연결 대기 중…');return;}
   try{
     const {db,ref,update}=window.__fb;
-    await update(ref(db,'priceAudit/'+BRANCH+'/'+dateKey()+'/'+CUR_ZONE.id),{status:'ok',by:meName(),at:Date.now()});
+    await update(ref(db,'priceAudit/'+BRANCH+'/'+dateKey()+'/'+CUR_ZONE.id),{status:'ok',by:meName(),at:Date.now(),score:1});
+    const zn=CUR_ZONE.label+(CUR_ZONE.num?' ('+CUR_ZONE.num+')':'');
+    postEval('🏷️ 가격표 감사 — '+branchKo(BRANCH)+' · '+zn+'\n✅ 이상 없음 · '+meName()+' (+1점)',
+      {en:'🏷️ Price audit — '+branchKo(BRANCH)+' · '+zn+'\n✅ All correct · '+meName()+' (+1pt)',
+       es:'🏷️ Auditoría — '+branchKo(BRANCH)+' · '+zn+'\n✅ Todo correcto · '+meName()+' (+1pt)'}, []);
     toast('✅ 이상 없음 저장됨 (+1점)');setTimeout(goList,700);
   }catch(e){alert('저장 실패: '+(e&&e.message||e));}
 }
