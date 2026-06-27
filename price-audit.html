@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'priceaudit_2026_06_27_v5';
+  var BUST = 'priceaudit_2026_06_27_v6';
   try {
     var KEY='priceaudit.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -105,13 +105,14 @@ input[type=text],input[type=number]{width:100%;border:1.5px solid #d1d5db;border
     <div class="card">
       <div style="font-weight:800;margin-bottom:4px">🔧 수정 기록 (고친 것)</div>
       <div class="muted" style="margin-bottom:10px">틀린 가격표를 POS로 출력·교체한 뒤 → <b>몇 개 고쳤는지 + 사진</b>으로 한 번에 수정완료</div>
-      <div class="muted" style="margin-bottom:6px">유형 (선택)</div>
-      <div id="typeChips" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px"></div>
-      <input type="text" id="iProduct" placeholder="품목/메모 (예: 신라면 멀티팩 — 또는 '라면 윗칸')">
-      <div style="display:flex;gap:8px;margin:10px 0">
-        <input type="number" id="iCount" value="1" min="1" style="flex:1" placeholder="고친 개수">
-        <input type="text" id="iCorrect" style="flex:2" placeholder="올바른 가격 (선택)">
+      <div class="muted" style="margin-bottom:8px">유형별 고친 개수</div>
+      <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px"><span style="flex:1;font-weight:600">🚫 가격표 없음</span><input type="number" id="cnt_missing" value="0" min="0" style="width:88px;text-align:center"></div>
+        <div style="display:flex;align-items:center;gap:10px"><span style="flex:1;font-weight:600">❌ 가격 틀림</span><input type="number" id="cnt_wrong" value="0" min="0" style="width:88px;text-align:center"></div>
+        <div style="display:flex;align-items:center;gap:10px"><span style="flex:1;font-weight:600">🏷️ 라벨 손상·바램</span><input type="number" id="cnt_damaged" value="0" min="0" style="width:88px;text-align:center"></div>
+        <div style="display:flex;align-items:center;gap:10px"><span style="flex:1;font-weight:600">🔀 위치 뒤바뀜</span><input type="number" id="cnt_misplaced" value="0" min="0" style="width:88px;text-align:center"></div>
       </div>
+      <input type="text" id="iProduct" placeholder="메모 (선택 — 예: 라면 윗칸)" style="margin-bottom:12px">
       <div class="muted" style="margin-bottom:6px">📷 사진 (고친 결과·틀렸던 것 — 여러 장, 최소 1장)</div>
       <div id="beforeThumbs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
       <label class="lbl-btn" style="background:#374151;margin-bottom:12px" id="beforeBtn">📷 사진 추가<input type="file" accept="image/*" capture="environment" onchange="onPickBefore(this)" style="display:none"></label>
@@ -218,8 +219,8 @@ function renderList(){
   }).join('');
 }
 
-function renderTypeChips(){document.getElementById('typeChips').innerHTML=ISSUE_TYPES.map(t=>`<span class="chip ${selType===t.k?'on':''}" onclick="pickType('${t.k}')">${t.ko}</span>`).join('');}
-function pickType(k){selType=k;renderTypeChips();}
+function renderTypeChips(){/* 유형칩 폐지 — 유형별 개수 입력으로 대체 */}
+function pickType(k){selType=k;}
 
 function openAudit(zoneId){
   CUR_ZONE=ZONES.find(z=>z.id===String(zoneId));
@@ -235,9 +236,8 @@ function openAudit(zoneId){
 function resetIssueForm(){
   selType='';pendingBefores=[];
   document.getElementById('iProduct').value='';
-  document.getElementById('iCount').value='1';
-  document.getElementById('iCorrect').value='';
-  renderBeforeThumbs();renderTypeChips();
+  ['cnt_missing','cnt_wrong','cnt_damaged','cnt_misplaced'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='0';});
+  renderBeforeThumbs();
 }
 function renderBeforeThumbs(){
   const c=document.getElementById('beforeThumbs');
@@ -256,12 +256,14 @@ async function onPickBefore(inp){
 }
 async function addIssue(){
   if(!CUR_ZONE||!window.__fb){toast('연결 대기 중…');return;}
+  const gv=id=>{const n=parseInt((document.getElementById(id)||{}).value,10);return n>0?n:0;};
+  const counts={missing:gv('cnt_missing'),wrong:gv('cnt_wrong'),damaged:gv('cnt_damaged'),misplaced:gv('cnt_misplaced')};
+  const count=counts.missing+counts.wrong+counts.damaged+counts.misplaced;
+  if(count<1){alert('고친 개수를 하나 이상 입력하세요 (유형별).');return;}
   if(!pendingBefores.length){alert('사진을 최소 1장 찍어주세요 — 현장 증명.');return;}
-  let count=parseInt(document.getElementById('iCount').value,10);if(!(count>=1))count=1;
   const now=Date.now();
-  const issue={type:selType||'wrong',product:document.getElementById('iProduct').value.trim(),count:count,
-    correctPrice:document.getElementById('iCorrect').value.trim(),beforePhotos:pendingBefores.slice(),afterPhotos:[],
-    fixed:true,by:meName(),at:now,fixedBy:meName(),fixedAt:now};
+  const issue={counts:counts,count:count,product:document.getElementById('iProduct').value.trim(),
+    beforePhotos:pendingBefores.slice(),afterPhotos:[],fixed:true,by:meName(),at:now,fixedBy:meName(),fixedAt:now};
   const btn=document.getElementById('addIssueBtn');btn.disabled=true;btn.textContent='저장 중…';
   try{
     const {db,ref,push,set,update}=window.__fb;
@@ -308,7 +310,11 @@ function renderIssues(){
     const i=iss[k];
     const befores=Array.isArray(i.beforePhotos)?i.beforePhotos:(i.beforePhoto?[i.beforePhoto]:[]);
     const afters=Array.isArray(i.afterPhotos)?i.afterPhotos:(i.afterPhoto?[i.afterPhoto]:[]);
-    const cnt=(i.count&&i.count>1)?` <span class="muted">× ${i.count}개</span>`:'';
+    const c=i.counts||{};
+    const TLAB={missing:'가격표없음',wrong:'가격틀림',damaged:'라벨손상',misplaced:'위치바뀜'};
+    const parts=Object.keys(TLAB).filter(t=>c[t]>0).map(t=>TLAB[t]+' '+c[t]);
+    const breakdown=parts.length?parts.join(' · '):(i.type?typeKo(i.type)+(i.count>1?' '+i.count:''):'수정');
+    const total=i.count||Object.values(c).reduce((s,v)=>s+(v||0),0)||1;
     const bThumbs=befores.map(u=>`<div class="thumb"><img src="${u}" alt="전"></div>`).join('')||'<div class="thumb">전</div>';
     const aThumbs=afters.map(u=>`<div class="thumb"><img src="${u}" alt="후"></div>`).join('');
     const fixBlock=i.fixed
@@ -319,8 +325,8 @@ function renderIssues(){
            <button class="btn btn-ok" style="flex:1;padding:12px" onclick="markFixed('${k}')">✅ 수정완료</button>
          </div>`;
     return `<div class="card issue-card ${i.fixed?'fixed':''}">
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="chip on" style="cursor:default">${esc(typeKo(i.type))}</span><b style="flex:1">${esc(i.product||'(메모 없음)')}${cnt}</b></div>
-      ${i.correctPrice?`<div class="muted" style="margin-bottom:8px">올바른 가격 <b style="color:#b91c1c">${esc(i.correctPrice)}</b></div>`:''}
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="chip on" style="cursor:default">${total}개</span><b style="flex:1">${esc(breakdown)}</b></div>
+      ${i.product?`<div class="muted" style="margin-bottom:8px">${esc(i.product)}</div>`:''}
       <div class="muted" style="margin-bottom:4px">전 사진</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${bThumbs}</div>
       ${fixBlock}</div>`;
