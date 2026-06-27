@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0369a1">
+<title>가격표 감사 · 김치마트</title>
+<link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
+<!-- 🔄 BUST 마커 — 자동 업데이트 폴링 -->
+<script>
+(function(){
+  var BUST = 'priceaudit_2026_06_27_v1';
+  try {
+    var KEY = 'priceaudit.bust';
+    if (localStorage.getItem(KEY) !== BUST) localStorage.setItem(KEY, BUST);
+    setInterval(function(){
+      fetch('./price-audit.html?bust=' + Date.now(), { cache:'no-store' }).then(function(r){return r.text();}).then(function(t){
+        var m = t.match(/var BUST = '([^']+)'/);
+        if (m && m[1] !== BUST) { console.log('[bust] 새 버전:', m[1]); location.reload(); }
+      }).catch(function(){});
+    }, 90000);
+  } catch(e){}
+})();
+</script>
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, set, update, push, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  const db = getDatabase(app);
+  window.__fb = { db, ref, onValue, set, update, push, remove };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=4"></script>
+<script src="./me-persist.js?v=1"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;min-height:100vh;font-size:14px;padding-bottom:40px}
+button,input,select,textarea{font-family:inherit}
+button{cursor:pointer}
+.topbar{background:linear-gradient(135deg,#0c4a6e,#0369a1);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:50}
+.topbar h1{font-size:1.1em;font-weight:800;display:flex;align-items:center;gap:8px}
+.topbar .row{display:flex;align-items:center;gap:10px;margin-top:10px}
+.topbar select{flex:1;background:rgba(255,255,255,.15);color:#fff;border:0;padding:8px 12px;border-radius:10px;font-size:.9em;font-weight:600}
+.topbar select option{background:#0c4a6e;color:#fff}
+.wrap{padding:14px;max-width:760px;margin:0 auto}
+.card{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.prog{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.prog .n{font-size:1.6em;font-weight:900;color:#0369a1}
+.prog .lbl{font-size:.8em;color:#6b7280;font-weight:600}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:14px;font-size:1em;font-weight:800;color:#fff}
+.btn-ok{background:#16a34a}.btn-issue{background:#dc2626}.btn-sec{background:#e5e7eb;color:#374151}
+.zone{display:flex;align-items:center;gap:12px;padding:13px;border-radius:12px;background:#fff;margin-bottom:9px;box-shadow:0 1px 2px rgba(0,0,0,.05);border-left:5px solid #d1d5db}
+.zone.done{border-left-color:#16a34a;background:#f0fdf4}
+.zone.issue{border-left-color:#dc2626;background:#fef2f2}
+.zone .ic{font-size:1.4em}
+.zone .mid{flex:1;min-width:0}
+.zone .nm{font-weight:800;font-size:.98em}
+.zone .sub{font-size:.78em;color:#6b7280;margin-top:2px;white-space:pre-line}
+.zone .go{color:#0369a1;font-weight:800;font-size:.85em;white-space:nowrap}
+.hint{background:#e0f2fe;border-radius:10px;padding:11px 13px;font-size:.84em;color:#075985;margin-bottom:12px;line-height:1.6}
+textarea{width:100%;border:1.5px solid #d1d5db;border-radius:10px;padding:10px;font-size:.95em;min-height:90px;resize:vertical}
+.muted{color:#6b7280;font-size:.85em}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#16a34a;color:#fff;padding:11px 20px;border-radius:20px;font-weight:700;z-index:200;display:none}
+/* QR print */
+.qr-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:12px}
+.qr-cell{border:2px dashed #d1d5db;border-radius:10px;padding:10px;text-align:center;page-break-inside:avoid}
+.qr-cell img{width:100%;aspect-ratio:1;object-fit:contain}
+.qr-cell .id{font-size:.82em;font-weight:800;margin-top:6px}
+.qr-cell .bn{font-size:.7em;color:#6b7280}
+#qrPage{display:none}
+@media print{
+  body{background:#fff;padding:0}.topbar,.wrap > .card:not(#qrCard),#listPage,#auditPage,.no-print{display:none!important}
+  #qrPage{display:block!important}#qrCard{box-shadow:none;margin:0}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>🏷️ 가격표 감사 <span style="font-weight:600;font-size:.7em;opacity:.85">Price Tag Audit</span></h1>
+  <div class="row">
+    <select id="branchSel"></select>
+    <button onclick="location.href='./hub.html'" style="background:rgba(255,255,255,.18);border:0;color:#fff;width:34px;height:34px;border-radius:50%;font-size:1em">🏠</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <!-- LIST -->
+  <div id="listPage">
+    <div class="card">
+      <div class="prog">
+        <div><div class="n" id="progN">0 / 0</div><div class="lbl">오늘 감사한 구역</div></div>
+        <button class="btn-sec" style="width:auto;padding:9px 14px;border-radius:10px;font-weight:800" onclick="openQrSheet()">🖨️ QR 인쇄</button>
+      </div>
+      <div class="hint">📷 각 매대에 붙인 QR을 폰 카메라로 스캔하면 그 구역 감사 화면이 열립니다. 선반 가격표가 POS와 맞는지 확인 → <b>이상 없음</b> 또는 <b>문제 보고</b>. 감사 1구역 = +1점.</div>
+    </div>
+    <div id="zoneList"></div>
+  </div>
+
+  <!-- AUDIT -->
+  <div id="auditPage" style="display:none">
+    <div class="card">
+      <div style="font-size:.78em;color:#9ca3af;font-weight:700" id="aBranch">헐리우드</div>
+      <div style="font-size:1.3em;font-weight:900;margin-top:3px" id="aZone">—</div>
+      <div class="sub muted" id="aZoneSub" style="margin-top:4px;white-space:pre-line"></div>
+      <div id="aDone" style="display:none;margin-top:10px;background:#f0fdf4;border-radius:10px;padding:10px;font-size:.85em;color:#15803d;font-weight:700"></div>
+    </div>
+    <div class="card">
+      <div class="hint" style="margin:0 0 12px">선반의 <b>가격표가 POS 가격과 맞는지</b> 확인하세요. 틀린 가격·누락·바랜 라벨이 있으면 <b>문제 보고</b>로.</div>
+      <button class="btn btn-ok" onclick="submitAudit('ok')">✅ 이상 없음 — 전부 정확</button>
+      <div style="height:10px"></div>
+      <div id="issueBox" style="display:none">
+        <textarea id="issueNote" placeholder="문제 내용: 어떤 품목이 / 선반가 vs 실제가 / 누락 등 (예: 신라면 봉지 선반 $1.29인데 POS $1.49)"></textarea>
+        <div style="height:10px"></div>
+        <button class="btn btn-issue" onclick="submitAudit('issue')">⚠️ 문제 보고하고 저장</button>
+        <div style="height:8px"></div>
+        <button class="btn btn-sec" onclick="document.getElementById('issueBox').style.display='none';document.getElementById('issueToggle').style.display='block'">취소</button>
+      </div>
+      <button id="issueToggle" class="btn btn-issue" style="background:#fff;color:#dc2626;border:2px solid #dc2626" onclick="this.style.display='none';document.getElementById('issueBox').style.display='block'">⚠️ 문제 있음 — 보고하기</button>
+    </div>
+    <button class="btn btn-sec no-print" onclick="goList()" style="margin-top:4px">← 구역 목록으로</button>
+  </div>
+
+  <!-- QR PRINT -->
+  <div id="qrPage">
+    <div class="card" id="qrCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px" class="no-print">
+        <b style="font-size:1.05em" id="qrTitle">QR 스티커 — 헐리우드</b>
+        <div><button class="btn-sec" style="width:auto;padding:8px 14px;border-radius:10px;font-weight:800" onclick="window.print()">🖨️ 인쇄</button>
+        <button class="btn-sec" style="width:auto;padding:8px 14px;border-radius:10px;font-weight:800;margin-left:6px" onclick="goList()">닫기</button></div>
+      </div>
+      <div class="muted no-print" style="margin-bottom:8px">각 매대에 잘라 붙이세요. 직원이 폰 카메라로 스캔하면 그 구역 감사 화면이 열립니다.</div>
+      <div class="qr-grid" id="qrGrid"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BRANCHES = [
+  {id:'HOLLYWOOD', fp:'hollywood', ko:'헐리우드'},
+  {id:'MIAMI', fp:'miami', ko:'마이애미'},
+  {id:'CORAL_SPRINGS', fp:'coral', ko:'코럴 스프링스'},
+  {id:'LASOLAS', fp:'lasolas', ko:'라스올라스'},
+  {id:'PEMBROKE_PINES', fp:'pembroke', ko:'펨브로크 파인스'},
+  {id:'WESTPALM', fp:'westpalm', ko:'웨스트팜'},
+];
+let BRANCH = 'HOLLYWOOD';
+let ZONES = [];          // [{id,label,sub,num}]
+let TODAY = {};          // {zoneId: {status, by, note, at}}
+let FP_DATA = null;
+let __unsub = null;
+
+function dateKey(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function meName(){ try { return (JSON.parse(localStorage.getItem('chat.me')||'null')||{}).name || '직원'; } catch(e){ return '직원'; } }
+function branchKo(id){ const b=BRANCHES.find(x=>x.id===id); return b?b.ko:id; }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
+function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function getParam(k){ return new URLSearchParams(location.search).get(k); }
+
+async function loadFloorplan(){
+  if (FP_DATA) return FP_DATA;
+  const r = await fetch('./floorplan/floorplan-data.json?cache='+Date.now(), { cache:'no-store' });
+  FP_DATA = await r.json();
+  return FP_DATA;
+}
+function zonesFor(branchId){
+  const b = BRANCHES.find(x=>x.id===branchId); if (!b || !FP_DATA) return [];
+  const raw = (FP_DATA.stores && (FP_DATA.stores[b.fp]||[])) || [];
+  // 매대(통로·진열) 만 — 사무실/입구/계산대 빈칸 제외
+  return raw.filter(z => z && z.label && z.id != null && !/사무실|office|entrance|출입|checkout|계산대|^wall$/i.test((z.label||'')+(z.sub||'')))
+            .map(z => ({ id: String(z.id), label: String(z.label||'').replace(/\n/g,' / '), sub: String(z.sub||''), num: z.num||'' }));
+}
+
+function subscribeToday(){
+  if (!window.__fb) return;
+  if (__unsub) { try{__unsub();}catch(e){} __unsub=null; }
+  const { db, ref, onValue } = window.__fb;
+  __unsub = onValue(ref(db, 'priceAudit/'+BRANCH+'/'+dateKey()), snap => {
+    TODAY = snap.val() || {};
+    renderList(); renderAuditDoneState();
+  }, err => { console.warn('[audit] read', err); });
+}
+
+function renderList(){
+  const el = document.getElementById('zoneList'); if (!el) return;
+  const done = ZONES.filter(z => TODAY[z.id]).length;
+  document.getElementById('progN').textContent = done + ' / ' + ZONES.length;
+  el.innerHTML = ZONES.map(z => {
+    const rec = TODAY[z.id];
+    const cls = rec ? (rec.status==='issue'?'issue':'done') : '';
+    const ic = rec ? (rec.status==='issue'?'⚠️':'✅') : '⬜';
+    const status = rec ? (rec.status==='issue' ? ('문제 — '+esc((rec.note||'').slice(0,40))) : ('완료 · '+esc(rec.by||''))) : (z.sub ? esc(z.sub.slice(0,40)) : '미점검');
+    return `<div class="zone ${cls}" onclick="openAudit('${z.id}')">
+      <div class="ic">${ic}</div>
+      <div class="mid"><div class="nm">${esc(z.label)}${z.num?` <span class="muted">(${esc(String(z.num))})</span>`:''}</div><div class="sub">${status}</div></div>
+      <div class="go">${rec?'다시':'감사 ›'}</div></div>`;
+  }).join('');
+}
+
+let CUR_ZONE = null;
+function openAudit(zoneId){
+  CUR_ZONE = ZONES.find(z => z.id===String(zoneId));
+  if (!CUR_ZONE){ toast('구역을 찾을 수 없습니다'); return; }
+  document.getElementById('listPage').style.display='none';
+  document.getElementById('qrPage').style.display='none';
+  document.getElementById('auditPage').style.display='block';
+  document.getElementById('aBranch').textContent = branchKo(BRANCH);
+  document.getElementById('aZone').textContent = CUR_ZONE.label + (CUR_ZONE.num?' ('+CUR_ZONE.num+')':'');
+  document.getElementById('aZoneSub').textContent = CUR_ZONE.sub||'';
+  document.getElementById('issueBox').style.display='none';
+  document.getElementById('issueToggle').style.display='block';
+  document.getElementById('issueNote').value='';
+  renderAuditDoneState();
+  window.scrollTo(0,0);
+}
+function renderAuditDoneState(){
+  if (!CUR_ZONE) return;
+  const rec = TODAY[CUR_ZONE.id]; const d = document.getElementById('aDone');
+  if (rec){ d.style.display='block'; d.textContent = (rec.status==='issue'?'⚠️ 오늘 문제 보고됨: ':'✅ 오늘 감사 완료: ') + (rec.by||'') + (rec.note?(' — '+rec.note):''); }
+  else { d.style.display='none'; }
+}
+function goList(){
+  document.getElementById('auditPage').style.display='none';
+  document.getElementById('qrPage').style.display='none';
+  document.getElementById('listPage').style.display='block';
+  history.replaceState(null,'',location.pathname);
+}
+
+async function submitAudit(status){
+  if (!CUR_ZONE){ return; }
+  if (!window.__fb){ toast('연결 대기 중…'); return; }
+  const note = status==='issue' ? document.getElementById('issueNote').value.trim() : '';
+  if (status==='issue' && !note){ alert('문제 내용을 적어주세요 (어떤 품목·가격).'); return; }
+  const rec = { status, by: meName(), note, at: Date.now(), points: 1 };
+  try {
+    const { db, ref, set } = window.__fb;
+    await set(ref(db, 'priceAudit/'+BRANCH+'/'+dateKey()+'/'+CUR_ZONE.id), rec);
+    toast(status==='issue' ? '⚠️ 문제 보고 저장됨' : '✅ 이상 없음 저장됨 (+1점)');
+    setTimeout(goList, 700);
+  } catch(e){ alert('저장 실패: '+(e&&e.message||e)+'\n잠시 후 다시 시도해주세요.'); }
+}
+
+function openQrSheet(){
+  document.getElementById('listPage').style.display='none';
+  document.getElementById('auditPage').style.display='none';
+  document.getElementById('qrPage').style.display='block';
+  document.getElementById('qrTitle').textContent = 'QR 스티커 — ' + branchKo(BRANCH);
+  const base = location.origin + location.pathname;
+  document.getElementById('qrGrid').innerHTML = ZONES.map(z => {
+    const url = base + '?b=' + encodeURIComponent(BRANCH) + '&z=' + encodeURIComponent(z.id);
+    const img = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=6&data=' + encodeURIComponent(url);
+    return `<div class="qr-cell"><img src="${img}" alt="QR"><div class="id">${esc(z.label)}</div><div class="bn">${esc(branchKo(BRANCH))}${z.num?' · '+esc(String(z.num)):''}</div></div>`;
+  }).join('');
+  window.scrollTo(0,0);
+}
+
+async function setBranch(id){
+  BRANCH = id;
+  document.getElementById('branchSel').value = id;
+  try { localStorage.setItem('priceaudit.branch', id); } catch(e){}
+  ZONES = zonesFor(BRANCH);
+  renderList();
+  subscribeToday();
+}
+
+async function boot(){
+  // branch selector
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b=>`<option value="${b.id}">${b.ko}</option>`).join('');
+  sel.onchange = ()=>setBranch(sel.value);
+  await loadFloorplan();
+  // initial branch: URL param > saved > HOLLYWOOD
+  let init = getParam('b') || (function(){try{return localStorage.getItem('priceaudit.branch');}catch(e){return null;}})() || 'HOLLYWOOD';
+  if (!BRANCHES.some(b=>b.id===init)) init = 'HOLLYWOOD';
+  await setBranch(init);
+  // deep link to a zone (from QR)
+  const z = getParam('z');
+  if (z) { openAudit(z); }
+}
+// window.__fb 준비 후 부팅
+if (window.__fb) boot(); else window.addEventListener('fb-ready', boot, { once:true });
+// 인증 토큰이 늦게 준비되면(초기 읽기 권한오류 방지) 오늘 현황 재구독
+window.addEventListener('fb-auth-ready', function(){ try { if (ZONES.length) subscribeToday(); } catch(e){} });
+// 전역 노출
+window.openAudit=openAudit; window.submitAudit=submitAudit; window.goList=goList; window.openQrSheet=openQrSheet;
+</script>
+</body>
+</html>

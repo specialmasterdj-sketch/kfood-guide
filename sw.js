@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v822';
+const CACHE = 'kmtools-v823';
 
 const CORE = [
   './',
@@ -41,6 +41,7 @@ const CORE = [
   './auth.html',
   './approve.html',
   './leaderboard.html',
+  './price-audit.html',
   './planogram.html',
   './nav-sidebar.js',
   './back-nav.js',
