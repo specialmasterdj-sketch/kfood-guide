@@ -26,7 +26,20 @@
   };
 
   let CACHED_DATA = null;
+  let STATIC_CACHE = null;
   const FB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+
+  // 정적 json(번들·repo) — 도면 권위 소스. 헐리우드는 RTDB floorplan/shared 에 틀린 도면이 있어
+  //   이걸 강제 사용(전무님 2026-06-28 지시: "헐리우드는 번들 도면만, RTDB 것은 틀림").
+  async function fetchStatic(){
+    if (STATIC_CACHE) return STATIC_CACHE;
+    const r = await fetch(DATA_URL + '?t=' + Date.now(), { cache:'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    STATIC_CACHE = await r.json();
+    return STATIC_CACHE;
+  }
+  // 정적 json 을 강제로 쓸 매장(틀린 RTDB 무시). 필요 시 매장 추가.
+  const STATIC_ONLY_BRANCHES = ['hollywood'];
 
   // 우선순위: 1) Firebase floorplan/shared (매니저가 floorplan editor 에서 저장한 최신본)
   //          2) 정적 floorplan-data.json (번들된 기본값)
@@ -57,8 +70,16 @@
   }
 
   async function load(branchId){
-    const data = await loadData();
     const key = BRANCH_MAP[branchId] || branchId.toLowerCase();
+    // 🔧 헐리우드 등 — RTDB(틀림) 무시하고 정적 json(맞는 도면) 강제 사용.
+    if (STATIC_ONLY_BRANCHES.includes(key)) {
+      try {
+        const s = await fetchStatic();
+        const z = (s && s.stores && s.stores[key]) || [];
+        if (z.length) return { branchId, key, zones: z };
+      } catch(e) { console.warn('[floor-plan] static-only load failed, falling back', e); }
+    }
+    const data = await loadData();
     const zones = (data.stores && data.stores[key]) || [];
     return { branchId, key, zones };
   }
