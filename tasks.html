@@ -4331,6 +4331,33 @@ function renderGamify(){
 }
 
 // 🏆 매장 점수 전광판 — 5개 매장 (Miami/Pembroke/Hollywood/Coral/LasOlas) 오늘 점수 비교
+// 🆕 2026-07-04 전무님 지시: 전 직원에게 전 지점 점수판 노출(경쟁 자극).
+//   직원은 본인 지점 tasks 만 구독(iOS 메모리 크래시 방지) → 전 지점 점수는 여기서
+//   각 지점 '오늘' tasks 만 REST로 가볍게 조회해 점수만 합산(사진 렌더 안 함 → 메모리 안전,
+//   하루치라 413 위험 없음). fb-auth-fetch.js 가 토큰 자동첨부라 plain fetch OK.
+let SB_SCORES = null;          // {branchId: 오늘점수} — 비-오너 점수판용
+let __sbFetching = false;
+async function fetchScoreboardScores(){
+  if (__sbFetching) return; __sbFetching = true;
+  try {
+    const today = todayStr();
+    const results = await Promise.all(BRANCHES.map(async b => {
+      try {
+        const r = await fetch(`${FB_DB_URL}/tasks/${b.id}/${today}.json?cache=`+Date.now(), { cache:'no-store' });
+        if (!r.ok) return [b.id, null];
+        const v = await r.json();
+        let pts = 0;
+        if (v) for (const k in v){ const t = Object.assign({id:k, branchId:b.id}, v[k]); if (t.completedAt) pts += taskScore(t); }
+        return [b.id, pts];
+      } catch(_){ return [b.id, null]; }
+    }));
+    const next = Object.assign({}, SB_SCORES || {});   // 실패 지점은 직전 값 유지(0으로 덮지 않음)
+    results.forEach(([id, p]) => { if (p !== null) next[id] = p; });
+    SB_SCORES = next;
+    try { renderScoreboard(); } catch(_){}
+  } catch(_){} finally { __sbFetching = false; }
+}
+
 function renderScoreboard(){
   const rowsEl = document.getElementById('sbRows');
   if (!rowsEl) return;
@@ -4352,6 +4379,11 @@ function renderScoreboard(){
       const p = (typeof a.points === 'number') ? a.points : 0;
       if (p > 0) scores[a.branch] += p;
     });
+  }
+  // 🆕 직원(비-오너)은 본인 지점 tasks 만 구독 → 전 지점 점수는 SB_SCORES(REST 조회)로 채움.
+  //   오너·임원은 TASKS 로 이미 전 지점 실시간 보유 → 그대로 사용.
+  if (SB_SCORES && (typeof isOwner !== 'function' || !isOwner())){
+    for (const br of BRANCHES) if (br.id in SB_SCORES) scores[br.id] = SB_SCORES[br.id];
   }
   const ranked = BRANCHES.map(b => ({ id:b.id, name:(b[LANG] || b.ko || b.id), score: scores[b.id] || 0 }))
     .sort((a,b) => b.score - a.score);
@@ -4878,6 +4910,13 @@ function renderDashboard(){
   // 🏆 매장 점수판 (LIVE 전광판) — 이전엔 renderGamify() 안에서 호출됐는데
   // gamify 빼면서 같이 죽었음 → 여기서 직접 호출.
   try { renderScoreboard(); } catch(e){ console.warn('[scoreboard]', e); }
+  // 🆕 2026-07-04 직원(비-오너)에게도 전 지점 점수 노출 — REST로 가볍게 조회 후 점수판 갱신 + 60초 폴링.
+  try {
+    if (typeof isOwner === 'function' && !isOwner()){
+      fetchScoreboardScores();
+      if (!window.__sbPoll) window.__sbPoll = setInterval(fetchScoreboardScores, 60000);
+    }
+  } catch(_){}
   // 1) 매장 결정: 매니저/오너는 dropdown 으로 선택 가능
   const isMgr = canAssignTask();   // 🆕 업무 발송 권한자만 — dashboard 액션 버튼 노출 (2026-06-08)
   // 매니저 전용 액션 버튼(업무 지시 / 보고 확인) — 일반 직원·일반 슈퍼바이저에겐 숨김.
