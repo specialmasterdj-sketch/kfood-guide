@@ -559,6 +559,83 @@ function showL(m='처리 중...'){id('lt').textContent=m;id('ld').classList.add(
 function hideL(){id('ld').classList.remove('show')}
 function toast(m,d=2500){const t=id('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),d)}
 
+/* ============ 바코드 마스터 (확정 바코드 누적 저장소) ============
+ * 인보이스마다 벤더코드(품번)는 고정이지만 바코드는 박스(GTIN-14)·낱개·공란으로
+ * 제각각이라 매번 미매칭이 난다. 한 번 POS와 매칭돼 확인된 "정확한 바코드"를
+ * 벤더코드 기준으로 저장해두면, 다음 인보이스 업로드 때 자동으로 채워 넣는다.
+ * 바코드는 매장 구분이 없으므로 전 매장 공용(글로벌).
+ *   저장 경로: barcodeMaster/{벤더코드} = { bc, name }   (승인 직원 read/write)
+ *   ⚠️ 새 경로 — database.rules.json 에 barcodeMaster 규칙 추가 + Console 게시 필요.
+ */
+const BCMaster = (function(){
+  const URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com/barcodeMaster.json';
+  const map = Object.create(null);                 // 벤더코드(대문자) -> {bc, name}
+  const vckey = v => String(v||'').toUpperCase().replace(/\s+/g,'');
+  const digits = v => String(v||'').replace(/\D/g,'');
+  // fb-auth-fetch.js 가 fetch 를 패치해 토큰이 준비될 때까지 대기 후 ?auth= 첨부.
+  async function load(){
+    try {
+      const res = await fetch(URL);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json();
+      if(data && typeof data==='object'){
+        for(const k in data){ const v=data[k]; if(v && v.bc) map[k]={bc:digits(v.bc), name:v.name||''}; }
+      }
+      console.info('[BCMaster] loaded', Object.keys(map).length, '저장된 바코드');
+    } catch(e){ console.warn('[BCMaster] load 실패:', e.message); }
+    return map;
+  }
+  // 인보이스 행의 바코드를 저장된 정확한 바코드로 채움/교체. 채운 개수 반환.
+  function enrich(list){
+    if(!Array.isArray(list) || !list.length) return 0;
+    let n=0;
+    for(const r of list){
+      const vc=vckey(r.vendorCode); if(!vc) continue;
+      const hit=map[vc]; if(!hit || !hit.bc) continue;
+      if(digits(r.barcode) !== hit.bc){ r._bcOrig = r.barcode||''; r.barcode = hit.bc; r._bcSrc='master'; n++; }
+    }
+    return n;
+  }
+  // 확정된 벤더코드->바코드 쌍을 저장(달라진 것만 PATCH). 실패해도 조용히 넘어감.
+  function feed(pairs){
+    const delta={};
+    for(const p of (pairs||[])){
+      const vc=vckey(p.vendorCode), bc=digits(p.bc);
+      if(!vc || bc.length<8) continue;
+      if(map[vc] && map[vc].bc===bc) continue;               // 변화 없음
+      map[vc]={bc, name:p.name||(map[vc]&&map[vc].name)||''};
+      delta[vc]={bc, name:String(p.name||'').slice(0,80)};
+    }
+    const keys=Object.keys(delta);
+    if(!keys.length) return 0;
+    try {
+      fetch(URL, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(delta)})
+        .then(r=>{ if(!r.ok) console.warn('[BCMaster] save HTTP', r.status); })
+        .catch(e=>console.warn('[BCMaster] save 실패:', e.message));
+    } catch(e){ console.warn('[BCMaster] save 실패:', e.message); }
+    return keys.length;
+  }
+  return { load, enrich, feed, get size(){ return Object.keys(map).length; } };
+})();
+window.BCMaster = BCMaster;
+
+// 인보이스 로드 직후 호출 — 저장된 정확한 바코드로 채우고 개수를 토스트로 알림.
+function applyBCMaster(){
+  const n = BCMaster.enrich(S.invData);
+  if (n) toast(`🔖 저장된 바코드 ${n}개 자동 채움`, 3000);
+  return n;
+}
+
+// 페이지 열릴 때 저장소 로드 → 자동로드된 인보이스가 있으면 즉시 바코드 채움.
+window.addEventListener('DOMContentLoaded', () => {
+  BCMaster.load().then(() => {
+    if (S.invData && S.invData.length){
+      const n = BCMaster.enrich(S.invData);
+      if (n){ renderInvGrid(S.invData); toast(`🔖 저장된 바코드 ${n}개 자동 채움`, 3500); }
+    }
+  });
+});
+
 /* ===================== STEP 1: POS ===================== */
 const posDrop=id('pos-drop');
 posDrop.addEventListener('dragover',e=>{e.preventDefault();posDrop.classList.add('dg')});
@@ -669,6 +746,7 @@ function applyInvMap(){
     qty:qc!==''?s(r[+qc]):'',unit:uc!==''?s(r[+uc]):''
   })).filter(d=>d.name&&d.eaPrice>0);
   if(!S.invData.length){toast('❌ 유효한 항목 없음 - EA Price 컬럼 확인');return;}
+  applyBCMaster();
   renderInvGrid(S.invData);
   id('st1').classList.add('done');
   toast(`✅ ${S.invData.length.toLocaleString()}개 항목 로드`);
@@ -722,6 +800,7 @@ async function onInvPDF(inp){
       return;
     }
     S.invData=items;
+    applyBCMaster();
     renderInvGrid(items);
     st.textContent=`✅ ${items.length}개 항목 추출 완료`;
     id('st1').classList.add('done');
@@ -766,6 +845,7 @@ async function onInvPhoto(inp){
       return;
     }
     S.invData=items;
+    applyBCMaster();
     renderInvGrid(items);
     id('ocr-st').textContent=`✅ ${items.length}개 항목 추출 완료`;
     id('st1').classList.add('done');
@@ -1247,6 +1327,16 @@ function runCmp(){
 
     const results=[...changed, ...same, ...review, ...unmatched];
     S.results=results;
+
+    // 매칭 성공 건(바코드/코드로 POS 확인됨)의 정확한 POS 바코드를 벤더코드 기준으로
+    // 저장소에 누적한다. 다음번 같은 벤더 인보이스 업로드 때 자동으로 채워진다.
+    try {
+      const savePairs = [...changed, ...same, ...review]
+        .filter(r => r.invVendorCode && r.posBarcode)
+        .map(r => ({ vendorCode:r.invVendorCode, bc:r.posBarcode, name:r.name || r.invName || '' }));
+      const saved = BCMaster.feed(savePairs);
+      if (saved) console.info('[BCMaster] 저장', saved, '건 (벤더코드→정확한 바코드)');
+    } catch(_){}
 
     const cnt={up:0,down:0,same:same.length};
     changed.forEach(r=>cnt[r.status]=(cnt[r.status]||0)+1);
