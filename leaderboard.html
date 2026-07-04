@@ -122,6 +122,13 @@ h1{font-size:1.3em;font-weight:800;color:#1a5c3a;margin-bottom:4px;display:flex;
   .pt, .score { font-weight:800 !important; }
   /* 카드/그림자 제거 */
   * { box-shadow:none !important; }
+  /* 🍣 파트별 순위 — 특정 파트 1개만 인쇄 (예: 지난달 스시) */
+  .part-print-btn { display:none !important; }
+  body.printing-part #content { display:none !important; }
+  body.printing-part #lbPartRank .lb-part-title { display:none !important; }
+  body.printing-part #lbPartRank .lb-part-card { display:none !important; }
+  body.printing-part #lbPartRank .lb-part-card.print-target { display:block !important; break-inside:avoid; }
+  body.printing-part::before { content:"파트별 순위 — " attr(data-print-title); }
 }
 </style>
 </head>
@@ -1650,7 +1657,7 @@ function renderPartRankLB(rows){
   const title = LANG==='en'?'🏅 Part rankings (total)':LANG==='es'?'🏅 Ranking por parte (total)':'🏅 파트별 순위 (활동 총점)';
   const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal':'스케줄 명단 없음';
   const loadingLbl = (LB_PART_ROSTER===null) ? (LANG==='en'?' (loading…)':LANG==='es'?' (cargando…)':' (불러오는 중…)') : '';
-  let html = `<div style="font-weight:800;font-size:1.05em;color:#1f2937;margin:6px 2px 10px">${title}<span style="font-size:.7em;color:#9ca3af;font-weight:600">${loadingLbl}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
+  let html = `<div class="lb-part-title" style="font-weight:800;font-size:1.05em;color:#1f2937;margin:6px 2px 10px">${title}<span style="font-size:.7em;color:#9ca3af;font-weight:600">${loadingLbl}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat,label,color]) => {
     const members = (LB_PART_ROSTER||[]).filter(r => r.part===cat && (CUR_BRANCH==='ALL' || r.branch===CUR_BRANCH));
     let body;
@@ -1659,7 +1666,9 @@ function renderPartRankLB(rows){
       const ranked = members.map(m => ({ name:m.name, branch:m.branch, score: scoreMap[_partNorm(m.name)] || 0 })).sort((a,b)=>b.score-a.score || String(a.name).localeCompare(String(b.name)));
       body = ranked.map((r,i) => { const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1); const dim=r.score===0?'opacity:.5':''; const bl=r.branch?`<span style="font-size:.7em;color:#94a3b8;font-weight:500;margin-left:6px;flex-shrink:0">${_branchShort(r.branch)}</span>`:''; return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;${i?'border-top:1px solid #f3f4f6':''};${dim}"><span style="width:22px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span><span style="flex:1;min-width:0;font-size:.9em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.name)}${bl}</span><span style="font-weight:900;color:${color};font-size:.92em">${r.score}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span></div>`; }).join('');
     }
-    html += `<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${color};border-radius:10px;padding:9px 12px"><div style="font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label} <span style="font-size:.78em;color:#9ca3af;font-weight:600">${members.length}${LANG==='ko'?'명':''}</span></div>${body}</div>`;
+    const printTip = LANG==='en'?'Print this part':LANG==='es'?'Imprimir esta parte':'이 파트만 인쇄';
+    const printBtn = `<button class="part-print-btn" onclick="printPart('${cat}')" title="${printTip}" style="margin-left:auto;flex-shrink:0;background:#1e40af;border:none;border-radius:6px;color:#fff;font-size:.72em;font-weight:700;padding:3px 9px;cursor:pointer">🖨</button>`;
+    html += `<div class="lb-part-card" data-cat="${cat}" style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${color};border-radius:10px;padding:9px 12px"><div style="display:flex;align-items:center;gap:6px;font-weight:800;font-size:.92em;color:${color};margin-bottom:3px">${label} <span style="font-size:.78em;color:#9ca3af;font-weight:600">${members.length}${LANG==='ko'?'명':''}</span>${printBtn}</div>${body}</div>`;
   });
   html += `</div>`;
   el.innerHTML = html;
@@ -1935,6 +1944,26 @@ function printLeaderboard(){
   setTimeout(() => window.print(), 100);
 }
 window.printLeaderboard = printLeaderboard;
+
+// 🍣 파트별 순위 — 특정 파트 1개만 인쇄 (현재 선택된 기간·지점 그대로).
+// 예: "지난 달" 탭 → 스시 카드의 🖨 → 지난달 스시 순위만 A4 인쇄.
+function printPart(cat){
+  const el = document.getElementById('lbPartRank'); if(!el) return;
+  const card = el.querySelector(`.lb-part-card[data-cat="${cat}"]`);
+  if(!card){ alert('해당 파트 순위를 찾지 못했습니다 — 목록이 로드된 뒤 다시 시도해 주세요.'); return; }
+  const rangeLabel = { today:'오늘', week:'이번 주', month:'이번 달', lastmonth:'지난 달', all:'전체' }[CUR_RANGE] || CUR_RANGE;
+  const branchSel = document.getElementById('branchSel');
+  const branchLabel = branchSel && branchSel.selectedOptions[0] ? branchSel.selectedOptions[0].textContent.trim() : 'ALL';
+  const partLabel = ({'정육':'🥩 정육','스시':'🍣 스시','K-Food':'🍙 K-Food','Seafood':'🐟 해산물','Produce':'🥬 농산물'})[cat] || cat;
+  const dateStr = new Date().toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric'});
+  document.body.dataset.printTitle = `${partLabel} · ${branchLabel} · ${rangeLabel} (${dateStr})`;
+  card.classList.add('print-target');
+  document.body.classList.add('printing-part');
+  const cleanup = () => { document.body.classList.remove('printing-part'); card.classList.remove('print-target'); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+  setTimeout(() => window.print(), 100);
+}
+window.printPart = printPart;
 </script>
 </body>
 </html>
