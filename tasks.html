@@ -3876,7 +3876,18 @@ async function _recoverMyRoleFromSchedules(){
     const data = await fetch(`${FB}/schedules/${me.branch}.json?cb=${Date.now()}`, { cache:'no-store' }).then(r => r.json());
     if (!data || !Array.isArray(data.employees)) return;
     const norm = s => String(s||'').toLowerCase().trim().replace(/\s+/g,' ');
-    const found = data.employees.find(e => norm(e && e.name) === norm(me.name));
+    let found = data.employees.find(e => norm(e && e.name) === norm(me.name));
+    // 🔧 2026-07-11 헐리우드 H.KIM 매니저 권한 미인식 — 'H.KIM' vs 'H. KIM'/'H KIM' 같은
+    //   점·공백 표기 차이로 스케줄 직급 대조가 실패하던 것. 기호 제거(compact) 비교를
+    //   폴백으로 추가하되, 매장 내 유일 매칭일 때만 (동명 변형 오매칭 방지).
+    if (!found) {
+      const compact = s => String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]/g,'');
+      const c = compact(me.name);
+      if (c) {
+        const matches = data.employees.filter(e => compact(e && e.name) === c);
+        if (matches.length === 1) found = matches[0];
+      }
+    }
     if (found && found.role && found.role !== me.role) {
       me.role = found.role;
       try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(_){}
