@@ -1703,7 +1703,18 @@ function _bt(ko,en,es){ return LANG==='en' ? en : LANG==='es' ? (es||en) : ko; }
 function _myProfile(){ const u = window.__lbAuth && window.__lbAuth.currentUser; return (u && USERS[u.uid]) ? USERS[u.uid] : null; }
 // 오너/임원(B.H.K 등)은 OWNER_UIDS(이메일 화이트리스트 포함)로도 인정 — 역할 문자열이 '전무'/'MANAGER' 등이어도 무제한.
 function _isOwnerUid(){ const u=window.__lbAuth && window.__lbAuth.currentUser; return !!(u && OWNER_UIDS.has(u.uid)); }
-function _canAward(){ if(_isOwnerUid()) return true; const p=_myProfile(); return !!(p && p.role && AWARD_ROLES.has(p.role)); }
+// 🎭 2026-07-11 전무님 지시: HR 페르소나 지정 인물(DANIEL BANOS)도 보너스 부여 가능 (주간 한도 적용).
+//   tasks.html/chat.html 의 km.hrPersona 토글과 동일 인물 명단 — 켜져 있으면 by='HR MANAGER'로 기록.
+const HR_PERSONA_AWARD_NAMES = ['daniel banos'];
+function _personaAwardName(){ const p=_myProfile(); const n=(typeof me!=='undefined'&&me&&me.name)?me.name:((p&&p.name)||''); return String(n).toLowerCase().replace(/\s+/g,' ').trim(); }
+function _hrPersonaAwardOn(){ try { return localStorage.getItem('km.hrPersona')==='1' && (_isOwnerUid() || HR_PERSONA_AWARD_NAMES.indexOf(_personaAwardName())>=0); } catch(_){ return false; } }
+function _canAward(){
+  if(_isOwnerUid()) return true;
+  const p=_myProfile();
+  // role 표기 편차 흡수 — 'ASSISTANT MANAGER'(폰 로그인)도 'ASSISTANT_MANAGER'(users 표준)로 정규화해 인정
+  if (p && p.role && AWARD_ROLES.has(String(p.role).toUpperCase().trim().replace(/\s+/g,'_'))) return true;
+  return HR_PERSONA_AWARD_NAMES.indexOf(_personaAwardName()) >= 0;   // 🎭 지정 인물은 role 무관 허용
+}
 // 🆕 2026-06-20 전무님 지시: 보너스 '무제한'은 오너·전무 계정만(나머지는 주간 15점 한도).
 //   DJ(사장님)·B.H.K(전무님)·Sun Kim(kdaisy81, 공동 오너 — DJ와 동일권한 2026-05-28) 세 계정.
 //   EXECUTIVE 역할만 부여받은 사람은 무제한 아님(역할 오설정으로 새는 것 방지). 이메일(auth) 기준.
@@ -1751,7 +1762,7 @@ async function _myWeekBonusUsed(){
   const myName=p.name; const aq=await authParam(); const wk=_weekStartMs(); let used=0;
   await Promise.all(BRANCHES.map(async b=>{
     try{ const r=await fetch(`${FB_DB}/mgrBonus/${b.id}.json${aq}`,{cache:'no-store'}); if(!r.ok)return; const d=await r.json(); if(!d)return;
-      Object.values(d).forEach(a=>{ if(a && a.by===myName && (a.ts||0)>=wk) used += (a.points||0); }); }catch(_){}
+      Object.values(d).forEach(a=>{ if(a && (a.by===myName || a.actualBy===myName) && (a.ts||0)>=wk) used += (a.points||0); }); }catch(_){}   // 🎭 페르소나 명의(actualBy)도 본인 주간 한도에 합산
   }));
   return used;
 }
@@ -1822,7 +1833,8 @@ async function _submitBonus(){
     const _lm=new Date(_d.getFullYear(), _d.getMonth()-1, 1).getMonth()+1;
     if(!confirm(_bt(`⚠️ ${to} 에게 +${points}점을 '지난 달(${_lm}월) 순위'에 소급 반영합니다. 마감된 달을 바꾸는 것입니다. 진행할까요?`,`Backdate +${points} to ${to} into last month (${_lm})?`,`¿Retroactivo +${points} a ${to} (${_lm})?`))) return;
   }
-  const award={ to, points, reason, by:(me&&me.name)||'', byRole:(me&&me.role)||'', branch, ts:_ts };
+  const _hrOn=_hrPersonaAwardOn();   // 🎭 페르소나 켜짐 → 'HR MANAGER' 명의 (실행자는 actualBy)
+  const award={ to, points, reason, by: _hrOn ? 'HR MANAGER' : ((me&&me.name)||''), byRole: _hrOn ? 'HR MANAGER' : ((me&&me.role)||''), actualBy: _hrOn ? ((me&&me.name)||'') : null, branch, ts:_ts };
   if(_backdate){ award.backdated=true; award.awardedAt=Date.now(); }
   const aq=await authParam();
   const btn=document.getElementById('bonusSubmit'); btn.disabled=true; const _orig=btn.textContent; btn.textContent='…';
