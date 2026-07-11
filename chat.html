@@ -604,6 +604,7 @@ a{color:inherit;text-decoration:none}
       </div>
     </div>
     <div class="composer" id="composer">
+      <button class="attach" id="hrPersonaChatBtn" style="display:none" onclick="toggleHrPersonaChat()" title="켜면 메시지가 'HR Manager' 명의로 발송됩니다">🎭</button>
       <button class="attach" onclick="document.getElementById('cameraInput').click()" title="카메라로 찍기">📷</button>
       <button class="attach" onclick="document.getElementById('fileInput').click()" title="갤러리에서 선택">📎</button>
       <input type="file" id="cameraInput" accept="image/*" capture="environment" onchange="handleFiles(event)">
@@ -2026,6 +2027,7 @@ function openRoom(id){
   console.log('[openRoom]', id, 'me=', me?.name);
   // 자동 노출된 본인등록 모달이 룸 클릭을 가렸을 가능성 — 미리 닫기 (가시성 문제 해결)
   try { document.getElementById('meOverlay')?.classList.remove('show'); } catch(e){}
+  try { updateHrPersonaChatBtn(); } catch(e){}   // 🎭 자격자에게 페르소나 토글 노출
   // 권한 체크: 'payroll' 또는 'managers' id만 매니저+ 전용
   // 그 외 모든 일반 룸은 모든 지점 누구나 입장 가능
   if (id === 'payroll') {
@@ -3236,7 +3238,35 @@ async function uploadFile(att, roomId, msgId, idx){
 }
 
 function isHRRoom(){ return ACTIVE_ROOM === 'hr_inquiries'; }
-function hrSender(){ return isHRRoom() && canAccessHRRoom() ? {name:'HR Manager', branch:'', color:'#7c3aed', mgr:false} : null; }
+// 🎭 2026-07-11 전무님: HR방 밖 일반 방에서도 'HR Manager' 명의 발송 가능하게 토글 확장.
+//   자격 = canAccessHRRoom (오너·임원·DJ·DANIEL BANOS). 토글 키 km.hrPersona 는
+//   tasks.html 의 "🎭 HR 모드"와 공유 — 한쪽에서 켜면 양쪽 모두 적용.
+//   HR 건의방 안에서는 토글과 무관하게 기존대로 항상 HR Manager 명의.
+function hrPersonaOnChat(){ try { return canAccessHRRoom() && localStorage.getItem('km.hrPersona')==='1'; } catch(_){ return false; } }
+function hrSender(){
+  if (isHRRoom() && canAccessHRRoom()) return {name:'HR Manager', branch:'', color:'#7c3aed', mgr:false};
+  if (hrPersonaOnChat()) return {name:'HR Manager', branch:'', color:'#7c3aed', mgr:false};
+  return null;
+}
+function updateHrPersonaChatBtn(){
+  const b = document.getElementById('hrPersonaChatBtn');
+  if (!b) return;
+  if (!me || !canAccessHRRoom()) { b.style.display = 'none'; return; }
+  b.style.display = '';
+  const on = hrPersonaOnChat();
+  b.style.opacity = on ? '1' : '.45';
+  b.style.background = on ? '#7c3aed' : '';
+  b.title = on ? "🎭 HR Manager 명의로 발송 중 — 누르면 본인 이름으로" : "누르면 메시지가 'HR Manager' 명의로 발송됩니다";
+}
+function toggleHrPersonaChat(){
+  if (!me || !canAccessHRRoom()) return;
+  const next = hrPersonaOnChat() ? '0' : '1';
+  try { localStorage.setItem('km.hrPersona', next); } catch(_){}
+  updateHrPersonaChatBtn();
+  showStatus(next==='1' ? '🎭 HR Manager 명의로 발송됩니다' : '본인 이름으로 발송됩니다');
+  setTimeout(hideStatus, 2500);
+}
+window.toggleHrPersonaChat = toggleHrPersonaChat;
 
 function showStatus(msg){
   const el = document.getElementById('uploadStatus');
