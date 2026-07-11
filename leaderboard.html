@@ -791,14 +791,14 @@ async function loadUsers(){
     if (!p) continue;
     if (p.role === 'OWNER') OWNER_UIDS.add(uid);
     if (p.email && EXCLUDE_EMAILS.has(p.email.toLowerCase())) OWNER_UIDS.add(uid);
-    if (p.name) NAME_TO_PROFILE.set(p.name.toLowerCase(), { uid, ...p });
+    if (p.name) NAME_TO_PROFILE.set(_aggKey(p.name), { uid, ...p });
   }
   window.__lbUsersAt = Date.now();
 }
 
 function isExcludedSender(name, branch){
   if (!name) return true;
-  const low = String(name).toLowerCase().trim();
+  const low = _aggKey(name);
   if (EXCLUDE_NAMES.has(low) || EXCLUDE_NAMES.has(name)) return true;
   // 🚪 그만둔 직원 — 과거 활동 포함 전 구간 제외
   if (QUIT_NAMES.has(low)) return true;
@@ -814,18 +814,26 @@ function isExcludedSender(name, branch){
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
 const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, expiryPtsByDay:{}, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionByDay:{}, reactionGiven:0, reply:0, bonus:0, priceAuditPts:0, score:0 });
+// 🔧 2026-07-11 전무님 지시: 같은 사람이 대소문자만 다르게 등록돼 ("Shreya Shrestha" vs
+//   "SHREYA SHRESTHA") 순위가 둘로 쪼개지던 문제 — 집계 키를 소문자·공백정규화로 통일.
+//   표시 이름은 users 프로필 이름 우선, 없으면 대소문자 섞인(자연스러운) 쪽 선택.
+function _aggKey(name){ return String(name||'').trim().toLowerCase().replace(/\s+/g,' '); }
 function bumpAgg(agg, name, branchHint, key, n=1, color){
   if (!name || isExcludedSender(name, branchHint)) return;
-  const k = name.trim();
+  const disp = name.trim();
+  const k = _aggKey(name);
   // 🔧 2026-05-15: 우선순위 1 — schedules/{branch}/employees 에 등록된 매장 (권위).
   //   같은 이름이 다른 매장 task 를 도와줘도 본인 등록 매장으로 표시.
   // 우선순위 2 — users/{uid}.branch
   // 우선순위 3 — branchHint (task.branchId / senderBranch)
   const schedBranch = NAME_TO_BRANCH.get(_normForBranchLookup(k));
-  const usersProfile = NAME_TO_PROFILE.get(k.toLowerCase());
+  const usersProfile = NAME_TO_PROFILE.get(k);
   const usersBranch = (usersProfile && usersProfile.branch && usersProfile.branch !== '*') ? usersProfile.branch : null;
   const authoritativeBranch = schedBranch || usersBranch || branchHint || '';
-  if (!agg[k]) agg[k] = Object.assign({ name: k, branch: authoritativeBranch, color: color || '' }, _DEFAULT_ROW());
+  const dispName = (usersProfile && usersProfile.name) ? String(usersProfile.name).trim() : disp;
+  if (!agg[k]) agg[k] = Object.assign({ name: dispName, branch: authoritativeBranch, color: color || '' }, _DEFAULT_ROW());
+  // 표시 이름 업그레이드 — 저장된 게 전부 대문자인데 이번 건이 대소문자 섞임이면 자연스러운 쪽으로
+  else if (agg[k].name === agg[k].name.toUpperCase() && dispName !== dispName.toUpperCase()) agg[k].name = dispName;
   agg[k][key] = (agg[k][key] || 0) + n;
   // 권위 branch 가 있으면 항상 그걸로 — task hint 가 다른 매장이었어도 무시
   if (schedBranch || usersBranch) agg[k].branch = authoritativeBranch;
@@ -871,7 +879,7 @@ async function fetchExpiry(agg, since, until){
         for (const who of Object.keys(perPerson)) {
           const e = perPerson[who];
           bumpAgg(agg, who, br, e.kind, 1);              // 배지용 카운트
-          const _k = String(who).trim();                 // 일별 캡 버킷에 가중 점수 누적
+          const _k = _aggKey(who);                       // 일별 캡 버킷에 가중 점수 누적
           if (agg[_k]) {
             const _d = new Date(e.ts);
             const _dk = _d.getFullYear() + '-' + (_d.getMonth()+1) + '-' + _d.getDate();
@@ -962,7 +970,7 @@ async function fetchTasks(agg, since, until){
           // 🆕 Task 일일 상한용 — 완료일(completedAt)별로 점수 누적. computeScores 에서
           // 하루치 합이 TASK_DAILY_CAP 넘으면 초과분 컷. bumpAgg 가 제외(OWNER 등)한
           // 직원은 agg 에 없으므로 guard 로 건너뜀.
-          const _tk = String(t.completedBy).trim();
+          const _tk = _aggKey(t.completedBy);
           // ⏱️ 새 규칙은 컷오프(2026-06-01) 이후 완료분에만. 이전(이미 지급된 5월 등)은
           //    아래 per-day/발송자 누적을 건너뜀 → computeScores 에서 옛 규칙(무캡·발송자0)으로 처리.
           if (t.completedAt >= RULE_START_TS) {
@@ -1046,11 +1054,12 @@ async function fetchChat(agg, since, until){
                 bumpAgg(agg, m.sender, m.senderBranch || '', 'reactionPts', cw.reaction, m.color);
                 // 🆕 2026-06-15 사장님 지시: 받은 좋아요 하루 최대 5개만 점수 인정(담합 방지).
                 //   컷오프 이후 받은 좋아요만 일별 카운트 → computeScores 에서 5 초과분 차감.
-                if (ts >= PHOTO_CAP_CUTOFF && agg[m.sender]) {
+                const _sk = _aggKey(m.sender);
+                if (ts >= PHOTO_CAP_CUTOFF && agg[_sk]) {
                   const _rd = new Date(ts);
                   const _rday = _rd.getFullYear()+'-'+(_rd.getMonth()+1)+'-'+_rd.getDate();
-                  if (!agg[m.sender].reactionByDay) agg[m.sender].reactionByDay = {};
-                  agg[m.sender].reactionByDay[_rday] = (agg[m.sender].reactionByDay[_rday]||0) + 1;
+                  if (!agg[_sk].reactionByDay) agg[_sk].reactionByDay = {};
+                  agg[_sk].reactionByDay[_rday] = (agg[_sk].reactionByDay[_rday]||0) + 1;
                 }
                 // 누른 사람 (응원자) — 적은 점수
                 bumpAgg(agg, displayName, '', 'reactionGiven', 1);
@@ -1087,25 +1096,26 @@ let BONUS_DEPT = {};
 let BONUS_MGR  = {};
 function _bonusDeptBump(deptKey, name, branch, field, n){
   if (!name || isExcludedSender(name)) return;
-  const k = name.trim();
+  const k = _aggKey(name);   // 🔧 2026-07-11 대소문자 분리 방지 (bumpAgg 와 동일)
   if (!BONUS_DEPT[deptKey]) BONUS_DEPT[deptKey] = {};
   const slot = BONUS_DEPT[deptKey];
-  if (!slot[k]) slot[k] = { likes:0, replies:0, branch: branch || '' };
+  if (!slot[k]) slot[k] = { name: name.trim(), likes:0, replies:0, branch: branch || '' };
+  else if (slot[k].name === slot[k].name.toUpperCase() && name.trim() !== name.trim().toUpperCase()) slot[k].name = name.trim();
   slot[k][field] += n;
   // 권위 branch 적용
   const schedBranch = NAME_TO_BRANCH.get(_normForBranchLookup(k));
-  const usersProfile = NAME_TO_PROFILE.get(k.toLowerCase());
+  const usersProfile = NAME_TO_PROFILE.get(k);
   const usersBranch = (usersProfile && usersProfile.branch && usersProfile.branch !== '*') ? usersProfile.branch : null;
   if (schedBranch || usersBranch) slot[k].branch = schedBranch || usersBranch;
   else if (!slot[k].branch && branch) slot[k].branch = branch;
 }
 function _bonusMgrBump(name, branch, field, n){
   if (!name || isExcludedSender(name)) return;
-  const k = name.trim();
-  if (!BONUS_MGR[k]) BONUS_MGR[k] = { tasksSent:0, mgrRoomActivity:0, branch: branch || '' };
+  const k = _aggKey(name);   // 🔧 2026-07-11 대소문자 분리 방지
+  if (!BONUS_MGR[k]) BONUS_MGR[k] = { name: name.trim(), tasksSent:0, mgrRoomActivity:0, branch: branch || '' };
   BONUS_MGR[k][field] += n;
   const schedBranch = NAME_TO_BRANCH.get(_normForBranchLookup(k));
-  const usersProfile = NAME_TO_PROFILE.get(k.toLowerCase());
+  const usersProfile = NAME_TO_PROFILE.get(k);
   const usersBranch = (usersProfile && usersProfile.branch && usersProfile.branch !== '*') ? usersProfile.branch : null;
   if (schedBranch || usersBranch) BONUS_MGR[k].branch = schedBranch || usersBranch;
   else if (!BONUS_MGR[k].branch && branch) BONUS_MGR[k].branch = branch;
@@ -1492,7 +1502,7 @@ function renderBonusTrack(allRows){
   const deptRows = DEPT_ROOMS.map(d => {
     const slot = BONUS_DEPT[d.key] || {};
     const ranked = Object.entries(slot)
-      .map(([name, v]) => ({ name, score: v.likes + v.replies, likes: v.likes, replies: v.replies, branch: v.branch }))
+      .map(([name, v]) => ({ name: v.name || name, score: v.likes + v.replies, likes: v.likes, replies: v.replies, branch: v.branch }))
       .filter(x => x.score > 0)
       .sort((a,b) => b.score - a.score);
     const lbl = d[LANG] || d.ko;
