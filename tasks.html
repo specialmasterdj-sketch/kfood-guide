@@ -1265,6 +1265,7 @@ button{font-family:inherit;cursor:pointer}
       <button class="chip" data-f="delayed" onclick="setMgrFilter('delayed',this)">⚠️ 지연</button>
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
+    <button class="btn sec" id="hrPersonaBtn" style="display:none" onclick="toggleHrPersona()" title="켜면 지시가 'HR MANAGER' 명의로 발송됩니다 (오너/임원/지정 인물 전용)">🎭 HR 모드 OFF</button>
     <button class="btn sec" onclick="openAssignModal('정육')" title="정육 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 발송</button>
     <button class="btn sec" onclick="openAssignModal('스시')" title="스시 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#fae8ff;border-color:#c026d3;color:#86198f;font-weight:700">🍣 스시 발송</button>
     <button class="btn sec" onclick="openAssignModal('K-Food')" title="K-Food 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#dbeafe;border-color:#2563eb;color:#1e40af;font-weight:700">🍙 K-Food 발송</button>
@@ -3804,9 +3805,42 @@ function _assignAllowByBranchName(){
 const TASK_ASSIGN_ONLY_BY_BRANCH = {
   'CORAL_SPRINGS': ['kwangho noh', 'micaela vargas', 'brandon amaguana'],
 };
+// 🎭 2026-07-11 전무님 지시: HR MANAGER 페르소나 — 상징 직책(스케줄의 0h HR MANAGER 항목).
+//   오너/임원 + 아래 지정 인물은 ①전 지점 발송 가능(코럴 잠금 포함 통과) ②"🎭 HR 모드"
+//   토글이 보이고, 켜면 지시가 'HR MANAGER' 명의로 발송됨(실행자는 actualBy 에 기록).
+//   로그인은 각자 본인 계정 그대로 — 공용 계정 없음. 지정 인물 추가 = 소문자 풀네임 한 줄.
+const HR_PERSONA_NAMES = ['daniel banos'];   // DANIEL BANOS (라스올라스 AM, 786-319-7181)
+function isHrPersonaEligible(){
+  if (!me) return false;
+  if (isOwner()) return true;
+  const n = String(me.name||'').toLowerCase().replace(/\s+/g,' ').trim();
+  return HR_PERSONA_NAMES.indexOf(n) >= 0;
+}
+function hrPersonaOn(){ try { return isHrPersonaEligible() && localStorage.getItem('km.hrPersona')==='1'; } catch(_){ return false; } }
+function hrFrom(n){ return hrPersonaOn() ? 'HR MANAGER' : n; }
+function updateHrPersonaBtn(){
+  const b = document.getElementById('hrPersonaBtn');
+  if (!b) return;
+  if (!isHrPersonaEligible()) { b.style.display = 'none'; return; }
+  const on = hrPersonaOn();
+  b.style.display = '';
+  b.textContent = on ? '🎭 HR 모드 ON' : '🎭 HR 모드 OFF';
+  b.style.background = on ? '#7c3aed' : '';
+  b.style.color = on ? '#fff' : '';
+  b.style.borderColor = on ? '#7c3aed' : '';
+}
+function toggleHrPersona(){
+  if (!isHrPersonaEligible()) return;
+  const next = hrPersonaOn() ? '0' : '1';
+  try { localStorage.setItem('km.hrPersona', next); } catch(_){}
+  updateHrPersonaBtn();
+  if (typeof showToast === 'function') showToast(next==='1' ? '🎭 HR MANAGER 모드 켜짐' : 'HR MANAGER 모드 꺼짐', next==='1' ? '이제 지시가 HR MANAGER 명의로 발송됩니다' : '본인 이름으로 발송됩니다');
+}
+window.toggleHrPersona = toggleHrPersona;
 function canAssignTask(){
   if (!me) return false;
   if (isOwner()) return true;                                  // owner + 임원(B.H.K, SUN KIM)
+  if (isHrPersonaEligible()) return true;                      // 🎭 HR 페르소나 지정 인물 — 전 지점 발송
   const _only = TASK_ASSIGN_ONLY_BY_BRANCH[me.branch];
   if (Array.isArray(_only)) {                                  // 🔒 잠금 지점 — 명단이 전부
     const n = String(me.name||'').toLowerCase().replace(/\s+/g,' ').trim();
@@ -3929,6 +3963,7 @@ function refreshMe(){
   }
   const showMgr = canAssignTask();
   document.getElementById('mgrTabBtn').style.display = showMgr ? '' : 'none';
+  updateHrPersonaBtn();   // 🎭 HR 페르소나 토글 — 자격자에게만 노출
   document.getElementById('repTabBtn').style.display = showMgr ? '' : 'none';
   const homeBtn = document.getElementById('homeTabBtn');
   // 🏆 대시보드 탭은 전 직원 공개 — LIVE 매장 점수판·활동 순위는 모든 직원
@@ -10286,10 +10321,10 @@ async function openAssignModal(presetCat){
       onChecklistToggle();
     }
   }
-  // 지점 선택 — 오너/전무는 6지점 중 선택 가능, 매니저는 자기 지점만.
+  // 지점 선택 — 오너/전무 + 🎭 HR 페르소나 지정 인물은 6지점 중 선택 가능, 매니저는 자기 지점만.
   const branchField = document.getElementById('aBranchField');
   const branchSel = document.getElementById('aBranchSel');
-  if (isOwner()) {
+  if (isOwner() || isHrPersonaEligible()) {
     branchField.style.display = '';
     branchSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">🏢 ${escHtml(b[LANG]||b.ko||b.id)}</option>`).join('');
     // 기본값 — 매니저 뷰에서 마지막 본 지점 또는 me.branch
@@ -10484,7 +10519,8 @@ async function sendAssign(){
       locationPhotos: photoUrls && photoUrls.length ? photoUrls : null,
       locationNote: noteText || null,
       assignedTo: to,
-      from: me.name, fromRole: me.role,
+      from: hrFrom(me.name), fromRole: hrPersonaOn() ? 'HR MANAGER' : me.role,
+      actualBy: hrPersonaOn() ? me.name : null,   // 🎭 페르소나 발송 시 실제 실행자 기록
       createdAt: Date.now(),
       note: noteText || null,
       noteTr,
@@ -10698,7 +10734,8 @@ async function sendAssign(){
           locationPhotos: LOC_PHOTO_URLS && LOC_PHOTO_URLS.length ? LOC_PHOTO_URLS : null,
           locationNote: window.LOC_NOTE || null,
           assignedTo: stageAssignee,
-          from: me.name, fromRole: me.role,
+          from: hrFrom(me.name), fromRole: hrPersonaOn() ? 'HR MANAGER' : me.role,
+      actualBy: hrPersonaOn() ? me.name : null,   // 🎭 페르소나 발송 시 실제 실행자 기록
           createdAt: Date.now(),
           note: note || null,
           noteTr: noteTr || null,
@@ -10745,7 +10782,8 @@ async function sendAssign(){
       deadline, category: cat, requirePhoto: photo,
       assignedTo: _rcpt === '*' ? '*' : _rcpt,
       assignedToId: _rcpt === '*' ? null : _rcpt,
-      from: me.name, fromRole: me.role,
+      from: hrFrom(me.name), fromRole: hrPersonaOn() ? 'HR MANAGER' : me.role,
+      actualBy: hrPersonaOn() ? me.name : null,   // 🎭 페르소나 발송 시 실제 실행자 기록
       createdAt: Date.now(),
       note: note || null,
       noteTr: noteTr || null,
