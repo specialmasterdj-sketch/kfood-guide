@@ -4185,12 +4185,26 @@ function renderTeamRank(){
     if (!k) return;
     const pts = taskScore(t);
     const cur = agg.get(k) || { name: who, branch: _branchName(t.branchId), score: 0, count: 0, branches: new Set() };
-    cur.score += pts;
+    // 🔧 2026-07-11 전무님: 점수 바로 합산 → 완료일별 누적으로 변경. 아래에서 하루 20pt
+    //    캡(leaderboard.html TASK_DAILY_CAP 과 동일 규칙) 적용 — 대시보드 순위가 공식
+    //    활동순위보다 부풀려 보이던 문제(28pt 등) 수정.
+    const _capD = new Date(_cAt);
+    const _capK = _capD.getFullYear() + '-' + (_capD.getMonth()+1) + '-' + _capD.getDate();
+    cur.ptsByDay = cur.ptsByDay || {};
+    cur.ptsByDay[_capK] = (cur.ptsByDay[_capK] || 0) + pts;
     cur.count += 1;
     if (t.branchId) cur.branches.add(t.branchId);
     // 가장 많이 일한 매장 라벨 유지 (단일 매장이면 그 매장, 여러 매장이면 첫 매장 + N)
     if (!cur.branch && t.branchId) cur.branch = _branchName(t.branchId);
     agg.set(k, cur);
+  });
+  // 💎 완료일별 하루 20pt 캡 적용해 task 점수 확정 (leaderboard.html TASK_DAILY_CAP=20 동일)
+  const TASK_DAILY_CAP_W = 20;
+  agg.forEach(cur => {
+    let s = 0;
+    const days = cur.ptsByDay || {};
+    for (const dk in days) s += Math.min(days[dk], TASK_DAILY_CAP_W);
+    cur.score = s;
   });
   // 🌟 사장님 상점(mgrBonus, kind:'owner') — 점수에만 합산(전원에게), 출처 표시는 없음
   (window.MGR_BONUS || []).forEach(a => {
