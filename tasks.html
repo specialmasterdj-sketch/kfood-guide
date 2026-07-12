@@ -3846,8 +3846,12 @@ function canAssignTask(){
   if (isHrPersonaEligible()) return true;                      // 🎭 HR 페르소나 지정 인물 — 전 지점 발송
   const _only = TASK_ASSIGN_ONLY_BY_BRANCH[me.branch];
   if (Array.isArray(_only)) {                                  // 🔒 잠금 지점 — 명단이 전부
-    const n = String(me.name||'').toLowerCase().replace(/\s+/g,' ').trim();
-    return _only.indexOf(n) >= 0;
+    // 풀네임 정확일치 정책 유지 + 표기 편차만 흡수(대소문자·공백·기호·악센트) — compact 비교.
+    // NFD 분해 후 a-z0-9 만 남기면 악센트 결합기호·공백·마침표 전부 제거됨 (명단은 라틴 이름 전제).
+    // 배경: Micaela Vargas 계정 이름 표기 차이로 차단 항의 (2026-07-12).
+    const _compact = s => String(s||'').normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const n = _compact(me.name);
+    return !!n && _only.some(x => _compact(x) === n);
   }
   if (_assignAllowByName()) return true;                       // 이름 강제 허용 (역할 비어있음/GM 등 대비)
   if (_assignAllowByBranchName()) return true;                 // 지점 전용 이름 허용 (예: 헐리우드 Anderson/Mirna)
@@ -10322,9 +10326,15 @@ window.getAssignPoints = getAssignPoints;
 
 async function openAssignModal(presetCat){
   if (!me || !canAssignTask()) {
-    alert(LANG==='en' ? '⛔ Only Senior Supervisors and above (Managers) can issue task assignments.'
+    let _dmsg = LANG==='en' ? '⛔ Only Senior Supervisors and above (Managers) can issue task assignments.'
         : LANG==='es' ? '⛔ Solo Supervisores Senior o superiores (Gerentes) pueden asignar tareas.'
-        :               '⛔ 업무지시는 시니어 슈퍼바이저 이상(매니저)만 가능합니다.');
+        :               '⛔ 업무지시는 시니어 슈퍼바이저 이상(매니저)만 가능합니다.';
+    // 잠금 지점이면 계정 이름·지점을 함께 표시 — 명단 철자 불일치를 현장에서 바로 확인 (2026-07-12)
+    if (me && Array.isArray(TASK_ASSIGN_ONLY_BY_BRANCH[me.branch])) {
+      _dmsg += '\n\n' + (LANG==='en' ? 'This branch allows designated senders only.' : LANG==='es' ? 'Esta sucursal permite solo remitentes designados.' : '이 지점은 지정 발송자만 가능합니다.')
+             + '\n' + (LANG==='en' ? 'My account' : LANG==='es' ? 'Mi cuenta' : '내 계정') + ': "' + (me.name||'?') + '" · ' + (me.branch||'?');
+    }
+    alert(_dmsg);
     return;
   }
   // 매니저 장소 사진 + 지시 내용 초기화
