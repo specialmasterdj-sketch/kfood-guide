@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'voicestock_2026_07_12_v10_hanmi_frozen';
+  var BUST = 'voicestock_2026_07_12_v11_cloud_stt';
   try {
     var KEY='voicestock.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -28,11 +28,11 @@
 </script>
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-  import { getDatabase, ref, onValue, set, update, push, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getDatabase, ref, onValue, set, update, push, remove, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order", storageBucket:"kimchi-mart-order.firebasestorage.app" };
   const app = getApps().length ? getApp() : initializeApp(cfg);
   const db = getDatabase(app);
-  window.__fb = { db, ref, onValue, set, update, push, remove };
+  window.__fb = { db, ref, onValue, set, update, push, remove, get };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 <script src="./lang-sync.js?v=1"></script>
@@ -114,7 +114,7 @@ h3.sec{font-size:.95em;color:#374151;margin:14px 0 8px;font-weight:800}
 
 <div class="topbar">
   <div class="top1">
-    <h1>🎤 <span id="hTitle">음성 재고</span> <span style="font-size:.62em;opacity:.75;font-weight:600">v10</span></h1>
+    <h1>🎤 <span id="hTitle">음성 재고</span> <span style="font-size:.62em;opacity:.75;font-weight:600">v11</span></h1>
     <div class="lang-toggle" id="langToggle"></div>
   </div>
   <div class="row">
@@ -538,6 +538,78 @@ async function renameEntry(k){
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 let rec=null, recActive=false;
 const SR_LANGS={ko:'ko-KR',en:'en-US',es:'es-US'};
+
+// ☁️ 구글 클라우드 STT — config/speechKey(RTDB, 승인자만 읽기)에 API 키가 있으면 고정밀 모드.
+//   등록 품목명·별칭 전체를 phrase 부스팅으로 넣어 상품명 인식률을 올림. 키 없음/실패 시 브라우저 인식 폴백.
+let SPEECH_KEY=null, mediaRec=null, mediaStream=null, mediaChunks=[];
+async function loadSpeechKey(){
+  try{
+    if(!window.__fb||!window.__fb.get)return;
+    const {db,ref,get}=window.__fb;
+    const s=await get(ref(db,'config/speechKey'));
+    SPEECH_KEY=(s&&s.val())||null;
+  }catch(e){}
+  updateMicUI();
+}
+function cloudReady(){
+  return !!(SPEECH_KEY&&navigator.mediaDevices&&window.MediaRecorder&&MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus'));
+}
+function cloudPhrases(){
+  const ph=new Set();
+  const add=v=>{v=String(v||'').trim();if(v&&v.length<=100)ph.add(v);};
+  Object.keys(STORE_ALIAS[DEPT]||{}).forEach(add);
+  Object.keys(ALIAS_SEED[DEPT]||{}).forEach(add);
+  Object.values(ALIAS_LEARNED).forEach(v=>{if(v&&v.f)add(v.f);});
+  productList().forEach(add);
+  vocabList().forEach(add);
+  UNITS.forEach(add);
+  return [...ph].slice(0,4500);   // v1p1beta1 phrase 한도 5000
+}
+async function startCloudRec(){
+  try{mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});}
+  catch(e){toast(t('micDenied'),true);return;}
+  mediaChunks=[];
+  try{mediaRec=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});}
+  catch(e){try{mediaStream.getTracks().forEach(x=>x.stop());}catch(_){ } toast(t('micErr')+(e&&e.message||e),true);return;}
+  mediaRec.ondataavailable=e=>{if(e.data&&e.data.size)mediaChunks.push(e.data);};
+  mediaRec.onstop=onCloudStop;
+  mediaRec.start();
+  recActive=true;updateMicUI();showInterim('');
+  clearTimeout(startCloudRec._t);
+  startCloudRec._t=setTimeout(()=>{if(recActive)stopMic();},25000);   // 동기 인식 한도(60초) 전 안전 컷
+}
+async function onCloudStop(){
+  try{if(mediaStream)mediaStream.getTracks().forEach(x=>x.stop());}catch(e){}
+  const blob=new Blob(mediaChunks,{type:'audio/webm'});mediaChunks=[];
+  if(blob.size<1500)return;   // 빈 녹음 무시
+  document.getElementById('interim').innerHTML='<span class="ph">🎧 '+(LANG==='en'?'Transcribing...':LANG==='es'?'Transcribiendo...':'인식 중...')+'</span>';
+  try{
+    const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(blob);});
+    const body={config:{encoding:'WEBM_OPUS',sampleRateHertz:48000,languageCode:SR_LANGS[MIC_LANG]||'ko-KR',maxAlternatives:5,
+      speechContexts:[{phrases:cloudPhrases(),boost:14}]},audio:{content:b64}};
+    const r=await fetch('https://speech.googleapis.com/v1p1beta1/speech:recognize?key='+encodeURIComponent(SPEECH_KEY),
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(!r.ok)throw new Error((j&&j.error&&j.error.message)||('HTTP '+r.status));
+    let any=false;
+    (j.results||[]).forEach(seg=>{
+      let best=null;
+      (seg.alternatives||[]).forEach(a=>{
+        const txt=(a.transcript||'').trim();if(!txt)return;
+        const p=parseTranscript(txt);
+        const score=vocabScore(p.rows);
+        if(!best||score>best.score)best={txt,p,score};
+      });
+      if(best&&best.txt){
+        any=true;
+        if(best.p.rows.length)addRows(best.p.rows);
+        else if(best.p.rest)toast(t('noParse')+'"'+best.p.rest+'"',true);
+      }
+    });
+    if(!any)toast(t('noParse')+'…',true);
+  }catch(e){toast('☁️ '+(e&&e.message||e),true);}
+  showInterim('');
+}
 function makeRec(){
   const r=new SR();
   r.lang=SR_LANGS[MIC_LANG]||'ko-KR';
@@ -573,21 +645,24 @@ function makeRec(){
 }
 function toggleMic(){ recActive?stopMic():startMic(); }
 function startMic(){
+  if(cloudReady()){startCloudRec();return;}   // ☁️ 고정밀 모드 우선
   if(!SR){toast(t('micNo'),true);return;}
   try{rec=makeRec();rec.start();recActive=true;updateMicUI();}
   catch(e){toast(t('micErr')+(e&&e.message||e),true);}
 }
 function stopMic(){
   recActive=false;
+  if(mediaRec&&mediaRec.state!=='inactive'){try{mediaRec.stop();}catch(e){}}   // ☁️ 정지 → onCloudStop 이 전사
   if(rec){try{rec.stop();}catch(e){}}
   showInterim('');updateMicUI();
 }
 function updateMicUI(){
   const b=document.getElementById('micBtn'),s=document.getElementById('micState');
-  if(!SR){b.style.display='none';s.textContent=t('micNo');s.classList.remove('rec');return;}
+  if(!SR&&!cloudReady()){b.style.display='none';s.textContent=t('micNo');s.classList.remove('rec');return;}
+  b.style.display='';
   b.classList.toggle('rec',recActive);
   b.textContent=recActive?'⏹':'🎤';
-  s.textContent=recActive?t('micRec'):t('micReady');
+  s.textContent=(recActive?t('micRec'):t('micReady'))+(cloudReady()?' ☁️':'');
   s.classList.toggle('rec',recActive);
 }
 function showInterim(txt){
@@ -724,10 +799,10 @@ function boot(){
   document.getElementById('dateSel').onchange=function(){DATE=dateKey(this.value)||dateKey();subscribe();};
   document.getElementById('branchSel').onchange=function(){BRANCH=this.value;try{localStorage.setItem('voicestock.branch',BRANCH);}catch(e){}subscribe();};
   document.getElementById('mItem').addEventListener('keydown',e=>{if(e.key==='Enter')manualAdd();});
-  renderLangToggle();renderMicLang();applyLang();subscribe();subscribeVocab();
+  renderLangToggle();renderMicLang();applyLang();subscribe();subscribeVocab();loadSpeechKey();
 }
 if(window.__fb)boot();else window.addEventListener('fb-ready',boot,{once:true});
-window.addEventListener('fb-auth-ready',function(){try{subscribe();subscribeVocab();}catch(e){}});
+window.addEventListener('fb-auth-ready',function(){try{subscribe();subscribeVocab();loadSpeechKey();}catch(e){}});
 window.toggleMic=toggleMic;window.setMicLang=setMicLang;window.manualAdd=manualAdd;window.setDept=setDept;
 window.delEntry=delEntry;window.setQty=setQty;window.setLang=setLang;window.renameEntry=renameEntry;
 window.exportCsv=exportCsv;window.printSummary=printSummary;window.reportChat=reportChat;
