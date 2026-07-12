@@ -815,7 +815,7 @@ function isExcludedSender(name, branch){
 //   taskComplete, taskPoints, chatMsg, chatPhoto, reaction, reply, score }
 // taskPoints = 매니저가 task 발송 시 선택한 1·2·3 점 합 (실 score 계산용).
 // taskComplete = 완료 건수만 (배지 노출용).
-const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, expiryPtsByDay:{}, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionByDay:{}, reactionGiven:0, reply:0, bonus:0, priceAuditPts:0, score:0 });
+const _DEFAULT_ROW = () => ({ expiryAdd:0, expiryCheck:0, expiryDiscard:0, expiryPtsByDay:{}, taskComplete:0, taskPoints:0, taskPointsByDay:{}, chatMsg:0, chatPhoto:0, chatPts:0, reaction:0, reactionPts:0, reactionByDay:{}, reactionGiven:0, reply:0, bonus:0, priceAuditPts:0, voiceStockPts:0, score:0 });
 // 🔧 2026-07-11 전무님 지시: 같은 사람이 대소문자만 다르게 등록돼 ("Shreya Shrestha" vs
 //   "SHREYA SHRESTHA") 순위가 둘로 쪼개지던 문제 — 집계 키를 소문자·공백정규화로 통일.
 //   표시 이름은 users 프로필 이름 우선, 없으면 대소문자 섞인(자연스러운) 쪽 선택.
@@ -1247,6 +1247,30 @@ async function fetchPriceAudit(agg, since, until){
     } catch(_){}
   }));
 }
+
+// 🎤 2026-07-12 음성 재고 파악 점수 — inventory/voiceReports/{지점}/{날짜}/{부서} = {by,at,items,qty}.
+//   채팅 보고 버튼 누른 사람에게 +1. 부서·날짜당 1건(voice-stock 이 덮어쓰기)이라 재보고 중복 적립 없음.
+async function fetchVoiceStock(agg, since, until){
+  const aq = await authParam();
+  const branches = (CUR_BRANCH === 'ALL') ? BRANCHES.map(b => b.id) : [CUR_BRANCH];
+  await Promise.all(branches.map(async (br) => {
+    try {
+      const r = await fetch(`${FB_DB}/inventory/voiceReports/${br}.json${aq}`, { cache:'no-store' });
+      if (!r.ok) return;
+      const tree = await r.json();
+      if (!tree || typeof tree !== 'object') return;
+      Object.values(tree).forEach(dayBucket => {
+        if (!dayBucket || typeof dayBucket !== 'object') return;
+        Object.values(dayBucket).forEach(rep => {
+          if (!rep || typeof rep !== 'object' || !rep.by) return;
+          const ts = rep.at || 0;
+          if (ts < since || ts >= until) return;
+          bumpAgg(agg, rep.by, br, 'voiceStockPts', 1);
+        });
+      });
+    } catch(_){}
+  }));
+}
 function computeScores(agg){
   // 🆕 옵션 B — 윈도우 길이 비례 채팅 cap.
   const days = CUR_RANGE === 'today' ? 1
@@ -1306,6 +1330,7 @@ function computeScores(agg){
     + reactionGivenScore  // 누른 좋아요 점수 (캡 없음, 0.05/개) — 옵션 B
     + (r.bonus || 0)   // 🎖 매니저 보너스 (가중치 1.0, 캡 없음 — 주간 한도로 통제, 화면 표시됨)
     + (r.priceAuditPts || 0)  // 🏷️ 가격표 감사 (점검+1·수정 10개당+1, issue.score 합산)
+    + (r.voiceStockPts || 0)  // 🎤 음성 재고 파악 (부서·날짜당 보고 +1)
     + (r.omerit || 0); // ⭐ 사장님 상점 (점수엔 합산, 출처/표시는 숨김 — 배지·보너스트랙 비표시)
     r.score = Math.round(r.score * 10) / 10;
     // 디버깅용 — cap 으로 깎였는지 표시 (UI 배지에 활용 가능)
@@ -1344,6 +1369,7 @@ function _bdBadges(r){
   if (r.reaction)      bd.push(`👍${r.reaction}`);
   if (r.bonus)         bd.push(`🎖${r.bonus}`);
   if (r.priceAuditPts) bd.push(`🏷️${r.priceAuditPts}`);
+  if (r.voiceStockPts) bd.push(`🎤${r.voiceStockPts}`);
   return bd.join(' · ') || '—';
 }
 
@@ -1975,6 +2001,7 @@ async function loadAll(force){
     fetchMgrBonus(agg, since, until),
     fetchChat(agg, since, until),
     fetchPriceAudit(agg, since, until),
+    fetchVoiceStock(agg, since, until),
   ]);
   if (_seq !== _lbLoadSeq) return;
   if (CORE_FAILS > 0) { _partialFallback(); return; }   // 핵심 지점 실패 → 경고 + 재시도
