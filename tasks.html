@@ -7309,7 +7309,8 @@ function renderChecklistInline(task){
     body = Object.keys(groups).sort((a,b) => +a - +b).map(k => {
       const list = groups[k];
       const stageLabel = list[0].c.stageLabel || '';
-      const stageRange = list[0].c.stageRange || (list[0].c.stageFrom && list[0].c.stageTo ? (list[0].c.stageFrom+' ~ '+list[0].c.stageTo) : (list[0].c.stageTime || ''));
+      const stageRangeRaw = list[0].c.stageRange || (list[0].c.stageFrom && list[0].c.stageTo ? (list[0].c.stageFrom+' ~ '+list[0].c.stageTo) : (list[0].c.stageTime || ''));
+      const stageRange = String(stageRangeRaw).replace(/\d{1,2}:\d{2}/g, m => to12h(m));   // 12시간제 표시 (저장값은 24h 유지)
       const stageDone = list.filter(x => x.c.done).length;
       const stageHeader = `<div style="display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:.82em;font-weight:700;color:#1a5c3a;border-top:1px dashed #e5e7eb;padding-top:6px">
         <span>${escHtml(stageLabel)}</span>
@@ -9180,6 +9181,17 @@ function pickZone(zone, branch){
 }
 window.pickZone = pickZone;
 
+// 시프트 시간은 화면·인쇄 모두 12시간제(3pm, 4pm)로 — 24시간제(15:00)는 직원들이 헷갈림 (전무님 2026-07-12)
+function to12h(hm){
+  const m = String(hm || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return hm || '';
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if (h === 0) h = 12;
+  return h + (min === '00' ? '' : ':' + min) + ap;
+}
+
 // 🆕 2026-05-21 — 캐셔/보바 시프트 타임라인 카드. Manager View 상단에 표시.
 // TASKS 에서 category 가 '캐셔' 또는 'BOBA' 인 stage task 들을 시간순으로 묶어
 // 매장 게시판 인쇄용으로도 깔끔하게 보여줌.
@@ -9241,7 +9253,7 @@ function renderShiftSchedule(activeBranch, tasks){
       const _stages = stagesFor(tt.category) || [];
       const _found = _stages.find(s => s.label === tt.stageLabel);
       const stage = _found ? stageLabel(_found) : (tt.stageLabel || '?');
-      const range = (tt.stageFrom || '') + ' ~ ' + (tt.stageTo || '');
+      const range = to12h(tt.stageFrom) + ' ~ ' + to12h(tt.stageTo);
       const assignee = tt.assignedTo === '*' ? '(전체)' : (tt.assignedTo || tt.assignedToId || '?');
       const doer = tt.completedBy || tt.startedBy || '';
       const showDoer = doer && doer !== assignee;
@@ -9380,16 +9392,6 @@ function printShiftSchedule(){
   // 날짜 locale 도 LANG 따라
   const dateLocale = LANG==='en' ? 'en-US' : LANG==='es' ? 'es-ES' : 'ko-KR';
   const todayDate = new Date().toLocaleDateString(dateLocale, { year:'numeric', month:'long', day:'numeric', weekday:'long' });
-  // 인쇄물은 12시간제(3pm, 4pm)로 — 24시간제(15:00)는 직원들이 헷갈림 (전무님 2026-07-12)
-  function to12h(hm){
-    const m = String(hm || '').match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return hm || '';
-    let h = parseInt(m[1], 10);
-    const min = m[2];
-    const ap = h >= 12 ? 'pm' : 'am';
-    h = h % 12; if (h === 0) h = 12;
-    return h + (min === '00' ? '' : ':' + min) + ap;
-  }
   // 스테이지 라벨 다국어 픽업 — stageLabel(stageObj) 우선, 없으면 task 의 stageLabelTr 또는 그대로
   function stageDisplay(tt){
     // task.stageLabel 은 저장 시 한국어로 들어가있음. STAGES_BY_CAT 에서 매칭 시도.
