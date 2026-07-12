@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'voicestock_2026_07_12_v1';
+  var BUST = 'voicestock_2026_07_12_v2_vocab';
   try {
     var KEY='voicestock.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -200,6 +200,7 @@ const T={
   thItem:{ko:'품목',en:'Item',es:'Producto'},thQty:{ko:'수량',en:'Qty',es:'Cant.'},
   printedAt:{ko:'출력: ',en:'Printed: ',es:'Impreso: '},
   micErr:{ko:'⚠️ 마이크 오류: ',en:'⚠️ Mic error: ',es:'⚠️ Error de micrófono: '},
+  renamePh:{ko:'품목명 수정 (수정하면 사전에 학습됩니다)',en:'Edit item name (saved to dictionary)',es:'Editar nombre (se guarda al diccionario)'},
   micDenied:{ko:'⚠️ 마이크 권한이 거부됨 — 브라우저 설정에서 허용해주세요',en:'⚠️ Microphone permission denied — allow it in browser settings',es:'⚠️ Permiso de micrófono denegado — actívalo en el navegador'},
 };
 function detectLang(){try{return localStorage.getItem('tasks.lang')||localStorage.getItem('kimchi_lang')||'ko';}catch(e){return 'ko';}}
@@ -227,11 +228,82 @@ function deptName(l){const d=deptObj();return d.emoji+' '+(d[l||LANG]||d.ko);}
 function setDept(id){
   if(!DEPTS.some(d=>d.id===id))return;
   DEPT=id;try{localStorage.setItem('voicestock.dept',id);}catch(e){}
-  renderDepts();subscribe();
+  renderDepts();subscribe();subscribeVocab();
 }
 function renderDepts(){
   document.getElementById('deptTabs').innerHTML=DEPTS
     .map(d=>'<button class="'+(d.id===DEPT?'on':'')+'" onclick="setDept(\''+d.id+'\')">'+d.emoji+' '+escHtml(d[LANG]||d.ko)+'</button>').join('');
+}
+
+// ===== 품목 사전 + 발음 유사도 교정 =====
+// STT 가 "양파"를 "양아"로 잘못 들어도 발음은 비슷하게 들어옴 → 부서별 품목 사전에서
+// 자모(발음) 유사도가 가장 높은 품목으로 자동 교정 (전무님 2026-07-12 "미리 품목 넣고 비슷하면 기록").
+// 학습: 이름 수정/직접 추가 시 inventory/voiceVocab/{dept} 에 글로벌 저장 (바코드 마스터 방식).
+const VOCAB_SEED={
+  produce:['양파','적양파','대파','쪽파','마늘','깐마늘','통마늘','생강','감자','고구마','당근','무','알타리무','배추','알배추','양배추','적양배추','상추','로메인','깻잎','시금치','부추','미나리','쑥갓','콩나물','숙주','버섯','팽이버섯','새송이버섯','표고버섯','느타리버섯','양송이버섯','애호박','호박','단호박','오이','가지','고추','청양고추','풋고추','홍고추','꽈리고추','피망','파프리카','토마토','방울토마토','브로콜리','콜리플라워','셀러리','청경채','고수','아욱','근대','열무','갓','달래','냉이','더덕','도라지','연근','우엉','마','토란','사과','배','바나나','오렌지','레몬','라임','포도','청포도','딸기','블루베리','수박','참외','멜론','복숭아','자두','천도복숭아','귤','한라봉','감','단감','홍시','아보카도','망고','파인애플','키위','석류','유자','옥수수','밤','대추','onion','green onion','scallion','garlic','ginger','potato','sweet potato','carrot','radish','napa cabbage','cabbage','lettuce','perilla leaf','spinach','bean sprout','mushroom','zucchini','cucumber','eggplant','pepper','bell pepper','tomato','broccoli','celery','bok choy','cilantro','apple','pear','banana','orange','lemon','grape','strawberry','watermelon','melon','peach','plum','mango','avocado','pineapple','cebolla','ajo','papa','zanahoria','repollo','lechuga','espinaca','champiñon','pepino','tomate','manzana','platano','naranja','limon','fresa','sandia','mango'],
+  meat:['삼겹살','대패삼겹살','오겹살','목살','항정살','갈매기살','앞다리살','뒷다리살','갈비','돼지갈비','소갈비','LA갈비','엘에이갈비','왕갈비','등심','안심','채끝','부채살','차돌박이','우삼겹','불고기','국거리','사태','양지','설도','우둔','홍두깨','도가니','우족','꼬리','사골','잡뼈','등뼈','감자탕뼈','돼지껍데기','족발','닭','닭고기','통닭','닭다리','닭날개','닭봉','닭가슴살','닭안심','오리','오리고기','훈제오리','베이컨','소세지','소시지','햄','스팸','곱창','대창','막창','순대','간','천엽','선지','pork belly','pork shoulder','pork ribs','beef','beef ribs','short ribs','brisket','chuck','sirloin','tenderloin','chicken','chicken wings','chicken breast','chicken thigh','duck','bacon','sausage','ham','cerdo','res','costilla','pollo','pato','tocino','salchicha','jamon'],
+  seafood:['고등어','갈치','조기','굴비','삼치','꽁치','임연수','가자미','서대','병어','민어','조개','명태','동태','생태','코다리','황태','북어','노가리','연어','광어','우럭','도미','참돔','농어','아구','대구','홍어','가오리','장어','붕장어','꼼장어','미꾸라지','오징어','한치','낙지','문어','주꾸미','새우','대하','흰다리새우','칵테일새우','꽃게','대게','킹크랩','랍스터','전복','소라','굴','홍합','바지락','모시조개','백합','가리비','키조개','멍게','해삼','미더덕','미역','다시마','김','파래','매생이','멸치','건멸치','건새우','쥐포','한치포','오징어채','젓갈','새우젓','명란젓','오징어젓','창란젓','갈치속젓','어묵','맛살','게맛살','mackerel','hairtail','croaker','salmon','flounder','cod','pollock','squid','octopus','shrimp','crab','lobster','abalone','oyster','mussel','clam','scallop','seaweed','anchovy','fish cake','pescado','salmon','calamar','pulpo','camaron','cangrejo','ostra','almeja'],
+  frozen:['만두','김치만두','고기만두','물만두','군만두','왕만두','손만두','딤섬','샤오롱바오','탕수육','돈까스','치즈돈까스','너겟','치킨너겟','핫도그','콘도그','떡갈비','동그랑땡','완자','미트볼','아이스크림','하드','붕어빵','호떡','찐빵','호빵','냉동밥','볶음밥','필라프','냉동피자','피자','새우튀김','오징어튀김','감자튀김','고로케','츄러스','와플','토스트','냉동과일','냉동블루베리','냉동딸기','냉동망고','에다마메','frozen dumpling','dumpling','potsticker','ice cream','fried rice','pizza','french fries','nugget','corn dog','tempura','edamame','empanada','helado'],
+  chilled:['우유','저지방우유','딸기우유','초코우유','바나나우유','두유','요거트','요구르트','치즈','슬라이스치즈','모짜렐라','버터','마가린','생크림','휘핑크림','계란','달걀','메추리알','김치','포기김치','맛김치','깍두기','총각김치','열무김치','갓김치','백김치','동치미','반찬','젓갈','떡','떡국떡','떡볶이떡','가래떡','인절미','절편','송편','어묵','두부','순두부','연두부','유부','콩나물','묵','도토리묵','청포묵','냉면','생면','우동면','칼국수면','수제비','만두피','청국장','낫토','생막걸리','식혜','수정과','주스','오렌지주스','사과주스','milk','soy milk','yogurt','cheese','butter','eggs','kimchi','tofu','noodles','juice','leche','yogur','queso','mantequilla','huevos','jugo'],
+  general:['라면','신라면','진라면','너구리','안성탕면','삼양라면','불닭볶음면','짜파게티','비빔면','컵라면','육개장','국수','소면','중면','당면','냉면','메밀면','우동','파스타','스파게티','쌀','현미','찹쌀','흑미','햇반','즉석밥','누룽지','김','조미김','김밥김','참기름','들기름','식용유','카놀라유','올리브유','포도씨유','간장','진간장','국간장','양조간장','된장','고추장','쌈장','춘장','고춧가루','소금','굵은소금','설탕','흑설탕','밀가루','부침가루','튀김가루','빵가루','전분','미원','다시다','치킨스톡','식초','사과식초','물엿','올리고당','꿀','케첩','마요네즈','머스타드','굴소스','돈까스소스','불고기양념','갈비양념','카레','짜장','스프','참치캔','꽁치캔','골뱅이','옥수수캔','과자','초코파이','새우깡','홈런볼','빼빼로','사탕','젤리','초콜릿','음료수','콜라','사이다','환타','생수','물','보리차','옥수수차','커피','믹스커피','캔커피','녹차','홍차','율무차','소주','맥주','막걸리','청주','와인','rice','ramen','noodles','soy sauce','sesame oil','cooking oil','vinegar','sugar','salt','flour','gochujang','doenjang','red pepper powder','canned tuna','snack','chips','candy','chocolate','soda','coke','water','coffee','tea','beer','arroz','fideos','aceite','azucar','sal','harina','galletas','dulces','refresco','agua','cafe','cerveza'],
+};
+let VOCAB_LEARNED={}, vocabUnsub=null;
+function vocabList(){return (VOCAB_SEED[DEPT]||[]).concat(Object.values(VOCAB_LEARNED));}
+// 한글 → 자모 분해 (발음 비교용)
+const _CHO='ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ',_JUNG='ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ',_JONG='\0ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ';
+function jamo(s){
+  let o='';
+  for(const ch of String(s||'').toLowerCase()){
+    const c=ch.charCodeAt(0);
+    if(c>=0xAC00&&c<=0xD7A3){const i=c-0xAC00;o+=_CHO[Math.floor(i/588)]+_JUNG[Math.floor((i%588)/28)];const j=i%28;if(j)o+=_JONG[j];}
+    else if(ch!==' ')o+=ch;
+  }
+  return o;
+}
+function lev(a,b){
+  const m=a.length,n=b.length;
+  if(!m)return n;if(!n)return m;
+  let prev=Array.from({length:n+1},(_,i)=>i);
+  for(let i=1;i<=m;i++){
+    const cur=[i];
+    for(let j=1;j<=n;j++)cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    prev=cur;
+  }
+  return prev[n];
+}
+function sim(a,b){
+  const ja=jamo(a),jb=jamo(b);
+  const L=Math.max(ja.length,jb.length);
+  return L?1-lev(ja,jb)/L:0;
+}
+const SNAP_MIN=0.72;   // 이 이상 비슷하면 사전 품목으로 교정 (너무 낮으면 콜라비→콜라 같은 오교정)
+function snapToVocab(name){
+  let best=null,bestS=0;
+  for(const v of vocabList()){const s=sim(name,v);if(s>bestS){bestS=s;best=v;}}
+  if(best&&bestS>=SNAP_MIN&&best.toLowerCase()!==String(name).toLowerCase())return {name:best,heard:name,score:bestS};
+  return {name:name,score:bestS};
+}
+function vocabScore(rows){   // 인식 후보 중 사전과 제일 잘 맞는 것 고르기용 점수
+  if(!rows.length)return -1;
+  let s=0;
+  for(const r of rows){let m=0;for(const v of vocabList()){const x=sim(r.item,v);if(x>m)m=x;}s+=m;}
+  return s/rows.length+rows.length*0.05;
+}
+function vocabKey(name){return String(name).trim().replace(/[.#$/\[\]]/g,'_').slice(0,60);}
+function learnVocab(name){
+  name=String(name||'').trim();
+  if(!name||name.length<2)return;
+  const seed=(VOCAB_SEED[DEPT]||[]);
+  if(seed.some(v=>v.toLowerCase()===name.toLowerCase())||VOCAB_LEARNED[vocabKey(name)])return;
+  if(!window.__fb)return;
+  const {db,ref,set}=window.__fb;
+  set(ref(db,'inventory/voiceVocab/'+DEPT+'/'+vocabKey(name)),name).catch(()=>{});
+}
+function subscribeVocab(){
+  if(!window.__fb)return;
+  const {db,ref,onValue}=window.__fb;
+  if(vocabUnsub){try{vocabUnsub();}catch(e){}}
+  vocabUnsub=onValue(ref(db,'inventory/voiceVocab/'+DEPT),snap=>{VOCAB_LEARNED=snap.val()||{};},()=>{});
 }
 
 // ===== 음성 → 품목/수량/단위 파싱 =====
@@ -291,18 +363,26 @@ function subscribe(){
   if(unsub){try{unsub();}catch(e){}}
   unsub=onValue(ref(db,basePath()),snap=>{ENTRIES=snap.val()||{};render();},err=>{console.warn('[voice-stock]',err);});
 }
-async function addEntry(item,qty,unit){
+async function addEntry(item,qty,unit,heard){
   if(!window.__fb){toast(t('waiting'),true);return false;}
   const {db,ref,push,set}=window.__fb;
   const k=push(ref(db,basePath())).key;
-  await set(ref(db,basePath()+'/'+k),{item:item,qty:qty,unit:unit||'',by:meName(),at:Date.now()});
+  const rec={item:item,qty:qty,unit:unit||'',by:meName(),at:Date.now()};
+  if(heard)rec.heard=heard;   // 교정 전 들린 원문 (디버그용)
+  await set(ref(db,basePath()+'/'+k),rec);
   return true;
 }
-async function addRows(rows){
+async function addRows(rows,opts){
+  const snap=!(opts&&opts.noSnap);
   let ok=[];
   for(const r of rows){
-    const item=r.item.trim();if(!item)continue;
-    try{await addEntry(item,r.qty,r.unit);ok.push(item+' '+r.qty+(r.unit||''));}catch(e){toast(t('sendFail')+(e&&e.message||e),true);return;}
+    let item=r.item.trim();if(!item)continue;
+    let heard='';
+    if(snap){const s=snapToVocab(item);if(s.heard){heard=s.heard;item=s.name;}}
+    try{
+      await addEntry(item,r.qty,r.unit,heard);
+      ok.push(item+' '+r.qty+(r.unit||'')+(heard?' ("'+heard+'"→교정)':''));
+    }catch(e){toast(t('sendFail')+(e&&e.message||e),true);return;}
   }
   if(ok.length)toast(t('added')+ok.join(' · '));
 }
@@ -322,9 +402,23 @@ function manualAdd(){
   const qty=parseFloat(document.getElementById('mQty').value)||1;
   const unit=document.getElementById('mUnit').value.trim();
   if(!item){alert(t('needItem'));return;}
-  addRows([{item,qty,unit}]);
+  addRows([{item,qty,unit}],{noSnap:true});   // 직접 타이핑은 그대로 저장
+  learnVocab(item);                            // + 사전 학습 → 다음부턴 음성으로 바로 인식
   document.getElementById('mItem').value='';document.getElementById('mQty').value='1';
   document.getElementById('mItem').focus();
+}
+async function renameEntry(k){
+  const e=ENTRIES[k];if(!e)return;
+  const nn=prompt(t('renamePh'),e.item||'');
+  if(nn===null)return;
+  const name=nn.trim();if(!name)return;
+  if(!window.__fb)return;
+  const {db,ref,update}=window.__fb;
+  try{
+    await update(ref(db,basePath()+'/'+k),{item:name});
+    learnVocab(name);   // 고친 이름은 사전에 등록 → 같은 실수 반복 안 함
+    toast('✏️ '+name);
+  }catch(err){toast(t('sendFail')+(err&&err.message||err),true);}
 }
 
 // ===== 음성 인식 =====
@@ -334,18 +428,24 @@ const SR_LANGS={ko:'ko-KR',en:'en-US',es:'es-US'};
 function makeRec(){
   const r=new SR();
   r.lang=SR_LANGS[MIC_LANG]||'ko-KR';
-  r.continuous=true;r.interimResults=true;r.maxAlternatives=1;
+  r.continuous=true;r.interimResults=true;r.maxAlternatives=5;
   r.onresult=e=>{
     let interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){
       const res=e.results[i];
       if(res.isFinal){
-        const txt=res[0].transcript.trim();
         showInterim('');
-        if(txt){
-          const {rows,rest}=parseTranscript(txt);
-          if(rows.length)addRows(rows);
-          if(!rows.length&&rest)toast(t('noParse')+'"'+rest+'"',true);
+        // 인식 후보 여러 개 중 품목 사전과 제일 잘 맞는 후보 선택
+        let best=null;
+        for(let a=0;a<res.length;a++){
+          const txt=(res[a].transcript||'').trim();if(!txt)continue;
+          const p=parseTranscript(txt);
+          const score=vocabScore(p.rows);
+          if(!best||score>best.score)best={txt,p,score};
+        }
+        if(best&&best.txt){
+          if(best.p.rows.length)addRows(best.p.rows);
+          else if(best.p.rest)toast(t('noParse')+'"'+best.p.rest+'"',true);
         }
       }else interim+=res[0].transcript;
     }
@@ -411,7 +511,8 @@ function render(){
   if(!arr.length){list.innerHTML='<div class="muted" style="text-align:center;padding:16px">'+escHtml(t('empty'))+'</div>';}
   else{
     list.innerHTML=arr.map(e=>'<div class="entry">'+
-      '<div class="nm">'+escHtml(e.item)+'<span class="meta">'+escHtml(e.by||'')+' · '+new Date(e.at||0).toLocaleTimeString(LANG==='ko'?'ko-KR':'en-US',{hour:'numeric',minute:'2-digit'})+'</span></div>'+
+      '<div class="nm" onclick="renameEntry(\''+e.k+'\')" style="cursor:pointer">'+escHtml(e.item)+' <span style="color:#c4b5fd;font-size:.8em">✏</span>'+
+      '<span class="meta">'+(e.heard?'🎤 "'+escHtml(e.heard)+'" · ':'')+escHtml(e.by||'')+' · '+new Date(e.at||0).toLocaleTimeString(LANG==='ko'?'ko-KR':'en-US',{hour:'numeric',minute:'2-digit'})+'</span></div>'+
       '<input class="qty" type="number" step="0.5" min="0" value="'+(+e.qty||0)+'" onchange="setQty(\''+e.k+'\',this.value)">'+
       '<span class="unit">'+escHtml(e.unit||'')+'</span>'+
       '<button class="del" onclick="delEntry(\''+e.k+'\')">✕</button></div>').join('');
@@ -500,12 +601,12 @@ function boot(){
   document.getElementById('dateSel').onchange=function(){DATE=dateKey(this.value)||dateKey();subscribe();};
   document.getElementById('branchSel').onchange=function(){BRANCH=this.value;try{localStorage.setItem('voicestock.branch',BRANCH);}catch(e){}subscribe();};
   document.getElementById('mItem').addEventListener('keydown',e=>{if(e.key==='Enter')manualAdd();});
-  renderLangToggle();renderMicLang();applyLang();subscribe();
+  renderLangToggle();renderMicLang();applyLang();subscribe();subscribeVocab();
 }
 if(window.__fb)boot();else window.addEventListener('fb-ready',boot,{once:true});
-window.addEventListener('fb-auth-ready',function(){try{subscribe();}catch(e){}});
+window.addEventListener('fb-auth-ready',function(){try{subscribe();subscribeVocab();}catch(e){}});
 window.toggleMic=toggleMic;window.setMicLang=setMicLang;window.manualAdd=manualAdd;window.setDept=setDept;
-window.delEntry=delEntry;window.setQty=setQty;window.setLang=setLang;
+window.delEntry=delEntry;window.setQty=setQty;window.setLang=setLang;window.renameEntry=renameEntry;
 window.exportCsv=exportCsv;window.printSummary=printSummary;window.reportChat=reportChat;
 </script>
 </body>
