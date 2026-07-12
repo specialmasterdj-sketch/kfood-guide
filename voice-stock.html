@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7c2d92">
+<title>음성 재고 · 김치마트</title>
+<link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
+<script>
+(function(){
+  var BUST = 'voicestock_2026_07_12_v1';
+  try {
+    var KEY='voicestock.bust';
+    if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
+    var pendingReload=false;
+    setInterval(function(){
+      fetch('./voice-stock.html?bust='+Date.now(),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
+        var m=t.match(/var BUST = '([^']+)'/);
+        if(m&&m[1]!==BUST){
+          // 사용 중(녹음 중 포함) 강제 리로드 금지 — 화면이 숨겨졌을 때만 반영
+          if(document.hidden){location.reload();}else{pendingReload=true;}
+        }
+      }).catch(function(){});
+    },90000);
+    document.addEventListener('visibilitychange',function(){ if(pendingReload&&document.hidden)location.reload(); });
+  } catch(e){}
+})();
+</script>
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, set, update, push, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order", storageBucket:"kimchi-mart-order.firebasestorage.app" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  const db = getDatabase(app);
+  window.__fb = { db, ref, onValue, set, update, push, remove };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+<script src="./lang-sync.js?v=1"></script>
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=4"></script>
+<script src="./me-persist.js?v=1"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f6f4f9;color:#1f2937;min-height:100vh;font-size:14px;padding-bottom:60px}
+button,input,select{font-family:inherit}button{cursor:pointer}
+.topbar{background:linear-gradient(135deg,#581c87,#7c2d92);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:50}
+.topbar .top1{display:flex;align-items:center;gap:10px}
+.topbar h1{font-size:1.1em;font-weight:800;display:flex;align-items:center;gap:8px;flex:1}
+.lang-toggle{display:inline-flex;background:rgba(255,255,255,.15);border-radius:14px;padding:2px}
+.lang-toggle button{background:transparent;border:0;color:#fff;padding:4px 10px;border-radius:12px;font-size:.74em;font-weight:700;opacity:.7}
+.lang-toggle button.active{background:#fff;color:#7c2d92;opacity:1}
+.topbar .row{display:flex;align-items:center;gap:8px;margin-top:10px}
+.topbar select,.topbar input[type=date]{flex:1;background:rgba(255,255,255,.15);color:#fff;border:0;padding:8px 12px;border-radius:10px;font-size:.9em;font-weight:600;min-width:0}
+.topbar select option{background:#581c87;color:#fff}
+.depts{display:flex;gap:6px;margin-top:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.depts button{flex-shrink:0;background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:16px;padding:7px 13px;font-size:.84em;font-weight:700;opacity:.85}
+.depts button.on{background:#fff;color:#7c2d92;opacity:1}
+.wrap{padding:14px;max-width:760px;margin:0 auto}
+.card{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.hint{background:#f3e8ff;border-radius:10px;padding:11px 13px;font-size:.84em;color:#6b21a8;line-height:1.6;margin-bottom:12px}
+.micwrap{text-align:center;padding:6px 0 2px}
+.micbtn{width:96px;height:96px;border-radius:50%;border:0;background:linear-gradient(135deg,#7c2d92,#a855f7);color:#fff;font-size:2.4em;box-shadow:0 4px 14px rgba(124,45,146,.35);transition:transform .15s}
+.micbtn:active{transform:scale(.94)}
+.micbtn.rec{background:linear-gradient(135deg,#dc2626,#f87171);animation:pulse 1.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}70%{box-shadow:0 0 0 22px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+.micstate{margin-top:8px;font-weight:800;font-size:.95em;color:#7c2d92}
+.micstate.rec{color:#dc2626}
+.interim{min-height:38px;margin-top:10px;background:#faf5ff;border:1.5px dashed #d8b4fe;border-radius:10px;padding:9px 12px;font-size:.95em;color:#581c87;text-align:left}
+.interim .ph{color:#a78bca}
+.miclang{display:flex;justify-content:center;gap:6px;margin-top:10px}
+.miclang button{border:1.5px solid #d8b4fe;background:#fff;color:#7c2d92;border-radius:14px;padding:5px 13px;font-size:.8em;font-weight:700}
+.miclang button.on{background:#7c2d92;color:#fff;border-color:#7c2d92}
+.sumrow{display:flex;gap:10px;margin-bottom:12px}
+.sumbox{flex:1;background:#fff;border-radius:12px;padding:10px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.sumbox .n{font-size:1.5em;font-weight:900;color:#7c2d92}
+.sumbox .l{font-size:.74em;color:#6b7280;font-weight:600;margin-top:2px}
+.entry{display:flex;align-items:center;gap:8px;background:#fff;border-radius:11px;padding:9px 11px;margin-bottom:7px;box-shadow:0 1px 2px rgba(0,0,0,.05);border-left:4px solid #a855f7}
+.entry .nm{flex:1;min-width:0;font-weight:800;font-size:1em;word-break:break-all}
+.entry .meta{font-size:.7em;color:#9ca3af;font-weight:500;display:block;margin-top:1px}
+.entry input.qty{width:58px;border:1.5px solid #d1d5db;border-radius:8px;padding:7px 4px;font-size:1em;font-weight:800;text-align:center;color:#7c2d92}
+.entry .unit{font-weight:700;color:#6b7280;font-size:.9em;min-width:34px}
+.entry .del{background:#fee2e2;color:#b91c1c;border:0;border-radius:8px;width:32px;height:32px;font-size:1em;font-weight:800;flex-shrink:0}
+.btnrow{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn{flex:1;min-width:100px;border:0;border-radius:12px;padding:13px 8px;font-size:.92em;font-weight:800;color:#fff}
+.btn-csv{background:#16a34a}.btn-chat{background:#0369a1}.btn-print{background:#475569}
+.btn[disabled]{opacity:.5}
+.addrow{display:flex;gap:6px;margin-top:10px}
+.addrow input[type=text]{flex:1;border:1.5px solid #d1d5db;border-radius:10px;padding:10px;font-size:.95em;min-width:0}
+.addrow input.q{width:56px;text-align:center;font-weight:800}
+.addrow input.u{width:64px}
+.addrow button{background:#7c2d92;color:#fff;border:0;border-radius:10px;padding:0 16px;font-weight:800;font-size:1.1em}
+.muted{color:#6b7280;font-size:.85em}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#16a34a;color:#fff;padding:11px 20px;border-radius:20px;font-weight:700;z-index:200;display:none;max-width:90%;text-align:center}
+h3.sec{font-size:.95em;color:#374151;margin:14px 0 8px;font-weight:800}
+#aggTable{width:100%;border-collapse:collapse;font-size:.92em}
+#aggTable th,#aggTable td{border-bottom:1px solid #e5e7eb;padding:8px 6px;text-align:left}
+#aggTable th{color:#6b7280;font-size:.82em;font-weight:700}
+#aggTable td.q{font-weight:900;color:#7c2d92;text-align:right;white-space:nowrap}
+#printArea{display:none}
+@media print{
+  body{background:#fff;padding:0}
+  .topbar,.wrap,.toast{display:none!important}
+  #printArea{display:block;padding:20px;font-family:'Malgun Gothic',Arial,sans-serif}
+  #printArea h1{font-size:20pt;color:#000;border-bottom:3px solid #000;padding-bottom:6px;margin-bottom:4px}
+  #printArea .sub{font-size:11pt;color:#444;margin-bottom:14px}
+  #printArea table{width:100%;border-collapse:collapse}
+  #printArea th,#printArea td{border:1.5px solid #333;padding:9px 8px;font-size:12pt;text-align:left}
+  #printArea th{background:#eee;font-weight:800}
+  #printArea td.q{font-weight:800;text-align:right}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="top1">
+    <h1>🎤 <span id="hTitle">음성 재고</span></h1>
+    <div class="lang-toggle" id="langToggle"></div>
+  </div>
+  <div class="row">
+    <select id="branchSel"></select>
+    <input type="date" id="dateSel">
+  </div>
+  <div class="depts" id="deptTabs"></div>
+</div>
+
+<div class="wrap">
+  <div class="hint" id="hint"></div>
+
+  <div class="card micwrap">
+    <button class="micbtn" id="micBtn" onclick="toggleMic()">🎤</button>
+    <div class="micstate" id="micState"></div>
+    <div class="miclang" id="micLang"></div>
+    <div class="interim" id="interim"></div>
+  </div>
+
+  <div class="sumrow">
+    <div class="sumbox"><div class="n" id="sumItems">0</div><div class="l" id="sumItemsLbl">품목</div></div>
+    <div class="sumbox"><div class="n" id="sumQty">0</div><div class="l" id="sumQtyLbl">총 수량</div></div>
+    <div class="sumbox"><div class="n" id="sumEntries">0</div><div class="l" id="sumEntriesLbl">기록</div></div>
+  </div>
+
+  <div class="card">
+    <h3 class="sec" id="secManual">⌨️ 직접 추가</h3>
+    <div class="addrow">
+      <input type="text" id="mItem" placeholder="품목">
+      <input type="number" class="q" id="mQty" value="1" min="0" step="0.5">
+      <input type="text" class="u" id="mUnit" placeholder="박스">
+      <button onclick="manualAdd()">＋</button>
+    </div>
+  </div>
+
+  <h3 class="sec" id="secList">📋 기록 (최신순)</h3>
+  <div id="entryList"><div class="muted" id="emptyMsg" style="text-align:center;padding:16px"></div></div>
+
+  <h3 class="sec" id="secAgg">📊 품목별 합계</h3>
+  <div class="card"><table id="aggTable"><thead><tr><th id="thItem">품목</th><th id="thQty" style="text-align:right">수량</th></tr></thead><tbody id="aggBody"></tbody></table></div>
+
+  <div class="btnrow">
+    <button class="btn btn-csv" onclick="exportCsv()" id="btnCsv">📥 CSV</button>
+    <button class="btn btn-print" onclick="printSummary()" id="btnPrint">🖨 인쇄</button>
+    <button class="btn btn-chat" onclick="reportChat()" id="btnChat">📤 채팅 보고</button>
+  </div>
+</div>
+
+<div id="printArea"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const BRANCHES=[
+  {id:'HOLLYWOOD',ko:'헐리우드',en:'Hollywood',es:'Hollywood'},{id:'MIAMI',ko:'마이애미',en:'Miami',es:'Miami'},
+  {id:'CORAL_SPRINGS',ko:'코럴 스프링스',en:'Coral Springs',es:'Coral Springs'},{id:'LASOLAS',ko:'라스올라스',en:'Las Olas',es:'Las Olas'},
+  {id:'PEMBROKE_PINES',ko:'펨브로크 파인스',en:'Pembroke Pines',es:'Pembroke Pines'},{id:'WESTPALM',ko:'웨스트팜',en:'West Palm',es:'West Palm'},
+];
+const T={
+  title:{ko:'음성 재고',en:'Voice Stock Count',es:'Inventario por Voz'},
+  hint:{ko:'🎤 마이크를 누르고 말하세요 — "양파 3박스, 버섯 2박스, 두부 5팩" 처럼 품목+수량+단위로 말하면 자동으로 기록됩니다. 잘못 인식된 건 목록에서 바로 수정·삭제하세요.',
+        en:'🎤 Tap the mic and speak — "onions 3 boxes, mushrooms 2 boxes" (item + quantity + unit). Entries are recorded automatically; fix or delete any mistakes in the list below.',
+        es:'🎤 Toca el micrófono y habla — "cebolla 3 cajas, champiñones 2 cajas" (producto + cantidad + unidad). Se registra automáticamente; corrige o elimina errores en la lista.'},
+  micReady:{ko:'눌러서 말하기',en:'Tap to speak',es:'Toca para hablar'},
+  micRec:{ko:'듣는 중... 다시 누르면 종료',en:'Listening... tap to stop',es:'Escuchando... toca para parar'},
+  micNo:{ko:'⚠️ 이 브라우저는 음성인식 미지원 — 아래 직접 추가를 사용하세요 (크롬/사파리 권장)',en:'⚠️ Speech recognition not supported — use manual add below (Chrome/Safari recommended)',es:'⚠️ Reconocimiento de voz no soportado — usa la entrada manual (Chrome/Safari)'},
+  interimPh:{ko:'말한 내용이 여기 표시됩니다...',en:'Your speech appears here...',es:'Tu voz aparece aquí...'},
+  items:{ko:'품목',en:'Items',es:'Productos'},qty:{ko:'총 수량',en:'Total qty',es:'Cant. total'},entries:{ko:'기록',en:'Entries',es:'Registros'},
+  manual:{ko:'⌨️ 직접 추가',en:'⌨️ Manual add',es:'⌨️ Agregar manual'},
+  itemPh:{ko:'품목',en:'Item',es:'Producto'},unitPh:{ko:'박스',en:'box',es:'caja'},
+  list:{ko:'📋 기록 (최신순)',en:'📋 Entries (newest first)',es:'📋 Registros (recientes primero)'},
+  agg:{ko:'📊 품목별 합계',en:'📊 Totals by item',es:'📊 Totales por producto'},
+  empty:{ko:'아직 기록 없음 — 마이크를 눌러 시작하세요',en:'No entries yet — tap the mic to start',es:'Sin registros — toca el micrófono'},
+  print:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},chat:{ko:'📤 채팅 보고',en:'📤 Report to chat',es:'📤 Reportar al chat'},
+  added:{ko:'✅ 추가: ',en:'✅ Added: ',es:'✅ Agregado: '},
+  noParse:{ko:'⚠️ 인식 못함: ',en:'⚠️ Could not parse: ',es:'⚠️ No se entendió: '},
+  delOk:{ko:'삭제됨',en:'Deleted',es:'Eliminado'},
+  needItem:{ko:'품목을 입력하세요',en:'Enter an item name',es:'Ingresa el producto'},
+  noData:{ko:'기록이 없습니다',en:'No entries',es:'Sin registros'},
+  sent:{ko:'✅ 채팅방에 보고됨 (재고 부족/과다)',en:'✅ Reported to chat (Need/Over stock)',es:'✅ Reportado al chat'},
+  sendFail:{ko:'전송 실패: ',en:'Send failed: ',es:'Error al enviar: '},
+  waiting:{ko:'연결 대기 중...',en:'Connecting...',es:'Conectando...'},
+  reportHead:{ko:'🎤 재고 파악',en:'🎤 Stock count',es:'🎤 Inventario'},
+  thItem:{ko:'품목',en:'Item',es:'Producto'},thQty:{ko:'수량',en:'Qty',es:'Cant.'},
+  printedAt:{ko:'출력: ',en:'Printed: ',es:'Impreso: '},
+  micErr:{ko:'⚠️ 마이크 오류: ',en:'⚠️ Mic error: ',es:'⚠️ Error de micrófono: '},
+  micDenied:{ko:'⚠️ 마이크 권한이 거부됨 — 브라우저 설정에서 허용해주세요',en:'⚠️ Microphone permission denied — allow it in browser settings',es:'⚠️ Permiso de micrófono denegado — actívalo en el navegador'},
+};
+function detectLang(){try{return localStorage.getItem('tasks.lang')||localStorage.getItem('kimchi_lang')||'ko';}catch(e){return 'ko';}}
+let LANG=detectLang();
+function t(k){const e=T[k];return e?(e[LANG]||e.ko):k;}
+function meName(){try{return (JSON.parse(localStorage.getItem('chat.me')||'null')||{}).name||'직원';}catch(e){return '직원';}}
+function toast(m,bad){const el=document.getElementById('toast');el.textContent=m;el.style.background=bad?'#dc2626':'#16a34a';el.style.display='block';clearTimeout(toast._t);toast._t=setTimeout(()=>el.style.display='none',2600);}
+function escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function dateKey(d){const x=d?new Date(d+'T12:00:00'):new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');}
+
+// ===== 상태 =====
+// 부서 탭 — 일반은 냉동/냉장/일반(드라이)으로 분리 (전무님 2026-07-12)
+const DEPTS=[
+  {id:'produce',emoji:'🥬',ko:'야채',en:'Produce',es:'Verduras'},
+  {id:'meat',emoji:'🥩',ko:'정육',en:'Meat',es:'Carne'},
+  {id:'seafood',emoji:'🐟',ko:'해산물',en:'Seafood',es:'Mariscos'},
+  {id:'frozen',emoji:'❄️',ko:'냉동',en:'Frozen',es:'Congelados'},
+  {id:'chilled',emoji:'🧊',ko:'냉장',en:'Chilled',es:'Refrigerados'},
+  {id:'general',emoji:'🛒',ko:'일반',en:'General',es:'General'},
+];
+let BRANCH='HOLLYWOOD', DATE=dateKey(), DEPT='produce', ENTRIES={}, unsub=null;
+let MIC_LANG=LANG;   // 인식 언어 (UI 언어와 별도 선택 가능)
+function deptObj(){return DEPTS.find(d=>d.id===DEPT)||DEPTS[0];}
+function deptName(l){const d=deptObj();return d.emoji+' '+(d[l||LANG]||d.ko);}
+function setDept(id){
+  if(!DEPTS.some(d=>d.id===id))return;
+  DEPT=id;try{localStorage.setItem('voicestock.dept',id);}catch(e){}
+  renderDepts();subscribe();
+}
+function renderDepts(){
+  document.getElementById('deptTabs').innerHTML=DEPTS
+    .map(d=>'<button class="'+(d.id===DEPT?'on':'')+'" onclick="setDept(\''+d.id+'\')">'+d.emoji+' '+escHtml(d[LANG]||d.ko)+'</button>').join('');
+}
+
+// ===== 음성 → 품목/수량/단위 파싱 =====
+// 단위 사전 (긴 것 먼저 매칭되도록 길이순 정렬)
+const UNITS=['킬로그램','킬로','박스','케이스','카톤','봉지','자루','파운드','팩','병','캔','봉','포','줄','판','단','망','통','개',
+  'boxes','box','cases','case','cartons','carton','packs','pack','bottles','bottle','bags','bag','cans','can','pieces','piece','pounds','pound','kilos','kilo','each','ea','kg','lb',
+  'cajas','caja','paquetes','paquete','botellas','botella','bolsas','bolsa','latas','lata','piezas','pieza','libras','libra','unidades','unidad']
+  .sort((a,b)=>b.length-a.length);
+const UNIT_RE=new RegExp('^(?:'+UNITS.join('|')+')$','i');
+// 말로 하는 숫자 → 아라비아 숫자 (단위 앞에 올 때만 안전하게 치환)
+const WORD_NUM={'하나':1,'한':1,'둘':2,'두':2,'셋':3,'세':3,'넷':4,'네':4,'다섯':5,'여섯':6,'일곱':7,'여덟':8,'아홉':9,'열':10,'스물':20,'스무':20,
+  'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10,
+  'uno':1,'una':1,'dos':2,'tres':3,'cuatro':4,'cinco':5,'seis':6,'siete':7,'ocho':8,'nueve':9,'diez':10};
+// ⚠️ 단위 뒤에 \b 붙이지 말 것 — JS \b 는 한글 뒤에서 매칭 안 됨 (박스, 봉 등 전부 무력화)
+const WORD_NUM_RE=new RegExp('(?:^|\\s)('+Object.keys(WORD_NUM).join('|')+')(?=\\s*(?:'+UNITS.join('|')+'))','gi');
+function normalizeSpeech(s){
+  s=String(s||'');
+  s=s.replace(/(\d)\.(\d)/g,'$1‸$2');             // 소수점(2.5) 임시 보호
+  s=s.replace(/[,.·;!?]/g,' ');
+  s=s.replace(/‸/g,'.');
+  // "3박스" 붙어나온 것 분리 + 한글 숫자→아라비아 (단위가 바로 뒤따를 때만)
+  s=s.replace(WORD_NUM_RE,(m,w)=>' '+(WORD_NUM[w.toLowerCase()]||WORD_NUM[w]||w)+' ');
+  s=s.replace(/(\d+(?:\.\d+)?)([^\d\s.])/g,'$1 $2');   // 3박스 → 3 박스
+  s=s.replace(/([^\d\s.])(\d)/g,'$1 $2');              // 양파3 → 양파 3 ('.' 제외 — 2.5 보존)
+  return s.replace(/\s+/g,' ').trim();
+}
+// 토큰 스캔: [품목...] 숫자 [단위] 반복 (한국어 어순) + "3 boxes onions" (영어 어순) 모두 처리
+function parseTranscript(raw){
+  const s=normalizeSpeech(raw);
+  if(!s) return {rows:[],rest:''};
+  const toks=s.split(' ').filter(x=>x&&!/^(그리고|and|y|de|of|더|또)$/i.test(x));
+  const rows=[]; let buf=[];
+  for(let i=0;i<toks.length;i++){
+    const tok=toks[i];
+    if(/^\d+(?:\.\d+)?$/.test(tok)){
+      const qty=parseFloat(tok);
+      let unit='';
+      if(i+1<toks.length&&UNIT_RE.test(toks[i+1])){unit=toks[i+1];i++;}
+      if(buf.length){                       // 한국어 어순: 양파 3 박스
+        rows.push({item:buf.join(' '),qty,unit});buf=[];
+      }else{                                // 영어 어순: 3 boxes onions → 다음 숫자 전까지가 품목
+        const after=[];
+        while(i+1<toks.length&&!/^\d+(?:\.\d+)?$/.test(toks[i+1])){after.push(toks[++i]);}
+        if(after.length)rows.push({item:after.join(' '),qty,unit});
+        else buf=[];                        // 품목 없는 숫자는 버림
+      }
+    }else buf.push(tok);
+  }
+  return {rows,rest:buf.join(' ')};
+}
+
+// ===== Firebase =====
+function basePath(){return 'inventory/voice/'+BRANCH+'/'+DATE+'/'+DEPT;}
+function subscribe(){
+  if(!window.__fb)return;
+  const {db,ref,onValue}=window.__fb;
+  if(unsub){try{unsub();}catch(e){}}
+  unsub=onValue(ref(db,basePath()),snap=>{ENTRIES=snap.val()||{};render();},err=>{console.warn('[voice-stock]',err);});
+}
+async function addEntry(item,qty,unit){
+  if(!window.__fb){toast(t('waiting'),true);return false;}
+  const {db,ref,push,set}=window.__fb;
+  const k=push(ref(db,basePath())).key;
+  await set(ref(db,basePath()+'/'+k),{item:item,qty:qty,unit:unit||'',by:meName(),at:Date.now()});
+  return true;
+}
+async function addRows(rows){
+  let ok=[];
+  for(const r of rows){
+    const item=r.item.trim();if(!item)continue;
+    try{await addEntry(item,r.qty,r.unit);ok.push(item+' '+r.qty+(r.unit||''));}catch(e){toast(t('sendFail')+(e&&e.message||e),true);return;}
+  }
+  if(ok.length)toast(t('added')+ok.join(' · '));
+}
+async function delEntry(k){
+  if(!window.__fb)return;
+  const {db,ref,remove}=window.__fb;
+  try{await remove(ref(db,basePath()+'/'+k));toast(t('delOk'));}catch(e){toast(t('sendFail')+(e&&e.message||e),true);}
+}
+async function setQty(k,v){
+  const n=parseFloat(v);if(!(n>=0))return;
+  if(!window.__fb)return;
+  const {db,ref,update}=window.__fb;
+  try{await update(ref(db,basePath()+'/'+k),{qty:n});}catch(e){toast(t('sendFail')+(e&&e.message||e),true);}
+}
+function manualAdd(){
+  const item=document.getElementById('mItem').value.trim();
+  const qty=parseFloat(document.getElementById('mQty').value)||1;
+  const unit=document.getElementById('mUnit').value.trim();
+  if(!item){alert(t('needItem'));return;}
+  addRows([{item,qty,unit}]);
+  document.getElementById('mItem').value='';document.getElementById('mQty').value='1';
+  document.getElementById('mItem').focus();
+}
+
+// ===== 음성 인식 =====
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null, recActive=false;
+const SR_LANGS={ko:'ko-KR',en:'en-US',es:'es-US'};
+function makeRec(){
+  const r=new SR();
+  r.lang=SR_LANGS[MIC_LANG]||'ko-KR';
+  r.continuous=true;r.interimResults=true;r.maxAlternatives=1;
+  r.onresult=e=>{
+    let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const res=e.results[i];
+      if(res.isFinal){
+        const txt=res[0].transcript.trim();
+        showInterim('');
+        if(txt){
+          const {rows,rest}=parseTranscript(txt);
+          if(rows.length)addRows(rows);
+          if(!rows.length&&rest)toast(t('noParse')+'"'+rest+'"',true);
+        }
+      }else interim+=res[0].transcript;
+    }
+    if(interim)showInterim(interim);
+  };
+  r.onerror=e=>{
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){toast(t('micDenied'),true);stopMic();}
+    else if(e.error!=='no-speech'&&e.error!=='aborted'){toast(t('micErr')+e.error,true);}
+  };
+  r.onend=()=>{ if(recActive){try{r.start();}catch(e){}} else updateMicUI(); };
+  return r;
+}
+function toggleMic(){ recActive?stopMic():startMic(); }
+function startMic(){
+  if(!SR){toast(t('micNo'),true);return;}
+  try{rec=makeRec();rec.start();recActive=true;updateMicUI();}
+  catch(e){toast(t('micErr')+(e&&e.message||e),true);}
+}
+function stopMic(){
+  recActive=false;
+  if(rec){try{rec.stop();}catch(e){}}
+  showInterim('');updateMicUI();
+}
+function updateMicUI(){
+  const b=document.getElementById('micBtn'),s=document.getElementById('micState');
+  if(!SR){b.style.display='none';s.textContent=t('micNo');s.classList.remove('rec');return;}
+  b.classList.toggle('rec',recActive);
+  b.textContent=recActive?'⏹':'🎤';
+  s.textContent=recActive?t('micRec'):t('micReady');
+  s.classList.toggle('rec',recActive);
+}
+function showInterim(txt){
+  const el=document.getElementById('interim');
+  el.innerHTML=txt?escHtml(txt):'<span class="ph">'+escHtml(t('interimPh'))+'</span>';
+}
+function setMicLang(l){
+  MIC_LANG=l;
+  document.querySelectorAll('#micLang button').forEach(b=>b.classList.toggle('on',b.dataset.l===l));
+  if(recActive){stopMic();setTimeout(startMic,250);}   // 언어 바꾸면 재시작
+}
+function renderMicLang(){
+  document.getElementById('micLang').innerHTML=[['ko','🇰🇷 한국어'],['en','🇺🇸 English'],['es','🇪🇸 Español']]
+    .map(([l,n])=>'<button data-l="'+l+'" class="'+(MIC_LANG===l?'on':'')+'" onclick="setMicLang(\''+l+'\')">'+n+'</button>').join('');
+}
+
+// ===== 렌더 =====
+function entryArr(){return Object.entries(ENTRIES).map(([k,v])=>({k,...v})).sort((a,b)=>(b.at||0)-(a.at||0));}
+function aggregate(){
+  const m={};
+  entryArr().forEach(e=>{
+    const key=(e.item||'').trim().toLowerCase()+'|'+(e.unit||'').trim().toLowerCase();
+    if(!m[key])m[key]={item:(e.item||'').trim(),unit:(e.unit||'').trim(),qty:0,n:0};
+    m[key].qty+=(+e.qty||0);m[key].n++;
+  });
+  return Object.values(m).sort((a,b)=>a.item.localeCompare(b.item,'ko'));
+}
+function render(){
+  const arr=entryArr(),agg=aggregate();
+  document.getElementById('sumItems').textContent=agg.length;
+  document.getElementById('sumQty').textContent=Math.round(agg.reduce((s,x)=>s+x.qty,0)*10)/10;
+  document.getElementById('sumEntries').textContent=arr.length;
+  const list=document.getElementById('entryList');
+  if(!arr.length){list.innerHTML='<div class="muted" style="text-align:center;padding:16px">'+escHtml(t('empty'))+'</div>';}
+  else{
+    list.innerHTML=arr.map(e=>'<div class="entry">'+
+      '<div class="nm">'+escHtml(e.item)+'<span class="meta">'+escHtml(e.by||'')+' · '+new Date(e.at||0).toLocaleTimeString(LANG==='ko'?'ko-KR':'en-US',{hour:'numeric',minute:'2-digit'})+'</span></div>'+
+      '<input class="qty" type="number" step="0.5" min="0" value="'+(+e.qty||0)+'" onchange="setQty(\''+e.k+'\',this.value)">'+
+      '<span class="unit">'+escHtml(e.unit||'')+'</span>'+
+      '<button class="del" onclick="delEntry(\''+e.k+'\')">✕</button></div>').join('');
+  }
+  document.getElementById('aggBody').innerHTML=agg.map(x=>'<tr><td>'+escHtml(x.item)+(x.n>1?' <span class="muted">×'+x.n+'</span>':'')+'</td><td class="q">'+x.qty+' '+escHtml(x.unit)+'</td></tr>').join('')
+    ||'<tr><td colspan="2" class="muted">'+escHtml(t('noData'))+'</td></tr>';
+}
+
+// ===== 내보내기 / 보고 =====
+function branchName(){const b=BRANCHES.find(x=>x.id===BRANCH)||{};return b[LANG]||b.ko||BRANCH;}
+function exportCsv(){
+  const agg=aggregate();
+  if(!agg.length){alert(t('noData'));return;}
+  let csv='﻿'+t('thItem')+','+t('thQty')+',unit,entries\n';
+  agg.forEach(x=>{csv+='"'+x.item.replace(/"/g,'""')+'",'+x.qty+',"'+x.unit+'",'+x.n+'\n';});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download='voice-stock_'+BRANCH+'_'+DEPT+'_'+DATE+'.csv';a.click();URL.revokeObjectURL(a.href);
+}
+function printSummary(){
+  const agg=aggregate();
+  if(!agg.length){alert(t('noData'));return;}
+  document.getElementById('printArea').innerHTML=
+    '<h1>'+escHtml(t('reportHead'))+' — '+escHtml(branchName())+' · '+escHtml(deptName())+'</h1>'+
+    '<div class="sub">'+escHtml(DATE)+' · '+escHtml(meName())+'</div>'+
+    '<table><thead><tr><th>'+escHtml(t('thItem'))+'</th><th style="text-align:right">'+escHtml(t('thQty'))+'</th></tr></thead><tbody>'+
+    agg.map(x=>'<tr><td>'+escHtml(x.item)+'</td><td class="q">'+x.qty+' '+escHtml(x.unit)+'</td></tr>').join('')+
+    '</tbody></table>'+
+    '<div style="margin-top:16px;font-size:10pt;color:#666">'+escHtml(t('printedAt'))+new Date().toLocaleString()+' · KIMCHI MART</div>';
+  window.print();
+}
+async function reportChat(){
+  const agg=aggregate();
+  if(!agg.length){alert(t('noData'));return;}
+  if(!window.__fb){toast(t('waiting'),true);return;}
+  const btn=document.getElementById('btnChat');btn.disabled=true;
+  const lines=agg.map(x=>'• '+x.item+' — '+x.qty+' '+x.unit).join('\n');
+  const mk=lang=>{const b=BRANCHES.find(x=>x.id===BRANCH)||{};return T.reportHead[lang]+' — '+(b[lang]||b.ko)+' · '+deptName(lang)+' · '+DATE+' ('+meName()+')\n'+lines;};
+  try{
+    const {db,ref,set,update}=window.__fb;
+    const ts=Date.now(),msgId='m'+ts+Math.floor(Math.random()*900);
+    const text=mk('ko');
+    await set(ref(db,'chat/messages/need_overstock/'+msgId),
+      {sender:meName(),ts,text,textTr:{ko:text,en:mk('en'),es:mk('es')},meta:{kind:'voice_stock',branch:BRANCH,date:DATE,dept:DEPT}});
+    update(ref(db,'chat/rooms/need_overstock'),{lastMsg:text.split('\n')[0].slice(0,32),lastTs:ts,lastSender:meName()}).catch(()=>{});
+    toast(t('sent'));
+  }catch(e){toast(t('sendFail')+(e&&e.message||e),true);}
+  btn.disabled=false;
+}
+
+// ===== UI 초기화 =====
+function applyLang(){
+  document.getElementById('hTitle').textContent=t('title');
+  document.getElementById('hint').textContent=t('hint');
+  document.getElementById('sumItemsLbl').textContent=t('items');
+  document.getElementById('sumQtyLbl').textContent=t('qty');
+  document.getElementById('sumEntriesLbl').textContent=t('entries');
+  document.getElementById('secManual').textContent=t('manual');
+  document.getElementById('secList').textContent=t('list');
+  document.getElementById('secAgg').textContent=t('agg');
+  document.getElementById('btnPrint').textContent=t('print');
+  document.getElementById('btnChat').textContent=t('chat');
+  document.getElementById('mItem').placeholder=t('itemPh');
+  document.getElementById('mUnit').placeholder=t('unitPh');
+  document.getElementById('thItem').textContent=t('thItem');
+  document.getElementById('thQty').textContent=t('thQty');
+  document.title=t('title')+' · KIMCHI MART';
+  updateMicUI();showInterim('');renderBranchSel();renderDepts();render();
+}
+function setLang(l){
+  LANG=l;['tasks.lang','kimchi_lang','hub.lang'].forEach(k=>{try{localStorage.setItem(k,l);}catch(e){}});
+  renderLangToggle();applyLang();
+}
+function renderLangToggle(){
+  document.getElementById('langToggle').innerHTML=['ko','en','es']
+    .map(l=>'<button class="'+(LANG===l?'active':'')+'" onclick="setLang(\''+l+'\')">'+l.toUpperCase()+'</button>').join('');
+}
+function renderBranchSel(){
+  document.getElementById('branchSel').innerHTML=BRANCHES
+    .map(b=>'<option value="'+b.id+'"'+(b.id===BRANCH?' selected':'')+'>'+escHtml(b[LANG]||b.ko)+'</option>').join('');
+}
+function boot(){
+  try{const s=localStorage.getItem('voicestock.branch');if(s&&BRANCHES.some(b=>b.id===s))BRANCH=s;}catch(e){}
+  try{const d=localStorage.getItem('voicestock.dept');if(d&&DEPTS.some(x=>x.id===d))DEPT=d;}catch(e){}
+  document.getElementById('dateSel').value=DATE;
+  document.getElementById('dateSel').onchange=function(){DATE=dateKey(this.value)||dateKey();subscribe();};
+  document.getElementById('branchSel').onchange=function(){BRANCH=this.value;try{localStorage.setItem('voicestock.branch',BRANCH);}catch(e){}subscribe();};
+  document.getElementById('mItem').addEventListener('keydown',e=>{if(e.key==='Enter')manualAdd();});
+  renderLangToggle();renderMicLang();applyLang();subscribe();
+}
+if(window.__fb)boot();else window.addEventListener('fb-ready',boot,{once:true});
+window.addEventListener('fb-auth-ready',function(){try{subscribe();}catch(e){}});
+window.toggleMic=toggleMic;window.setMicLang=setMicLang;window.manualAdd=manualAdd;window.setDept=setDept;
+window.delEntry=delEntry;window.setQty=setQty;window.setLang=setLang;
+window.exportCsv=exportCsv;window.printSummary=printSummary;window.reportChat=reportChat;
+</script>
+</body>
+</html>
