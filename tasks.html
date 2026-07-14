@@ -2786,8 +2786,10 @@ async function renderCashierStageInputs(){
   // Pull branch employees once for the per-stage assignee selects
   let employees = [];
   try {
-    const data = await fetch(`${FB_DB_URL}/schedules/${me.branch}.json`).then(r => r.json());
-    if (data && Array.isArray(data.employees)) employees = data.employees;
+    // ⚡ 2026-07-13: employees 만 (통째 스케줄엔 전체 시프트 기록 포함 — 페이지 느림 원인)
+    const data = await fetch(`${FB_DB_URL}/schedules/${me.branch}/employees.json`).then(r => r.json());
+    const _arr = Array.isArray(data) ? data : (data && typeof data === 'object' ? Object.values(data) : []);
+    if (_arr.length) employees = _arr;
   } catch(e){}
   // 2026-05-21 — '담당자' default 다국어
   const assigneeDefault = LANG==='en' ? '— Select employee —'
@@ -3880,10 +3882,12 @@ async function _recoverMyRoleFromSchedules(){
   __roleRecoveredFor = key;
   try {
     const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-    const data = await fetch(`${FB}/schedules/${me.branch}.json?cb=${Date.now()}`, { cache:'no-store' }).then(r => r.json());
-    if (!data || !Array.isArray(data.employees)) return;
+    // ⚡ 2026-07-13: employees 만 (통째 스케줄=전체 시프트 포함, 느림)
+    const data = await fetch(`${FB}/schedules/${me.branch}/employees.json`, { cache:'no-store' }).then(r => r.json());
+    const _emps = Array.isArray(data) ? data : (data && typeof data === 'object' ? Object.values(data) : null);
+    if (!_emps || !_emps.length) return;
     const norm = s => String(s||'').toLowerCase().trim().replace(/\s+/g,' ');
-    let found = data.employees.find(e => norm(e && e.name) === norm(me.name));
+    let found = _emps.find(e => norm(e && e.name) === norm(me.name));
     // 🔧 2026-07-11 헐리우드 H.KIM 매니저 권한 미인식 — 'H.KIM' vs 'H. KIM'/'H KIM' 같은
     //   점·공백 표기 차이로 스케줄 직급 대조가 실패하던 것. 기호 제거(compact) 비교를
     //   폴백으로 추가하되, 매장 내 유일 매칭일 때만 (동명 변형 오매칭 방지).
@@ -3891,7 +3895,7 @@ async function _recoverMyRoleFromSchedules(){
       const compact = s => String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]/g,'');
       const c = compact(me.name);
       if (c) {
-        const matches = data.employees.filter(e => compact(e && e.name) === c);
+        const matches = _emps.filter(e => compact(e && e.name) === c);
         if (matches.length === 1) found = matches[0];
       }
     }
@@ -3924,10 +3928,11 @@ async function _recoverMyBranchFromSchedules(){
     const ids = (typeof BRANCHES !== 'undefined' && Array.isArray(BRANCHES)) ? BRANCHES.map(b => b.id) : [];
     for (const bId of ids){
       let data;
-      try { data = await fetch(`${FB}/schedules/${bId}.json?cb=${Date.now()}`, { cache:'no-store' }).then(r => r.json()); }
+      try { data = await fetch(`${FB}/schedules/${bId}/employees.json`, { cache:'no-store' }).then(r => r.json()); }
       catch(_){ continue; }
-      if (!data || !Array.isArray(data.employees)) continue;
-      const found = data.employees.find(e => e && _namesMatch(e.name, me.name));
+      const _emps = Array.isArray(data) ? data : (data && typeof data === 'object' ? Object.values(data) : null);
+      if (!_emps) continue;
+      const found = _emps.find(e => e && _namesMatch(e.name, me.name));
       if (found){
         me.branch = bId;
         if (found.role && !String(me.role||'').trim()) me.role = found.role;
@@ -4149,9 +4154,17 @@ function renderTeamRank(){
     const isMgrPre = (typeof me !== 'undefined' && me) && ((typeof isManager === 'function' && isManager(me.role)) || (typeof isOwner === 'function' && isOwner()));
     _setTxt('teamRankTitle',    _pT[_lang] || _pT.ko);
     if (isMgrPre) {
-      const subAll = LANG==='en' ? 'All branches combined — completed × points'
-                   : LANG==='es' ? 'Todas las sucursales — completadas × puntos'
-                   :               '전 매장 통합 — 완료 × 점수';
+      // 🔄 2026-07-13: 선택된 매장(CURRENT STORE) 이름을 부제로 — 어느 지점 순위인지 명확히
+      const _bSel = (typeof DASH_BRANCH !== 'undefined' && DASH_BRANCH) ? DASH_BRANCH : '';
+      const _bObj = _bSel ? ((typeof BRANCHES !== 'undefined' ? BRANCHES : []).find(x => x.id === _bSel)) : null;
+      const _bNm  = _bObj ? (_bObj[LANG] || _bObj.ko || _bObj.id) : '';
+      const subAll = _bNm
+        ? (LANG==='en' ? '🏢 ' + _bNm + ' — completed × points'
+         : LANG==='es' ? '🏢 ' + _bNm + ' — completadas × puntos'
+         :               '🏢 ' + _bNm + ' — 완료 × 점수')
+        : (LANG==='en' ? 'All branches combined — completed × points'
+         : LANG==='es' ? 'Todas las sucursales — completadas × puntos'
+         :               '전 매장 통합 — 완료 × 점수');
       _setTxt('teamRankSub', subAll);
     } else {
       _setTxt('teamRankSub', gt('teamRankSub'));
@@ -4168,9 +4181,11 @@ function renderTeamRank(){
   // 1) 완료된 업무만 집계
   const me0 = (typeof me === 'object' && me) ? me : null;
   const isMgr = me0 && (typeof isManager === 'function' ? isManager(me0.role) : false) || (typeof isOwner === 'function' && isOwner());
-  // 🆕 2026-05-28 — 전무님 요청: 매니저/오너 = **전 매장 통합** 순위 (dropdown 무시).
-  //                  일반 직원은 본인 매장만 유지.
+  // 🔄 2026-07-13 사장님 지시: 매니저/오너도 대시보드 매장 선택(CURRENT STORE)을 따름 —
+  //    선택한 지점 직원만 순위에 표시. (2026-05-28 '전 매장 통합·dropdown 무시' 동작을
+  //    대체 — 전 매장 통합 순위는 Leaderboard 앱 'All Branches' 에서.) 일반 직원은 본인 매장 고정.
   const myBranch = me0 && me0.branch;
+  const mgrBranch = isMgr ? ((typeof DASH_BRANCH !== 'undefined' && DASH_BRANCH) || '') : '';
 
   const agg = new Map(); // key: normalized name → {name, branch, score, count, branches:Set}
   function _norm(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
@@ -4183,8 +4198,9 @@ function renderTeamRank(){
     // 🏆 2026-05-30 — 선택 기간(오늘/주간/월간) 밖이면 제외
     const _cAt = new Date(t.completedAt).getTime();
     if (!isFinite(_cAt) || _cAt < startMs) return;
-    // 일반 직원만 본인 매장 필터. 매니저/오너는 모든 매장 합산.
+    // 일반 직원 = 본인 매장 / 매니저·오너 = 선택한 매장(CURRENT STORE) 필터.
     if (!isMgr && myBranch && t.branchId && t.branchId !== myBranch) return;
+    if (isMgr && mgrBranch && t.branchId && t.branchId !== mgrBranch) return;
     const who = t.completedBy || t.assignedTo || t.assigneeName || '';
     if (!who || who === '*') return;
     if (_isLeadershipName(who)) return;   // 🆕 오너·임원은 활동 순위 제외
@@ -4219,6 +4235,7 @@ function renderTeamRank(){
     if (_isLeadershipName(a.to)) return;   // 🆕 오너·임원은 활동 순위 제외
     if ((a.ts || 0) < startMs) return;
     if (!isMgr && myBranch && a.branch && a.branch !== myBranch) return;
+    if (isMgr && mgrBranch && a.branch && a.branch !== mgrBranch) return;
     const bpts = (typeof a.points === 'number') ? a.points : 0;
     if (!bpts) return;
     const bk = _norm(a.to);
@@ -4682,12 +4699,24 @@ async function loadPartRoster(){
   if (__partRosterLoading) return;
   __partRosterLoading = true;
   const roster = []; const seen = new Set(); let empSeen = 0;
-  for (const b of BRANCHES){
+  // ⚡ 2026-07-13: 통째 스케줄(전체 시프트 포함) 5지점 순차 fetch → 페이지 느림의 주범.
+  //   employees/shifts 분리 + 지점 병렬. 처리(집계)는 BRANCHES 순서 유지(표시 일관성).
+  const _fetched = await Promise.all(BRANCHES.map(async (b) => {
     try {
-      const data = await fetch(`${FB_DB_URL}/schedules/${b.id}.json?cache=`+Date.now(), { cache:'no-store' }).then(r=>r.json());
-      const emps = (data && Array.isArray(data.employees)) ? data.employees : [];
+      const [er, sr] = await Promise.all([
+        fetch(`${FB_DB_URL}/schedules/${b.id}/employees.json`, { cache:'no-store' }).then(r=>r.json()).catch(()=>null),
+        fetch(`${FB_DB_URL}/schedules/${b.id}/shifts.json`,    { cache:'no-store' }).then(r=>r.json()).catch(()=>null),
+      ]);
+      return { b, emps: Array.isArray(er) ? er : (er && typeof er === 'object' ? Object.values(er) : []),
+               shifts: (sr && typeof sr === 'object') ? sr : {} };
+    } catch(_){ return { b, emps: [], shifts: {} }; }
+  }));
+  for (const _f of _fetched){
+    const b = _f.b;
+    try {
+      const emps = _f.emps;
       empSeen += emps.length;
-      const shifts = (data && data.shifts) ? data.shifts : {};
+      const shifts = _f.shifts;
       // 직원별 시프트 포지션 → 파트 빈도 집계 (empId@date)
       const posByEmp = {};
       Object.keys(shifts).forEach(k => {
@@ -10016,10 +10045,12 @@ async function adminUncomplete(t){
 // 지점 직원 명단 로드 (스케줄에서) — 보정 메뉴에서 이름 추천용
 async function loadBranchEmployeeNames(branchId){
   try {
-    const r = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' });
+    // ⚡ 2026-07-13: employees 만 (통째 스케줄=전체 시프트 포함, 느림)
+    const r = await fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`, { cache:'no-store' });
     if (!r.ok) return [];
     const d = await r.json();
-    return Array.isArray(d?.employees) ? d.employees.map(e => e.name).filter(Boolean) : [];
+    const _arr = Array.isArray(d) ? d : (d && typeof d === 'object' ? Object.values(d) : []);
+    return _arr.map(e => e && e.name).filter(Boolean);
   } catch(e) { return []; }
 }
 function toggleMgrRowDetail(key){
@@ -10433,11 +10464,13 @@ async function loadAssignEmployees(branchId){
   const allLbl    = LANG==='en' ? '📢 Entire branch'    : LANG==='es' ? '📢 Toda la sucursal'      : '📢 본 지점 전체';
   sel.innerHTML = `<option value="" id="aToDefault">${selectLbl}</option><option value="*">${allLbl}</option>`;
   try {
-    const data = await fetch(`${FB_DB_URL}/schedules/${branchId}.json?cache=`+Date.now(), { cache:'no-store' }).then(r => r.json());
-    if (data && data.employees) {
+    // ⚡ 2026-07-13: employees 만 (통째 스케줄=전체 시프트 포함 — 발송 모달 느림 원인)
+    const raw = await fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`, { cache:'no-store' }).then(r => r.json());
+    const _emps = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+    if (_emps.length) {
       // Miguel Perez / Mai Garcia 영구 SENIOR SUPERVISOR — UI + Firebase 영구 정정.
       let _srSupChanged = false;
-      data.employees.forEach(e => {
+      _emps.forEach(e => {
         const nm = String(e && e.name || '').toLowerCase().trim();
         if (((/\bmiguel\b/.test(nm) && /\bperez\b/.test(nm)) ||
              (/\bmai\b/.test(nm)    && /\bgarcia\b/.test(nm))) &&
@@ -10450,13 +10483,13 @@ async function loadAssignEmployees(branchId){
       if (_srSupChanged) {
         fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`, {
           method: 'PUT',
-          body: JSON.stringify(data.employees),
+          body: JSON.stringify(_emps),
           headers: { 'Content-Type': 'application/json' }
         }).then(() => console.log('[force-sr-sup] Firebase 정정 완료:', branchId))
           .catch(e => console.warn('[force-sr-sup] Firebase PUT 실패 — UI 만 정정', e));
       }
       const grouped = {};
-      data.employees.forEach(e => { (grouped[e.role||'기타'] = grouped[e.role||'기타'] || []).push(e); });
+      _emps.forEach(e => { (grouped[e.role||'기타'] = grouped[e.role||'기타'] || []).push(e); });
       // 역할 우선순위로 정렬 — 같은 priority 그룹 내에서는 알파벳 순.
       const sortedRoles = Object.keys(grouped).sort((a,b) => {
         const pa = _roleRank(a), pb = _roleRank(b);
@@ -11162,8 +11195,10 @@ async function _meritLoadEmployees(branch, preselectName){
   sel.innerHTML='<option value="">'+_mt('직원 불러오는 중…','Loading…','Cargando…')+'</option>';
   var employees=[];
   try{
-    var data=await fetch(FB_DB_URL+'/schedules/'+branch+'.json?cache='+Date.now(),{cache:'no-store'}).then(function(r){return r.json();});
-    if(data && Array.isArray(data.employees)) employees=data.employees.filter(function(e){return e&&e.name;});
+    // ⚡ 2026-07-13: employees 만 (통째 스케줄=전체 시프트 포함 — 'Loading…' 오래 걸리던 원인)
+    var data=await fetch(FB_DB_URL+'/schedules/'+branch+'/employees.json',{cache:'no-store'}).then(function(r){return r.json();});
+    var _arr=Array.isArray(data)?data:(data&&typeof data==='object'?Object.values(data):[]);
+    employees=_arr.filter(function(e){return e&&e.name;});
   }catch(e){ console.warn('[merit] load emp',e); }
   if(!employees.length){ sel.innerHTML='<option value="">'+_mt('명단 없음','No roster','Sin lista')+'</option>'; return; }
   var grouped={};
