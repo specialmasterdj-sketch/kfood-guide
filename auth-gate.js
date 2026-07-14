@@ -3,8 +3,15 @@
 // to check approval. Bootstrap admins (OWNER/전무) auto-approve on first
 // login. Anyone else lands in 'pending' until a manager+ approves.
 //
-// Usage: <script type="module" src="./auth-gate.js?v=1"></script>
+// Usage: <script type="module" src="./auth-gate.js?v=5"></script>
 // Place BEFORE the page's main scripts so window.__currentUser is set.
+//
+// ⚡ v5 (2026-07-13) 전 지점 재인증 루프 수정:
+//   전화 인증 직후 RTDB 실시간연결(SDK onValue) auth 부착이 지연/유실되면 프로필이
+//   영영 안 와서 → 화면 무한 로딩 → 28초 escape → fresh=1 강제 로그아웃 → 재인증 루프.
+//   auth.html 이 이미 쓰는 REST+명시토큰+재시도 방식을 게이트에도 1차로 적용하고,
+//   onValue 는 라이브 승인 갱신용 best-effort 로만 사용. 실패 시엔 조용히 튕기지 않고
+//   정확한 원인(HTTP 코드)을 화면에 표시 + km.authTrace 에 기록.
 
 import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence, indexedDBLocalPersistence } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
@@ -20,6 +27,22 @@ const db = getDatabase(app);
 setPersistence(auth, indexedDBLocalPersistence)
   .catch(() => setPersistence(auth, browserLocalPersistence))
   .catch(e => console.warn('[auth-gate] setPersistence failed', e));
+
+// 🩺 진단 breadcrumb — 마지막 40개 이벤트를 localStorage 에 남겨 auth.html 이
+// 로그인 화면에서 '왜 튕겼는지' 자동 표시. 원격 진단(스크린샷 한 장)용.
+function gateTrace(ev, extra){
+  try {
+    const k = 'km.authTrace';
+    const a = JSON.parse(localStorage.getItem(k) || '[]');
+    a.push({ t: Date.now(), p: (location.pathname.split('/').pop() || '/'), e: ev, x: extra == null ? null : String(extra).slice(0, 120) });
+    while (a.length > 40) a.shift();
+    localStorage.setItem(k, JSON.stringify(a));
+  } catch(_){}
+}
+// 로그인 화면으로 돌려보낼 때 사유 전달 — auth.html 진단 박스가 읽음.
+function setBounce(reason){
+  try { sessionStorage.setItem('km.authBounce', JSON.stringify({ t: Date.now(), from: location.pathname.split('/').pop(), reason })); } catch(_){}
+}
 
 // Bootstrap administrators — auto-approved with full権限 on first login.
 // Email match is case-insensitive. Add more here when needed.
@@ -88,6 +111,37 @@ function showOverlay({ kind, user, profile }){
 }
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
+// ⚠️ 프로필 읽기/생성 실패 — 예전처럼 조용히 로그아웃·리다이렉트(=재인증 루프) 하지 않고
+// 정확한 원인을 화면에 남김. 401/permission 이면 서버 규칙 문제 → 스크린샷으로 원인 확정 가능.
+function showGateError(user, errText, what){
+  const existing = document.getElementById('__authGateOv');
+  if (existing) existing.remove();
+  const isPerm = /401|403|permission/i.test(String(errText||''));
+  const hint = isPerm
+    ? '접근 권한 문제로 보입니다.<br><b>이 화면을 캡처해 매니저/사장님께 보내주세요.</b>'
+    : '네트워크 문제일 수 있습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.';
+  const ov = document.createElement('div');
+  ov.id = '__authGateOv';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(245,247,250,.98);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;font-family:"Segoe UI","Malgun Gothic",Arial,sans-serif';
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:18px;padding:30px 26px;max-width:420px;width:100%;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.10)">
+      <div style="font-size:3em;margin-bottom:8px">⚠️</div>
+      <h1 style="font-size:1.2em;color:#b45309;margin-bottom:12px;font-weight:800">${what || '계정 정보를 불러오지 못했습니다'}</h1>
+      <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:9px 12px;font-size:.85em;color:#92400e;font-weight:700;margin-bottom:12px">오류: ${escapeHtml(errText || 'unknown')} · ${escapeHtml(location.pathname.split('/').pop() || '')}</div>
+      <div style="color:#6b7280;font-size:.92em;line-height:1.6;margin-bottom:16px">${hint}</div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;font-size:.8em;color:#6b7280;margin-bottom:16px">${escapeHtml(user?.email || user?.phoneNumber || '')}</div>
+      <button id="__gateRetry" style="background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:12px 22px;font-weight:800;font-size:.95em;cursor:pointer;width:100%;margin-bottom:8px">🔄 다시 시도</button>
+      <button id="__gateOut" style="background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:10px;font-weight:700;font-size:.88em;cursor:pointer;width:100%">로그아웃 후 재로그인</button>
+    </div>`;
+  document.body.appendChild(ov);
+  document.getElementById('__gateRetry').onclick = () => location.reload();
+  document.getElementById('__gateOut').onclick = async () => {
+    try { await signOut(auth); } catch(_){}
+    setBounce('gate-error-manual-relogin: ' + (errText || ''));
+    location.href = './auth.html';
+  };
+}
+
 // Sync the Firebase user profile into chat.me localStorage so existing
 // pages (chat.html, tasks.html, etc.) that read chat.me keep working
 // without modification. Eventually they should switch to window.__currentUser
@@ -155,28 +209,127 @@ function syncToChatMe(profile){
   } catch(e){ console.warn('syncToChatMe failed', e); }
 }
 
-// Core gate. Subscribes to Firebase auth state + RTDB users/{uid} so a
-// manager approving this user immediately drops the overlay without a
-// reload. The page keeps the overlay on top of itself instead of
-// blanking the body so reload isn't strictly required either way.
+// ===== REST + 명시 토큰 헬퍼 (auth.html 과 동일 패턴) =====
+// 전화 인증 직후 토큰이 RTDB 에 전파되기 전 첫 요청이 401/네트워크로 실패하는
+// 케이스 → 토큰 강제 갱신하며 3회 재시도.
+async function _restGetProfile(user){
+  let tok = '';
+  try { tok = await user.getIdToken(); } catch(_){}
+  let lastErr = null;
+  for (let i = 0; i < 3; i++){
+    try {
+      const r = await fetch(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
+      if (r.ok) return { ok: true, val: await r.json() };
+      lastErr = 'HTTP ' + r.status;
+    } catch(e){ lastErr = (e && e.message) || String(e); }
+    await new Promise(res => setTimeout(res, 400 + i*300));
+    try { tok = await user.getIdToken(true); } catch(_){}
+  }
+  return { ok: false, err: lastErr || 'unknown' };
+}
+async function _restPutProfile(user, profile){
+  let tok = '';
+  try { tok = await user.getIdToken(); } catch(_){}
+  let lastErr = null;
+  for (let i = 0; i < 3; i++){
+    try {
+      const r = await fetch(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok), {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
+      if (r.ok) return { ok: true };
+      lastErr = 'HTTP ' + r.status;
+    } catch(e){ lastErr = (e && e.message) || String(e); }
+    await new Promise(res => setTimeout(res, 400 + i*300));
+    try { tok = await user.getIdToken(true); } catch(_){}
+  }
+  return { ok: false, err: lastErr || 'unknown' };
+}
+async function _restGet(path, user){
+  try {
+    const tok = await user.getIdToken();
+    const r = await fetch(cfg.databaseURL + '/' + path + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
+    if (r.ok) return await r.json();
+  } catch(_){}
+  return undefined;   // 실패 (null 데이터와 구분)
+}
+
+// Core gate — v5: 프로필 확인은 REST(재시도)로 즉시 결정, onValue 는 라이브 승인
+// 갱신용 best-effort. 매니저 승인 반영은 pending 상태에서 15초 REST 폴링이 백업.
 let __unsubProfile = null;
-function watchProfile(user){
+let __gateResolved = false;   // 프로필 결정(또는 명시적 에러 표시) 완료 — 28초 escape 억제
+let __gateBusy = false;
+let __gateUid = null;
+let __pendingPoll = null;
+
+function applyStatus(user, profile){
+  profile.uid = user.uid;
+  __gateResolved = true;
+  if (profile.status === 'approved') {
+    const ov = document.getElementById('__authGateOv');
+    if (ov) ov.remove();
+    if (__pendingPoll) { clearInterval(__pendingPoll); __pendingPoll = null; }
+    syncToChatMe(profile);
+  } else if (profile.status === 'pending') {
+    showOverlay({ kind:'pending', user, profile });
+    // onValue 가 죽어있어도 매니저 승인이 반영되도록 REST 폴링 백업
+    if (!__pendingPoll) {
+      __pendingPoll = setInterval(async () => {
+        try {
+          const res = await _restGetProfile(user);
+          if (res.ok && res.val) applyStatus(user, res.val);
+        } catch(_){}
+      }, 15000);
+    }
+  } else if (profile.status === 'blocked') {
+    // 🔒 SECURITY (2026-05-28): 차단 시 즉시 토큰 무효화 + localStorage 제거.
+    // 토큰을 살려두면 콘솔에서 chat.me 조작으로 우회 가능. signOut → 토큰 만료
+    // → RTDB rules 가 모든 요청 거부. 차단 화면 3초 보여주고 강제 redirect.
+    if (__pendingPoll) { clearInterval(__pendingPoll); __pendingPoll = null; }
+    showOverlay({ kind:'blocked', user, profile });
+    try { localStorage.removeItem('chat.me'); } catch(_){}
+    try { sessionStorage.clear(); } catch(_){}
+    Promise.resolve(signOut(auth)).catch(()=>{});
+    setTimeout(() => { try { location.replace('./auth.html?blocked=1'); } catch(_){} }, 3500);
+  }
+}
+
+function _attachLiveProfile(user){
   if (__unsubProfile) { try { __unsubProfile(); } catch(e){} __unsubProfile = null; }
-  const r = ref(db, 'users/' + user.uid);
-  __unsubProfile = onValue(r, async (snap) => {
-    let profile = snap.val();
+  try {
+    const r = ref(db, 'users/' + user.uid);
+    __unsubProfile = onValue(r,
+      (snap) => { const p = snap.val(); if (p) applyStatus(user, p); },
+      (err)  => { gateTrace('gate:onValue-err', err && (err.code || err.message)); });
+  } catch(e){ gateTrace('gate:onValue-attach-fail', e && e.message); }
+}
+
+async function watchProfile(user){
+  // onAuthStateChanged 다중 발화 / visibilitychange 재진입 가드
+  if (__gateBusy) return;
+  if (__gateResolved && __gateUid === user.uid) return;
+  __gateBusy = true;
+  __gateUid = user.uid;
+  try {
+    gateTrace('gate:profile-check', user.phoneNumber || user.email || user.uid.slice(0,8));
+    const res = await _restGetProfile(user);
+    if (!res.ok) {
+      // 예전: SDK onValue 만 기다리다 무한 로딩 → escape → 강제 로그아웃 루프.
+      // 이제: 원인(HTTP 코드)을 화면에 표시하고 멈춤 — 세션은 유지 (재시도 가능).
+      gateTrace('gate:profile-read-fail', res.err);
+      __gateResolved = true;
+      showGateError(user, res.err, '계정 정보를 불러오지 못했습니다');
+      return;
+    }
+    let profile = res.val;
     if (!profile) {
       // First-time login — create record. Bootstrap admins get auto-approved.
       const boot = bootstrapForUser(user);
       // 방식2: 매니저가 미리 등록한 전화번호(phoneRoster)면 PIN·승인 없이 자동 승인.
       let roster = null;
       if (!boot && user.phoneNumber) {
-        // REST + 명시적 토큰 (전화 인증 직후 SDK 연결 auth 지연 회피)
         try {
           const rk = String(user.phoneNumber).replace(/\D/g, '');
-          const tok = await user.getIdToken();
-          const rr = await fetch('https://kimchi-mart-order-default-rtdb.firebaseio.com/phoneRoster/' + rk + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
-          if (rr.ok) { const v = await rr.json(); if (v) roster = v; }
+          const v = await _restGet('phoneRoster/' + rk, user);
+          if (v) roster = v;
         } catch(_){}
       }
       const eff = boot || roster;
@@ -199,6 +352,8 @@ function watchProfile(user){
         try { joinPin = sessionStorage.getItem('km.joinPin') || ''; } catch(_){}
         // PIN 비어있거나 매장 안 골랐으면 가입 차단
         if (!joinPin || !preBranch) {
+          gateTrace('gate:pin-missing-signout', (preBranch||'') + '/' + (user.phoneNumber||user.email||''));
+          setBounce('신규 계정으로 인식됨 — 매장 가입 PIN 필요 (기존 직원이라면 users 기록/전화번호 명단 문제)');
           await signOut(auth).catch(()=>{});
           const msg = '🔐 매장 가입 PIN이 필요합니다.\n매니저에게 본인 매장 4자리 PIN을 받아 입력해주세요.';
           try { alert(msg); } catch(_){}
@@ -206,21 +361,22 @@ function watchProfile(user){
           location.replace('./auth.html');
           return;
         }
-        // RTDB 의 매장 PIN 과 비교
-        try {
-          const pinSnap = await get(ref(db, 'joinPins/' + preBranch));
-          const dbPin = pinSnap.val();
-          if (!dbPin || String(dbPin).trim() !== String(joinPin).trim()) {
-            await signOut(auth).catch(()=>{});
-            try { alert('❌ 매장 PIN이 일치하지 않습니다. 매니저에게 다시 확인하세요.'); } catch(_){}
-            try { sessionStorage.removeItem('km.joinPin'); } catch(_){}
-            location.replace('./auth.html');
-            return;
-          }
-        } catch(e){
-          console.warn('joinPin verify failed', e);
+        // RTDB 의 매장 PIN 과 비교 (REST — SDK get 은 전화인증 직후 hang 가능)
+        const dbPin = await _restGet('joinPins/' + preBranch, user);
+        if (dbPin === undefined) {
+          gateTrace('gate:pin-verify-fail', preBranch);
+          setBounce('매장 PIN 검증 실패 (읽기 오류)');
           await signOut(auth).catch(()=>{});
           try { alert('PIN 검증 실패. 다시 시도하세요.'); } catch(_){}
+          location.replace('./auth.html');
+          return;
+        }
+        if (!dbPin || String(dbPin).trim() !== String(joinPin).trim()) {
+          gateTrace('gate:pin-mismatch', preBranch);
+          setBounce('매장 PIN 불일치');
+          await signOut(auth).catch(()=>{});
+          try { alert('❌ 매장 PIN이 일치하지 않습니다. 매니저에게 다시 확인하세요.'); } catch(_){}
+          try { sessionStorage.removeItem('km.joinPin'); } catch(_){}
           location.replace('./auth.html');
           return;
         }
@@ -240,7 +396,13 @@ function watchProfile(user){
         approvedAt: eff ? Date.now() : null,
         approvedBy: boot ? 'bootstrap' : (roster ? 'roster' : null),
       };
-      try { await set(r, profile); } catch(e){ console.warn('create user record failed', e); }
+      const put = await _restPutProfile(user, profile);
+      if (!put.ok) {
+        gateTrace('gate:profile-create-fail', put.err);
+        __gateResolved = true;
+        showGateError(user, put.err, '계정 생성에 실패했습니다');
+        return;
+      }
     } else {
       // Existing record — if email is in BOOTSTRAP_ADMINS but the record
       // is still pending or missing role/branch (e.g. created before the
@@ -256,28 +418,17 @@ function watchProfile(user){
           approvedAt: profile.approvedAt || Date.now(),
           approvedBy: profile.approvedBy || 'bootstrap-upgrade',
         });
-        try { await set(r, upgraded); profile = upgraded; }
-        catch(e){ console.warn('bootstrap-upgrade failed', e); }
+        const put = await _restPutProfile(user, upgraded);
+        if (put.ok) profile = upgraded;
+        else gateTrace('gate:bootstrap-upgrade-fail', put.err);
       }
     }
-    profile.uid = user.uid;
-    if (profile.status === 'approved') {
-      const ov = document.getElementById('__authGateOv');
-      if (ov) ov.remove();
-      syncToChatMe(profile);
-    } else if (profile.status === 'pending') {
-      showOverlay({ kind:'pending', user, profile });
-    } else if (profile.status === 'blocked') {
-      // 🔒 SECURITY (2026-05-28): 차단 시 즉시 토큰 무효화 + localStorage 제거.
-      // 토큰을 살려두면 콘솔에서 chat.me 조작으로 우회 가능. signOut → 토큰 만료
-      // → RTDB rules 가 모든 요청 거부. 차단 화면 3초 보여주고 강제 redirect.
-      showOverlay({ kind:'blocked', user, profile });
-      try { localStorage.removeItem('chat.me'); } catch(_){}
-      try { sessionStorage.clear(); } catch(_){}
-      try { await signOut(auth); } catch(_){}
-      setTimeout(() => { try { location.replace('./auth.html?blocked=1'); } catch(_){} }, 3500);
-    }
-  });
+    gateTrace('gate:profile-ok', profile.status + '/' + (profile.role || '') );
+    applyStatus(user, profile);
+    _attachLiveProfile(user);   // 라이브 승인/차단 갱신 (best-effort)
+  } finally {
+    __gateBusy = false;
+  }
 }
 
 // 페이지 이동마다 즉시 redirect 하던 게 전 지점 불만 (iOS / 느린 망에서
@@ -295,9 +446,11 @@ async function _maybeRedirect(user){
   // 익명 user 는 무조건 로그아웃 + auth.html 로.
   if (user && user.isAnonymous) {
     console.warn('[auth-gate] anonymous user on managed page → forcing sign-out + redirect');
+    gateTrace('gate:anonymous-signout');
     try { await signOut(auth); } catch(_){}
     if (!__redirected) {
       __redirected = true;
+      setBounce('익명 세션 감지 — 재로그인 필요');
       const ret = encodeURIComponent(location.pathname + location.search);
       location.replace('./auth.html?fresh=1&return=' + ret);
     }
@@ -320,32 +473,36 @@ async function _maybeRedirect(user){
     (cached.name && cached.branch)
   );
 
-  if (hadPreviousLogin) {
-    __waitingForRestore = true;
-    // 2026-06-08 사장님 지시 (앱 느려짐 조사): 20초 대기는 happy-path 사용자에게
-    // 너무 길어서 로그인 느낌. iOS Safari IndexedDB cold-start 대부분 3초 이내
-    // 완료 → 5초로 줄임. 그래도 안 되면 로그인 페이지로 (사용자가 재시도 가능).
-    const restored = await new Promise(resolve => {
-      let done = false;
-      const finish = (u) => { if (!done){ done = true; resolve(u); } };
-      const TIMEOUT = setTimeout(() => finish(null), 5000);
-      const poll = setInterval(() => {
-        if (auth.currentUser){ clearInterval(poll); clearTimeout(TIMEOUT); finish(auth.currentUser); }
-      }, 120);
-    });
-    __waitingForRestore = false;
-    if (restored){
-      console.info('[auth-gate] auth restored from persistence');
-      watchProfile(restored);
-      return;
-    }
-    console.warn('[auth-gate] persistence empty — redirecting to login');
+  // 2026-06-08 사장님 지시 (앱 느려짐 조사): 20초 대기는 happy-path 사용자에게
+  // 너무 길어서 로그인 느낌. iOS Safari IndexedDB cold-start 대부분 3초 이내
+  // 완료 → 5초로 줄임. 그래도 안 되면 로그인 페이지로 (사용자가 재시도 가능).
+  // ⚡ v5: chat.me 가 없어도(지워졌어도) 1.5초는 기다림 — 세션 복원이 리다이렉트에
+  // 지는 race 로 멀쩡히 로그인된 사용자가 로그인 화면으로 튕기던 케이스 방지.
+  __waitingForRestore = true;
+  const waitMs = hadPreviousLogin ? 5000 : 1500;
+  const restored = await new Promise(resolve => {
+    let done = false;
+    const finish = (u) => { if (!done){ done = true; resolve(u); } };
+    const TIMEOUT = setTimeout(() => finish(null), waitMs);
+    const poll = setInterval(() => {
+      if (auth.currentUser){ clearInterval(poll); clearTimeout(TIMEOUT); finish(auth.currentUser); }
+    }, 120);
+  });
+  __waitingForRestore = false;
+  if (restored){
+    console.info('[auth-gate] auth restored from persistence');
+    gateTrace('gate:restored-late');
+    watchProfile(restored);
+    return;
   }
+  if (hadPreviousLogin) console.warn('[auth-gate] persistence empty — redirecting to login');
   // 🛡️ Race fix: 폴링 끝났어도 다른 onAuthStateChanged 발화가 watchProfile 호출했을
-  // 가능성 — __unsubProfile 채워졌으면 redirect 막음 (불필요한 cycle 방지).
-  if (__unsubProfile) return;
+  // 가능성 — 프로필 확인이 시작됐으면 redirect 막음 (불필요한 cycle 방지).
+  if (__unsubProfile || __gateResolved || __gateBusy) return;
   if (__redirected) return;
   __redirected = true;
+  gateTrace('gate:redirect-login', hadPreviousLogin ? 'session-restore-timeout' : 'no-login-history');
+  setBounce(hadPreviousLogin ? '로그인 세션 복원 실패 (기기에서 세션이 사라짐)' : '');
   const ret = encodeURIComponent(location.pathname + location.search);
   location.replace('./auth.html?return=' + ret);
 }
@@ -353,16 +510,17 @@ async function _maybeRedirect(user){
 onAuthStateChanged(auth, (user) => { _maybeRedirect(user); });
 
 // 🚨 2026-05-15: 로딩 무한 spinner 방지 — 페이지 로드 28초 후에도 auth 결정 안
-// 났으면 사용자에게 escape 옵션 (강제 재로그인) 제공. 폴링(20초)이 끝난 뒤
-// 추가 여유 8초.
+// 났으면 사용자에게 escape 옵션 제공. ⚡ v5: escape 가 fresh=1(강제 로그아웃) 로
+// 보내던 것이 재인증 루프의 마지막 고리 — 이제 기본 버튼은 로그아웃 없이 auth.html
+// (세션 살아있으면 자동 복귀), 강제 초기화는 별도 버튼.
 setTimeout(() => {
   if (isExemptPath()) return;
-  // 이미 watchProfile 이 도는 중 (profile 받음) 이면 통과
-  if (__unsubProfile) return;
-  // 익명 사용자거나 user 없는 상태로 15초 → escape
+  // 프로필 확인이 이미 끝났으면(정상/에러표시 포함) 통과
+  if (__unsubProfile || __gateResolved) return;
   if (auth.currentUser && !auth.currentUser.isAnonymous) return;
-  // 매니저/직원이 spinner 만 보고 있는 경우 — 강제 escape UI
   if (document.getElementById('__authGateEscape')) return;
+  gateTrace('gate:escape-28s');
+  setBounce('28초 로그인 확인 실패 (escape 화면)');
   const esc = document.createElement('div');
   esc.id = '__authGateEscape';
   esc.style.cssText = 'position:fixed;inset:0;background:rgba(245,247,250,.98);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;font-family:"Segoe UI","Malgun Gothic",Arial,sans-serif';
@@ -371,10 +529,11 @@ setTimeout(() => {
     +   '<div style="font-size:3em;margin-bottom:8px">⏳</div>'
     +   '<h1 style="font-size:1.2em;color:#dc2626;margin-bottom:14px;font-weight:800">로딩이 너무 오래 걸려요</h1>'
     +   '<div style="color:#6b7280;font-size:.92em;line-height:1.6;margin-bottom:18px">'
-    +     '28초 동안 로그인 확인이 안 됐습니다.<br>다시 로그인 화면으로 이동해서 새로 시도해 주세요.'
+    +     '28초 동안 로그인 확인이 안 됐습니다.<br>로그인 화면으로 이동해서 다시 시도해 주세요.'
     +   '</div>'
-    +   '<button onclick="location.replace(\'./auth.html?fresh=1\')" style="background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:13px 28px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;width:100%;margin-bottom:8px">🔁 로그인 화면으로</button>'
-    +   '<button onclick="location.reload()" style="background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:11px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;width:100%">🔄 페이지 새로고침</button>'
+    +   '<button onclick="location.replace(\'./auth.html\')" style="background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:13px 28px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;width:100%;margin-bottom:8px">🔁 로그인 화면으로</button>'
+    +   '<button onclick="location.reload()" style="background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:11px;font-weight:700;font-size:.88em;cursor:pointer;font-family:inherit;width:100%;margin-bottom:8px">🔄 페이지 새로고침</button>'
+    +   '<button onclick="location.replace(\'./auth.html?fresh=1\')" style="background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:10px;padding:10px;font-weight:700;font-size:.82em;cursor:pointer;font-family:inherit;width:100%">🧹 완전 초기화 후 처음부터 로그인</button>'
     + '</div>';
   document.body.appendChild(esc);
 }, 28000);

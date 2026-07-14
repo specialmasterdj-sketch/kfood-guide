@@ -468,13 +468,59 @@ function applyLang(){
 window.setLang = function(l){ if (!I18N[l]) return; LANG = l; ['tasks.lang','kimchi_lang','hub.lang'].forEach(k => localStorage.setItem(k, l)); applyLang(); renderProfile(); };
 applyLang();
 
-function show(viewId){ ['signinView','loadingView','statusView'].forEach(id => document.getElementById(id).style.display = id === viewId ? '' : 'none'); }
+function show(viewId){
+  ['signinView','loadingView','statusView'].forEach(id => document.getElementById(id).style.display = id === viewId ? '' : 'none');
+  if (viewId === 'signinView') { try { _renderAuthDiag(); } catch(_){} }
+}
 function showError(msg){
   const el = document.getElementById('err');
   el.textContent = msg;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), 5000);
+  trace('auth:error-shown', msg);
 }
+
+// 🩺 자동 진단 (2026-07-13 전 지점 재인증 루프 사건) — auth-gate.js 와 이 페이지가
+// 남긴 breadcrumb(km.authTrace) + 튕긴 사유(km.authBounce)를 로그인 화면에 표시.
+// 직원이 '왜 또 로그인?' 상황을 스크린샷 한 장으로 원인 확정할 수 있게 함.
+function trace(ev, extra){
+  try {
+    const k = 'km.authTrace';
+    const a = JSON.parse(localStorage.getItem(k) || '[]');
+    a.push({ t: Date.now(), p: 'auth.html', e: ev, x: extra == null ? null : String(extra).slice(0, 120) });
+    while (a.length > 40) a.shift();
+    localStorage.setItem(k, JSON.stringify(a));
+  } catch(_){}
+}
+function _fmtT(ts){ const d = new Date(ts); return [d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':'); }
+function _renderAuthDiag(){
+  try {
+    let bounce = null; try { bounce = JSON.parse(sessionStorage.getItem('km.authBounce') || 'null'); } catch(_){}
+    let tr = []; try { tr = JSON.parse(localStorage.getItem('km.authTrace') || '[]'); } catch(_){}
+    const now = Date.now(), FRESH = 15*60*1000;
+    const recent = tr.filter(e => e && (now - e.t) < FRESH);
+    const bad = recent.filter(e => /fail|escape|timeout|signout|redirect-login|onValue-err|pin-/.test(String(e.e)));
+    const hasBounce = bounce && (now - bounce.t) < FRESH && bounce.reason;
+    const old = document.getElementById('authDiag');
+    if (!hasBounce && !bad.length) { if (old) old.remove(); return; }
+    let box = old;
+    if (!box){
+      box = document.createElement('div'); box.id = 'authDiag';
+      const err = document.getElementById('err');
+      if (err && err.parentNode) err.parentNode.insertBefore(box, err.nextSibling);
+      else document.getElementById('signinView').appendChild(box);
+    }
+    const last = bad.length ? bad[bad.length-1] : null;
+    const reason = hasBounce ? bounce.reason : (last ? (last.e + (last.x ? ' — ' + last.x : '')) : '');
+    const lines = recent.slice(-12).map(e => _fmtT(e.t) + ' ' + (e.p||'') + ' · ' + e.e + (e.x ? ' (' + e.x + ')' : '')).join('\n');
+    box.style.cssText = 'margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;text-align:left';
+    box.innerHTML = '<div style="font-size:.8em;color:#92400e;font-weight:800">⚠️ 자동 진단: ' + escapeHtml(reason || '최근 로그인 오류 기록 있음') + '</div>'
+      + '<details style="margin-top:6px"><summary style="font-size:.72em;color:#b45309;cursor:pointer">자세한 기록 — 문제가 반복되면 이 박스를 열어 캡처해서 보내주세요</summary>'
+      + '<pre style="font-size:.68em;color:#78350f;white-space:pre-wrap;margin:6px 0 0;line-height:1.5">' + escapeHtml(lines) + '</pre></details>';
+  } catch(_){}
+}
+trace('auth:page-load', location.search.slice(0, 80));
+setTimeout(() => { try { _renderAuthDiag(); } catch(_){} }, 0);
 
 let __currentProfile = null;
 function renderProfile(){
@@ -635,6 +681,7 @@ window.doVerifyPhoneCode = async function(){
   show('loadingView');
   try {
     await window.__confirmationResult.confirm(code);
+    trace('auth:otp-verified');
     // 이후 onAuthStateChanged + auth-gate.js 가 레코드 생성/승인 처리
   } catch(e){
     btn.disabled = false;
@@ -801,6 +848,7 @@ let __freshHandled = false;
 async function __doFreshSignout(){
   if (__freshHandled) return;
   __freshHandled = true;
+  trace('auth:fresh-signout');
   try { await signOut(auth); } catch(_){}
   try { localStorage.removeItem('chat.me'); } catch(_){}
   try { localStorage.removeItem('hub.branch'); } catch(_){}
@@ -836,15 +884,18 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
   if (!user) {
+    trace('auth:no-user');
     if (__unsub) { try{__unsub();}catch(e){} __unsub = null; }
     show('signinView');
     return;
   }
+  trace('auth:user', user.phoneNumber || user.email || user.uid.slice(0,8));
   show('loadingView');
   // 🛡️ Safety net — 10초 이상 loadingView 머무르면 자동으로 signinView 복귀 +
   // 진단 메시지 표시. 이전엔 onValue 가 null 던지면 무한 spinner 였음.
   const __loadingGuard = setTimeout(() => {
     if (document.getElementById('loadingView').style.display === '') {
+      trace('auth:timeout-10s');
       show('signinView');
       showError('로그인이 완료되지 않았습니다. 다시 시도하거나 로그아웃 후 재로그인 해주세요. (timeout)');
     }
@@ -870,6 +921,7 @@ onAuthStateChanged(auth, async (user) => {
     try { __tok = await user.getIdToken(true); __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok); } catch(_){}
   }
   if (getErr) {
+    trace('auth:profile-read-fail', getErr);
     clearTimeout(__loadingGuard);
     show('signinView');
     showError('계정 정보 조회 실패: ' + getErr + ' — 다시 로그인 해주세요.');
@@ -916,6 +968,7 @@ onAuthStateChanged(auth, async (user) => {
       try { __tok = await user.getIdToken(true); __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok); } catch(_){}
     }
     if (!__putOk) {
+      trace('auth:profile-create-fail', __putErr);
       clearTimeout(__loadingGuard);
       show('signinView');
       showError('계정 생성 실패: ' + (__putErr || '') + ' — Firebase 규칙 또는 네트워크 문제일 수 있습니다.');
@@ -1067,11 +1120,14 @@ onAuthStateChanged(auth, async (user) => {
     renderProfile();
     // Auto-enter as soon as approved (covers both initial bootstrap and live approval)
     if (__currentProfile.status === 'approved') {
+      // 로그인 성공 — 이전 튕김 사유는 해소된 것으로 보고 진단 배너 초기화
+      try { sessionStorage.removeItem('km.authBounce'); } catch(_){}
       // Keep the user on the status screen for ~1 second so they see "approved",
       // then take them where they were headed
       setTimeout(() => {
         const params = new URLSearchParams(location.search);
         const ret = params.get('return');
+        trace('auth:approved-forward', (ret || 'hub.html'));
         if (ret && ret.startsWith('/') && !ret.startsWith('//')) location.replace(ret);
         else location.replace('./hub.html');
       }, 800);

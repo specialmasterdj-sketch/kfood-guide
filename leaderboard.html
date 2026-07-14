@@ -8,7 +8,7 @@
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <link rel="icon" type="image/png" href="pwa-assets/icon-192.png">
 <link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
-<script type="module" src="./auth-gate.js?v=4"></script>
+<script type="module" src="./auth-gate.js?v=5"></script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
 <script src="./nav-sidebar.js?v=22-chat-perf" defer></script>
@@ -1654,15 +1654,27 @@ function _partOf(role, position){
   if (/meat|정육|carne|beef|pork|cerdo|pollo|chicken/.test(s)) return '정육';
   return null;
 }
-let LB_PART_ROSTER = null, __lbRosterLoading = false;
+let LB_PART_ROSTER = null, __lbRosterLoading = false, __lbRosterFails = 0, __lbRosterRetries = 0;
+// ⚡ 2026-07-13: 지점 스케줄을 타임아웃 없이 통째 순차 fetch → 한 지점만 느려도
+//   '(불러오는 중…)'에 영구 고착 + PDF 버튼 에러. 지점 병렬 + employees/shifts 분리
+//   + 타임아웃·재시도(fetchT) + 실패해도 항상 렌더(강제 명단 포함) + 자동 재시도 2회.
+async function _rosterFetch(url, ms){
+  for (let i = 0; i < 2; i++){
+    try { const r = await fetchT(url, { cache:'no-store' }, ms); if (r && r.ok) return r; } catch(_){}
+  }
+  return null;
+}
 async function loadLBPartRoster(){
   if (__lbRosterLoading) return; __lbRosterLoading = true;
-  const aq = await authParam(); const roster = []; const seen = new Set();
-  for (const b of BRANCHES){
+  const aq = await authParam(); const roster = []; const seen = new Set(); let fails = 0;
+  await Promise.all(BRANCHES.map(async (b) => {
+    let emps = [], shifts = {};
+    const er = await _rosterFetch(`${FB_DB}/schedules/${b.id}/employees.json${aq}`, 8000);
+    if (er){ try { const v = await er.json(); emps = Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : []); } catch(_){} }
+    else fails++;
+    const sr = await _rosterFetch(`${FB_DB}/schedules/${b.id}/shifts.json${aq}`, 9000);
+    if (sr){ try { shifts = (await sr.json()) || {}; } catch(_){} }   // shifts 실패해도 role 기반 폴백으로 명단은 살림
     try {
-      const data = await fetch(`${FB_DB}/schedules/${b.id}.json${aq}`, { cache:'no-store' }).then(r=>r.json());
-      const emps = (data && Array.isArray(data.employees)) ? data.employees : [];
-      const shifts = (data && data.shifts) ? data.shifts : {};
       const posByEmp = {};
       Object.keys(shifts).forEach(k => { const at=k.indexOf('@'); if(at<0)return; const eid=k.slice(0,at); const p=_partOf('',(shifts[k]&&shifts[k].position)||''); if(!p)return; (posByEmp[eid]=posByEmp[eid]||{}); posByEmp[eid][p]=(posByEmp[eid][p]||0)+1; });
       emps.forEach(e => {
@@ -1678,9 +1690,11 @@ async function loadLBPartRoster(){
         parts.forEach(part => { const key = part + '|' + nm; if (seen.has(key)) return; seen.add(key); roster.push({ name:e.name, branch:b.id, part }); });
       });
     } catch(_){}
-  }
+  }));
   PART_FORCE.forEach(f => { f.parts.forEach(part => { const key = part + '|' + _partNorm(f.name); if (!seen.has(key)) { seen.add(key); roster.push({ name:f.name, branch:f.branch||'', part }); } }); });
-  LB_PART_ROSTER = roster; __lbRosterLoading = false;
+  LB_PART_ROSTER = roster; __lbRosterLoading = false; __lbRosterFails = fails;
+  // 일부 지점 실패 → 최대 2회 자동 재시도 (성공분은 표시된 채로 갱신)
+  if (fails > 0 && __lbRosterRetries < 2){ __lbRosterRetries++; setTimeout(() => loadLBPartRoster(), 6000); }
   try { renderPartRankLB(window.__lbLastRows || []); } catch(_){}
 }
 function renderPartRankLB(rows){
@@ -1694,7 +1708,8 @@ function renderPartRankLB(rows){
   const unit = (LANG==='ko')?'점':'pts';
   const title = LANG==='en'?'🏅 Part rankings (total)':LANG==='es'?'🏅 Ranking por parte (total)':'🏅 파트별 순위 (활동 총점)';
   const emptyLbl = LANG==='en'?'No members in schedule':LANG==='es'?'Sin personal':'스케줄 명단 없음';
-  const loadingLbl = (LB_PART_ROSTER===null) ? (LANG==='en'?' (loading…)':LANG==='es'?' (cargando…)':' (불러오는 중…)') : '';
+  const loadingLbl = (LB_PART_ROSTER===null) ? (LANG==='en'?' (loading…)':LANG==='es'?' (cargando…)':' (불러오는 중…)')
+                   : (__lbRosterFails>0 ? (LANG==='en'?' (some branches failed — retrying)':LANG==='es'?' (algunas sucursales fallaron — reintentando)':' (일부 지점 로드 실패 — 자동 재시도 중)') : '');
   let html = `<div class="lb-part-title" style="font-weight:800;font-size:1.05em;color:#1f2937;margin:6px 2px 10px">${title}<span style="font-size:.7em;color:#9ca3af;font-weight:600">${loadingLbl}</span></div><div style="display:flex;flex-direction:column;gap:10px">`;
   PARTS.forEach(([cat,label,color]) => {
     const members = (LB_PART_ROSTER||[]).filter(r => r.part===cat && (CUR_BRANCH==='ALL' || r.branch===CUR_BRANCH));
