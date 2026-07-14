@@ -11,7 +11,7 @@
 <script type="module" src="./auth-gate.js?v=5"></script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
-<script src="./nav-sidebar.js?v=22-chat-perf" defer></script>
+<script src="./nav-sidebar.js?v=23-lb-own" defer></script>
 <script src="./back-nav.js?v=1"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -2000,7 +2000,32 @@ function initBonusUI(){
 
 let _lbLoadSeq = 0;
 let __lbAutoRetries = 0;   // 🔁 자동 재시도 횟수 (성공/수동 새로고침 시 0 으로 리셋)
+// 🔒 2026-07-14 사장님 지시: 활동순위 페이지 전체 = 오너(DJ·Sun Kim) + 전무(김병호 B.H.K) 전용.
+//   "전부 다 닫아줘" — 그 외 전원(매니저·수퍼바이저·직원)은 차단 화면. 판정은
+//   _isUnlimitedAwarder() 재사용 (OWNER_UIDS·프로필 role OWNER/EXECUTIVE·이메일 화이트리스트
+//   다중 기준 — 구글/전화 어떤 로그인이든 세 분은 통과, 이름 사칭으론 못 뚫음).
+let __lbAccessOk = null;
+async function _lbEnsureAccess(){
+  if (__lbAccessOk !== null) return __lbAccessOk;
+  await __lbWaitForUser(12000);
+  try { await loadUsers(); } catch(_){}
+  __lbAccessOk = !!_isUnlimitedAwarder();
+  if (!__lbAccessOk) _lbShowDenied();
+  return __lbAccessOk;
+}
+function _lbShowDenied(){
+  try {
+    const w = document.querySelector('.wrap') || document.body;
+    w.innerHTML = `<div style="max-width:420px;margin:60px auto;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:34px 26px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.06)">
+      <div style="font-size:3em;margin-bottom:10px">🔒</div>
+      <div style="font-weight:800;font-size:1.1em;color:#1f2937;margin-bottom:8px">${LANG==='en'?'Restricted page':LANG==='es'?'Página restringida':'접근이 제한된 페이지입니다'}</div>
+      <div style="color:#6b7280;font-size:.9em;line-height:1.6;margin-bottom:18px">${LANG==='en'?'This page is for the owner and executive only.':LANG==='es'?'Esta página es solo para el dueño y el ejecutivo.':'이 페이지는 오너·전무님 전용입니다.'}</div>
+      <a href="./hub.html" style="display:inline-block;background:#1a5c3a;color:#fff;border-radius:10px;padding:11px 26px;font-weight:800;text-decoration:none">← HUB</a>
+    </div>`;
+  } catch(_){}
+}
 async function loadAll(force){
+  if (!(await _lbEnsureAccess())) return;   // 🔒 오너·전무 외 전원 차단
   const _seq = ++_lbLoadSeq;   // 탭 빠르게 바꿔도 옛 응답이 새 화면 덮어쓰지 않게
   // ⚡ 캐시 즉시 표시. 충분히 최신이면(지난달=동결 무기한 / 그 외 30초) 네트워크 재요청 생략 → 탭 전환 즉시.
   const _cached = _lbReadCache();

@@ -43,6 +43,17 @@
     return false;
   }
 
+  // 🔒 2026-07-14 사장님 지시: 오너(DJ·Sun Kim)+전무(김병호 B.H.K) 전용 링크 (own:true).
+  //   사이드바에서만 숨김 — 진짜 차단은 해당 페이지(leaderboard.html) 자체 게이트가 담당.
+  function isOwnerExec(){
+    const me = _loadMe();
+    if (!me) return false;
+    const r = String(me.role || '').toUpperCase();
+    if (/OWNER|EXECUTIVE|오너|사장|대표|전무/.test(r)) return true;
+    const n = String(me.name || '').replace(/\./g, '').replace(/\s+/g, '').toUpperCase();
+    return ['DJ','BHK','SUNKIM','김병호'].includes(n);
+  }
+
   const LINKS = [
     { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
     { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
@@ -61,7 +72,7 @@
     { ic: '📦', lbl: { ko:'입고 스캔',       en:'Receiving scan', es:'Escaneo entrada' }, href: './receiving-scan.html', highlight: true },
     { ic: '👥', lbl: { ko:'직원 승인',       en:'Approvals',      es:'Aprobaciones' },    href: './approve.html', mgr: true },
     { ic: '📇', lbl: { ko:'직원 디렉토리',   en:'Staff Directory', es:'Directorio' },      href: './hub.html#directory', mgr: true },
-    { ic: '🏆', lbl: { ko:'활동 순위',       en:'Leaderboard',    es:'Clasificación' },   href: './leaderboard.html' },
+    { ic: '🏆', lbl: { ko:'활동 순위',       en:'Leaderboard',    es:'Clasificación' },   href: './leaderboard.html', own: true },
 
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
     { ic: '🏆', lbl: { ko:'Top 500 재고',  en:'Top 500 Stock', es:'Top 500 Inventario' }, href: './top500.html', highlight: true },
@@ -232,6 +243,7 @@
       if (it.sec) return true;
       if (it.payroll && !payrollOk) return false;
       if (it.mgr && !mgr) return false;
+      if (it.own && !isOwnerExec()) return false;   // 🔒 오너·전무 전용 (2026-07-14)
       return true;
     });
     const lang = currentLang();
