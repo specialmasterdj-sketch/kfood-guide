@@ -1324,6 +1324,39 @@ function _isDmOpenExec(name){
   return DM_OPEN_EXEC_NAMES.some(x => x.replace(/\s+/g,'').toUpperCase() === n);
 }
 function _normName(s){ return String(s||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
+// 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 발신은 '전송 시점'에도 차단.
+//   예전엔 새 1:1 '시작'(picker/?dm=)만 막아서, 이미 존재하던 dm__ 방으로는 직원이
+//   계속 보낼 수 있었음 (급여 인상 등 금전 요청 DM 유입 경로). 이제 기존 방도 발신 금지 —
+//   읽기는 가능(사장님이 보낸 지시 확인용), 답장은 HR 문의(HR Inquiries)로 유도.
+function _dmProtectedTarget(name){
+  if (!name) return false;
+  if (_isDmOpenExec(name)) return false;   // 개방 예외 (Sun Kim — 회계/총무 문의)
+  const nn = String(name).replace(/\s+/g,'').toUpperCase();
+  if (STRICT_OWNER_NAMES.some(s => _normName(s) === _normName(name))) return true;
+  return (typeof EXECUTIVE_NAMES !== 'undefined' ? EXECUTIVE_NAMES : []).some(x => x.replace(/\s+/g,'').toUpperCase() === nn);
+}
+function _dmBlockedRoom(roomId){
+  try {
+    if (!roomId || !roomId.startsWith('dm__')) return false;
+    if (_canDmOwner(me?.name)) return false;   // 화이트리스트 인원은 그대로 허용
+    const r = (typeof ROOMS !== 'undefined' && ROOMS[roomId]) || {};
+    const myK = normName(me?.name || '');
+    let others = (Array.isArray(r.members) ? r.members : []).filter(n => normName(n) !== myK);
+    if (!others.length){
+      // 방 메타(members) 없으면 room id 에서 상대 복원 (dm__A__B, '_'→' ')
+      others = roomId.slice(4).split('__').filter(p => p && p !== myK).map(p => p.replace(/_/g, ' '));
+    }
+    return others.some(_dmProtectedTarget);
+  } catch(_){ return false; }
+}
+function _showDmBlockedNotice(){
+  const msg = ({
+    ko:'🚫 사장님/임원에게는 1:1 메시지를 보낼 수 없습니다.\n급여·금전 등 건의는 HR 문의(HR Inquiries)로 보내주세요 — 사장님만 직접 열람합니다.\n\nHR 문의 창을 열까요?',
+    en:'🚫 Direct messages to the owner/executives are not allowed.\nPlease use HR Inquiries for pay or money matters — only the owner reads them.\n\nOpen HR Inquiries now?',
+    es:'🚫 No se permiten mensajes directos al dueño/ejecutivos.\nUsa HR Inquiries para temas de pago o dinero — solo el dueño los lee.\n\n¿Abrir HR Inquiries?'
+  })[LANG] || '🚫 Use HR Inquiries.';
+  try { if (confirm(msg)) { try { openHRInquiryModal(); } catch(_){} } } catch(_){}
+}
 // 최상위 OWNER 체크 — 모든 메시지 편집 같은 최상위 권한.
 // 🆕 2026-05-28: Sun Kim 도 DJ 와 동일 권한 부여 (사장님 지시).
 function isDjOwner(){
@@ -2127,6 +2160,26 @@ function openRoom(id){
   const phNoMe = {ko:'메시지 보내려면 우측 상단 "이름 선택"을 먼저 눌러주세요', en:'Select your name (top right) to send messages', es:'Selecciona tu nombre (arriba a la derecha) para enviar'};
   if (!me) input.placeholder = phNoMe[LANG] || phNoMe.ko;
   else input.placeholder = (CHAT_T.msg_ph && CHAT_T.msg_ph[LANG]) || '메시지 입력…';
+  // 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 은 읽기 전용 (발신 금지, HR 문의로 유도).
+  //   입력창 비활성 + 안내 배너. 다른 방 들어가면 원상 복구.
+  try {
+    const _sendBtnEl = document.getElementById('sendBtn');
+    const _oldBan = document.getElementById('dmBlockBanner'); if (_oldBan) _oldBan.remove();
+    input.disabled = false;
+    if (_sendBtnEl) _sendBtnEl.disabled = false;
+    if (_dmBlockedRoom(id)) {
+      input.disabled = true;
+      if (_sendBtnEl) _sendBtnEl.disabled = true;
+      input.placeholder = ({ko:'🚫 사장님께는 1:1 발신 불가 — HR 문의를 이용하세요', en:'🚫 DMs to the owner are disabled — use HR Inquiries', es:'🚫 No se envía al dueño — usa HR Inquiries'})[LANG] || '';
+      const bn = document.createElement('div');
+      bn.id = 'dmBlockBanner';
+      bn.style.cssText = 'background:#fef3c7;border-top:1px solid #fde68a;color:#92400e;font-size:.82em;font-weight:700;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+      bn.innerHTML = (({ko:'🚫 급여·금전 등 건의는 <b>HR 문의</b>로 보내주세요 — 사장님만 직접 열람합니다.', en:'🚫 For pay/money matters use <b>HR Inquiries</b> — only the owner reads them.', es:'🚫 Para temas de pago usa <b>HR Inquiries</b> — solo el dueño los lee.'})[LANG] || '')
+        + ` <button onclick="try{openHRInquiryModal()}catch(_){}" style="background:#b45309;color:#fff;border:0;border-radius:8px;padding:5px 12px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit">📮 ${({ko:'HR 문의 열기',en:'Open HR Inquiries',es:'Abrir HR'})[LANG]||'HR'}</button>`;
+      const _comp = document.getElementById('composer');
+      if (_comp && _comp.parentNode) _comp.parentNode.insertBefore(bn, _comp);
+    }
+  } catch(_){}
   document.querySelector('.rooms').classList.remove('show');
   subscribeMessages(id);
   renderRooms();
@@ -3370,6 +3423,8 @@ async function sendMessage(){
   console.log('[sendMessage] me=', me?.name, 'room=', ACTIVE_ROOM, 'attach=', ATTACH.length);
   if (!ensureMe()) { console.warn('[sendMessage] ensureMe failed → openMeModal'); return; }
   if (!ACTIVE_ROOM) { console.warn('[sendMessage] no ACTIVE_ROOM'); showStatus('❌ 채팅방을 먼저 선택하세요'); setTimeout(hideStatus, 3000); return; }
+  // 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 발신 차단 (기존 방 포함), HR 문의로 유도
+  if (_dmBlockedRoom(ACTIVE_ROOM)) { _showDmBlockedNotice(); return; }
   const text = document.getElementById('msgInput').value.trim();
   if (!text && ATTACH.length === 0) return;
   // 2026-05-01: Storage 활성화됨 (kimchi-mart-order). 수량 경고 제거.
@@ -3601,6 +3656,8 @@ window.removeReplyAttach = removeReplyAttach;
 async function sendReply(parentMsgId){
   if (!ensureMe()) return;
   if (!ACTIVE_ROOM) return;
+  // 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 은 답글도 발신 차단, HR 문의로 유도
+  if (_dmBlockedRoom(ACTIVE_ROOM)) { _showDmBlockedNotice(); return; }
   const inp = document.getElementById('reply-' + parentMsgId);
   if (!inp) return;
   const text = inp.value.trim();
@@ -3686,6 +3743,8 @@ window.openForward = openForward;
 async function forwardTo(targetRoomId){
   if (!__fwdSourceMsg || !targetRoomId) return;
   if (!ensureMe()) return;
+  // 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 로는 '전달'도 차단 (발신 우회 방지)
+  if (_dmBlockedRoom(targetRoomId)) { _showDmBlockedNotice(); return; }
   const src = __fwdSourceMsg;
   const ts = Date.now();
   const newMsgId = 'm' + ts + Math.floor(Math.random()*900);
