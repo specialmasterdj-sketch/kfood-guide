@@ -4666,6 +4666,7 @@ async function loadPeriodScores(p){
   if (failed.length) console.warn('[파트별 순위] 매장 데이터 로드 실패:', failed.map(_branchShort));
   PART_PERIOD_SCORES[p] = sc;
   if (PART_PERIOD === p) { try { renderPartRank(); } catch(_){} }
+  if (typeof BP_PERIOD !== 'undefined' && BP_PERIOD === p) { try { renderBranchPoints(); } catch(_){} }
 }
 window.setPartPeriod = function(p){
   PART_PERIOD = p;
@@ -4762,6 +4763,7 @@ async function loadPartRoster(){
   window.__partRetry = 0;
   PART_ROSTER = roster;
   try { renderPartRank(); } catch(_){}
+  try { renderBranchPoints(); } catch(_){}
 }
 // 🔧 2026-06-16 — 완료자(completedBy) 표기가 스케줄 명단과 달라도(예: "Anderson" / "Anderson G"
 //   ↔ 명단 "Anderson Godoy") 점수가 제대로 붙도록 느슨한 이름 매칭. 첫 이름(토큰)부터 호환되고
@@ -4887,6 +4889,88 @@ function renderPartRank(){
   html += `</div>`;
   el.innerHTML = html;
 }
+
+// ====== 🏢 지점 직원 포인트 현황 (2026-07-14 사장님 지시) ======
+// 대시보드 맨 아래 — CURRENT STORE 로 선택한 지점의 '직원 전원' 포인트 목록.
+// 지점을 바꾸면(renderDashboard) 같이 갱신. 점수 = 업무 완료 + 보너스·상점
+// (loadPeriodScores 재사용 — 유통기한·채팅 점수는 leaderboard 전용, 폰 메모리 보호).
+// 🛡️ 오너/임원 전용 — 일반 직원 폰에서 전 매장 task 자동 로드 금지 (2026-06-19 아이폰 크래시 사건).
+let BP_PERIOD = 'today';
+window.setBranchPointsPeriod = function(p){
+  BP_PERIOD = p;
+  try { if (!(PART_PERIOD_SCORES[p] && (PART_PERIOD_SCORES[p].__loaded || PART_PERIOD_SCORES[p].__loading))) loadPeriodScores(p); } catch(_){}
+  try { renderBranchPoints(); } catch(_){}
+};
+window.retryBranchPoints = function(){
+  try { delete PART_PERIOD_SCORES[BP_PERIOD]; loadPeriodScores(BP_PERIOD); } catch(_){}
+  try { renderBranchPoints(); } catch(_){}
+};
+function renderBranchPoints(){
+  const home = document.getElementById('page-home');
+  if (!home) return;
+  let el = document.getElementById('branchPoints');
+  if (!(typeof isOwner === 'function' && isOwner())){ if (el) el.style.display = 'none'; return; }
+  if (!el){ el = document.createElement('div'); el.id = 'branchPoints'; el.style.cssText = 'margin-top:16px'; home.appendChild(el); }
+  el.style.display = '';
+  if (PART_ROSTER === null){ try { loadPartRoster(); } catch(_){} }
+  const _pc = PART_PERIOD_SCORES[BP_PERIOD];
+  let scoreByName = {}, scoresLoading = false;
+  if (_pc && _pc.__loaded) scoreByName = _pc;
+  else { scoresLoading = true; try { if (!(_pc && _pc.__loading)) loadPeriodScores(BP_PERIOD); } catch(_){} }
+  let resolved = scoreByName;
+  if (PART_ROSTER && PART_ROSTER.length){ try { resolved = _resolvePartScores(scoreByName).resolved; } catch(_){} }
+  const bid = (typeof DASH_BRANCH !== 'undefined' && DASH_BRANCH) || '';
+  const bObj = (typeof BRANCHES !== 'undefined' ? BRANCHES : []).find(x => x.id === bid);
+  const bNm = bObj ? (bObj[LANG] || bObj.ko || bObj.id) : (bid || '');
+  // 명단 = PART_ROSTER 에서 이 지점 직원 (파트 겸업으로 중복 등재 → 이름 기준 unique)
+  const seenN = new Set(); const members = [];
+  (PART_ROSTER || []).forEach(r => {
+    if (!r || r.branch !== bid || !r.name) return;
+    const k = _partNorm(r.name);
+    if (!k || seenN.has(k)) return;
+    seenN.add(k);
+    members.push({ name: r.name, score: resolved[k] || 0 });
+  });
+  members.sort((a,b) => b.score - a.score || String(a.name).localeCompare(String(b.name)));
+  const unit = (LANG==='ko') ? '점' : 'pts';
+  const title = LANG==='en' ? '🏢 ' + bNm + ' — Staff points'
+              : LANG==='es' ? '🏢 ' + bNm + ' — Puntos del personal'
+              :               '🏢 ' + bNm + ' — 직원 포인트 현황';
+  const pLbl = { today:(LANG==='en'?'Today':LANG==='es'?'Hoy':'오늘'), week:(LANG==='en'?'7 days':LANG==='es'?'7 días':'주간'), month:(LANG==='en'?'This month':LANG==='es'?'Este mes':'월간') };
+  const tabs = ['today','week','month'].map(p => `<button onclick="setBranchPointsPeriod('${p}')" style="background:${BP_PERIOD===p?'#1a5c3a':'#f1f5f9'};color:${BP_PERIOD===p?'#fff':'#475569'};border:0;border-radius:7px;padding:4px 11px;font-size:.8em;font-weight:700;cursor:pointer">${pLbl[p]}</button>`).join('');
+  const loadingLbl = (PART_ROSTER === null || scoresLoading) ? (LANG==='en'?' (loading…)':LANG==='es'?' (cargando…)':' (불러오는 중…)') : '';
+  const noteTxt = LANG==='en' ? 'ℹ️ Score = tasks + bonus/merit. Expiry & chat points are on the Leaderboard app.'
+                : LANG==='es' ? 'ℹ️ Puntaje = tareas + bono/mérito. Caducidad y chat están en el Leaderboard.'
+                :               'ℹ️ 점수 = 업무 완료 + 보너스·상점. 유통기한·채팅 점수는 Leaderboard 앱에서 확인.';
+  const failed = (scoreByName && Array.isArray(scoreByName.__failed)) ? scoreByName.__failed : [];
+  const warnHtml = failed.length
+    ? `<div style="font-size:.76em;color:#9a3412;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:7px 10px;margin:8px 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">⚠️ ${failed.map(_branchShort).join(', ')} ${LANG==='en'?'failed to load — scores may be missing.':LANG==='es'?'no cargó — faltan puntos.':'데이터를 못 불러왔어요 — 점수가 빠졌을 수 있습니다.'}<button onclick="retryBranchPoints()" style="background:#ea580c;color:#fff;border:0;border-radius:6px;padding:3px 10px;font-size:.95em;font-weight:700;cursor:pointer">${LANG==='en'?'Retry':LANG==='es'?'Reintentar':'다시 시도'}</button></div>`
+    : '';
+  let body;
+  if (!members.length){
+    body = `<div style="font-size:.85em;color:#9ca3af;padding:10px 4px">${PART_ROSTER===null ? (LANG==='en'?'Loading roster…':LANG==='es'?'Cargando lista…':'명단 불러오는 중…') : (LANG==='en'?'No staff in this branch schedule':LANG==='es'?'Sin personal en el horario':'이 지점 스케줄에 직원 명단이 없습니다')}</div>`;
+  } else {
+    body = members.map((r,i) => {
+      const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1);
+      const dim = r.score===0 ? 'opacity:.5' : '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${i?'border-top:1px solid #f3f4f6':''};${dim}">
+        <span style="width:24px;text-align:center;font-weight:800;color:#9ca3af;font-size:.85em">${medal}</span>
+        <span style="flex:1;min-width:0;font-size:.92em;color:#1f2937;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.name)}</span>
+        <span style="font-weight:900;color:#1a5c3a;font-size:.95em">${r.score}<span style="font-size:.7em;color:#9ca3af;margin-left:2px">${unit}</span></span>
+      </div>`;
+    }).join('');
+  }
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 2px 8px">
+      <span style="font-weight:800;font-size:1.02em;color:#1f2937">${title}</span>
+      <span style="font-size:.72em;color:#9ca3af;font-weight:600">${members.length}${LANG==='ko'?'명':''}${loadingLbl}</span>
+      <span style="margin-left:auto;display:flex;gap:5px">${tabs}</span>
+    </div>
+    <div style="font-size:.74em;color:#6b7280;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:0 2px 8px">${noteTxt}</div>
+    ${warnHtml}
+    <div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid #1a5c3a;border-radius:10px;padding:9px 14px">${body}</div>`;
+}
+window.renderBranchPoints = renderBranchPoints;
 
 function animateCounter(el, target){
   const dur = 800;
@@ -5193,6 +5277,8 @@ function renderDashboard(){
       }).join('');
     }
   }
+  // 🏢 지점 직원 포인트 현황 (2026-07-14) — 대시보드 맨 아래, 지점 변경 시 같이 갱신
+  try { renderBranchPoints(); } catch(e){ console.warn('[branchPoints]', e); }
 }
 function dashGoStat(kind){
   // 통계 카드는 일반 직원에겐 보기 전용 — 매니저 뷰가 없으므로 탭하면 아무 일도
