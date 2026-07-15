@@ -1384,11 +1384,11 @@ button{font-family:inherit;cursor:pointer}
     </div>
     <div class="field"><label id="aToLbl">① 담당자</label>
       <div style="display:flex;gap:6px;align-items:center">
-        <select id="aTo" style="flex:1"><option value="" id="aToDefault">— 직원 선택 —</option></select>
-        <button type="button" id="aAddTo" onclick="addMultiAssignee()" title="여러 명에게 각자 발송 — 직원 골라 ➕ 추가" style="background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:0 12px;font-size:.85em;font-weight:800;cursor:pointer;white-space:nowrap;flex-shrink:0">➕ 추가</button>
+        <select id="aTo" style="flex:1" onchange="onAssigneeSelectChange()"><option value="" id="aToDefault">— 직원 선택 —</option></select>
+        <button type="button" id="aAddTo" onclick="addMultiAssignee()" title="여러 명에게 각자 발송 — 직원 골라 ➕ 추가" style="display:none;background:#1a5c3a;color:#fff;border:0;border-radius:6px;padding:0 12px;font-size:.85em;font-weight:800;cursor:pointer;white-space:nowrap;flex-shrink:0">➕ 추가</button>
       </div>
       <div id="aMultiTo" style="display:none;flex-wrap:wrap;gap:6px;margin-top:7px"></div>
-      <div class="hint" id="aToHint">또는 본 지점 전체에 배정 가능 · ➕추가로 여러 명에게 각자 발송</div>
+      <div class="hint" id="aToHint">이름을 누르면 ✅ 선택 (여러 명 가능 · 다시 누르면 해제) — 각자에게 별도 발송</div>
     </div>
     <div class="field"><label id="aCatLbl">② 카테고리</label>
       <div style="display:flex;gap:4px;align-items:stretch;flex-wrap:wrap">
@@ -3286,7 +3286,7 @@ const I18N = {
   aBranchHint:     { ko:'선택한 지점의 직원만 담당자 목록에 노출됩니다', en:'Only employees from the selected branch will appear', es:'Solo aparecerán empleados de la sucursal seleccionada' },
   aToLbl:          { ko:'① 담당자',            en:'① Assignee',                es:'① Encargado' },
   aToDefault:      { ko:'— 직원 선택 —',       en:'— Select employee —',       es:'— Selecciona empleado —' },
-  aToHint:         { ko:'또는 본 지점 전체에 배정 가능', en:'Or assign to entire branch', es:'O asignar a toda la sucursal' },
+  aToHint:         { ko:'이름을 누르면 ✅ 선택 (여러 명 가능 · 다시 누르면 해제) — 각자에게 별도 발송', en:'Tap a name to ✅ select (multiple OK · tap again to unselect) — each gets their own task', es:'Toca un nombre para ✅ seleccionar (varios OK · toca de nuevo para quitar) — cada uno recibe su tarea' },
   aCatLbl:         { ko:'② 카테고리',          en:'② Category',                es:'② Categoría' },
   aPlaceLbl:       { ko:'📍 장소',             en:'📍 Place',                  es:'📍 Lugar' },
   aPlaceDefault:   { ko:'— 장소 선택 (선택 시 업무명 앞에 표시) —', en:'— Select place (shown before task name) —', es:'— Selecciona lugar (aparece antes del nombre) —' },
@@ -10588,6 +10588,12 @@ async function loadAssignEmployees(branchId){
       });
     }
   } catch(e){ console.warn('[loadAssignEmployees]', e); }
+  // 👥 목록 재구성(지점 변경 등) — 새 목록에 없는 선택 인원 제거 + ✅ 표시/칩 복원
+  try {
+    const _names = Array.from(sel.options).map(o => o.value);
+    MULTI_ASSIGNEES = MULTI_ASSIGNEES.filter(n => _names.includes(n));
+    renderMultiAssignees();
+  } catch(_){}
 }
 
 // 새 업무 발송 시 사용할 지점 ID — 모달에서 선택된 값 우선, 없으면 본인 지점.
@@ -10641,9 +10647,46 @@ function toggleQuickMode(){
 }
 window.toggleQuickMode = toggleQuickMode;
 
-// 👥 여러 명에게 각자 발송 — 담당자 드롭다운에서 골라 ➕추가 하면 칩으로 담김.
+// 👥 여러 명에게 각자 발송 — 드롭다운에서 이름을 누르면 ✅ 토글로 담김 (2026-07-15).
+//    선택 인원은 옵션 앞 ✅ 표시 + 아래 칩으로 보이고, 발송 시 각자 별도 task.
+//    (기존 ➕추가 버튼 방식 대체 — addMultiAssignee 는 호환용으로 유지)
 let MULTI_ASSIGNEES = [];
+// 드롭다운 옵션 텍스트에 ✅ 표시 반영 + placeholder 에 선택 인원수 표시
+function updateAssigneeMarks(){
+  const sel = document.getElementById('aTo');
+  if (!sel) return;
+  Array.from(sel.options).forEach(o => {
+    if (!o.value || o.value === '*') return;
+    const base = o.textContent.replace(/^✅\s*/, '');
+    o.textContent = (MULTI_ASSIGNEES.includes(o.value) ? '✅ ' : '') + base;
+  });
+  const def = sel.options[0];
+  if (def && !def.value) {
+    const n = MULTI_ASSIGNEES.length;
+    def.textContent = n
+      ? (LANG==='en' ? `✅ ${n} selected — open to add more` : LANG==='es' ? `✅ ${n} seleccionados — abre para más` : `✅ ${n}명 선택됨 — 더 담으려면 열기`)
+      : (LANG==='en' ? '— Select employee —' : LANG==='es' ? '— Selecciona empleado —' : '— 직원 선택 —');
+  }
+}
+window.onAssigneeSelectChange = function(){
+  const sel = document.getElementById('aTo');
+  if (!sel) return;
+  const v = sel.value;
+  if (!v) { updateAssigneeMarks(); return; }
+  if (v === '*') {
+    // 📢 본 지점 전체 — 개별 다중선택과 병행 불가, 기존 개별 선택 해제
+    MULTI_ASSIGNEES = [];
+    renderMultiAssignees();
+    return;   // 셀렉트 값은 '*' 로 유지 (기존 전체발송 흐름 그대로)
+  }
+  // 개별 직원 — ✅ 토글
+  if (MULTI_ASSIGNEES.includes(v)) MULTI_ASSIGNEES = MULTI_ASSIGNEES.filter(x => x !== v);
+  else MULTI_ASSIGNEES.push(v);
+  sel.value = '';   // 선택 상태는 ✅ 표시 + 칩이 보여줌 — 발송은 칩 목록 기준
+  renderMultiAssignees();
+};
 function renderMultiAssignees(){
+  try { updateAssigneeMarks(); } catch(_){}
   const box = document.getElementById('aMultiTo');
   if (!box) return;
   if (!MULTI_ASSIGNEES.length){ box.style.display='none'; box.innerHTML=''; return; }
@@ -10662,7 +10705,14 @@ async function sendAssign(){
   // ⚡ 특별 지시 모드: 카테고리/체크리스트 우회 — 단순 task 1개 발송
   if (QUICK_MODE) {
     const to = document.getElementById('aTo').value;
-    if (!to) { alert('담당자 선택 필요'); return; }
+    // 👥 ✅ 다중 선택 지원 — 선택 인원 각자에게 별도 발송 (드롭다운 값과 합집합)
+    let _qRcpts;
+    if (MULTI_ASSIGNEES && MULTI_ASSIGNEES.length){
+      _qRcpts = MULTI_ASSIGNEES.slice();
+      if (to && to !== '*' && !_qRcpts.includes(to)) _qRcpts.push(to);
+    } else if (to) {
+      _qRcpts = [to];
+    } else { alert('담당자 선택 필요'); return; }
     const sendBtnQ = document.querySelector('#assignOv .btn:not(.sec)');
     const noteText = (document.getElementById('aLocNote')?.value || document.getElementById('aNote')?.value || '').trim();
     if (!LOC_PHOTOS.length && !noteText) {
@@ -10674,30 +10724,33 @@ async function sendAssign(){
     const photoUrls = await uploadLocPhotos(tempId);
     const targetBranch = getAssignTargetBranch();
     const path = 'tasks/'+targetBranch+'/'+todayStr();
-    const ref = window.__fb.push(window.__fb.ref(window.__fb.db, path));
     const taskName = noteText ? ('🚨 ' + noteText.slice(0, 40)) : '🚨 특별 지시';
     const taskNameTr = await translateMulti(taskName);
     const noteTr = noteText ? await translateMulti(noteText) : null;
-    await window.__fb.set(ref, {
-      name: taskName,
-      nameTr: taskNameTr,
-      deadline: null,
-      category: '특별 지시',
-      requirePhoto: true,
-      place: null,                                              // quick-mode: no place picker
-      locationPhotos: photoUrls && photoUrls.length ? photoUrls : null,
-      locationNote: noteText || null,
-      assignedTo: to,
-      from: hrFrom(me.name), fromRole: hrPersonaOn() ? 'HR MANAGER' : me.role,
-      actualBy: hrPersonaOn() ? me.name : null,   // 🎭 페르소나 발송 시 실제 실행자 기록
-      createdAt: Date.now(),
-      note: noteText || null,
-      noteTr,
-      isQuickAssign: true,
-      points: getAssignPoints(),
-    });
+    for (const _rcpt of _qRcpts) {
+      const ref = window.__fb.push(window.__fb.ref(window.__fb.db, path));
+      await window.__fb.set(ref, {
+        name: taskName,
+        nameTr: taskNameTr,
+        deadline: null,
+        category: '특별 지시',
+        requirePhoto: true,
+        place: null,                                              // quick-mode: no place picker
+        locationPhotos: photoUrls && photoUrls.length ? photoUrls : null,
+        locationNote: noteText || null,
+        assignedTo: _rcpt,
+        from: hrFrom(me.name), fromRole: hrPersonaOn() ? 'HR MANAGER' : me.role,
+        actualBy: hrPersonaOn() ? me.name : null,   // 🎭 페르소나 발송 시 실제 실행자 기록
+        createdAt: Date.now(),
+        note: noteText || null,
+        noteTr,
+        isQuickAssign: true,
+        points: getAssignPoints(),
+      });
+    }
+    MULTI_ASSIGNEES = []; try { renderMultiAssignees(); } catch(_){}
     closeOv('assignOv');
-    showToast('⚡ 특별 지시 전송 완료', to + ' 에게');
+    showToast('⚡ 특별 지시 전송 완료', _qRcpts.length > 1 ? (_qRcpts.length + '명에게 각자 발송') : (_qRcpts[0] + ' 에게'));
     if (sendBtnQ) { sendBtnQ.disabled = false; sendBtnQ.textContent = '📨 보내기'; }
     return;
   }
@@ -10884,7 +10937,7 @@ async function sendAssign(){
         const stageMeta = stagesForCat[sIdx];
         const stageFrom = document.getElementById('aStageFrom'+sIdx)?.value || stageMeta.from;
         const stageTo   = document.getElementById('aStageTo'+sIdx)?.value   || stageMeta.to;
-        const stageAssignee = document.getElementById('aStageAssignee'+sIdx)?.value || to;
+        const stageAssignee = document.getElementById('aStageAssignee'+sIdx)?.value || to || (MULTI_ASSIGNEES && MULTI_ASSIGNEES[0]) || '';
         const itemsForStage = allChecked.filter(cb => parseInt(cb.dataset.stage, 10) === sIdx).map(cb => cb.dataset.name);
         if (!itemsForStage.length) continue;
         if (!stageAssignee) { alert(stageMeta.label + ' 담당자를 선택하세요'); if (sendBtn){sendBtn.disabled=false;sendBtn.textContent='📨 보내기';} return; }
