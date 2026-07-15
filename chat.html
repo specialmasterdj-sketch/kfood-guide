@@ -2192,27 +2192,62 @@ function subscribeMessages(roomId){
   //   메시지/사진이 많이 쌓인 방(grocery_eval 등)에서 전체 다운로드가
   //   너무 커 폰이 받다 멈추거나 RangeError 로 방이 안 열리던 문제 해결.
   const MSG_FETCH_LIMIT = 400;
+  // 🚀 2026-07-15 — 사진 많은 평가방(closing/grocery_eval 등)이 열릴 때 400개
+  //   전체 다운로드(옛 base64 사진 포함 = 수 MB)가 끝나야 첫 화면이 떠서
+  //   수 초간 이전 방 화면/빈 화면이 보이던 문제.
+  //   1단계: 최근 FAST_FIRST_LIMIT 개만 먼저 받아 즉시 렌더 (첫 페인트 단축)
+  //   2단계: 기존 400개 구독이 도착하면 그대로 교체 — 검색/갤러리 범위 불변.
+  const FAST_FIRST_LIMIT = 60;
+  let __fullArrived = false;
+  // 이전 방 메시지가 남아 보이지 않게 비우고 로딩 표시 (즉각 피드백)
+  MSGS = [];
+  try {
+    const _loadingMsg = {ko:'⏳ 메시지 불러오는 중…', en:'⏳ Loading messages…', es:'⏳ Cargando mensajes…'};
+    document.getElementById('msgs').innerHTML = `<div class="empty-chat">${_loadingMsg[LANG] || _loadingMsg.ko}</div>`;
+  } catch(_){}
   if (!window.__fb) {
-    // REST fallback — limitToLast 쿼리로 최근 것만
+    // REST fallback — 1단계 빠른 첫 페인트
+    fetch(`${FB_DB_URL}/chat/messages/${roomId}.json?orderBy="$key"&limitToLast=${FAST_FIRST_LIMIT}`)
+      .then(r => r.json())
+      .then(d => {
+        if (__fullArrived || ACTIVE_ROOM !== roomId) return;
+        MSGS = msgsFromObj(d); renderMessages();
+      }).catch(()=>{});
+    // 2단계 — limitToLast 쿼리로 최근 400개
     fetch(`${FB_DB_URL}/chat/messages/${roomId}.json?orderBy="$key"&limitToLast=${MSG_FETCH_LIMIT}`)
       .then(r => r.json())
-      .then(d => { MSGS = msgsFromObj(d); renderMessages(); })
+      .then(d => {
+        __fullArrived = true;
+        if (ACTIVE_ROOM !== roomId) return;
+        MSGS = msgsFromObj(d); renderMessages();
+      })
       .catch(() => {
         // 쿼리 실패 시 전체 fallback (인덱스 규칙 없을 때)
         fetch(`${FB_DB_URL}/chat/messages/${roomId}.json`).then(r => r.json()).then(d => {
+          __fullArrived = true;
+          if (ACTIVE_ROOM !== roomId) return;
           MSGS = msgsFromObj(d); renderMessages();
         }).catch(()=>{});
       });
     return;
   }
-  const { db, ref, onValue, query, limitToLast } = window.__fb;
+  const { db, ref, onValue, get, query, limitToLast } = window.__fb;
   const baseRef = ref(db, 'chat/messages/' + roomId);
+  // 1단계 — get() 원샷으로 최근 60개: 400개 스냅샷보다 훨씬 먼저 도착해 즉시 렌더.
+  if (get && query && limitToLast) {
+    get(query(baseRef, limitToLast(FAST_FIRST_LIMIT))).then(snap => {
+      if (__fullArrived || ACTIVE_ROOM !== roomId) return;
+      MSGS = msgsFromObj(snap.val());
+      renderMessages();
+    }).catch(()=>{});
+  }
   // query/limitToLast 가 있으면 최근 N개만 구독, 없으면(옛 캐시) 전체 구독 fallback
   const target = (query && limitToLast) ? query(baseRef, limitToLast(MSG_FETCH_LIMIT)) : baseRef;
   // 🆕 2026-06-08 (앱 느려짐 수정): 새 메시지마다 400개 전부 다시 그리던 것을 디바운스.
   //   여러 명이 동시에 보내면 80ms 동안 합쳐서 한 번만 렌더 → 폰 layout thrashing 감소.
   let __renderT = null;
   __unsubMsgs = onValue(target, snap => {
+    __fullArrived = true;
     MSGS = msgsFromObj(snap.val());
     if (__renderT) clearTimeout(__renderT);
     __renderT = setTimeout(() => { __renderT = null; renderMessages(); }, 80);
