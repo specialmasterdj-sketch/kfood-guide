@@ -806,19 +806,14 @@ function migrateRoles(d){
     return /\bkendell\b/.test(nm) && /\braymundo\b/.test(nm);
   };
 
-  // LASOLAS 지점에서 Miguel Perez / Kendell Raymundo 가 schedules 에 누락된 경우 자동 추가.
-  // 사용자 명시: 이 두 사람은 항상 라스올라스 스케줄에 포함되어야 함 (매니저 권한 + 업무 발송 가능)
+  // 🚪 2026-07-15 사장님 지시 — Miguel Perez 퇴사: 어떤 지점 데이터든 발견 즉시 제거.
+  //   (이전의 'LASOLAS 누락 시 자동 추가' 코드가 삭제해도 계속 부활시키던 원인이라 반전.)
+  if (d.employees) {
+    d.employees = d.employees.filter(e => !_isMiguel(e));
+  }
+
+  // LASOLAS 지점에서 Kendell Raymundo 가 schedules 에 누락된 경우 자동 추가.
   if (d.employees && typeof BRANCH !== 'undefined' && BRANCH === 'LASOLAS') {
-    if (!d.employees.some(_isMiguel)) {
-      d.employees.unshift({
-        id: 'e_miguel_perez_lasolas',
-        name: 'Miguel Perez',
-        role: 'SENIOR SUPERVISOR',
-        target: 40,
-        color: '#3b82f6',
-        initials: 'MP'
-      });
-    }
     if (!d.employees.some(_isKendell)) {
       d.employees.unshift({
         id: 'e_kendell_raymundo_lasolas',
@@ -831,26 +826,14 @@ function migrateRoles(d){
     }
   }
 
-  // Miguel Perez & Mai Garcia 영구 SENIOR SUPERVISOR — 어떤 데이터 상태든 매번 정정.
+  // Mai Garcia 영구 SENIOR SUPERVISOR — 어떤 데이터 상태든 매번 정정.
   // 사용자 영구 결정 (2026-05-17). 플래그 없이 idempotent.
   if (d.employees) {
     d.employees.forEach(e => {
-      if (_isMiguel(e) || _isMai(e)) {
+      if (_isMai(e)) {
         if (e.role !== 'SENIOR SUPERVISOR') e.role = 'SENIOR SUPERVISOR';
       }
     });
-  }
-
-  // Mai → Miguel 직후 위치 정렬 (1회성, 사용자가 수동 재정렬할 수 있도록)
-  if (d.employees && !d._migMaiAfterMiguelOrder) {
-    const maiIdx = d.employees.findIndex(_isMai);
-    const miguelIdx = d.employees.findIndex(_isMiguel);
-    if (maiIdx !== -1 && miguelIdx !== -1 && maiIdx !== miguelIdx + 1) {
-      const [mai] = d.employees.splice(maiIdx, 1);
-      const newMiguelIdx = d.employees.findIndex(_isMiguel);
-      d.employees.splice(newMiguelIdx + 1, 0, mai);
-    }
-    d._migMaiAfterMiguelOrder = true;
   }
   return d;
 }

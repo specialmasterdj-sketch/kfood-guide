@@ -822,16 +822,23 @@ function _dirGlobalLbl(){ return LANG==='en' ? 'HQ / Executive' : LANG==='es' ? 
 const DIR_BRANCH_LABELS = {get _GLOBAL(){return _dirGlobalLbl();},LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
 const DIR_ROLE_SEQ = [['OWNER',0],['ASSISTANT MANAGER',2],['ASSISTANT_MANAGER',2],['SENIOR SUPERVISOR',3],['VICE SUPERVISOR',5],['VICE_SUPERVISOR',5],['MANAGER',1],['SUPERVISOR',4]];
 function _dirRoleSort(r){ const u = String(r||'').toUpperCase(); for (const [k,v] of DIR_ROLE_SEQ) if (u.includes(k)) return v; return 9; }
-// Miguel Perez / Mai Garcia 영구 SENIOR SUPERVISOR 강제 정정 — UI + Firebase.
-// 사용자 영구 결정 (2026-05-17). 어떤 페이지든 들어오면 정정.
+// Mai Garcia 영구 SENIOR SUPERVISOR 강제 정정 — UI + Firebase (2026-05-17).
+// 🚪 2026-07-15 사장님 지시 — Miguel Perez 퇴사: 강제 복원 대신 발견 즉시 제거.
 async function _forceSrSupRoles(fb, br, d){
   const isMiguel = (n) => { const x = String(n||'').toLowerCase().trim(); return /\bmiguel\b/.test(x) && /\bperez\b/.test(x); };
   const isMai    = (n) => { const x = String(n||'').toLowerCase().trim(); return /\bmai\b/.test(x) && /\bgarcia\b/.test(x); };
   let changed = false;
   if (Array.isArray(d)) {
-    d.forEach(e => { if (e && (isMiguel(e.name) || isMai(e.name)) && e.role !== 'SENIOR SUPERVISOR') { e.role = 'SENIOR SUPERVISOR'; changed = true; } });
+    const _n = d.length;
+    d = d.filter(e => !(e && isMiguel(e.name)));
+    if (d.length !== _n) changed = true;
+    d.forEach(e => { if (e && isMai(e.name) && e.role !== 'SENIOR SUPERVISOR') { e.role = 'SENIOR SUPERVISOR'; changed = true; } });
   } else if (d && typeof d === 'object') {
-    Object.values(d).forEach(e => { if (e && (isMiguel(e.name) || isMai(e.name)) && e.role !== 'SENIOR SUPERVISOR') { e.role = 'SENIOR SUPERVISOR'; changed = true; } });
+    Object.keys(d).forEach(k => {
+      const e = d[k];
+      if (e && isMiguel(e.name)) { delete d[k]; changed = true; return; }
+      if (e && isMai(e.name) && e.role !== 'SENIOR SUPERVISOR') { e.role = 'SENIOR SUPERVISOR'; changed = true; }
+    });
   }
   if (changed) {
     try {
@@ -855,9 +862,11 @@ async function loadDirectory(){
     sel.innerHTML += `<option value="${br}">${DIR_BRANCH_LABELS[br]||br}</option>`;
     try {
       const res = await fetch(fb+'/schedules/'+br+'/employees.json');
-      const d = await res.json();
+      const d0 = await res.json();
+      if (!d0) continue;
+      // 반환값 사용 필수 — 배열이면 filter 로 새 배열이 되어 원본 d0 에는 퇴사자가 남음
+      const d = await _forceSrSupRoles(fb, br, d0);
       if (!d) continue;
-      await _forceSrSupRoles(fb, br, d);
       const arr = Array.isArray(d) ? d : Object.values(d);
       arr.forEach(e => { if(e && e.name) _dirData.push({name:e.name, role:e.role||'', dept:e.dept||'', branch:br}); });
     } catch(e){}
