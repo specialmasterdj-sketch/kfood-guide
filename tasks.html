@@ -1409,6 +1409,8 @@ button{font-family:inherit;cursor:pointer}
       </div>
       <select id="aDisplayPlace" onchange="onDisplayPlaceChange();updatePlaceEditButtons()">
         <option value="" id="aPlaceDefault">— 장소 선택 (선택 시 업무명 앞에 표시) —</option>
+        <!-- ✏️ 직접 입력 — 장소 많은 지점에서 맨 아래에 묻히던 것을 맨 위로 (사장님 지시 2026-07-15) -->
+        <option value="__custom__">✏️ 직접 입력…</option>
         <option value="1번 통로">1번 통로</option>
         <option value="2번 통로">2번 통로</option>
         <option value="3번 통로">3번 통로</option>
@@ -1424,7 +1426,6 @@ button{font-family:inherit;cursor:pointer}
         <option value="냉동 지역">냉동 지역</option>
         <option value="마트 밖">마트 밖</option>
         <option value="정육 작업장">🥩 정육 작업장</option>
-        <option value="__custom__">✏️ 직접 입력…</option>
       </select>
       <input type="text" id="aDisplayPlaceCustom" placeholder="장소 직접 입력 (예: 앤디 캡, 백룸 입구)" style="display:none;margin-top:6px">
       <!-- "이 장소 저장" 체크박스 — 직접 입력했을 때만 보임. 체크하면
@@ -2472,14 +2473,13 @@ async function loadCustomPlaces(targetBranch){
     const builtin = BUILTIN_PLACES_BY_BRANCH[branchForPlaces] || [];
     if (builtin.length) {
       const existing0 = new Set(Array.from(selX.options).map(o => o.value));
-      const customOpt0 = selX.querySelector('option[value="__custom__"]');
       builtin.forEach(name => {
         if (existing0.has(name)) return;
         const opt = document.createElement('option');
         opt.value = name;
         opt.textContent = '🏢 ' + name;
-        if (customOpt0) selX.insertBefore(opt, customOpt0);
-        else selX.appendChild(opt);
+        // ✏️ 직접 입력이 맨 위로 이동 (2026-07-15) — 동적 장소는 목록 끝에 추가
+        selX.appendChild(opt);
       });
     }
     const r = await fetch(`${FB_DB_URL}/taskPlaces/${branchForPlaces}.json?t=`+Date.now(), { cache:'no-store' });
@@ -2492,16 +2492,14 @@ async function loadCustomPlaces(targetBranch){
     // 기존에 같은 장소가 이미 있으면 스킵 (하드코딩 옵션 + 이전 로드 결과)
     // 단 매장 장소는 새로 들어왔을 수 있으니 ★ 마크로 다시 라벨링
     const existing = new Set(Array.from(sel.options).map(o => o.value));
-    // "✏️ 직접 입력…" option 위에 삽입
-    const customOpt = sel.querySelector('option[value="__custom__"]');
+    // ✏️ 직접 입력이 맨 위로 이동 (2026-07-15) — 매장 장소는 목록 끝에 추가
     __BRANCH_PLACES.filter(name => name && !existing.has(name)).forEach(name => {
       const opt = document.createElement('option');
       opt.value = name;
       // 매장 자체 장소는 ★ 마크로 구분 (다국어 라벨 위에도 표시)
       const label = (typeof localizePlace === 'function') ? localizePlace(name) : name;
       opt.textContent = '★ ' + label;
-      if (customOpt) sel.insertBefore(opt, customOpt);
-      else sel.appendChild(opt);
+      sel.appendChild(opt);
     });
     updatePlaceEditButtons();
   } catch(e){ console.warn('[loadCustomPlaces]', e); }
@@ -2526,13 +2524,11 @@ async function addNewPlace(){
   if (existing.has(name)) { alert((LANG==='en'?'Already exists':LANG==='es'?'Ya existe':'이미 있는 장소입니다')); sel.value = name; updatePlaceEditButtons(); return; }
   try {
     await saveCustomPlace(name);
-    // dropdown 즉시 갱신
+    // dropdown 즉시 갱신 — ✏️ 직접 입력이 맨 위라 목록 끝에 추가 (2026-07-15)
     const opt = document.createElement('option');
     opt.value = name;
     opt.textContent = '★ ' + name;
-    const customOpt = sel.querySelector('option[value="__custom__"]');
-    if (customOpt) sel.insertBefore(opt, customOpt);
-    else sel.appendChild(opt);
+    sel.appendChild(opt);
     if (!__BRANCH_PLACES.includes(name)) __BRANCH_PLACES.push(name);
     sel.value = name;
     onDisplayPlaceChange();
