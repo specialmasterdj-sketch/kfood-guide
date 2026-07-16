@@ -227,9 +227,28 @@ async function idbGet(k){ const db=await idbOpen(); return new Promise((res,rej)
 async function idbSet(k,v){ const db=await idbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).put(v,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 function setSaveState(t){ const s=document.getElementById('saveState'); if(s)s.textContent=t; }
 /* ===== 클라우드 연동 (폰↔PC 같은 데이터) ===== */
-const FB_REF='https://kimchi-mart-order-default-rtdb.firebaseio.com/barcodeRef';
-async function cloudGet(p){ try{ const r=await fetch(FB_REF+p+'.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) return undefined; return await r.json(); }catch(e){ return undefined; } }
-async function cloudPut(p,v){ try{ const r=await fetch(FB_REF+p+'.json',{method:'PUT',body:JSON.stringify(v)}); return r.ok; }catch(e){ return false; } }
+const FB_DB='https://kimchi-mart-order-default-rtdb.firebaseio.com';
+/* 저장 위치 후보 — 잠겨 있으면 다음 위치를 자동 시도 (채팅 등이 쓰는 열린 위치 포함) */
+const FB_BASES=['/barcodeRef','/config/barcodeRef','/chat/barcodeRef'];
+let _fbBase=null; try{ _fbBase=localStorage.getItem('vbref_fbbase'); }catch(e){}
+async function _tryPut(base,p,v){ try{ const r=await fetch(FB_DB+base+p+'.json',{method:'PUT',body:JSON.stringify(v)}); return r.ok; }catch(e){ return false; } }
+async function _tryGet(base,p){ try{ const r=await fetch(FB_DB+base+p+'.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) return undefined; return await r.json(); }catch(e){ return undefined; } }
+async function cloudPut(p,v){
+  if(_fbBase && await _tryPut(_fbBase,p,v)) return true;
+  for(const b of FB_BASES){ if(b===_fbBase) continue;
+    if(await _tryPut(b,p,v)){ _fbBase=b; try{ localStorage.setItem('vbref_fbbase',b); }catch(e){} return true; } }
+  return false;
+}
+async function cloudGet(p){
+  if(_fbBase){ const v=await _tryGet(_fbBase,p); if(v!==undefined) return v; }
+  let readableNull=undefined;
+  for(const b of FB_BASES){ if(b===_fbBase) continue;
+    const v=await _tryGet(b,p);
+    if(v!==undefined&&v!==null){ _fbBase=b; try{ localStorage.setItem('vbref_fbbase',b); }catch(e){} return v; }
+    if(v===null) readableNull=null;
+  }
+  return readableNull;
+}
 let dTimer=null,mTimer=null;
 function save(){ setSaveState('저장 중…'); clearTimeout(dTimer); dTimer=setTimeout(async()=>{
   try{ await idbSet('data',{vendors:DATA.vendors,current:DATA.current,ref:DATA.ref}); }catch(e){}
