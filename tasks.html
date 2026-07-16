@@ -11331,54 +11331,35 @@ function subscribeMgrBonus(){
   });
 }
 
-/* 👥 상점 다중 선택 (2026-07-15 사장님 지시) — 드롭다운에서 이름 누르면 ✅ 토글.
-   선택 인원은 옵션 앞 ✅ + 칩으로 표시, 제출 시 각자에게 별도 상점 push.
-   👥 전체 직원 버튼 = 현재 지점 명단 전원 선택. */
-var MERIT_MULTI=[];      // 선택된 직원 이름들
-var _MERIT_ROSTER=[];    // 현재 지점 명단 (전체 선택 버튼용)
-function _meritRenderMulti(){
-  var sel=document.getElementById('kmMeritEmp');
-  if(sel){
-    Array.prototype.forEach.call(sel.options,function(o){
-      if(!o.value) return;
-      var base=o.textContent.replace(/^✅\s*/,'');
-      o.textContent=(MERIT_MULTI.indexOf(o.value)>=0?'✅ ':'')+base;
-    });
-    var def=sel.options[0];
-    if(def&&!def.value){
-      var n=MERIT_MULTI.length;
-      def.textContent=n?('✅ '+n+_mt('명 선택됨 — 더 담으려면 열기',' selected — open to add more',' seleccionados — abre para más'))
-                       :_mt('— 직원 선택 —','— Select employee —','— Selecciona —');
-    }
-  }
-  var box=document.getElementById('kmMeritMulti');
-  if(!box) return;
-  if(!MERIT_MULTI.length){ box.style.display='none'; box.innerHTML=''; return; }
-  box.style.display='flex';
-  box.innerHTML=MERIT_MULTI.map(function(n,i){
-    return '<span style="display:inline-flex;align-items:center;gap:5px;background:#fffbeb;border:1px solid #fcd34d;color:#b45309;border-radius:14px;padding:3px 9px;font-size:.82em;font-weight:700">⭐ '+escHtml(n)
-      +'<span data-rmi="'+i+'" style="cursor:pointer;color:#c62828;font-weight:900">×</span></span>';
-  }).join('');
+/* 👥 상점 다중 선택 v2 (2026-07-15 사장님 지시) — 항상 보이는 체크박스 명단.
+   이름 앞 ☑ 를 눌러 여러 명 선택, 제출 시 체크된 전원에게 각자 상점 push.
+   👥 전체 직원 버튼 = 전원 체크 / 선택 지우기 = 전원 해제. */
+var MERIT_MULTI=[];      // 체크된 직원 이름들 (체크박스 상태에서 동기화)
+function _meritSyncFromChecks(){
+  MERIT_MULTI=Array.prototype.map.call(
+    document.querySelectorAll('#kmMeritEmpList .km-merit-cb:checked'),
+    function(c){ return c.value; });
+  _meritUpdateCount();
 }
-function _meritEmpToggle(){
-  var sel=document.getElementById('kmMeritEmp'); if(!sel) return;
-  var v=sel.value; if(!v) { _meritRenderMulti(); return; }
-  var i=MERIT_MULTI.indexOf(v);
-  if(i>=0) MERIT_MULTI.splice(i,1); else MERIT_MULTI.push(v);
-  sel.value='';   // 선택 상태는 ✅ 표시 + 칩이 보여줌
-  _meritRenderMulti();
+function _meritUpdateCount(){
+  var el=document.getElementById('kmMeritCount'); if(!el) return;
+  var n=MERIT_MULTI.length;
+  el.textContent=n?('✅ '+n+_mt('명 선택됨',' selected',' seleccionados'))
+                  :_mt('이름 앞 네모를 체크하세요 — 여러 명 가능','Check the box next to each name — multiple OK','Marca la casilla junto a cada nombre');
+  el.style.color=n?'#b45309':'#94a3b8';
 }
-function _meritSelectAll(){
-  if(!_MERIT_ROSTER.length){ alert(_mt('명단이 아직 없습니다','No roster yet','Sin lista aún')); return; }
-  MERIT_MULTI=_MERIT_ROSTER.slice();
-  var sel=document.getElementById('kmMeritEmp'); if(sel) sel.value='';
-  _meritRenderMulti();
+function _meritSetAll(on){
+  Array.prototype.forEach.call(
+    document.querySelectorAll('#kmMeritEmpList .km-merit-cb'),
+    function(c){ c.checked=on; });
+  _meritSyncFromChecks();
 }
 
-/* 직원 명단 로드 (지점별) */
+/* 직원 명단 로드 (지점별) — 체크박스 명단으로 렌더 (v2) */
 async function _meritLoadEmployees(branch, preselectName){
-  var sel=document.getElementById('kmMeritEmp'); if(!sel) return;
-  sel.innerHTML='<option value="">'+_mt('직원 불러오는 중…','Loading…','Cargando…')+'</option>';
+  var box=document.getElementById('kmMeritEmpList'); if(!box) return;
+  box.innerHTML='<div style="color:#94a3b8;font-size:.86em;padding:9px 6px">'+_mt('직원 불러오는 중…','Loading…','Cargando…')+'</div>';
+  MERIT_MULTI=[]; _meritUpdateCount();
   var employees=[];
   try{
     // ⚡ 2026-07-13: employees 만 (통째 스케줄=전체 시프트 포함 — 'Loading…' 오래 걸리던 원인)
@@ -11386,26 +11367,25 @@ async function _meritLoadEmployees(branch, preselectName){
     var _arr=Array.isArray(data)?data:(data&&typeof data==='object'?Object.values(data):[]);
     employees=_arr.filter(function(e){return e&&e.name;});
   }catch(e){ console.warn('[merit] load emp',e); }
-  if(!employees.length){ sel.innerHTML='<option value="">'+_mt('명단 없음','No roster','Sin lista')+'</option>'; _MERIT_ROSTER=[]; MERIT_MULTI=[]; _meritRenderMulti(); return; }
-  // 👥 지점 명단 갱신 — 전체 선택 버튼용. 지점이 바뀌면 이전 선택은 리셋,
-  //    ⭐버튼 프리필(preselectName)은 ✅ 선택 1명으로 시작.
-  _MERIT_ROSTER=employees.map(function(e){return String(e.name);});
-  var _pre=preselectName?employees.find(function(e){return String(e.name).trim().toLowerCase()===String(preselectName).trim().toLowerCase();}):null;
-  MERIT_MULTI=_pre?[String(_pre.name)]:[];
+  if(!employees.length){ box.innerHTML='<div style="color:#94a3b8;font-size:.86em;padding:9px 6px">'+_mt('명단 없음','No roster','Sin lista')+'</div>'; return; }
+  // ⭐버튼 프리필(preselectName)은 그 직원만 미리 체크된 상태로 시작.
+  var pre=String(preselectName||'').trim().toLowerCase();
   var grouped={};
   employees.forEach(function(e){ var role=e.role||'기타'; (grouped[role]=grouped[role]||[]).push(e); });
   var roles=Object.keys(grouped).sort(function(a,bb){ var pa=(typeof _roleRank==='function'?_roleRank(a):0),pb=(typeof _roleRank==='function'?_roleRank(bb):0); if(pa!==pb)return pb-pa; return a.localeCompare(bb); });
-  var html='<option value="">'+_mt('— 직원 선택 —','— Select employee —','— Selecciona —')+'</option>';
+  var html='';
   roles.forEach(function(role){
-    html+='<optgroup label="'+escHtml(role)+'">';
+    html+='<div style="font-size:.7em;font-weight:900;color:#94a3b8;letter-spacing:.05em;text-transform:uppercase;margin:8px 5px 2px">'+escHtml(role)+'</div>';
     grouped[role].sort(function(a,bb){return String(a.name).localeCompare(String(bb.name));}).forEach(function(e){
       var nm=escHtml(e.name);
-      html+='<option value="'+nm+'">'+nm+'</option>';
+      var checked=(pre&&String(e.name).trim().toLowerCase()===pre)?' checked':'';
+      html+='<label style="display:flex;align-items:center;gap:10px;padding:8px 7px;border-radius:9px;cursor:pointer;font-size:.95em;font-weight:600;color:#1e293b">'
+        +'<input type="checkbox" class="km-merit-cb" value="'+nm+'"'+checked+' style="width:20px;height:20px;accent-color:#f59e0b;flex:0 0 auto;margin:0">'
+        +'<span>'+nm+'</span></label>';
     });
-    html+='</optgroup>';
   });
-  sel.innerHTML=html;
-  _meritRenderMulti();
+  box.innerHTML=html;
+  _meritSyncFromChecks();
 }
 
 /* 최근 부여한 상점 (취소 가능) */
@@ -11445,15 +11425,14 @@ function closeMeritModal(){ var m=document.getElementById('kmMeritModal'); if(m)
 async function submitMerit(){
   if(!(typeof isMeritAdmin==='function'&&isMeritAdmin())){ alert(_mt('사장님 본인만 가능','Only you','Solo tú')); return; }
   var branch=document.getElementById('kmMeritBranch').value;
-  var to=document.getElementById('kmMeritEmp').value;
   var onBtn=document.querySelector('#kmMeritPts .km-merit-pt.on');
   var points=onBtn?+onBtn.dataset.p:0;
   var reason=(document.getElementById('kmMeritReason').value||'').trim();
   if(!branch){ alert(_mt('지점을 선택하세요','Select a branch','Selecciona sucursal')); return; }
-  // 👥 다중 선택 (2026-07-15) — ✅ 선택 인원 + 드롭다운 값 합집합, 각자에게 별도 push
+  // 👥 다중 선택 v2 (2026-07-15) — 체크된 전원에게 각자 별도 push
+  _meritSyncFromChecks();
   var recipients=MERIT_MULTI.slice();
-  if(to&&recipients.indexOf(to)<0) recipients.push(to);
-  if(!recipients.length){ alert(_mt('직원을 선택하세요','Select an employee','Selecciona empleado')); return; }
+  if(!recipients.length){ alert(_mt('직원을 1명 이상 체크하세요','Check at least one employee','Marca al menos un empleado')); return; }
   if(!points){ alert(_mt('점수를 선택하세요','Select points','Selecciona puntos')); return; }
   if(recipients.length>1){
     var cMsg='⭐ '+recipients.length+_mt('명에게 각각 +'+points+'점 상점을 줄까요?\n\n',' people will each get +'+points+'pt. Continue?\n\n',' personas recibirán +'+points+'pt cada una. ¿Continuar?\n\n')+recipients.join(', ');
@@ -11468,7 +11447,7 @@ async function submitMerit(){
     }
     try{ launchConfetti(); }catch(_){}
     try{ showToast('⭐ '+_mt('상점 부여 완료','Merit given','Mérito dado'), (recipients.length>1?(recipients.length+_mt('명','people','personas')):recipients[0])+'  +'+points+'pt'); }catch(_){}
-    MERIT_MULTI=[]; try{ _meritRenderMulti(); }catch(_){}
+    try{ _meritSetAll(false); }catch(_){}
     closeMeritModal();
     try{ renderTeamRank(); }catch(_){}
     try{ renderScoreboard(); }catch(_){}
@@ -11553,15 +11532,15 @@ function injectOwnerMeritUI(){
       +'<div class="km-merit-hd"><h3>⭐ '+_mt('사장님 상점 주기','Owner Merit','Mérito del dueño')+'</h3><button type="button" class="km-merit-x" id="kmMeritClose">✕</button></div>'
       +'<label class="km-merit-lbl">'+_mt('지점','Branch','Sucursal')+'</label>'
       +'<select id="kmMeritBranch" class="km-merit-input">'+brOpts+'</select>'
-      +'<label class="km-merit-lbl">'+_mt('직원','Employee','Empleado')+'</label>'
-      +'<select id="kmMeritEmp" class="km-merit-input"></select>'
-      // 👥 다중 선택 (2026-07-15 사장님 지시) — 이름 누르면 ✅ 토글, 전체 직원 버튼
-      +'<div style="display:flex;gap:6px;margin-top:6px">'
+      +'<label class="km-merit-lbl">'+_mt('직원 — 체크한 전원에게 지급','Employees — merit goes to everyone checked','Empleados — mérito a todos los marcados')+'</label>'
+      // 👥 2026-07-15 사장님 지시 v2 — 드롭다운 대신 항상 보이는 체크박스 명단.
+      //    앞의 ☑ 를 클릭해 여러 명 선택, 전체 직원 버튼으로 전원 선택.
+      +'<div style="display:flex;gap:6px;margin-bottom:6px">'
       +'<button type="button" id="kmMeritAllBtn" style="flex:1;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#fff;border:0;border-radius:10px;padding:9px 12px;font-size:.9em;font-weight:800;cursor:pointer;font-family:inherit">👥 '+_mt('전체 직원 선택','Select all staff','Todo el personal')+'</button>'
       +'<button type="button" id="kmMeritClearBtn" style="background:#fff;border:1.5px solid #e2e8f0;color:#64748b;border-radius:10px;padding:9px 12px;font-size:.9em;font-weight:700;cursor:pointer;font-family:inherit">'+_mt('선택 지우기','Clear','Limpiar')+'</button>'
       +'</div>'
-      +'<div class="km-merit-hint" style="margin-top:5px;font-size:.78em;color:#94a3b8;font-weight:600">'+_mt('이름을 누르면 ✅ 선택 — 여러 명 가능, 다시 누르면 해제','Tap a name to ✅ select — multiple OK, tap again to unselect','Toca un nombre para ✅ — varios OK')+'</div>'
-      +'<div id="kmMeritMulti" style="display:none;flex-wrap:wrap;gap:6px;margin-top:7px"></div>'
+      +'<div id="kmMeritEmpList" style="max-height:230px;overflow-y:auto;border:1.5px solid #e2e8f0;border-radius:12px;padding:5px 6px;background:#fff"></div>'
+      +'<div id="kmMeritCount" style="margin-top:5px;font-size:.82em;font-weight:700;color:#94a3b8"></div>'
       +'<label class="km-merit-lbl">'+_mt('상점 점수','Merit points','Puntos')+'</label>'
       +'<div id="kmMeritPts" class="km-merit-pts"><button type="button" class="km-merit-pt" data-p="3">+3</button><button type="button" class="km-merit-pt on" data-p="5">+5</button><button type="button" class="km-merit-pt" data-p="10">+10</button></div>'
       +'<label class="km-merit-lbl">'+_mt('이유 · 메모 (선택, 사장님만 봄)','Reason · note (only you)','Motivo · nota (solo tú)')+'</label>'
@@ -11575,14 +11554,10 @@ function injectOwnerMeritUI(){
     document.getElementById('kmMeritClose').addEventListener('click',closeMeritModal);
     wrap.addEventListener('click',function(e){ if(e.target===wrap) closeMeritModal(); });
     document.getElementById('kmMeritBranch').addEventListener('change',function(e){ _meritLoadEmployees(e.target.value,''); });
-    // 👥 다중 선택 (2026-07-15) — 셀렉트 토글 + 전체/지우기 버튼 + 칩 × 제거 (위임)
-    document.getElementById('kmMeritEmp').addEventListener('change',_meritEmpToggle);
-    document.getElementById('kmMeritAllBtn').addEventListener('click',_meritSelectAll);
-    document.getElementById('kmMeritClearBtn').addEventListener('click',function(){ MERIT_MULTI=[]; _meritRenderMulti(); });
-    document.getElementById('kmMeritMulti').addEventListener('click',function(e){
-      var x=e.target.closest&&e.target.closest('[data-rmi]'); if(!x) return;
-      MERIT_MULTI.splice(+x.dataset.rmi,1); _meritRenderMulti();
-    });
+    // 👥 다중 선택 v2 (2026-07-15) — 체크박스 명단 + 전체/지우기 버튼
+    document.getElementById('kmMeritEmpList').addEventListener('change',_meritSyncFromChecks);
+    document.getElementById('kmMeritAllBtn').addEventListener('click',function(){ _meritSetAll(true); });
+    document.getElementById('kmMeritClearBtn').addEventListener('click',function(){ _meritSetAll(false); });
     document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(b){ b.addEventListener('click',function(){ document.querySelectorAll('#kmMeritPts .km-merit-pt').forEach(function(x){x.classList.remove('on');}); b.classList.add('on'); }); });
     document.querySelectorAll('#kmMeritChips .km-merit-chip').forEach(function(c){ c.addEventListener('click',function(){ var r=document.getElementById('kmMeritReason'); if(r){ var v=(r.value||'').trim(); r.value=v?(v+', '+(c.dataset.r||'')):(c.dataset.r||''); r.focus(); } }); });
     document.getElementById('kmMeritSubmit').addEventListener('click',submitMerit);
