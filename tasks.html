@@ -9068,10 +9068,10 @@ function renderMgr(){
     const tpBd = tpts >= 3 ? '#86efac' : tpts === 2 ? '#93c5fd' : '#cbd5e1';
     const pointsPill = `<span style="display:inline-block;background:${tpBg};color:${tpFg};border:1px solid ${tpBd};border-radius:999px;padding:1px 8px;font-size:.72em;font-weight:800;margin-left:4px;vertical-align:middle" title="완료 시 +${tpts}점">${'⭐'.repeat(Math.min(3, tpts))} ${tpts}점</span>`;
     // ⭐ 오너 전용 상점 버튼 (2026-07-15 사장님 지시) — 매니저 뷰에서 진행/완료 확인하며
-    //    바로 상점 부여. 기존 .trc-star 위임 핸들러 재사용 → 그 직원 체크된 모달 오픈.
+    //    바로 상점 부여. data-qm=1 → ⭐ 클릭 시 모달 대신 [+3][+5][+10] 즉시 지급 팝업.
     const _meritTarget = actualDoer || ((assignedTo && assignedTo !== '전체' && assignedTo !== '*' && !String(assignedTo).startsWith('[')) ? assignedTo : '');
     const meritBtn = (_meritTarget && typeof isMeritAdmin === 'function' && isMeritAdmin())
-      ? `<button type="button" class="trc-star" data-name="${escHtml(_meritTarget)}" data-branch="${escHtml(t.branchId||'')}" title="⭐ ${LANG==='en'?'Give merit':LANG==='es'?'Dar mérito':'상점 주기'} — ${escHtml(_meritTarget)}" style="margin-left:6px;vertical-align:middle">⭐</button>`
+      ? `<button type="button" class="trc-star" data-qm="1" data-name="${escHtml(_meritTarget)}" data-branch="${escHtml(t.branchId||'')}" data-task="${escHtml(t.name||'')}" title="⭐ ${LANG==='en'?'Give merit':LANG==='es'?'Dar mérito':'상점 주기'} — ${escHtml(_meritTarget)}" style="margin-left:6px;vertical-align:middle">⭐</button>`
       : '';
     return `<tr class="${t._status}" onclick="toggleMgrRowDetail('${t.id}-${t.branchId}')" style="cursor:${clTotal?'pointer':'default'}">
       <td>${av}${doerLabel}${meritBtn}${branch}${assigneeSub}</td>
@@ -11476,6 +11476,54 @@ async function undoMerit(branch,id){
   }catch(e){ alert(_mt('취소 실패','Undo failed','Error')+': '+(e&&e.message||e)); }
 }
 
+/* ⚡ 빠른 상점 팝업 (2026-07-15 사장님 지시) — 매니저 뷰 ⭐ 클릭 시 그 자리에
+   [+3][+5][+10] 버튼만 뜨고, 한 번 더 누르면 즉시 지급. 메모는 업무명 자동 기록.
+   ✏️ 버튼 = 메모 직접 쓰거나 여러 명 줄 때만 기존 모달 오픈. */
+function openQuickMerit(anchorEl, name, branch, taskName){
+  if(!(typeof isMeritAdmin==='function'&&isMeritAdmin())) return;
+  var old=document.getElementById('kmQuickMerit'); if(old) old.remove();
+  if(!name||!branch) return;
+  var r; try{ r=anchorEl.getBoundingClientRect(); }catch(_){ r={left:20,top:80,bottom:86}; }
+  var pop=document.createElement('div');
+  pop.id='kmQuickMerit';
+  pop.style.cssText='position:fixed;z-index:99999;background:#fff;border:2px solid #fcd34d;border-radius:16px;box-shadow:0 14px 34px rgba(0,0,0,.22);padding:10px 12px;display:flex;align-items:center;gap:8px;flex-wrap:nowrap';
+  pop.innerHTML='<span style="font-size:.88em;font-weight:800;color:#92400e;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis">⭐ '+escHtml(name)+'</span>'
+    +[3,5,10].map(function(p){
+      return '<button type="button" data-p="'+p+'" style="min-width:56px;padding:12px 0;border:0;border-radius:12px;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#fff;font-weight:900;font-size:1.1em;cursor:pointer;font-family:inherit">+'+p+'</button>';
+    }).join('')
+    +'<button type="button" data-more="1" title="'+_mt('메모 쓰기 / 여러 명 주기','Add note / multiple people','Nota / varios')+'" style="padding:12px 11px;border:1.5px solid #e2e8f0;border-radius:12px;background:#fff;color:#64748b;font-weight:700;font-size:1em;cursor:pointer;font-family:inherit">✏️</button>';
+  document.body.appendChild(pop);
+  var pw=pop.offsetWidth||300, ph=pop.offsetHeight||58;
+  var x=Math.min(Math.max(8,r.left-10),Math.max(8,window.innerWidth-pw-8));
+  var y=r.bottom+8; if(y+ph+8>window.innerHeight) y=Math.max(8,r.top-ph-8);
+  pop.style.left=x+'px'; pop.style.top=y+'px';
+  function close(){ try{pop.remove();}catch(_){} document.removeEventListener('click',onDoc,true); window.removeEventListener('scroll',close,true); }
+  function onDoc(e){ if(!pop.contains(e.target)) close(); }
+  setTimeout(function(){ document.addEventListener('click',onDoc,true); window.addEventListener('scroll',close,true); },0);
+  var busy=false;
+  pop.addEventListener('click',function(e){
+    e.stopPropagation();
+    if(e.target.closest('[data-more]')){ close(); openMeritModal(name,branch); return; }
+    var b=e.target.closest('button[data-p]'); if(!b||busy) return;
+    busy=true;
+    var points=+b.dataset.p;
+    b.textContent='…';
+    var note=taskName?('['+_mt('빠른 상점','Quick merit','Mérito rápido')+'] '+taskName):null;
+    var award={to:name,points:points,note:note,reason:note,by:(me&&me.name)||'OWNER',byRole:(me&&me.role)||'OWNER',branch:branch,ts:Date.now(),kind:'owner'};
+    window.__fb.push(window.__fb.ref(window.__fb.db,'mgrBonus/'+branch),award).then(function(){
+      close();
+      try{ showToast('⭐ '+name+'  +'+points+'pt', _mt('상점 지급 완료 — 취소는 Owner Merit 창 최근 목록에서','Merit given — undo in Owner Merit recent list','Mérito dado — deshacer en la lista reciente')); }catch(_){}
+      try{ launchConfetti(); }catch(_){}
+      try{ renderTeamRank(); }catch(_){}
+      try{ renderScoreboard(); }catch(_){}
+    }).catch(function(e2){
+      busy=false; b.textContent='+'+points;
+      alert(_mt('저장 실패 — 다시 시도','Save failed — try again','Error al guardar')+'\n'+(e2&&e2.message||e2));
+    });
+  });
+}
+window.openQuickMerit=openQuickMerit;
+
 /* UI 주입 (오너만) */
 var _meritUIReady=false;
 function injectOwnerMeritUI(){
@@ -11573,7 +11621,11 @@ function injectOwnerMeritUI(){
 /* ⭐버튼 / 취소버튼 위임 */
 document.addEventListener('click',function(ev){
   var star=ev.target.closest&&ev.target.closest('.trc-star');
-  if(star){ ev.preventDefault(); ev.stopPropagation(); openMeritModal(star.dataset.name||'',star.dataset.branch||''); return; }
+  if(star){
+    ev.preventDefault(); ev.stopPropagation();
+    // ⚡ data-qm=1 (매니저 뷰) — 모달 대신 [+3][+5][+10] 즉시 지급 팝업 (2026-07-15)
+    if(star.dataset.qm){ openQuickMerit(star, star.dataset.name||'', star.dataset.branch||'', star.dataset.task||''); return; }
+    openMeritModal(star.dataset.name||'',star.dataset.branch||''); return; }
   var undo=ev.target.closest&&ev.target.closest('.kmrr-undo');
   if(undo){ ev.preventDefault(); undoMerit(undo.dataset.branch||'',undo.dataset.id||''); return; }
 },true);
