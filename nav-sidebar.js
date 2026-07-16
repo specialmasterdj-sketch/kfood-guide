@@ -78,7 +78,9 @@
     { ic: '🏆', lbl: { ko:'Top 500 재고',  en:'Top 500 Stock', es:'Top 500 Inventario' }, href: './top500.html', highlight: true },
     { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
     { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: './lookup.html' },
-    { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/' },
+    // 🛡 2026-07-15 사장님 사건 — 별도 앱인데 같은 창에서 열려 매니저앱을 통째로 뺏어가고,
+    //    그 앱이 뒤로가기를 가로채 복귀 불가였음. 외부 앱은 반드시 새 창(_blank).
+    { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/', target: '_blank' },
     { ic: '📄', lbl: { ko:'인보이스',       en:'Invoices',       es:'Facturas' },         href: './invoice-to-excel.html' },
     { ic: '💸', lbl: { ko:'지점 지출',      en:'Branch Expenses', es:'Gastos de Sucursal' }, href: './expense-log.html', mgr: true },
 
@@ -88,7 +90,7 @@
     { ic: '🎁', lbl: { ko:'주간 특가 등록', en:'Weekly Deals', es:'Ofertas Semanales' },  href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-deals.html', target: '_blank', mgr: true },
     { ic: '📢', lbl: { ko:'손님 알림 발송', en:'Notify Members', es:'Notificar Clientes' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-notify.html', target: '_blank', mgr: true },
     { ic: '📊', lbl: { ko:'추천 통계',     en:'Referral Stats',es:'Estadísticas Referidos' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-referrals.html', target: '_blank', mgr: true },
-    { ic: '🧾', lbl: { ko:'카운터 도구',   en:'Counter Tool',  es:'Herramienta de Caja' },     href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/counter.html' },
+    { ic: '🧾', lbl: { ko:'카운터 도구',   en:'Counter Tool',  es:'Herramienta de Caja' },     href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/counter.html', target: '_blank' },
     { ic: '💔', lbl: { ko:'휴면 캠페인',    en:'Win-Back',      es:'Recuperación' },             href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/dormant-campaign.html', target: '_blank', mgr: true },
     { ic: '📖', lbl: { ko:'관리자 가이드',  en:'Admin Guide',   es:'Guía de Admin' },             href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-guide.html', target: '_blank', mgr: true },
     { ic: '🆕', lbl: { ko:'신규 가입자',     en:'New Members',   es:'Nuevos Miembros' },          href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-new-members.html', target: '_blank', mgr: true },
@@ -96,12 +98,12 @@
     { ic: '📈', lbl: { ko:'앱 사용 통계',     en:'App Stats',     es:'Estadísticas' },             href: 'https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-stats.html', target: '_blank', mgr: true },
 
     { sec: { ko:'트레이닝', en:'Training', es:'Capacitación' } },
-    { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/' },
-    { ic: '🍱', lbl: { ko:'K-Food 가이드',  en:'K-Food Guide',     es:'Guía K-Food' },          href: 'https://specialmasterdj-sketch.github.io/kfood-guide/' },
+    { ic: '🥩', lbl: { ko:'정육 트레이닝',  en:'Meat Training',     es:'Capacitación de Carne' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-meat-training/', target: '_blank' },
+    { ic: '🍱', lbl: { ko:'K-Food 가이드',  en:'K-Food Guide',     es:'Guía K-Food' },          href: 'https://specialmasterdj-sketch.github.io/kfood-guide/', target: '_blank' },
 
     { sec: { ko:'기타', en:'Other', es:'Otros' } },
     { ic: '🚚', lbl: { ko:'물류 (채팅으로 이전)', en:'Logistics → Chat', es:'Logística → Chat' }, href: './chat.html#need_overstock' },
-    { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/' },
+    { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/', target: '_blank' },
     { ic: '📋', lbl: { ko:'플래노그램',    en:'Planogram', es:'Planograma' }, href: './planogram.html' },
     { ic: '🏪', lbl: { ko:'Floor Plan',    en:'Floor Plan', es:'Plano de Tienda' }, href: './floorplan/' },
     { ic: '⊞',  lbl: { ko:'모든 앱',       en:'All Apps',  es:'Todas Apps' }, href: './apps.html' },
