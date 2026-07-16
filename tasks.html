@@ -4010,6 +4010,8 @@ function switchTab(t){
   document.getElementById('page-'+t).classList.add('active');
   if (t === 'rep') { renderReport(); renderProofReport(); }
   if (t === 'home') renderDashboard();
+  // 🚀 2026-07-15 — 매니저 뷰는 lazy 렌더: 탭에 들어올 때 밀린 변경분(dirty)만 그림
+  if (t === 'mgr' && typeof __mgrDirty !== 'undefined' && __mgrDirty) { try { renderMgr(); } catch(_){} }
   if (window.kmBack && prev && prev !== t && t !== 'emp') kmBack.push('tab:'+t);
 }
 
@@ -4049,9 +4051,17 @@ function dashSetBranch(b){
   const mgrBranchSel = document.getElementById('mgrBranchFilter');
   if (mgrBranchSel) mgrBranchSel.value = b;
   renderDashboard();
-  // 다른 탭이 활성이거나 미리 데이터 그려놓기 위해 같이 재렌더
-  try { renderEmp(); } catch(_){}
-  try { renderMgr(); } catch(_){}
+  // 🚀 2026-07-15 — 매장 전환이 몇 초씩 멈추던 원인: 숨겨진 매니저/직원 뷰까지
+  //   동기로 통째 재렌더. 드롭다운·대시보드는 즉시 반응하고, 무거운 재렌더는
+  //   다음 틱으로 미룸 + 매니저 뷰는 탭이 열려 있을 때만 (아니면 dirty 표시).
+  setTimeout(() => {
+    try { renderEmp(); } catch(_){}
+    try {
+      const _mp = document.getElementById('page-mgr');
+      if (_mp && _mp.classList.contains('active')) renderMgr();
+      else __mgrDirty = true;
+    } catch(_){}
+  }, 30);
 }
 window.dashSetBranch = dashSetBranch;
 
@@ -8966,6 +8976,9 @@ window.refreshMgrBranchFilter = refreshMgrBranchFilter;
 //   (채팅 평가방과 동일 원인). base64 는 placeholder 만 그리고, 화면에 보일 때
 //   IntersectionObserver 로 .src 를 채움. 일반 URL 사진은 기존 그대로.
 let MGR_HUGE = {}, MGR_HUGE_SEQ = 0, __mgrHugeObs = null;
+// 🚀 2026-07-15 — 매니저 뷰(가장 무거운 렌더)는 탭이 열려 있을 때만 그림.
+//   닫혀 있는 동안 데이터가 바뀌면 dirty 만 표시 → 탭 진입 시 switchTab 이 그림.
+let __mgrDirty = false;
 function _mgrThumb(u, title, extraStyle){
   if (typeof u === 'string' && u.length > 5000) {
     const k = 'mh' + (MGR_HUGE_SEQ++);
@@ -9002,6 +9015,7 @@ function applyMgrHugePhotos(cont){
 }
 function renderMgr(){
   const tbody = document.getElementById('mgrRows');
+  __mgrDirty = false;
   MGR_HUGE = {}; MGR_HUGE_SEQ = 0;   // 매 렌더 초기화 (누적 방지)
   refreshMgrBranchFilter();
   populateMgrFilters();
@@ -11156,7 +11170,11 @@ function renderAllNow(){
   } catch(_){}
 
   renderEmp();
-  renderMgr();
+  // 🚀 2026-07-15 — 매니저 뷰는 탭이 보일 때만 렌더 (5지점 데이터 도착마다
+  //   숨겨진 뷰까지 통째로 그려 UI 가 몇 초씩 멈추던 원인). 안 보이면 dirty 표시.
+  const _mgrPage = document.getElementById('page-mgr');
+  if (_mgrPage && _mgrPage.classList.contains('active')) renderMgr();
+  else __mgrDirty = true;
   renderClockIn();
   if (document.getElementById('page-rep').classList.contains('active')) renderReport();
   if (document.getElementById('page-home') && document.getElementById('page-home').classList.contains('active')) renderDashboard();
