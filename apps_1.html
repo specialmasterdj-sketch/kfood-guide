@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KIMCHI MART — Manager Apps</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<meta name="theme-color" content="#7f1d1d">
+<script>
+  /* 홈화면(바탕화면)에 설치한 KIMCHI MART 앱으로 열면 → 첫 화면을 '업무 지시'로 바로 이동.
+     브라우저로 열면(설치 안 한 경우) 기존 앱 모음이 그대로 보임. 주소에 ?menu 를 붙이면 앱 모음 유지. */
+  (function(){
+    try{
+      var qs = new URLSearchParams(location.search);
+      if (qs.has('menu')) return;
+      var mm = window.matchMedia;
+      var standalone = (mm && (mm('(display-mode: standalone)').matches
+                        || mm('(display-mode: fullscreen)').matches
+                        || mm('(display-mode: minimal-ui)').matches))
+                        || window.navigator.standalone === true;
+      if (standalone) {
+        location.replace('https://specialmasterdj-sketch.github.io/kfood-guide/tasks.html');
+      }
+    }catch(e){}
+  })();
+</script>
+<script>
+  // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
+  (function(){
+    var BUST = 'apps_2026_07_15_ops_tasks';   // 화장실 청소 스케줄 카드 제거 — 직접 URL 만
+    var KEY = 'kmtools_bust_apps';
+    try {
+      if (localStorage.getItem(KEY) !== BUST) {
+        localStorage.setItem(KEY, BUST);
+        (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+          .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+          .catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
+    function pollBust(){
+      fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.text(); })
+        .then(function(t){
+          var m = t.match(/var BUST = '([^']+)'/);
+          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+        }).catch(function(){});
+    }
+    setInterval(pollBust, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') pollBust(); });
+    window.addEventListener('focus', pollBust);
+  })();
+</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script src="./nav-sidebar.js?v=23-lb-own" defer></script>
+<script src="./back-nav.js?v=1"></script>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="김치마트">
+<link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="pwa-assets/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="pwa-assets/icon-512.png">
+<script>
+// One-shot SW reset (legacy)
+(function(){
+  var KEY='kmtools_sw_reset_v18';
+  if(!('serviceWorker' in navigator)) return;
+  if(localStorage.getItem(KEY)==='1'){
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+    return;
+  }
+  Promise.all([
+    navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister();}));}),
+    (window.caches?caches.keys().then(function(ks){return Promise.all(ks.map(function(k){return caches.delete(k);}));}):Promise.resolve())
+  ]).then(function(){
+    localStorage.setItem(KEY,'1');
+    location.reload();
+  });
+})();
+</script>
+<style>
+:root{
+  --primary:#dc2626;
+  --primary-dark:#991b1b;
+  --primary-deep:#7f1d1d;
+  --primary-light:#fef2f2;
+  --bg:#fffaf5;
+  --bg-end:#faf6f1;
+  --surface:#ffffff;
+  --border:rgba(15,23,42,.06);
+  --border-strong:rgba(15,23,42,.10);
+  --text-1:#0f172a;
+  --text-2:#475569;
+  --text-3:#94a3b8;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04), 0 0 0 1px rgba(15,23,42,.04);
+  --shadow-md:0 4px 14px rgba(15,23,42,.07), 0 0 0 1px rgba(15,23,42,.05);
+  --shadow-lg:0 18px 40px rgba(15,23,42,.10), 0 0 0 1px rgba(15,23,42,.04);
+  --radius:16px;
+  --radius-lg:20px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,'Inter','Segoe UI','Malgun Gothic',sans-serif;
+  background:linear-gradient(180deg,var(--bg) 0%,var(--bg-end) 100%);
+  background-attachment:fixed;
+  min-height:100vh;
+  color:var(--text-1);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  font-feature-settings:'ss01','tnum';
+  letter-spacing:-.01em;
+}
+button,a{font-family:inherit}
+
+/* ===== HERO ===== */
+.hero{
+  position:sticky; top:0; z-index:99;
+  margin-left:-200px; padding:30px 24px 28px 224px;
+  color:#fff;
+  background:
+    radial-gradient(120% 80% at 100% 0%,rgba(254,202,202,.18) 0%,transparent 55%),
+    radial-gradient(80% 60% at 0% 100%,rgba(254,215,170,.14) 0%,transparent 60%),
+    linear-gradient(135deg,#7f1d1d 0%,#991b1b 45%,#b91c1c 100%);
+  overflow:hidden;
+  border-bottom:1px solid rgba(0,0,0,.10);
+}
+.hero::before{
+  content:''; position:absolute; inset:0;
+  background-image:
+    radial-gradient(circle at 96% 110%, rgba(255,255,255,.10) 0%, transparent 40%),
+    radial-gradient(circle at -10% -10%, rgba(255,255,255,.08) 0%, transparent 35%);
+  pointer-events:none;
+}
+.hero-inner{position:relative; max-width:920px; margin:0 auto}
+.hero-top{display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap}
+.hero-brand{display:flex; align-items:center; gap:14px}
+.hero-logo{
+  height:74px; width:auto; flex-shrink:0;
+  object-fit:contain;
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.35));
+}
+.hero-mark{
+  width:50px; height:50px; border-radius:14px;
+  background:rgba(255,255,255,.15);
+  border:1px solid rgba(255,255,255,.2);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.4em; font-weight:900; letter-spacing:0;
+  color:#fff; flex-shrink:0;
+}
+.hero-title h1{
+  font-size:1.65em; font-weight:900;
+  letter-spacing:-.02em; line-height:1;
+}
+.hero-title .sub{
+  font-size:.78em; opacity:.78; margin-top:5px;
+  font-weight:500; letter-spacing:0;
+}
+.lang-cluster{
+  display:inline-flex; gap:2px;
+  background:rgba(255,255,255,.10);
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:18px; padding:3px;
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  flex-shrink:0;
+}
+.lang-cluster button{
+  background:transparent; border:0;
+  color:rgba(255,255,255,.65); padding:5px 12px;
+  border-radius:14px; font-size:.7em; font-weight:800;
+  cursor:pointer; letter-spacing:.05em; transition:all .15s;
+}
+.lang-cluster button.active{background:#fff; color:var(--primary-deep)}
+.lang-cluster button:not(.active):hover{color:#fff; background:rgba(255,255,255,.08)}
+
+.hero-greet{
+  margin-top:18px; display:flex; align-items:center; gap:10px;
+  flex-wrap:wrap;
+}
+.greeting-line{
+  font-size:1em; opacity:.95; font-weight:600; letter-spacing:-.005em;
+}
+.user-pill{
+  background:rgba(255,255,255,.13);
+  border:1px solid rgba(255,255,255,.20);
+  border-radius:24px; padding:7px 14px;
+  color:#fff; font-size:.82em; font-weight:600;
+  display:inline-flex; align-items:center; gap:8px;
+  cursor:pointer; transition:all .2s;
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+}
+.user-pill:hover{background:rgba(255,255,255,.22); transform:translateY(-1px)}
+.user-pill .chev{opacity:.6; font-size:.85em}
+
+/* ===== QUICK STATS ===== */
+.quick-stats{
+  max-width:920px; margin:18px auto 0; padding:0 24px;
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px;
+}
+.stat-pill{
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; padding:13px 14px;
+  display:flex; align-items:center; gap:11px;
+  transition:all .22s cubic-bezier(.2,.8,.2,1);
+  text-decoration:none; color:inherit; cursor:pointer;
+}
+.stat-pill:hover{transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--border-strong)}
+.stat-ic{
+  width:36px; height:36px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center; font-size:1.2em;
+  flex-shrink:0;
+}
+.stat-info{min-width:0}
+.stat-info .num{font-size:1.3em; font-weight:800; color:var(--text-1); line-height:1; letter-spacing:-.02em}
+.stat-info .lbl{font-size:.72em; color:var(--text-3); font-weight:600; margin-top:3px; letter-spacing:0}
+
+/* ===== SECTION HEAD ===== */
+.section-head{
+  max-width:920px; margin:26px auto 8px; padding:0 24px;
+  display:flex; align-items:center; gap:8px;
+}
+.section-head .sec-ic{font-size:.95em; opacity:.8}
+.section-head h2{
+  font-size:.74em; color:var(--text-3); font-weight:800;
+  letter-spacing:.10em; text-transform:uppercase;
+}
+
+/* ===== APP GRID ===== */
+.apps{
+  max-width:920px; margin:0 auto; padding:0 24px;
+  display:grid; grid-template-columns:1fr; gap:10px;
+}
+@media(min-width:760px){.apps{grid-template-columns:1fr 1fr}}
+
+.app-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:16px 18px; gap:14px;
+  display:flex; align-items:center;
+  text-decoration:none; color:inherit;
+  position:relative; overflow:hidden;
+  transition:all .25s cubic-bezier(.2,.8,.2,1);
+  cursor:pointer;
+}
+.app-card::before{
+  content:''; position:absolute; left:0; top:14px; bottom:14px;
+  width:3px; background:var(--accent,var(--primary));
+  border-radius:0 3px 3px 0;
+  transform:scaleY(0); transform-origin:center;
+  transition:transform .3s cubic-bezier(.2,.8,.2,1);
+}
+.app-card:hover{
+  transform:translateY(-2px);
+  box-shadow:var(--shadow-lg);
+  border-color:transparent;
+}
+.app-card:hover::before{transform:scaleY(1)}
+
+.app-icon{
+  width:48px; height:48px; border-radius:13px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.35em; flex-shrink:0;
+  background:var(--accent-bg,#fef2f2);
+  color:var(--accent,var(--primary));
+  position:relative;
+  transition:transform .25s cubic-bezier(.2,.8,.2,1);
+}
+.app-card:hover .app-icon{transform:scale(1.06) rotate(-2deg)}
+
+.app-info{flex:1; min-width:0}
+.app-name{
+  font-size:.95em; font-weight:800; color:var(--text-1);
+  letter-spacing:-.01em; line-height:1.2;
+}
+.app-desc{
+  font-size:.74em; color:var(--text-3); margin-top:3px;
+  line-height:1.45; font-weight:500;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+
+.app-badge{
+  background:rgba(15,23,42,.04);
+  color:var(--text-3);
+  padding:4px 9px; border-radius:6px;
+  font-size:.62em; font-weight:800;
+  letter-spacing:.06em; text-transform:uppercase;
+  flex-shrink:0; line-height:1.4;
+}
+.app-badge.unread{
+  background:var(--primary); color:#fff;
+  font-size:.74em; padding:4px 9px;
+  letter-spacing:0; min-width:24px; text-align:center;
+}
+.app-arrow{
+  width:24px; height:24px; border-radius:50%;
+  background:rgba(15,23,42,.04);
+  color:var(--text-3); font-size:.95em; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+  transition:all .25s cubic-bezier(.2,.8,.2,1); flex-shrink:0;
+}
+.app-card:hover .app-arrow{
+  background:var(--accent,var(--primary));
+  color:#fff; transform:translateX(3px);
+}
+
+/* Per-card accents */
+.cat-comm{--accent:#0ea5e9; --accent-bg:#e0f2fe}
+.cat-order{--accent:#16a34a; --accent-bg:#dcfce7}
+.cat-lookup{--accent:#dc2626; --accent-bg:#fee2e2}
+.cat-compare{--accent:#059669; --accent-bg:#d1fae5}
+.cat-filter{--accent:#65a30d; --accent-bg:#ecfccb}
+.cat-tags{--accent:#e11d48; --accent-bg:#ffe4e6}
+.cat-daily{--accent:#d97706; --accent-bg:#fef3c7}
+.cat-food{--accent:#dc2626; --accent-bg:#fee2e2}
+.cat-meat{--accent:#be185d; --accent-bg:#fce7f3}
+.cat-logistics{--accent:#4f46e5; --accent-bg:#e0e7ff}
+.cat-shop{--accent:#16a34a; --accent-bg:#dcfce7}
+.cat-shop2{--accent:#dc2626; --accent-bg:#fee2e2}
+.cat-invoice{--accent:#ea580c; --accent-bg:#ffedd5}
+
+/* ===== GUIDE / SHARE ===== */
+.guide-card{
+  max-width:920px; margin:22px auto 0; padding:18px 22px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius);
+}
+.guide-card .guide-title{
+  font-size:.96em; font-weight:800; color:var(--text-1);
+  margin-bottom:12px; letter-spacing:-.01em;
+}
+.guide-step{
+  display:flex; align-items:center; gap:11px;
+  padding:9px 0; border-top:1px solid var(--border);
+  font-size:.83em; color:var(--text-2); line-height:1.5;
+}
+.guide-step:first-of-type{border-top:0; padding-top:0}
+.guide-step .num{
+  width:24px; height:24px; border-radius:50%;
+  background:var(--primary-light); color:var(--primary);
+  display:flex; align-items:center; justify-content:center;
+  font-size:.7em; font-weight:800; flex-shrink:0;
+}
+
+.share-card{
+  max-width:920px; margin:14px auto 32px; padding:22px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); text-align:center;
+}
+.share-card .guide-title{margin-bottom:6px}
+.share-card .share-desc{font-size:.76em; color:var(--text-3); margin:0 0 14px}
+.share-card img.qr{
+  border-radius:14px; padding:6px; background:#fff;
+  border:1px solid var(--border); max-width:160px;
+}
+.share-url-row{
+  background:#f5f5f7; border-radius:10px; padding:8px 12px;
+  margin:14px auto 0; max-width:440px;
+  display:flex; align-items:center; gap:8px;
+}
+.share-url-row input{
+  flex:1; border:0; background:transparent; outline:0;
+  font-size:.74em; color:var(--text-2); font-family:inherit;
+}
+.share-url-row button{
+  background:var(--primary); color:#fff; border:0;
+  padding:7px 14px; border-radius:8px;
+  font-size:.74em; font-weight:800; cursor:pointer;
+  transition:all .2s;
+}
+.share-url-row button:hover{background:var(--primary-dark)}
+.share-btn{
+  background:#0f172a; color:#fff; border:0;
+  padding:11px 22px; border-radius:11px;
+  font-size:.84em; font-weight:700; cursor:pointer;
+  margin-top:14px; transition:all .2s;
+  width:80%; max-width:280px;
+}
+.share-btn:hover{transform:translateY(-1px); box-shadow:0 4px 14px rgba(15,23,42,.18)}
+
+/* ===== Card entrance animation ===== */
+.app-card{animation:cardIn .55s cubic-bezier(.2,.8,.2,1) backwards}
+.apps>.app-card:nth-child(1){animation-delay:.04s}
+.apps>.app-card:nth-child(2){animation-delay:.08s}
+.apps>.app-card:nth-child(3){animation-delay:.12s}
+.apps>.app-card:nth-child(4){animation-delay:.16s}
+.apps>.app-card:nth-child(5){animation-delay:.20s}
+.apps>.app-card:nth-child(6){animation-delay:.24s}
+.apps>.app-card:nth-child(7){animation-delay:.28s}
+.apps>.app-card:nth-child(8){animation-delay:.32s}
+.stat-pill{animation:cardIn .5s cubic-bezier(.2,.8,.2,1) backwards}
+.stat-pill:nth-child(1){animation-delay:.05s}
+.stat-pill:nth-child(2){animation-delay:.10s}
+.stat-pill:nth-child(3){animation-delay:.15s}
+@keyframes cardIn{
+  from{opacity:0; transform:translateY(10px)}
+  to{opacity:1; transform:translateY(0)}
+}
+
+/* ===== Tablet (sidebar visible) ===== */
+@media(max-width:1100px) and (min-width:761px){
+  .quick-stats,.apps,.section-head,.guide-card,.share-card{
+    max-width:100%; margin-left:0; margin-right:0;
+  }
+}
+
+/* ===== Mobile ===== */
+@media(max-width:760px){
+  .hero{margin-left:0; padding:22px 18px 22px 60px; position:relative}
+  .hero-title h1{font-size:1.4em}
+  .hero-logo{height:56px}
+  .hero-mark{width:42px; height:42px; font-size:1.15em; border-radius:12px}
+  .quick-stats,.apps,.section-head,.guide-card,.share-card{
+    max-width:100%; margin-left:0; margin-right:0;
+  }
+  .quick-stats{padding:0 16px; margin-top:14px}
+  .apps{padding:0 16px}
+  .section-head{padding:0 16px; margin:20px auto 8px}
+  .guide-card,.share-card{margin:18px 16px; padding:16px 18px}
+  .app-card{padding:13px 14px}
+  .app-icon{width:44px; height:44px; font-size:1.25em; border-radius:12px}
+  .app-name{font-size:.92em}
+  .app-desc{font-size:.72em}
+}
+
+/* Reduce motion */
+@media(prefers-reduced-motion:reduce){
+  *{animation:none !important; transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<!-- ===== HERO ===== -->
+<header class="hero">
+  <div class="hero-inner">
+    <div class="hero-top">
+      <div class="hero-brand">
+        <img class="hero-logo" src="./pwa-assets/kimchi-text-logo-white.png?v=1" alt="KIMCHI MART">
+        <div class="hero-title">
+          <div class="sub" data-t="subtitle">매니저 앱 &amp; 도구</div>
+        </div>
+      </div>
+      <div class="lang-cluster">
+        <button onclick="setLang('en')">EN</button>
+        <button onclick="setLang('es')">ES</button>
+        <button onclick="setLang('ko')">KO</button>
+      </div>
+    </div>
+    <div class="hero-greet">
+      <span id="greeting" class="greeting-line" data-t="greeting_default">오늘도 수고하세요 ✨</span>
+      <button id="apps-user-pill" class="user-pill" onclick="onUserPillClick()">
+        <span id="apps-user-icon">👤</span>
+        <span id="apps-user-name" data-t="login_lbl">로그인 / 본인 등록</span>
+        <span class="chev">▾</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ===== QUICK STATS — morning briefing ===== -->
+<div class="quick-stats" id="quickStats">
+  <a href="./chat.html" class="stat-pill" id="stat-pill-chat">
+    <div class="stat-ic" style="background:#fee2e2;color:#dc2626">💬</div>
+    <div class="stat-info">
+      <div class="num" id="stat-chat">—</div>
+      <div class="lbl" data-t="stat_chat_lbl">안 읽은 메시지</div>
+    </div>
+  </a>
+  <a href="./tasks.html" class="stat-pill">
+    <div class="stat-ic" style="background:#fef3c7;color:#d97706">📋</div>
+    <div class="stat-info">
+      <div class="num" id="stat-tasks">—</div>
+      <div class="lbl" data-t="stat_tasks_lbl">진행 업무</div>
+    </div>
+  </a>
+  <a href="./expiry.html" class="stat-pill">
+    <div class="stat-ic" style="background:#dcfce7;color:#16a34a">📅</div>
+    <div class="stat-info">
+      <div class="num" id="stat-expiry">—</div>
+      <div class="lbl" data-t="stat_expiry_lbl">유통기한 임박</div>
+    </div>
+  </a>
+</div>
+
+<!-- ===== Section: 커뮤니케이션 ===== -->
+<div class="section-head"><span class="sec-ic">💬</span><h2 data-t="sec_comm">커뮤니케이션</h2></div>
+<div class="apps">
+  <a class="app-card cat-comm" href="./chat.html">
+    <div class="app-icon">💬</div>
+    <div class="app-info">
+      <div class="app-name" data-t="chat_name">채팅 / 사진 게시판</div>
+      <div class="app-desc" data-t="chat_desc">방별 메시지 + 사진 멀티 업로드</div>
+    </div>
+    <span class="app-badge unread" id="chat-unread-badge" style="display:none">0</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-comm mgr-only" id="card-chat-edit" href="./admin-chat-edit.html" style="display:none">
+    <div class="app-icon">✏️</div>
+    <div class="app-info">
+      <div class="app-name" data-t="chat_edit_name">채팅 메시지 편집 (관리자)</div>
+      <div class="app-desc" data-t="chat_edit_desc">평가방 메시지 sender / 본문 수정 + 삭제</div>
+    </div>
+    <span class="app-badge">ADMIN</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <!-- 🔒 2026-05-28 전무님 지시: 화장실 청소 스케줄도 급여처럼 매니저앱에서 완전 제거.
+       매니저는 직접 URL 북마크로 접근: ./bathroom-schedule.html?branch=HOLLYWOOD -->
+
+  <a class="app-card cat-comm" href="./daily-report.html">
+    <div class="app-icon">📋</div>
+    <div class="app-info">
+      <div class="app-name" data-t="dr_name">일일 매니저 보고</div>
+      <div class="app-desc" data-t="dr_desc">근무·직원 활동·냉동/냉장·벤더 배달/발주·이슈 → 매니저 룸 발송</div>
+    </div>
+    <span class="app-badge" style="background:#dcfce7;color:#15803d">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-comm" href="./store-map.html">
+    <div class="app-icon">🗺</div>
+    <div class="app-info">
+      <div class="app-name" data-t="sm_name">매장 도면 — 실시간 재고</div>
+      <div class="app-desc" data-t="sm_desc">영역 클릭 → 🟢 정상 / 🟡 부족 / 🔴 품절 + 메모 즉시 기록. 매장 한눈에 파악.</div>
+    </div>
+    <span class="app-badge" style="background:#fef3c7;color:#92400e">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-comm" href="./hollywood-floorplan-3d.html">
+    <div class="app-icon">🏪</div>
+    <div class="app-info">
+      <div class="app-name" data-t="hwf_name">헐리우드 매장 3D 도면</div>
+      <div class="app-desc" data-t="hwf_desc">입체 isometric 매대 배치 — 통로·매대 클릭 후 드래그로 위치/크기 편집 가능.</div>
+    </div>
+    <span class="app-badge" style="background:#e0e7ff;color:#3730a3">3D</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-comm" href="./leaderboard.html">
+    <div class="app-icon">🏆</div>
+    <div class="app-info">
+      <div class="app-name" data-t="lb_name">활동 순위</div>
+      <div class="app-desc" data-t="lb_desc">전 직원 활동 점수 — 채팅·등록·체크·폐기 종합</div>
+    </div>
+    <span class="app-badge">RANK</span>
+    <span class="app-arrow">›</span>
+  </a>
+</div>
+
+<!-- ===== Section: 매장 운영 ===== -->
+<div class="section-head"><span class="sec-ic">🏪</span><h2 data-t="sec_ops">매장 운영</h2></div>
+<div class="apps">
+  <a class="app-card cat-order" id="card-staff-phones" href="./staff-phones.html">
+    <div class="app-icon">📱</div>
+    <div class="app-info">
+      <div class="app-name" data-t="staff_phones_name">직원 전화번호 등록 (관리자)</div>
+      <div class="app-desc" data-t="staff_phones_desc">등록한 직원은 전화번호+문자코드로 바로 로그인 (PIN·승인 불필요)</div>
+    </div>
+    <span class="app-badge">ADMIN</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="./vendor-order-center.html">
+    <div class="app-icon">🏪</div>
+    <div class="app-info">
+      <div class="app-name" data-t="vc_name">벤더 오더 센타</div>
+      <div class="app-desc" data-t="vc_desc">공급사별 주문 앱 모음 (Wang Global · Wismettac 등)</div>
+    </div>
+    <span class="app-badge">ORDER</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="./produce-stock/">
+    <div class="app-icon">🥬</div>
+    <div class="app-info">
+      <div class="app-name" data-t="ps_name">야채/과일 재고 체크</div>
+      <div class="app-desc" data-t="ps_desc">매장 돌면서 카운트 → 발주 필요 품목 자동 표시</div>
+    </div>
+    <span class="app-badge" style="background:#dcfce7;color:#15803d">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="./meat-stock/">
+    <div class="app-icon">🥩</div>
+    <div class="app-info">
+      <div class="app-name" data-t="ms_name">정육 재고 체크</div>
+      <div class="app-desc" data-t="ms_desc">소/돼지/가금 — Sysco · A&D · Namdaemun 벤더별 발주 리스트</div>
+    </div>
+    <span class="app-badge" style="background:#fee2e2;color:#991b1b">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="./seafood-stock/">
+    <div class="app-icon">🐟</div>
+    <div class="app-info">
+      <div class="app-name" data-t="ss_name">해산물 재고 체크</div>
+      <div class="app-desc" data-t="ss_desc">생선·새우·오징어·알류·젓갈 — Namdaemun 위주 벤더별 발주</div>
+    </div>
+    <span class="app-badge" style="background:#cffafe;color:#155e75">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="./price-audit.html">
+    <div class="app-icon">🏷️</div>
+    <div class="app-info">
+      <div class="app-name" data-t="pa_name">가격표 감사</div>
+      <div class="app-desc" data-t="pa_desc">매대 QR 스캔 → 가격표 점검 · 수정완료(POS 출력) · 사진 기록</div>
+    </div>
+    <span class="app-badge" style="background:#fef3c7;color:#92400e">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="./voice-stock.html">
+    <div class="app-icon">🎤</div>
+    <div class="app-info">
+      <div class="app-name" data-t="vs_name">음성 재고</div>
+      <div class="app-desc" data-t="vs_desc">말로 재고 기록 — "양파 3박스" 하면 자동 입력 · 합계 · CSV</div>
+    </div>
+    <span class="app-badge" style="background:#f3e8ff;color:#6b21a8">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-lookup" href="./lookup.html">
+    <div class="app-icon">🔎</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app7_name">상품조회</div>
+      <div class="app-desc" data-t="app7_desc">바코드 스캔 / 지점별 판매가 조회</div>
+    </div>
+    <span class="app-badge">LOOKUP</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-compare" href="./invoice-to-excel.html">
+    <div class="app-icon">💰</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app8_name">인보이스 가격비교</div>
+      <div class="app-desc" data-t="app8_desc">PDF 인보이스 → 엑셀 변환 → Vela POS와 가격 비교</div>
+    </div>
+    <span class="app-badge">COMPARE</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-compare" href="./barcode-reference.html">
+    <div class="app-icon">🔗</div>
+    <div class="app-info">
+      <div class="app-name">밴더 바코드 참조 만들기</div>
+      <div class="app-desc">POS 기준으로 밴더코드↔바코드 정확히 연결 · 참조 엑셀 내보내기</div>
+    </div>
+    <span class="app-badge">BARCODE</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-filter" href="./pos-cost-filter.html">
+    <div class="app-icon">🧹</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app9_name">POS COST 필터</div>
+      <div class="app-desc" data-t="app9_desc">매일 받은 POS 엑셀에서 COST 있는 상품만 뽑아 저장</div>
+    </div>
+    <span class="app-badge">FILTER</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-tags" href="https://specialmasterdj-sketch.github.io/kimchi-mart-order/price-tag-generator.html">
+    <div class="app-icon">🏷️</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app_pt_name">가격표 생성기</div>
+      <div class="app-desc" data-t="app_pt_desc">캔바 대체 — 바코드 스캔·폰↔PC 동기화·4가지 사이즈 인쇄</div>
+    </div>
+    <span class="app-badge">TAGS</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-tags" href="https://specialmasterdj-sketch.github.io/kimchi-mart-order/canva-backup/viewer.html">
+    <div class="app-icon">🖼️</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app_cg_name">Canva 가격표 갤러리</div>
+      <div class="app-desc" data-t="app_cg_desc">2,610 페이지 검색·즐겨찾기·가격 덮어쓰기·일괄 인쇄</div>
+    </div>
+    <span class="app-badge">GALLERY</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-daily" href="./temp.html">
+    <div class="app-icon">🌡</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app_temp_name">온도 관리 (Temp Tracker)</div>
+      <div class="app-desc" data-t="app_temp_desc">냉장·냉동 QR 스캔 → 오전·오후·마감 자동 슬롯 + 채팅방 자동 보고</div>
+    </div>
+    <span class="app-badge">TEMP</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-daily" href="https://specialmasterdj-sketch.github.io/kimchi-opening-control/">
+    <div class="app-icon">📋</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app_oc_name">일일 평가</div>
+      <div class="app-desc" data-t="app_oc_desc">부문별 지시·보고 — 공통 체크포인트 + 스페셜 노트 + 시간대별 데드라인 (별도 앱 · ADMIN PIN 필요)</div>
+    </div>
+    <span class="app-badge">DAILY</span>
+    <span class="app-arrow">›</span>
+  </a>
+</div>
+
+<!-- ===== Section: 고객 멤버십 ===== -->
+<div class="section-head"><span class="sec-ic">🎁</span><h2 data-t="sec_rewards">고객 멤버십</h2></div>
+<div class="apps">
+  <a class="app-card cat-comm" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/login.html" target="_blank">
+    <div class="app-icon">💎</div>
+    <div class="app-info">
+      <div class="app-name" data-t="rewards_name">KIMCHI MART 멤버십 앱</div>
+      <div class="app-desc" data-t="rewards_desc">손님용 — 포인트 · K1/K2 · 추천 · 임박 특가 (5만 7천명)</div>
+    </div>
+    <span class="app-badge">REWARDS</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-compare" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/pos-import.html" target="_blank">
+    <div class="app-icon">🔄</div>
+    <div class="app-info">
+      <div class="app-name" data-t="pos_import_name">POS 동기화 (관리자)</div>
+      <div class="app-desc" data-t="pos_import_desc">Vela CSV → Firebase 자동 import (시간당 1회)</div>
+    </div>
+    <span class="app-badge">SYNC</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-tags" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-deals.html" target="_blank">
+    <div class="app-icon">🎁</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_deals_name">주간 특가 등록 (관리자)</div>
+      <div class="app-desc" data-t="admin_deals_desc">앱 전용 주간 특가 등록·편집·미리보기</div>
+    </div>
+    <span class="app-badge">DEALS</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-comm" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-notify.html" target="_blank">
+    <div class="app-icon">📢</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_notify_name">손님 알림 발송 (관리자)</div>
+      <div class="app-desc" data-t="admin_notify_desc">전체·VIP·휴면고객 등 타겟별 인앱 알림</div>
+    </div>
+    <span class="app-badge">NOTIFY</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-lookup" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-referrals.html" target="_blank">
+    <div class="app-icon">📊</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_referrals_name">추천 통계 (관리자)</div>
+      <div class="app-desc" data-t="admin_referrals_desc">추천 캠페인 KPI · 상위 추천자 리더보드</div>
+    </div>
+    <span class="app-badge">STATS</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/counter.html" target="_blank">
+    <div class="app-icon">🧾</div>
+    <div class="app-info">
+      <div class="app-name" data-t="counter_name">카운터 도구 (직원)</div>
+      <div class="app-desc" data-t="counter_desc">손님 폰 입력 → 등급·할인·포인트 즉시 적립</div>
+    </div>
+    <span class="app-badge">COUNTER</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-meat" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/dormant-campaign.html" target="_blank">
+    <div class="app-icon">💔</div>
+    <div class="app-info">
+      <div class="app-name" data-t="dormant_name">휴면 고객 캠페인 (관리자)</div>
+      <div class="app-desc" data-t="dormant_desc">30·60·90일 휴면 고객 자동 알림 + 보너스 포인트</div>
+    </div>
+    <span class="app-badge">WIN-BACK</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-food" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-guide.html" target="_blank">
+    <div class="app-icon">📖</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_guide_name">관리자 사용 가이드</div>
+      <div class="app-desc" data-t="admin_guide_desc">6개 도구 사용법 (한국어 · English · Español)</div>
+    </div>
+    <span class="app-badge">GUIDE</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-comm" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-new-members.html" target="_blank">
+    <div class="app-icon">🆕</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_newmem_name">신규 가입자 (Vela 등록 트래킹)</div>
+      <div class="app-desc" data-t="admin_newmem_desc">앱 가입 손님 → Vela POS 입력 처리 체크</div>
+    </div>
+    <span class="app-badge">NEW</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-tags" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-poster.html" target="_blank">
+    <div class="app-icon">📲</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_poster_name">QR 포스터 인쇄</div>
+      <div class="app-desc" data-t="admin_poster_desc">매장별 가입 QR 포스터 · 카운터에 부착</div>
+    </div>
+    <span class="app-badge">QR</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-lookup" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-stats.html" target="_blank">
+    <div class="app-icon">📈</div>
+    <div class="app-info">
+      <div class="app-name" data-t="admin_stats_name">앱 사용 통계</div>
+      <div class="app-desc" data-t="admin_stats_desc">DAU · WAU · MAU · 매장별 · 등급별 · 가입 추이</div>
+    </div>
+    <span class="app-badge">STATS</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-order" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-ugc.html" target="_blank">
+    <div class="app-icon">📣</div>
+    <div class="app-info">
+      <div class="app-name">고객 게시물 검토 (관리자)</div>
+      <div class="app-desc">손님 SNS 게시물 승인 → 보너스 포인트 적립</div>
+    </div>
+    <span class="app-badge">UGC</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-tags" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-featured.html" target="_blank">
+    <div class="app-icon">📷</div>
+    <div class="app-info">
+      <div class="app-name">인스타 추천 게시물 (관리자)</div>
+      <div class="app-desc">베스트 인스타 게시물 골라 둘러보기에 노출</div>
+    </div>
+    <span class="app-badge">FEATURED</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-food" href="https://specialmasterdj-sketch.github.io/kimchi-rewards/admin-recipes.html" target="_blank">
+    <div class="app-icon">🍳</div>
+    <div class="app-info">
+      <div class="app-name">레시피 등록 (관리자)</div>
+      <div class="app-desc">앱 레시피 추가 · 재료 담기(장바구니) 연결</div>
+    </div>
+    <span class="app-badge">RECIPES</span>
+    <span class="app-arrow">›</span>
+  </a>
+</div>
+
+<!-- ===== Section: 트레이닝 ===== -->
+<div class="section-head"><span class="sec-ic">📚</span><h2 data-t="sec_training">트레이닝</h2></div>
+<div class="apps">
+  <a class="app-card cat-food" href="./index.html">
+    <div class="app-icon">🍱</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app1_name">K-Food 제조 가이드</div>
+      <div class="app-desc" data-t="app1_desc">반찬/김밥/도시락 제조 매뉴얼 + YouTube 레시피</div>
+    </div>
+    <span class="app-badge">FOOD</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-meat" href="https://specialmasterdj-sketch.github.io/kimchi-meat-training/">
+    <div class="app-icon">🥩</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app2_name">정육 트레이닝 가이드</div>
+      <div class="app-desc" data-t="app2_desc">정육 커팅 매뉴얼 + 영상 가이드 (EN/KO/ES)</div>
+    </div>
+    <span class="app-badge">MEAT</span>
+    <span class="app-arrow">›</span>
+  </a>
+</div>
+
+<!-- ===== Section: 기타 시스템 ===== -->
+<div class="section-head"><span class="sec-ic">⚙️</span><h2 data-t="sec_other">기타 시스템</h2></div>
+<div class="apps">
+  <a class="app-card cat-logistics" href="https://specialmasterdj-sketch.github.io/kimchi-logistics/">
+    <div class="app-icon">🚚</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app3_name">물류 시스템</div>
+      <div class="app-desc" data-t="app3_desc">물류/재고 관리 시스템</div>
+    </div>
+    <span class="app-badge">LOGISTICS</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-shop" href="https://specialmasterdj-sketch.github.io/kimchi-shop/">
+    <div class="app-icon">🛒</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app5_name">김치 쇼핑 앱</div>
+      <div class="app-desc" data-t="app5_desc">온라인 쇼핑 웹사이트</div>
+    </div>
+    <span class="app-badge">SHOP</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-shop2" href="https://specialmasterdj-sketch.github.io/kimchi-shop/shop.html" target="_blank">
+    <div class="app-icon">🍱</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app5b_name">김치 쇼핑 (도어대시 스타일)</div>
+      <div class="app-desc" data-t="app5b_desc">배달앱 스타일 쇼핑 — 카테고리 아이콘 / 할인 카로셀 / 재고 표시</div>
+    </div>
+    <span class="app-badge">SHOP+</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-invoice" href="https://coral-springs-kimchi.github.io/kimchi-invoice-system/" target="_blank">
+    <div class="app-icon">📄</div>
+    <div class="app-info">
+      <div class="app-name" data-t="app6_name">인보이스 시스템</div>
+      <div class="app-desc" data-t="app6_desc">인보이스 정리 + 가격 비교 시스템</div>
+    </div>
+    <span class="app-badge">INVOICE</span>
+    <span class="app-arrow">›</span>
+  </a>
+</div>
+
+<!-- ===== INSTALL GUIDE ===== -->
+<div class="guide-card">
+  <div class="guide-title" data-t="install_title">📱 핸드폰 홈화면에 설치하는 법</div>
+  <div class="guide-step"><div class="num">1</div><span data-t="install_step1">위 앱 링크를 터치해서 열기</span></div>
+  <div class="guide-step"><div class="num">2</div><span data-t="install_step2"><b>iPhone:</b> 하단 공유 버튼(↑) → "홈 화면에 추가"</span></div>
+  <div class="guide-step"><div class="num">3</div><span data-t="install_step3"><b>Android:</b> 메뉴(⋮) → "홈 화면에 추가" 또는 "앱 설치"</span></div>
+  <div class="guide-step"><div class="num">✓</div><span data-t="install_done">완료! 앱처럼 홈화면에서 바로 열 수 있습니다</span></div>
+</div>
+
+<!-- ===== SHARE ===== -->
+<div class="share-card">
+  <div class="guide-title" data-t="share_title">🔗 이 페이지 공유하기</div>
+  <p class="share-desc" data-t="share_desc">직원들에게 이 링크를 보내면 모든 앱에 접근 가능합니다</p>
+  <img class="qr" id="qrCode" src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https://specialmasterdj-sketch.github.io/kfood-guide/apps.html" alt="QR Code">
+  <div class="share-url-row">
+    <input id="shareUrl" type="text" value="https://specialmasterdj-sketch.github.io/kfood-guide/apps.html" readonly>
+    <button onclick="copyLink()" data-t="share_copy">복사</button>
+  </div>
+  <button class="share-btn" onclick="shareApps()" data-t="share_btn">📤 공유하기</button>
+</div>
+
+<script>
+function copyLink(){
+  var inp=document.getElementById('shareUrl');
+  inp.select();
+  document.execCommand('copy');
+  var btn=event.target;
+  var orig=btn.textContent;
+  btn.textContent='✓';
+  setTimeout(function(){btn.textContent=T[localStorage.getItem('kimchi_lang')||'ko'].share_copy||'복사';},1500);
+}
+function shareApps(){
+  if(navigator.share){
+    navigator.share({title:'Kimchi Mart Apps',text:'김치마트 매니저 앱 & 도구',url:'https://specialmasterdj-sketch.github.io/kfood-guide/apps.html'});
+  }else{copyLink();}
+}
+</script>
+
+<script>
+// ============ I18N ============
+const T = {
+  ko: {
+    subtitle:'매니저 앱 & 도구',
+    login_lbl:'로그인 / 본인 등록',
+    greeting_morning:'좋은 아침이에요 ☀️',
+    greeting_afternoon:'오늘도 수고하세요 ✨',
+    greeting_evening:'마감 잘 부탁드려요 🌙',
+    greeting_night:'안전 마감 부탁해요 🌙',
+    greeting_default:'오늘도 수고하세요 ✨',
+    greeting_named:'{n}님, ',
+    sec_comm:'커뮤니케이션',
+    sec_ops:'매장 운영',
+    sec_rewards:'고객 멤버십',
+    sec_training:'트레이닝',
+    sec_other:'기타 시스템',
+    stat_chat_lbl:'안 읽은 메시지',
+    stat_tasks_lbl:'진행 업무',
+    stat_expiry_lbl:'유통기한 임박',
+    chat_name:'채팅 / 사진 게시판',
+    chat_edit_name:'채팅 메시지 편집 (관리자)',
+    staff_phones_name:'직원 전화번호 등록 (관리자)',
+    staff_phones_desc:'등록한 직원은 전화번호+문자코드로 바로 로그인 (PIN·승인 불필요)',
+    chat_edit_desc:'평가방 메시지 sender / 본문 수정 + 삭제',
+    bs_name:'화장실 청소 스케줄',
+    bs_desc:'월간 달력 · 직원 배정 · 일괄 분배 · 매장별 · 매니저 전용',
+    chat_desc:'방별 메시지 + 사진 멀티 업로드',
+    dr_name:'일일 매니저 보고',
+    dr_desc:'근무·직원 활동·냉동/냉장·벤더 배달/발주·이슈 → 매니저 룸 발송',
+    sm_name:'매장 도면 — 실시간 재고',
+    sm_desc:'영역 클릭 → 🟢 정상 / 🟡 부족 / 🔴 품절 + 메모 즉시 기록. 매장 한눈에 파악.',
+    hwf_name:'헐리우드 매장 3D 도면',
+    hwf_desc:'입체 isometric 매대 배치 — 통로·매대 클릭 후 드래그로 위치/크기 편집 가능.',
+    ps_name:'야채/과일 재고 체크',
+    ps_desc:'매장 돌면서 카운트 → 발주 필요 품목 자동 표시',
+    ms_name:'정육 재고 체크',
+    ms_desc:'소/돼지/가금 — Sysco · A&D · Namdaemun 벤더별 발주 리스트',
+    ss_name:'해산물 재고 체크',
+    ss_desc:'생선·새우·오징어·알류·젓갈 — Namdaemun 위주 벤더별 발주',
+    pa_name:'가격표 감사',
+    pa_desc:'매대 QR 스캔 → 가격표 점검 · 수정완료(POS 출력) · 사진 기록',
+    vs_name:'음성 재고',
+    vs_desc:'말로 재고 기록 — "양파 3박스" 하면 자동 입력 · 합계 · CSV',
+    lb_name:'활동 순위',
+    lb_desc:'전 직원 활동 점수 — 채팅·등록·체크·폐기 종합',
+    app1_name:'K-Food 제조 가이드',
+    app1_desc:'반찬/김밥/도시락 제조 매뉴얼 + YouTube 레시피',
+    app2_name:'정육 트레이닝 가이드',
+    app2_desc:'정육 커팅 매뉴얼 + 영상 가이드 (EN/KO/ES)',
+    app_temp_name:'온도 관리 (Temp Tracker)',
+    app_temp_desc:'냉장·냉동 QR 스캔 → 오전·오후·마감 자동 슬롯 + 채팅방 자동 보고',
+    app_oc_name:'일일 평가',
+    app_oc_desc:'부문별 지시·보고 — 별도 앱 · ADMIN PIN 필요',
+    app_pt_name:'가격표 생성기',
+    app_pt_desc:'캔바 대체 — 바코드 스캔·폰↔PC 동기화·4가지 사이즈 인쇄',
+    app_cg_name:'Canva 가격표 갤러리',
+    app_cg_desc:'2,610 페이지 검색·즐겨찾기·가격 덮어쓰기·일괄 인쇄 (로컬)',
+    app3_name:'물류 시스템',
+    app3_desc:'물류/재고 관리 시스템',
+    app5_name:'김치 쇼핑 앱',
+    app5_desc:'온라인 쇼핑 웹사이트',
+    app6_name:'인보이스 시스템',
+    app6_desc:'인보이스 정리 + 가격 비교 시스템',
+    app7_name:'상품조회',
+    app7_desc:'바코드 스캔 / 지점별 판매가 조회',
+    app8_name:'인보이스 가격비교',
+    app8_desc:'PDF 인보이스 → 엑셀 변환 → Vela POS와 가격 비교',
+    app9_name:'POS COST 필터',
+    app9_desc:'매일 받은 POS 엑셀에서 COST 있는 상품만 뽑아 저장',
+    vc_name:'벤더 오더 센타',
+    vc_desc:'공급사별 주문 앱 모음 (Wang Global · Wismettac 등)',
+    app5b_name:'김치 쇼핑 (도어대시 스타일)',
+    app5b_desc:'배달앱 스타일 쇼핑 — 카테고리 아이콘 / 할인 카로셀 / 재고 표시',
+    rewards_name:'KIMCHI MART 멤버십 앱',
+    rewards_desc:'손님용 — 포인트 · K1/K2 · 추천 · 임박 특가 (5만 7천명)',
+    pos_import_name:'POS 동기화 (관리자)',
+    pos_import_desc:'Vela CSV → Firebase 자동 import (시간당 1회)',
+    admin_deals_name:'주간 특가 등록 (관리자)',
+    admin_deals_desc:'앱 전용 주간 특가 등록·편집·미리보기',
+    admin_notify_name:'손님 알림 발송 (관리자)',
+    admin_notify_desc:'전체·VIP·휴면고객 등 타겟별 인앱 알림',
+    admin_referrals_name:'추천 통계 (관리자)',
+    admin_referrals_desc:'추천 캠페인 KPI · 상위 추천자 리더보드',
+    counter_name:'카운터 도구 (직원)',
+    counter_desc:'손님 폰 입력 → 등급·할인·포인트 즉시 적립',
+    dormant_name:'휴면 고객 캠페인 (관리자)',
+    dormant_desc:'30·60·90일 휴면 고객 자동 알림 + 보너스 포인트',
+    admin_guide_name:'관리자 사용 가이드',
+    admin_guide_desc:'6개 도구 사용법 (한국어 · English · Español)',
+    admin_newmem_name:'신규 가입자 (Vela 등록 트래킹)',
+    admin_newmem_desc:'앱 가입 손님 → Vela POS 입력 처리 체크',
+    admin_poster_name:'QR 포스터 인쇄',
+    admin_poster_desc:'매장별 가입 QR 포스터 · 카운터에 부착',
+    admin_stats_name:'앱 사용 통계',
+    admin_stats_desc:'DAU · WAU · MAU · 매장별 · 등급별 · 가입 추이',
+    install_title:'📱 핸드폰 홈화면에 설치하는 법',
+    install_step1:'위 앱 링크를 터치해서 열기',
+    install_step2:'<b>iPhone:</b> 하단 공유 버튼(↑) → "홈 화면에 추가"',
+    install_step3:'<b>Android:</b> 메뉴(⋮) → "홈 화면에 추가" 또는 "앱 설치"',
+    install_done:'완료! 앱처럼 홈화면에서 바로 열 수 있습니다',
+    share_title:'🔗 이 페이지 공유하기',
+    share_desc:'직원들에게 이 링크를 보내면 모든 앱에 접근 가능합니다',
+    share_copy:'복사',
+    share_btn:'📤 공유하기'
+  },
+  en: {
+    subtitle:'Manager Apps & Tools',
+    login_lbl:'Sign in',
+    greeting_morning:'Good morning ☀️',
+    greeting_afternoon:'Have a great shift ✨',
+    greeting_evening:'Thanks for closing 🌙',
+    greeting_night:'Safe closing 🌙',
+    greeting_default:'Have a great shift ✨',
+    greeting_named:'{n}, ',
+    sec_comm:'Communication',
+    sec_ops:'Store Operations',
+    sec_rewards:'Customer Rewards',
+    sec_training:'Training',
+    sec_other:'Other Systems',
+    stat_chat_lbl:'Unread messages',
+    stat_tasks_lbl:'Active tasks',
+    stat_expiry_lbl:'Near-expiry items',
+    chat_name:'Chat / Photo Board',
+    chat_edit_name:'Edit Chat Messages (Admin)',
+    staff_phones_name:'Staff Phone Registration (Admin)',
+    staff_phones_desc:'Registered staff log in with phone + SMS code (no PIN / approval)',
+    chat_edit_desc:'Fix sender / body of eval-room messages + delete',
+    bs_name:'Bathroom Cleaning Schedule',
+    bs_desc:'Monthly calendar · Assign staff · Bulk distribute · Per branch · Manager only',
+    chat_desc:'Per-room messages + multi photo upload',
+    dr_name:'Daily Manager Report',
+    dr_desc:'Shift · staff activity · freezer/cooler · vendor deliveries/orders · issues → Manager Room',
+    sm_name:'Store Map — Live Stock',
+    sm_desc:'Click any zone → 🟢 OK / 🟡 Low / 🔴 Out + memo. See whole store at a glance.',
+    hwf_name:'Hollywood Store 3D Layout',
+    hwf_desc:'Isometric fixture layout — click & drag to move/resize aisles and shelves.',
+    ps_name:'Produce / Fruit Stock Check',
+    ps_desc:'Count while walking the store → auto-flag items needing reorder',
+    ms_name:'Meat Stock Check',
+    ms_desc:'Beef/Pork/Poultry — Sysco · A&D · Namdaemun per-vendor order list',
+    ss_name:'Seafood Stock Check',
+    ss_desc:'Fish · Shrimp · Squid · Roe · Salted — Namdaemun-centric vendor orders',
+    pa_name:'Price Tag Audit',
+    pa_desc:'Scan shelf QR → check tags, fix (POS print), photo log',
+    vs_name:'Voice Stock Count',
+    vs_desc:'Speak your count — "onions 3 boxes" auto-logs · totals · CSV',
+    lb_name:'Activity Rank',
+    lb_desc:'All-employee activity score — chat / register / check / discard combined',
+    app1_name:'K-Food Production Guide',
+    app1_desc:'Banchan/Kimbap/Lunchbox manual + YouTube recipes',
+    app2_name:'Meat Training Guide',
+    app2_desc:'Meat cutting manual + video guide (EN/KO/ES)',
+    app_temp_name:'Temp Tracker',
+    app_temp_desc:'QR-scan fridge/freezer → Morning/Afternoon/Closing slots + auto chat reports',
+    app_oc_name:'Daily Evaluation',
+    app_oc_desc:'Department orders & reports — separate app · ADMIN PIN required',
+    app_pt_name:'Price Tag Generator',
+    app_pt_desc:'Canva replacement — barcode scan · phone↔PC sync · 4 print sizes',
+    app_cg_name:'Canva Price Tag Gallery',
+    app_cg_desc:'2,610 pages · search · favorites · price overlay · batch print (local)',
+    app3_name:'Logistics System',
+    app3_desc:'Logistics/inventory management system',
+    app5_name:'Kimchi Shop App',
+    app5_desc:'Online shopping website',
+    app6_name:'Invoice System',
+    app6_desc:'Invoice organizer + price comparison system',
+    app7_name:'Product Lookup',
+    app7_desc:'Barcode scan / per-branch price lookup',
+    app8_name:'Invoice Price Compare',
+    app8_desc:'PDF invoice → Excel → compare against Vela POS',
+    app9_name:'POS COST Filter',
+    app9_desc:'Keep only rows with COST from the daily POS export',
+    vc_name:'Vendor Order Center',
+    vc_desc:'Per-supplier order apps (Wang Global · Wismettac, etc.)',
+    app5b_name:'Kimchi Shop (Doordash Style)',
+    app5b_desc:'Delivery-app style shopping — category icons / promo carousel / stock badges',
+    rewards_name:'KIMCHI MART Rewards App',
+    rewards_desc:'Customer-facing — points · K1/K2 · refer · expiring deals (57K members)',
+    pos_import_name:'POS Sync (Admin)',
+    pos_import_desc:'Vela CSV → Firebase auto-import (hourly)',
+    admin_deals_name:'Weekly Deals Editor (Admin)',
+    admin_deals_desc:'Create / edit / preview app-only weekly deals',
+    admin_notify_name:'Member Notifications (Admin)',
+    admin_notify_desc:'In-app push to all / VIP / dormant / by store',
+    admin_referrals_name:'Referral Stats (Admin)',
+    admin_referrals_desc:'Campaign KPIs + top-referrer leaderboard',
+    counter_name:'Counter Tool (Staff)',
+    counter_desc:'Phone lookup → tier/discount/points apply',
+    dormant_name:'Win-Back Campaign (Admin)',
+    dormant_desc:'30/60/90-day dormant push + auto bonus points',
+    admin_guide_name:'Admin Quick Guide',
+    admin_guide_desc:'How to run all 6 tools (KO · EN · ES)',
+    admin_newmem_name:'New Members (Vela tracking)',
+    admin_newmem_desc:'Track app sign-ups → enter into Vela POS',
+    admin_poster_name:'QR Poster (print)',
+    admin_poster_desc:'Per-store sign-up QR poster · post at register',
+    admin_stats_name:'App usage stats',
+    admin_stats_desc:'DAU / WAU / MAU + store / tier / sign-up trend',
+    install_title:'📱 How to install on your home screen',
+    install_step1:'Tap an app link above to open it',
+    install_step2:'<b>iPhone:</b> Tap Share (↑) → "Add to Home Screen"',
+    install_step3:'<b>Android:</b> Menu (⋮) → "Add to Home Screen" or "Install App"',
+    install_done:'Done! You can now open it directly from your home screen',
+    share_title:'🔗 Share this page',
+    share_desc:'Send this link to staff so they can access every app',
+    share_copy:'Copy',
+    share_btn:'📤 Share'
+  },
+  es: {
+    subtitle:'Apps y Herramientas para Gerentes',
+    login_lbl:'Iniciar sesión',
+    greeting_morning:'Buen día ☀️',
+    greeting_afternoon:'¡Buen turno! ✨',
+    greeting_evening:'Gracias por cerrar 🌙',
+    greeting_night:'Cierre seguro 🌙',
+    greeting_default:'¡Buen turno! ✨',
+    greeting_named:'{n}, ',
+    sec_comm:'Comunicación',
+    sec_ops:'Operaciones',
+    sec_rewards:'Lealtad de Clientes',
+    sec_training:'Capacitación',
+    sec_other:'Otros Sistemas',
+    stat_chat_lbl:'Mensajes sin leer',
+    stat_tasks_lbl:'Tareas activas',
+    stat_expiry_lbl:'Próximos a vencer',
+    chat_name:'Chat / Panel de Fotos',
+    chat_edit_name:'Editar Mensajes (Admin)',
+    staff_phones_name:'Registro de Teléfono de Personal (Admin)',
+    staff_phones_desc:'El personal registrado inicia con teléfono + código SMS (sin PIN / aprobación)',
+    chat_edit_desc:'Corregir remitente / cuerpo de mensajes de evaluación + eliminar',
+    bs_name:'Horario Limpieza Baños',
+    bs_desc:'Calendario mensual · Asignar personal · Distribución masiva · Por sucursal · Solo gerentes',
+    chat_desc:'Mensajes por sala + carga múltiple de fotos',
+    dr_name:'Reporte Diario de Gerente',
+    dr_desc:'Turno · actividad del personal · congelador/refri · entregas/pedidos de proveedores · incidentes → Sala de Gerentes',
+    sm_name:'Plano — Stock en Vivo',
+    sm_desc:'Clic en cualquier zona → 🟢 OK / 🟡 Bajo / 🔴 Sin stock + nota. Vista completa de la tienda.',
+    hwf_name:'Plano 3D — Hollywood',
+    hwf_desc:'Distribución isométrica — clic y arrastrar para mover/redimensionar pasillos y estantes.',
+    ps_name:'Inventario de Frutas y Verduras',
+    ps_desc:'Conteo recorriendo la tienda → marca automática de artículos a reordenar',
+    ms_name:'Inventario de Carnicería',
+    ms_desc:'Res/Cerdo/Aves — lista de pedidos por proveedor Sysco · A&D · Namdaemun',
+    ss_name:'Inventario de Mariscos',
+    ss_desc:'Pescado · Camarón · Calamar · Huevas · Salados — pedidos por proveedor (Namdaemun)',
+    pa_name:'Auditoría de Etiquetas',
+    pa_desc:'Escanea QR del estante → revisar precios, corregir (POS), foto',
+    vs_name:'Inventario por Voz',
+    vs_desc:'Habla tu conteo — "cebolla 3 cajas" se registra solo · totales · CSV',
+    lb_name:'Ranking de Actividad',
+    lb_desc:'Puntaje de actividad de todos los empleados — chat / registro / control / descarte',
+    app1_name:'Guía de Producción K-Food',
+    app1_desc:'Manual de producción + recetas YouTube',
+    app2_name:'Guía de Entrenamiento de Carne',
+    app2_desc:'Manual de corte de carne + guía en video',
+    app_temp_name:'Control de Temperatura (Temp Tracker)',
+    app_temp_desc:'QR refri/congelador → turnos Mañana/Tarde/Cierre + reportes automáticos al chat',
+    app_oc_name:'Evaluación Diaria',
+    app_oc_desc:'Órdenes por departamento — app separada · se requiere ADMIN PIN',
+    app_pt_name:'Generador de Etiquetas',
+    app_pt_desc:'Reemplazo de Canva — escaneo · sync teléfono↔PC · 4 tamaños',
+    app_cg_name:'Galería de Etiquetas Canva',
+    app_cg_desc:'2,610 páginas · búsqueda · favoritos · sobreescribir precios · imprimir (local)',
+    app3_name:'Sistema de Logística',
+    app3_desc:'Sistema de logística/inventario',
+    app5_name:'Kimchi Shop App',
+    app5_desc:'Sitio web de compras en línea',
+    app6_name:'Sistema de Facturas',
+    app6_desc:'Sistema de facturas + comparación de precios',
+    app7_name:'Búsqueda de Productos',
+    app7_desc:'Escaneo de código / precios por sucursal',
+    app8_name:'Comparar Precios de Facturas',
+    app8_desc:'PDF factura → Excel → comparar con Vela POS',
+    app9_name:'Filtro COST de POS',
+    app9_desc:'Extraer solo productos con COST del Excel diario',
+    vc_name:'Centro de Pedidos de Proveedores',
+    vc_desc:'Apps de pedido por proveedor (Wang Global · Wismettac, etc.)',
+    app5b_name:'Kimchi Shop (Estilo Doordash)',
+    app5b_desc:'Compras estilo app de delivery — categorías / ofertas / stock',
+    rewards_name:'App de Lealtad KIMCHI MART',
+    rewards_desc:'Para clientes — puntos · K1/K2 · referidos · ofertas (57K miembros)',
+    pos_import_name:'Sincronización POS (Admin)',
+    pos_import_desc:'Vela CSV → Firebase importación automática (cada hora)',
+    admin_deals_name:'Editor de Ofertas Semanales (Admin)',
+    admin_deals_desc:'Crear, editar y previsualizar ofertas exclusivas de la app',
+    admin_notify_name:'Notificaciones a Clientes (Admin)',
+    admin_notify_desc:'Push in-app a todos / VIP / inactivos / por tienda',
+    admin_referrals_name:'Estadísticas de Referidos (Admin)',
+    admin_referrals_desc:'KPIs de campaña + ranking de mejores referidores',
+    counter_name:'Herramienta de Caja (Personal)',
+    counter_desc:'Buscar teléfono → aplicar nivel/descuento/puntos',
+    dormant_name:'Campaña de Recuperación (Admin)',
+    dormant_desc:'Notificación + puntos a clientes inactivos 30/60/90 días',
+    admin_guide_name:'Guía Rápida de Admin',
+    admin_guide_desc:'Cómo usar las 6 herramientas (KO · EN · ES)',
+    admin_newmem_name:'Nuevos Miembros (Vela)',
+    admin_newmem_desc:'Registros app → entrada en Vela POS',
+    admin_poster_name:'Poster QR (imprimir)',
+    admin_poster_desc:'Poster QR por tienda · poner en caja',
+    admin_stats_name:'Estadísticas de uso',
+    admin_stats_desc:'DAU / WAU / MAU + tienda / nivel / tendencia',
+    install_title:'📱 Cómo instalar en la pantalla de inicio',
+    install_step1:'Toca un enlace de app arriba',
+    install_step2:'<b>iPhone:</b> Compartir (↑) → "Añadir a pantalla de inicio"',
+    install_step3:'<b>Android:</b> Menú (⋮) → "Añadir a pantalla de inicio" o "Instalar app"',
+    install_done:'¡Listo! Ahora puedes abrirla desde tu pantalla de inicio',
+    share_title:'🔗 Compartir esta página',
+    share_desc:'Envía este enlace a los empleados para acceder a todas las apps',
+    share_copy:'Copiar',
+    share_btn:'📤 Compartir'
+  }
+};
+
+function setLang(lang){
+  localStorage.setItem('kimchi_lang', lang);
+  try { localStorage.setItem('hub.lang', lang); } catch(e){}
+  try { localStorage.setItem('tasks.lang', lang); } catch(e){}
+  applyLang(lang);
+  refreshGreeting();
+  window.dispatchEvent(new CustomEvent('km-lang-changed', { detail: lang }));
+}
+window.addEventListener('storage', function(e){
+  if (e.key === 'kimchi_lang' || e.key === 'hub.lang' || e.key === 'tasks.lang'){
+    if (e.newValue) { applyLang(e.newValue); refreshGreeting(); }
+  }
+});
+window.addEventListener('km-lang-changed', function(e){
+  if (e.detail) { applyLang(e.detail); refreshGreeting(); }
+});
+
+function applyLang(lang){
+  var dict = T[lang]; if (!dict) return;
+  document.querySelectorAll('[data-t]').forEach(function(el){
+    var key = el.getAttribute('data-t');
+    if (dict[key] !== undefined) el.innerHTML = dict[key];
+  });
+  document.querySelectorAll('.lang-cluster button').forEach(function(btn){
+    btn.classList.toggle('active', btn.textContent.trim().toLowerCase() === lang);
+  });
+}
+
+// 🌐 스마트 언어 감지 — localStorage 없으면 브라우저 언어 자동 매칭.
+// 마이애미 직원 (스페인어 폰) / 헐리우드 영어 직원 등이 캐시 클리어 후
+// 한국어로 떨어지던 문제 해결 (2026-05-18 전무님 요청).
+function smartDefaultLang(){
+  for (var i=0;i<3;i++){
+    var k = ['kimchi_lang','hub.lang','tasks.lang'][i];
+    var v = null; try { v = localStorage.getItem(k); } catch(e){}
+    if (v === 'ko' || v === 'en' || v === 'es') return v;
+  }
+  var nav = '';
+  try { nav = (navigator.language || navigator.userLanguage || '').slice(0,2).toLowerCase(); } catch(e){}
+  if (nav === 'ko' || nav === 'en' || nav === 'es') return nav;
+  // 🇺🇸 미국 매장 — 기본 폴백 영어. 스페인어 폰은 위 navigator.language 에서 잡힘.
+  return 'en';
+}
+(function(){
+  var lang = smartDefaultLang();
+  // 처음 감지한 언어를 localStorage에도 즉시 저장 → 다른 페이지/탭도 동기화
+  try {
+    if (!localStorage.getItem('kimchi_lang')) localStorage.setItem('kimchi_lang', lang);
+    if (!localStorage.getItem('hub.lang'))    localStorage.setItem('hub.lang', lang);
+    if (!localStorage.getItem('tasks.lang'))  localStorage.setItem('tasks.lang', lang);
+  } catch(e){}
+  applyLang(lang);
+})();
+
+// ============ Time-aware greeting + named ============
+function refreshGreeting(){
+  var lang = localStorage.getItem('kimchi_lang') || 'ko';
+  var dict = T[lang] || T.ko;
+  var h = new Date().getHours();
+  var key = h < 11 ? 'greeting_morning' : h < 16 ? 'greeting_afternoon' : h < 21 ? 'greeting_evening' : 'greeting_night';
+  var base = dict[key] || dict.greeting_default;
+  var me = null; try { me = JSON.parse(localStorage.getItem('chat.me')||'null'); } catch(e){}
+  var prefix = '';
+  if (me && me.name) {
+    var template = dict.greeting_named || '{n}, ';
+    prefix = template.replace('{n}', me.name);
+  }
+  var el = document.getElementById('greeting');
+  if (el) el.textContent = prefix + base;
+}
+
+// ============ Sidebar offset (full-width header) ============
+document.addEventListener('DOMContentLoaded', function(){
+  var sidebar = document.querySelector('.km-navside');
+  var hdr = document.querySelector('.hero');
+  if (sidebar && hdr && window.innerWidth > 760) {
+    var h = hdr.offsetHeight;
+    sidebar.style.top = h + 'px';
+    sidebar.style.height = 'calc(100vh - ' + h + 'px)';
+  }
+  refreshGreeting();
+});
+
+// ============ User pill ============
+(function(){
+  function loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me')||'null'); } catch(e){ return null; } }
+  function refreshUserPill(){
+    var me = loadMe();
+    var nm = document.getElementById('apps-user-name');
+    var ic = document.getElementById('apps-user-icon');
+    if (!nm) return;
+    if (me && me.name) {
+      nm.textContent = me.name + (me.branch ? ' · ' + me.branch : '');
+      if (ic) ic.textContent = '👤';
+    } else {
+      var lang = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; } })();
+      nm.textContent = ({ko:'로그인 / 본인 등록', en:'Sign in', es:'Iniciar sesión'})[lang] || '로그인 / 본인 등록';
+      if (ic) ic.textContent = '⚠️';
+    }
+    refreshGreeting();
+  }
+  refreshUserPill();
+  window.addEventListener('storage', function(e){ if (e.key === 'chat.me') refreshUserPill(); });
+  window.addEventListener('km-identity-changed', refreshUserPill);
+
+  // 🔐 DevTools 사칭 방어 (2026-05-14, PC 보호)
+  // 사용자가 F12 → chat.me.role 직접 박는 경우, auth-gate.js 가 RTDB 에서
+  // 받은 window.__currentUser.role 이 권위. 1초마다 비교해서 다르면 복구.
+  var MGR_LIST = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
+  function enforceAuthoritativeRole(){
+    try {
+      var cu = window.__currentUser;
+      if (!cu || !cu.uid) return;          // auth-gate 아직 미발화
+      var raw = localStorage.getItem('chat.me');
+      if (!raw) return;
+      var m = JSON.parse(raw);
+      var trueRole = String(cu.role || '');
+      var curRole = String(m.role || '');
+      if (curRole !== trueRole) {
+        m.role = trueRole;
+        m.isManager = MGR_LIST.indexOf(trueRole.toUpperCase()) >= 0;
+        localStorage.setItem('chat.me', JSON.stringify(m));
+        try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
+        console.warn('[security] chat.me.role tampering reverted');
+      }
+    } catch(_){}
+  }
+  window.addEventListener('km-auth-ready', enforceAuthoritativeRole);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') enforceAuthoritativeRole();
+  });
+  setInterval(enforceAuthoritativeRole, 1000);
+
+  // 매니저 전용 카드 (mgr-only 클래스) 표시 토글
+  function applyMgrOnlyVisibility(){
+    try {
+      var me = loadMe();
+      var show = !!(me && me.isManager);
+      document.querySelectorAll('.mgr-only').forEach(function(el){
+        el.style.display = show ? '' : 'none';
+      });
+    } catch(_){}
+  }
+  applyMgrOnlyVisibility();
+  window.addEventListener('km-auth-ready', applyMgrOnlyVisibility);
+  window.addEventListener('km-identity-changed', applyMgrOnlyVisibility);
+})();
+
+// ============ Quick stats fetch ============
+(function(){
+  var FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  var MGR_TOKENS = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR'];
+  function loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me')||'null'); } catch(e){ return null; } }
+  function isManager(me){ if (!me||!me.role) return false; var r=String(me.role).toUpperCase(); return MGR_TOKENS.some(function(t){return r.includes(t.toUpperCase());}); }
+  function normName(s){ return String(s||'').trim().replace(/\s+/g,'_').replace(/[^A-Za-z0-9_가-힣]/g,'').toUpperCase(); }
+  function tsFromMsgId(id){ if (!id || id[0] !== 'm') return 0; var n = parseInt(id.slice(1,14),10); return isFinite(n) ? n : 0; }
+  function lastVisitMap(){ try { return JSON.parse(localStorage.getItem('chat.lastVisit')||'{}'); } catch(e){ return {}; } }
+  function setStat(id, val){ var el=document.getElementById(id); if (el) el.textContent = val; }
+  function setBadge(id, n){
+    var b = document.getElementById(id); if (!b) return;
+    if (n <= 0) { b.style.display = 'none'; return; }
+    b.style.display = ''; b.textContent = n > 99 ? '99+' : String(n);
+  }
+  async function refreshChatUnread(){
+    try {
+      var me = loadMe();
+      var roomsRes = await fetch(FB + '/chat/rooms.json', { cache:'no-store' });
+      var rooms = (await roomsRes.json()) || {};
+      var lv = lastVisitMap();
+      var meKey = normName(me && me.name);
+      var mgr = isManager(me);
+      var roomIds = Object.keys(rooms).filter(function(id){
+        var r = rooms[id] || {};
+        if (id === 'payroll' || id === 'managers') return mgr;
+        if (id.indexOf('dm__') === 0) {
+          if (!Array.isArray(r.members)) return false;
+          return r.members.some(function(n){ return normName(n) === meKey; });
+        }
+        return true;
+      });
+      var lvChanged = false, now = Date.now();
+      roomIds.forEach(function(id){ if (lv[id] === undefined) { lv[id] = now; lvChanged = true; } });
+      if (lvChanged) { try { localStorage.setItem('chat.lastVisit', JSON.stringify(lv)); } catch(e){} }
+      // 🚀 PERF (2026-05-28): chat/rooms 1회 fetch 후 lastTs 비교만으로 unread 방 카운트.
+      // 이전: 각 방마다 chat/messages/<id>.json shallow fetch (100+ requests).
+      // 이제: 0 추가 fetch. badge 는 정확한 메시지 개수 대신 안 읽은 방 개수.
+      var unreadRoomCount = 0;
+      roomIds.forEach(function(id){
+        var r = rooms[id] || {};
+        var last = lv[id] || 0;
+        var roomLastTs = r.lastTs || 0;
+        if (roomLastTs > last) unreadRoomCount++;
+      });
+      setBadge('chat-unread-badge', unreadRoomCount);
+      setStat('stat-chat', unreadRoomCount);
+    } catch(e){ console.warn('[apps] chat unread fetch failed', e); setStat('stat-chat', '—'); }
+  }
+
+  // Tasks count — RTDB /tasks 가 있으면 시도. 없으면 — 표시.
+  async function refreshTasks(){
+    try {
+      var me = loadMe();
+      var branch = me && me.branch;
+      var url = branch ? (FB + '/tasks/' + branch + '.json?shallow=true') : (FB + '/tasks.json?shallow=true');
+      var r = await fetch(url, { cache:'no-store' });
+      if (!r.ok) { setStat('stat-tasks', '—'); return; }
+      var v = await r.json();
+      if (!v) { setStat('stat-tasks', 0); return; }
+      setStat('stat-tasks', Object.keys(v).length);
+    } catch(e){ setStat('stat-tasks', '—'); }
+  }
+
+  // Expiry imminent — d3 + over (status !== discarded)
+  async function refreshExpiry(){
+    try {
+      var me = loadMe();
+      var branch = (me && me.branch) || 'MIAMI';
+      var settingsR = await fetch(FB + '/expiry/' + branch + '/settings.json', { cache:'no-store' });
+      var settings = (settingsR.ok ? (await settingsR.json()) : null) || { warn:3, danger:1 };
+      var prodR = await fetch(FB + '/expiry/' + branch + '/products.json', { cache:'no-store' });
+      if (!prodR.ok) { setStat('stat-expiry', '—'); return; }
+      var v = await prodR.json();
+      if (!v) { setStat('stat-expiry', 0); return; }
+      var today = new Date(); today.setHours(0,0,0,0);
+      var n = 0;
+      Object.values(v).forEach(function(p){
+        if (!p || p.status === 'discarded' || !p.expiry) return;
+        var e = new Date(p.expiry); e.setHours(0,0,0,0);
+        var diff = Math.round((e - today) / 86400000);
+        if (diff <= (settings.warn || 3)) n += (p.qty || 1);
+      });
+      setStat('stat-expiry', n);
+    } catch(e){ setStat('stat-expiry', '—'); }
+  }
+
+  function refreshAll(){
+    refreshChatUnread();
+    refreshTasks();
+    refreshExpiry();
+  }
+  refreshAll();
+  setInterval(function(){ if (document.visibilityState === 'visible') refreshAll(); }, 30000);
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') refreshAll(); });
+  window.addEventListener('storage', function(e){ if (e.key === 'chat.lastVisit' || e.key === 'chat.me') refreshAll(); });
+})();
+
+// ============ Inline Identity Picker ============
+// 이전엔 pill 클릭 시 chat.html?openMe=1 으로 navigation 했는데 폰에서 chat.html
+// 무거워서 로드 중 튕김. 인라인 picker 로 navigation 없이 같은 자리에서 처리.
+(function(){
+  var BRANCHES = [
+    { id:'MIAMI',          ko:'마이애미',       en:'Miami',           es:'Miami' },
+    { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines',  es:'Pembroke Pines' },
+    { id:'HOLLYWOOD',      ko:'할리우드',       en:'Hollywood',       es:'Hollywood' },
+    { id:'CORAL_SPRINGS',  ko:'코럴 스프링스',  en:'Coral Springs',   es:'Coral Springs' },
+    { id:'LASOLAS',        ko:'라스올라스',     en:'Las Olas',        es:'Las Olas' },
+    { id:'WEST_PALM',      ko:'웨스트 팜 비치', en:'West Palm Beach', es:'West Palm Beach' },
+  ];
+  var FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  function getLang(){ try { return localStorage.getItem('kimchi_lang')||'ko'; } catch(e){ return 'ko'; }}
+  function loadMe(){ try { return JSON.parse(localStorage.getItem('chat.me')||'null'); } catch(e){ return null; }}
+  function escHtml(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
+
+  // OWNER 라벨 숨김 (DJ 본인은 유지)
+  function roleSuffix(role, name){
+    var r = String(role||'').toUpperCase();
+    if (!r) return '';
+    if (r === 'OWNER' && String(name||'').toUpperCase() !== 'DJ') return '';
+    return ' (' + role + ')';
+  }
+
+  function ensureModal(){
+    if (document.getElementById('idPickerOv')) return;
+    var L = getLang();
+    var TXT = {
+      ko: { title:'본인 정보 변경', branch:'📍 지점', name:'👤 이름 선택', custom:'또는 직접 입력', save:'💾 저장', cancel:'취소', loading:'⏳ 로딩…', noList:'— 명단 없음, 직접 입력 —', sel:'— 직접 입력 —', logout:'🚪 로그아웃 (다른 계정)', confirmLogout:'정말 로그아웃 하시겠습니까?\n다른 사람이 이 PC/폰을 쓸 때 필요합니다.' },
+      en: { title:'Change Identity', branch:'📍 Branch', name:'👤 Pick name', custom:'Or type name', save:'💾 Save', cancel:'Cancel', loading:'⏳ Loading…', noList:'— No list, type name —', sel:'— Type custom —', logout:'🚪 Sign out (different account)', confirmLogout:'Sign out?\nUse this when someone else needs this PC/phone.' },
+      es: { title:'Cambiar Identidad', branch:'📍 Sucursal', name:'👤 Elegir nombre', custom:'O escribir nombre', save:'💾 Guardar', cancel:'Cancelar', loading:'⏳ Cargando…', noList:'— Sin lista, escriba —', sel:'— Personalizado —', logout:'🚪 Cerrar sesión (otra cuenta)', confirmLogout:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.' },
+    };
+    var t = TXT[L] || TXT.ko;
+    var ov = document.createElement('div');
+    ov.id = 'idPickerOv';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:none;align-items:center;justify-content:center;padding:18px;font-family:"Segoe UI","Malgun Gothic",Arial,sans-serif';
+    ov.innerHTML = ''
+      + '<div style="background:#fff;border-radius:18px;max-width:420px;width:100%;padding:22px 20px;box-shadow:0 8px 30px rgba(0,0,0,.25);color:#0f172a">'
+      + '  <h3 style="font-size:1.1em;font-weight:800;color:#1a5c3a;margin-bottom:14px;text-align:center">'+escHtml(t.title)+'</h3>'
+      + '  <label style="display:block;font-size:.84em;font-weight:700;color:#475569;margin-bottom:6px">'+escHtml(t.branch)+'</label>'
+      + '  <select id="idPickBranch" style="width:100%;padding:13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:16px;font-family:inherit;outline:0;background:#fff;cursor:pointer;margin-bottom:12px;min-height:48px">'
+      + BRANCHES.map(function(b){ return '<option value="'+b.id+'">'+escHtml(b[L]||b.ko)+'</option>'; }).join('')
+      + '  </select>'
+      + '  <label style="display:block;font-size:.84em;font-weight:700;color:#475569;margin-bottom:6px">'+escHtml(t.name)+'</label>'
+      + '  <select id="idPickName" style="width:100%;padding:13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:16px;font-family:inherit;outline:0;background:#fff;cursor:pointer;margin-bottom:8px;min-height:48px">'
+      + '    <option value="">'+escHtml(t.loading)+'</option>'
+      + '  </select>'
+      + '  <input id="idPickCustom" type="text" placeholder="'+escHtml(t.custom)+'" autocomplete="name" autocapitalize="words" style="width:100%;padding:13px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:16px;font-family:inherit;outline:0;margin-bottom:14px;min-height:48px;box-sizing:border-box">'
+      + '  <div style="display:flex;gap:8px;margin-bottom:10px">'
+      + '    <button type="button" onclick="closeIdentityPicker()" style="flex:1;background:#f1f5f9;color:#374151;border:0;border-radius:10px;padding:13px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;min-height:48px">'+escHtml(t.cancel)+'</button>'
+      + '    <button type="button" onclick="saveIdentityPicker()" style="flex:1;background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:13px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit;min-height:48px">'+escHtml(t.save)+'</button>'
+      + '  </div>'
+      + '  <div style="border-top:1px solid #e5e7eb;padding-top:10px">'
+      + '    <button type="button" onclick="signOutIdentity()" style="width:100%;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:10px;padding:11px;font-weight:700;font-size:.9em;cursor:pointer;font-family:inherit;min-height:44px">'+escHtml(t.logout)+'</button>'
+      + '  </div>'
+      + '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){ if (e.target === ov) closeIdentityPicker(); });
+    // 지점 변경 시 이름 dropdown 새로 채움
+    document.getElementById('idPickBranch').addEventListener('change', loadIdPickerNames);
+  }
+
+  function normalizeEmployees(arr){
+    if (!Array.isArray(arr)) return [];
+    return arr.map(function(e){
+      if (!e) return null;
+      if (typeof e === 'string') return { name: e.trim() };
+      var name = String(e.name||e.fullName||e.displayName||'').trim();
+      if (!name) return null;
+      return { name: name, role: String(e.role||'').trim() };
+    }).filter(Boolean);
+  }
+
+  async function loadIdPickerNames(){
+    var L = getLang();
+    var noListMsg = ({ko:'— 명단 없음, 직접 입력 —', en:'— No list, type name —', es:'— Sin lista, escriba —'})[L] || '— 명단 없음 —';
+    var sel = document.getElementById('idPickName');
+    if (!sel) return;
+    var branchId = document.getElementById('idPickBranch').value;
+    var employees = [], owners = [];
+    try {
+      var cached = JSON.parse(localStorage.getItem('shifts.'+branchId) || 'null');
+      if (cached && cached.employees) employees = normalizeEmployees(cached.employees);
+    } catch(_){}
+    try {
+      var g = JSON.parse(localStorage.getItem('shifts.global') || 'null');
+      if (g && g.owners) owners = normalizeEmployees(g.owners);
+    } catch(_){}
+    // RTDB 보강
+    try {
+      var r = await fetch(FB_DB_URL + '/schedules/' + branchId + '.json', { cache:'no-store' });
+      if (r.ok) {
+        var d = await r.json();
+        if (d && d.employees) {
+          var fresh = normalizeEmployees(d.employees);
+          if (fresh.length) employees = fresh;
+        }
+      }
+    } catch(_){}
+    if (!owners.length) {
+      try {
+        var rg = await fetch(FB_DB_URL + '/schedules/_global.json', { cache:'no-store' });
+        if (rg.ok) {
+          var dg = await rg.json();
+          if (dg && dg.owners) owners = normalizeEmployees(dg.owners);
+        }
+      } catch(_){}
+    }
+    // 🔐 owners 리스트에 들어있는 entry 는 role 라벨이 없어도 매니저급 취급.
+    // 이전 fix 에선 role 필드만 보고 필터해서, role:'' 인 DJ 같은 entry 가 그대로 dropdown 에 노출됨.
+    owners = owners.map(function(e){ return Object.assign({}, e, { role: e.role || 'OWNER', _fromOwners: true }); });
+    var all = owners.concat(employees);
+    var me = loadMe();
+    // 🔐 한/영/스페인어 매니저 라벨 모두 매칭. 단순 비교 X — 부분 매칭(.includes).
+    var MGR_TOK = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR'];
+    function _isMgrRole(role){
+      var u = String(role||'').toUpperCase();
+      if (!u) return false;
+      return MGR_TOK.some(function(t){ return u.indexOf(t.toUpperCase()) >= 0; });
+    }
+    // 🔐 SECURITY (2026-05-14): chat.me.role 이 이전 매니저 세션에서 남아있을 수
+    // 있어서, 이름을 schedule 에서 다시 조회해 진짜 역할 판단. 예) Erika 가 이름은
+    // 'Erika Garcia' 인데 chat.me.role 이 'EXECUTIVE' 로 남아있어도 staff 로 인식.
+    function _meIsActuallyManager(){
+      if (!me) return false;
+      if (me.name){
+        var entry = all.find(function(e){ return e.name === me.name; });
+        if (entry) return !!(entry._fromOwners || _isMgrRole(entry.role));
+      }
+      return _isMgrRole(me.role);
+    }
+    var meIsMgr = _meIsActuallyManager();
+    var filtered = all.filter(function(e){
+      var isMgrEntry = e._fromOwners || _isMgrRole(e.role);
+      if (!isMgrEntry) return true;
+      if (meIsMgr) return true;
+      if (me && me.name && me.name === e.name) return true;
+      return false;                                    // 그 외엔 숨김
+    });
+    if (!filtered.length) {
+      sel.innerHTML = '<option value="">'+escHtml(noListMsg)+'</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">— ' + ({ko:'직접 입력', en:'Type custom', es:'Personalizado'})[L] + ' —</option>'
+      + filtered.map(function(e){
+          var r = String(e.role||'').toUpperCase();
+          var hideOwner = (r === 'OWNER' && String(e.name||'').toUpperCase() !== 'DJ');
+          var suffix = (r && !hideOwner) ? ' ('+e.role+')' : '';
+          var selected = (me && me.name === e.name) ? ' selected' : '';
+          return '<option value="'+escHtml(e.name)+'" data-role="'+escHtml(e.role)+'">'+escHtml(e.name)+suffix+'</option>';
+        }).join('');
+  }
+
+  async function openIdentityPicker(){
+    ensureModal();
+    var ov = document.getElementById('idPickerOv');
+    ov.style.display = 'flex';
+    var me = loadMe();
+    if (me && me.branch) document.getElementById('idPickBranch').value = me.branch;
+    if (me && me.name) document.getElementById('idPickCustom').value = me.name;
+    await loadIdPickerNames();
+  }
+
+  function closeIdentityPicker(){
+    var ov = document.getElementById('idPickerOv');
+    if (ov) ov.style.display = 'none';
+  }
+
+  function saveIdentityPicker(){
+    var br = document.getElementById('idPickBranch');
+    var nm = document.getElementById('idPickName');
+    var cx = document.getElementById('idPickCustom');
+    if (!br || !nm) return;
+    var brVal = br.value;
+    var nmVal = nm.value || cx.value;
+    if (!nmVal || !brVal) return;
+    var me = { name: nmVal.trim(), branch: brVal };
+    try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(e){}
+    try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
+    closeIdentityPicker();
+  }
+
+  function signOutIdentity(){
+    var L = getLang();
+    var msg = ({ko:'정말 로그아웃 하시겠습니까?\n다른 사람이 이 PC/폰을 쓸 때 필요합니다.',en:'Sign out?\nUse this when someone else needs this PC/phone.',es:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.'})[L];
+    if (confirm(msg)) {
+      try { localStorage.removeItem('chat.me'); } catch(e){}
+      try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
+      closeIdentityPicker();
+    }
+  }
+
+  window.openIdentityPicker = openIdentityPicker;
+  window.closeIdentityPicker = closeIdentityPicker;
+  window.saveIdentityPicker = saveIdentityPicker;
+  window.signOutIdentity = signOutIdentity;
+
+  function onUserPillClick(){
+    openIdentityPicker();
+  }
+  window.onUserPillClick = onUserPillClick;
+})();
+</script>
+
+</body>
+</html>
