@@ -6264,7 +6264,13 @@ function subscribeTasks(){
     // subscribe to today across all branches and merge
     TASKS = [];
     let firstByBranch = {};
-    BRANCHES.forEach(b => {
+    // 🚀 2026-07-15 (로딩 체감 개선, 사장님 지시) — 5지점 동시 다운로드가 끝나야 첫 화면이
+    //   뜨던 것을, 지금 보고 있는 지점 먼저 구독해 즉시 렌더 → 나머지 4지점은 1.2초 뒤.
+    //   사진 base64 가 박힌 날 수 MB × 5 를 기다리던 문제. 총 데이터양 동일, 첫 페인트만 앞당김.
+    const _subToken = (subscribeTasks.__token = (subscribeTasks.__token || 0) + 1);
+    let _prio = (typeof MGR_BRANCH !== 'undefined' && MGR_BRANCH) || _canonBranchId(me && me.branch) || '';
+    if (!BRANCHES.some(b => b.id === _prio)) _prio = (BRANCHES[0] && BRANCHES[0].id) || '';
+    const _subOne = (b) => {
       const r = window.__fb.ref(window.__fb.db, 'tasks/'+b.id+'/'+todayStr());
       taskUnsubs.push(window.__fb.onValue(r, snap => {   // 🔴 핸들 저장 → 재구독 시 해제
         const v = snap.val() || {};
@@ -6276,6 +6282,13 @@ function subscribeTasks(){
         autoMigrateProduceTasks(TASKS);
         autoMigrateTaskPoints(TASKS);
       }));
+    };
+    BRANCHES.forEach(b => {
+      if (b.id === _prio) { _subOne(b); return; }
+      setTimeout(() => {
+        if (subscribeTasks.__token !== _subToken) return;   // 그 사이 재구독됐으면 이 지연 구독은 폐기
+        _subOne(b);
+      }, 1200);
     });
   } else {
     // 🔧 2026-05-30 — 직원 매장 해석.
@@ -8948,8 +8961,48 @@ function setMgrBranch(b){
 }
 window.setMgrBranch = setMgrBranch;
 window.refreshMgrBranchFilter = refreshMgrBranchFilter;
+// 🚀 2026-07-15 (로딩 체감 개선) — 거대 base64 완료사진을 innerHTML 에 직접 넣으면
+//   사진 많은 날 매니저 뷰 HTML 문자열이 수십 MB 로 폭발해 렌더가 수 초 걸림
+//   (채팅 평가방과 동일 원인). base64 는 placeholder 만 그리고, 화면에 보일 때
+//   IntersectionObserver 로 .src 를 채움. 일반 URL 사진은 기존 그대로.
+let MGR_HUGE = {}, MGR_HUGE_SEQ = 0, __mgrHugeObs = null;
+function _mgrThumb(u, title, extraStyle){
+  if (typeof u === 'string' && u.length > 5000) {
+    const k = 'mh' + (MGR_HUGE_SEQ++);
+    MGR_HUGE[k] = u;
+    return `<img loading="lazy" class="thumb mgr-huge" data-mh="${k}" title="${title}" style="${extraStyle||''}background:#e5e7eb">`;
+  }
+  return `<img loading="lazy" class="thumb" src="${u}" onclick="openLb('${u}')" title="${title}" style="${extraStyle||''}">`;
+}
+function applyMgrHugePhotos(cont){
+  try {
+    // 데이터를 노드에 직접 붙임 — 다음 렌더가 MGR_HUGE 를 리셋해도 옵저버 콜백은 안전
+    cont.querySelectorAll('img.mgr-huge[data-mh]:not([src])').forEach(img => {
+      const k = img.getAttribute('data-mh');
+      if (k && MGR_HUGE[k] && !img.__mhSrc) img.__mhSrc = MGR_HUGE[k];
+    });
+    const targets = cont.querySelectorAll('img.mgr-huge[data-mh]:not([src])');
+    if (!targets.length) return;
+    const load = (img) => {
+      const s = img.__mhSrc;
+      if (s && !img.src) {
+        img.src = s;
+        img.style.cursor = 'zoom-in';
+        img.onclick = () => { try { openLb(s); } catch(_){} };
+      }
+    };
+    if (typeof IntersectionObserver === 'function') {
+      if (__mgrHugeObs) { try { __mgrHugeObs.disconnect(); } catch(_){} }
+      __mgrHugeObs = new IntersectionObserver(es => {
+        es.forEach(en => { if (en.isIntersecting) { load(en.target); try { __mgrHugeObs.unobserve(en.target); } catch(_){} } });
+      }, { rootMargin: '250px 0px' });
+      targets.forEach(img => __mgrHugeObs.observe(img));
+    } else targets.forEach(load);
+  } catch(_){}
+}
 function renderMgr(){
   const tbody = document.getElementById('mgrRows');
+  MGR_HUGE = {}; MGR_HUGE_SEQ = 0;   // 매 렌더 초기화 (누적 방지)
   refreshMgrBranchFilter();
   populateMgrFilters();
   // 매장 필터 — MGR_BRANCH 비어있으면 본인 매장 default, 특정 매장 선택 시 그 매장만
@@ -9015,8 +9068,8 @@ function renderMgr(){
     const locPhotos = Array.isArray(t.locationPhotos) ? t.locationPhotos : [];
     const completePhotos = [...(t.photos||[]), ...clPhotos];
     const photoTiles = [
-      ...locPhotos.map(u => `<img loading="lazy" class="thumb" src="${u}" onclick="openLb('${u}')" title="📍 장소 사진" style="border:2px solid #06b6d4;box-shadow:0 0 0 1px #fff inset">`),
-      ...completePhotos.map(u => `<img loading="lazy" class="thumb" src="${u}" onclick="openLb('${u}')" title="✅ 완료 사진">`),
+      ...locPhotos.map(u => _mgrThumb(u, '📍 장소 사진', 'border:2px solid #06b6d4;box-shadow:0 0 0 1px #fff inset;')),
+      ...completePhotos.map(u => _mgrThumb(u, '✅ 완료 사진', '')),
     ];
     const allProof = [...locPhotos, ...completePhotos];
     const photos = photoTiles.slice(0,5).join('')
@@ -9081,6 +9134,7 @@ function renderMgr(){
       <td>${photos || '<span style="color:#d1d5db">-</span>'}${delBtn}</td>
     </tr>${detailRows}`;
   }).join('');
+  applyMgrHugePhotos(tbody);   // 🚀 base64 사진은 화면에 보일 때만 .src 채움
 }
 // 🆕 2026-05-20 — Zone Detail Modal (Smart Zone Map Phase 1).
 // 매니저 뷰 도면에서 zone 클릭 시 호출. 재고 상태 + 메모 입력 + 오늘 그 zone task 표시.
