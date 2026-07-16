@@ -4010,8 +4010,9 @@ function switchTab(t){
   document.getElementById('page-'+t).classList.add('active');
   if (t === 'rep') { renderReport(); renderProofReport(); }
   if (t === 'home') renderDashboard();
-  // 🚀 2026-07-15 — 매니저 뷰는 lazy 렌더: 탭에 들어올 때 밀린 변경분(dirty)만 그림
+  // 🚀 2026-07-15 — 매니저 뷰/내 업무는 lazy 렌더: 탭에 들어올 때 밀린 변경분(dirty)만 그림
   if (t === 'mgr' && typeof __mgrDirty !== 'undefined' && __mgrDirty) { try { renderMgr(); } catch(_){} }
+  if (t === 'emp' && typeof __empDirty !== 'undefined' && __empDirty) { try { renderEmp(); } catch(_){} }
   if (window.kmBack && prev && prev !== t && t !== 'emp') kmBack.push('tab:'+t);
 }
 
@@ -6681,6 +6682,13 @@ function renderEmp(){
   const cnt = total - done;
   const cntEl = document.getElementById('empCount');
   if (cnt > 0) { cntEl.style.display=''; cntEl.textContent = cnt; } else cntEl.style.display='none';
+  // 🚀 2026-07-15 (사장님 지시: 매장 전환 시 멈춤) — 무거운 카드 목록은 '내 업무' 탭이
+  //   보일 때만 그림. 위의 요약 숫자·탭 뱃지는 항상 갱신됨. 대시보드에서 매장만 바꿔도
+  //   참고 모드가 그 매장 전체 업무(+base64 사진)를 숨겨진 탭에 통째로 그리던 원인.
+  const _empPage = document.getElementById('page-emp');
+  if (!(_empPage && _empPage.classList.contains('active'))) { __empDirty = true; return; }
+  __empDirty = false;
+  MGR_HUGE = {}; MGR_HUGE_SEQ = 0;   // lazy 사진 맵 초기화 (탭은 한 번에 하나만 활성 — 충돌 없음)
   if (total === 0) {
     // 참고 모드(매니저가 타 매장 열람)는 기존 메시지 그대로.
     if (isReferenceMode) {
@@ -6703,6 +6711,7 @@ function renderEmp(){
     return;
   }
   list.innerHTML = my.map(renderTaskCard).join('');
+  try { applyMgrHugePhotos(list); } catch(_){}   // 🚀 base64 사진은 보일 때만 .src 채움
 }
 // 🔧 2026-05-21 전무님 신고: 직원이 업무지시 안 보임 → 시작/완료 못함.
 // 원인 #1: 매니저가 발사한 이름과 직원 me.name 이 대소문자·공백·구두점 차이로 매칭 실패.
@@ -6824,7 +6833,8 @@ function renderTaskCard(t){
     const linkBtn = `<a href="${escHtml(_appLink)}" class="btn" style="background:#0369a1;color:#fff;text-decoration:none;font-weight:800;margin-right:6px;display:inline-block">${escHtml(linkLbl)}</a>`;
     actions = linkBtn + actions;
   }
-  const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map((u,i)=>`<img loading="lazy" src="${u}" onclick="openLb('${u}')">`).join('')}</div>` : '';
+  // 🚀 2026-07-15 — base64 완료사진은 placeholder 만 (매니저 뷰와 동일 lazy 패턴)
+  const photosHtml = (t.photos && t.photos.length) ? `<div class="task-photos">${t.photos.map(u => _mgrThumb(u, '', '', '')).join('')}</div>` : '';
   // 📍 매니저 장소 사진 + 지시 내용 — 직원이 어디 무엇 할지 정확히 보이게
   const hasLocPhotos = t.locationPhotos && t.locationPhotos.length;
   const hasLocNote = t.locationNote && String(t.locationNote).trim();
@@ -6834,7 +6844,7 @@ function renderTaskCard(t){
         📍 ${LANG==='en'?'Work Location (manager-assigned)':LANG==='es'?'Lugar de trabajo (asignado por gerente)':'작업 장소 (매니저 지정)'}
       </div>
       ${hasLocPhotos ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:${hasLocNote?'9px':'0'}">
-        ${t.locationPhotos.map(u => `<img loading="lazy" src="${u}" onclick="openLb('${u}')" style="width:78px;height:78px;border-radius:9px;object-fit:cover;cursor:zoom-in;border:1.5px solid rgba(8,145,178,.25)">`).join('')}
+        ${t.locationPhotos.map(u => _mgrThumb(u, '', 'width:78px;height:78px;border-radius:9px;object-fit:cover;cursor:zoom-in;border:1.5px solid rgba(8,145,178,.25);', '')).join('')}
       </div>` : ''}
       ${hasLocNote ? `<div style="background:rgba(255,255,255,.65);border:1px solid rgba(8,145,178,.18);border-radius:8px;padding:8px 11px;font-size:.86em;color:#0f172a;line-height:1.5;font-weight:600;letter-spacing:-.005em">📝 ${escHtml(pickLang(t.locationNoteTr, t.locationNote))}</div>` : ''}
     </div>` : '';
@@ -8979,13 +8989,15 @@ let MGR_HUGE = {}, MGR_HUGE_SEQ = 0, __mgrHugeObs = null;
 // 🚀 2026-07-15 — 매니저 뷰(가장 무거운 렌더)는 탭이 열려 있을 때만 그림.
 //   닫혀 있는 동안 데이터가 바뀌면 dirty 만 표시 → 탭 진입 시 switchTab 이 그림.
 let __mgrDirty = false;
-function _mgrThumb(u, title, extraStyle){
+let __empDirty = false;   // '내 업무' 카드 목록도 동일 — 요약 숫자/뱃지는 항상 갱신
+function _mgrThumb(u, title, extraStyle, cls){
+  const c = (cls === undefined) ? 'thumb' : cls;   // 기본=매니저 뷰 .thumb, ''=내 업무 카드 (CSS 가 태그 셀렉터)
   if (typeof u === 'string' && u.length > 5000) {
     const k = 'mh' + (MGR_HUGE_SEQ++);
     MGR_HUGE[k] = u;
-    return `<img loading="lazy" class="thumb mgr-huge" data-mh="${k}" title="${title}" style="${extraStyle||''}background:#e5e7eb">`;
+    return `<img loading="lazy" class="${c ? c + ' ' : ''}mgr-huge" data-mh="${k}" title="${title}" style="${extraStyle||''}background:#e5e7eb">`;
   }
-  return `<img loading="lazy" class="thumb" src="${u}" onclick="openLb('${u}')" title="${title}" style="${extraStyle||''}">`;
+  return `<img loading="lazy"${c ? ` class="${c}"` : ''} src="${u}" onclick="openLb('${u}')" title="${title}" style="${extraStyle||''}">`;
 }
 function applyMgrHugePhotos(cont){
   try {
@@ -9005,11 +9017,13 @@ function applyMgrHugePhotos(cont){
       }
     };
     if (typeof IntersectionObserver === 'function') {
-      if (__mgrHugeObs) { try { __mgrHugeObs.disconnect(); } catch(_){} }
-      __mgrHugeObs = new IntersectionObserver(es => {
-        es.forEach(en => { if (en.isIntersecting) { load(en.target); try { __mgrHugeObs.unobserve(en.target); } catch(_){} } });
+      // 옵저버는 컨테이너별로 — 내 업무/매니저 뷰가 연달아 렌더될 때 서로의
+      // 관찰을 끊지 않게 (전역 1개면 나중 호출이 앞 호출 placeholder 를 고아로 만듦)
+      if (cont.__hugeObs) { try { cont.__hugeObs.disconnect(); } catch(_){} }
+      const obs = cont.__hugeObs = new IntersectionObserver(es => {
+        es.forEach(en => { if (en.isIntersecting) { load(en.target); try { obs.unobserve(en.target); } catch(_){} } });
       }, { rootMargin: '250px 0px' });
-      targets.forEach(img => __mgrHugeObs.observe(img));
+      targets.forEach(img => obs.observe(img));
     } else targets.forEach(load);
   } catch(_){}
 }
