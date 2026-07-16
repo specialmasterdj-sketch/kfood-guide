@@ -7,9 +7,27 @@
 <link rel="manifest" href="pwa-assets/manifest.webmanifest">
 <meta name="theme-color" content="#7f1d1d">
 <script>
+  /* 홈화면(바탕화면)에 설치한 KIMCHI MART 앱으로 열면 → 첫 화면을 '업무 지시'로 바로 이동.
+     브라우저로 열면(설치 안 한 경우) 기존 앱 모음이 그대로 보임. 주소에 ?menu 를 붙이면 앱 모음 유지. */
+  (function(){
+    try{
+      var qs = new URLSearchParams(location.search);
+      if (qs.has('menu')) return;
+      var mm = window.matchMedia;
+      var standalone = (mm && (mm('(display-mode: standalone)').matches
+                        || mm('(display-mode: fullscreen)').matches
+                        || mm('(display-mode: minimal-ui)').matches))
+                        || window.navigator.standalone === true;
+      if (standalone) {
+        location.replace('https://specialmasterdj-sketch.github.io/kimchi-opening-control/');
+      }
+    }catch(e){}
+  })();
+</script>
+<script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'apps_2026_06_27_price_audit';   // 화장실 청소 스케줄 카드 제거 — 직접 URL 만
+    var BUST = 'apps_2026_07_15_ops_first';   // 화장실 청소 스케줄 카드 제거 — 직접 URL 만
     var KEY = 'kmtools_bust_apps';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -614,6 +632,15 @@ button,a{font-family:inherit}
       <div class="app-desc" data-t="app8_desc">PDF 인보이스 → 엑셀 변환 → Vela POS와 가격 비교</div>
     </div>
     <span class="app-badge">COMPARE</span>
+    <span class="app-arrow">›</span>
+  </a>
+  <a class="app-card cat-compare" href="./barcode-reference.html">
+    <div class="app-icon">🔗</div>
+    <div class="app-info">
+      <div class="app-name">밴더 바코드 참조 만들기</div>
+      <div class="app-desc">POS 기준으로 밴더코드↔바코드 정확히 연결 · 참조 엑셀 내보내기</div>
+    </div>
+    <span class="app-badge">BARCODE</span>
     <span class="app-arrow">›</span>
   </a>
   <a class="app-card cat-filter" href="./pos-cost-filter.html">
@@ -1606,194 +1633,60 @@ document.addEventListener('DOMContentLoaded', function(){
           var hideOwner = (r === 'OWNER' && String(e.name||'').toUpperCase() !== 'DJ');
           var suffix = (r && !hideOwner) ? ' ('+e.role+')' : '';
           var selected = (me && me.name === e.name) ? ' selected' : '';
-          return '<option value="'+escHtml(e.name)+'" data-role="'+escHtml(e.role||'')+'"'+selected+'>'+escHtml(e.name)+suffix+'</option>';
+          return '<option value="'+escHtml(e.name)+'" data-role="'+escHtml(e.role)+'">'+escHtml(e.name)+suffix+'</option>';
         }).join('');
   }
 
-  // 🚪 Pill 클릭 핸들러 — 로그인 안 됐으면 auth.html, 됐으면 picker
-  window.onUserPillClick = function(){
-    var me = null;
-    try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_){}
-    var loggedIn = me && (me.uid || me.email);  // Firebase auth 흔적 (auth-gate 가 박은 값)
-    if (!loggedIn){
-      // chat.me 도 클리어 — 잔존 데이터로 auth-gate restore 대기에 빠지지 않게
-      try { localStorage.removeItem('chat.me'); } catch(_){}
-      try { sessionStorage.clear(); } catch(_){}
-      location.replace('./auth.html');
-      return;
-    }
-    openIdentityPicker();
-  };
-
-  window.openIdentityPicker = function(){
+  async function openIdentityPicker(){
     ensureModal();
     var ov = document.getElementById('idPickerOv');
-    var me = loadMe();
-    var bsel = document.getElementById('idPickBranch');
-    var csel = document.getElementById('idPickCustom');
-    if (me && me.branch) bsel.value = me.branch;
-    csel.value = (me && me.name) || '';
-    // 🔒 2026-05-15: 비매니저 (스태프) 는 본인 지점만 — 다른 지점 못 고르게.
-    // 코럴 직원이 헐리우드 들어와서 입력하던 사건 해결.
-    // 매니저급은 다른 지점 참고할 수 있도록 그대로 둠.
-    var MGR_ROLES = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
-    var meIsMgr = me && _isMgrRoleSave && _isMgrRoleSave(me.role);
-    if (!meIsMgr && me && me.branch) {
-      bsel.disabled = true;
-      bsel.style.background = '#f3f4f6';
-      bsel.style.cursor = 'not-allowed';
-      bsel.title = '본인 지점만 사용 가능합니다. 변경하려면 매니저에게 문의하세요.';
-      // 지점 라벨 옆에 안내 추가 (중복 추가 방지)
-      var lbls = bsel.parentNode.querySelectorAll('label');
-      var brLbl = lbls && lbls[0];
-      if (brLbl && brLbl.dataset.lockNote !== '1') {
-        brLbl.dataset.lockNote = '1';
-        brLbl.innerHTML += ' <span style="color:#dc2626;font-weight:600;font-size:.85em">🔒 잠김</span>';
-      }
-    } else {
-      bsel.disabled = false;
-      bsel.style.background = '#fff';
-      bsel.style.cursor = 'pointer';
-      bsel.title = '';
-    }
     ov.style.display = 'flex';
-    loadIdPickerNames();
-  };
-  window.closeIdentityPicker = function(){
+    var me = loadMe();
+    if (me && me.branch) document.getElementById('idPickBranch').value = me.branch;
+    if (me && me.name) document.getElementById('idPickCustom').value = me.name;
+    await loadIdPickerNames();
+  }
+
+  function closeIdentityPicker(){
     var ov = document.getElementById('idPickerOv');
     if (ov) ov.style.display = 'none';
-  };
-  // 🔐 알려진 매니저 이름 캐시 — RTDB owners + 전 지점 employees 중 매니저급 + 하드코드
-  var MGR_NAMES_CACHE = ['DJ','B.H.K','BHK'];
-  var MGR_TOK_SAVE = ['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','ASSISTANT MANAGER','ASST MANAGER','ASST. MANAGER','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR'];
-  function _isMgrRoleSave(role){
-    var u = String(role||'').toUpperCase();
-    if (!u) return false;
-    return MGR_TOK_SAVE.some(function(t){ return u.indexOf(t.toUpperCase()) >= 0; });
-  }
-  async function refreshMgrNamesCache(){
-    try {
-      var union = ['DJ','B.H.K','BHK'];
-      var rg = await fetch(FB_DB_URL + '/schedules/_global.json', { cache:'no-store' });
-      if (rg.ok) {
-        var dg = await rg.json();
-        if (dg && dg.owners) {
-          (Array.isArray(dg.owners) ? dg.owners : []).forEach(function(o){
-            if (!o) return;
-            if (typeof o === 'string'){ if (o.trim()) union.push(o.trim()); return; }
-            var n = String(o.name||o.fullName||o.displayName||'').trim();
-            if (n) union.push(n);
-          });
-        }
-      }
-      // 전 지점 employees 중 role 이 매니저급인 사람 이름도 차단 대상
-      var BRANCHES = ['HOLLYWOOD','MIAMI','CORAL_SPRINGS','LASOLAS','PEMBROKE_PINES','KENDALL'];
-      await Promise.all(BRANCHES.map(async function(b){
-        try {
-          var r2 = await fetch(FB_DB_URL + '/schedules/' + b + '.json', { cache:'no-store' });
-          if (!r2.ok) return;
-          var d2 = await r2.json();
-          var emps = (d2 && d2.employees) || [];
-          (Array.isArray(emps) ? emps : Object.values(emps||{})).forEach(function(e){
-            if (!e) return;
-            var n = (typeof e === 'string') ? e : String(e.name||e.fullName||e.displayName||'');
-            n = n.trim();
-            if (n && _isMgrRoleSave(e.role||'')) union.push(n);
-          });
-        } catch(_){}
-      }));
-      MGR_NAMES_CACHE = Array.from(new Set(union.map(function(s){ return s.toUpperCase(); })));
-    } catch(_){}
-  }
-  refreshMgrNamesCache();
-
-  function isMgrNameBlocked(typed, meIsMgr){
-    if (meIsMgr) return false;                            // 매니저는 어떤 이름이든 OK
-    var u = String(typed||'').trim().toUpperCase();
-    if (!u) return false;
-    return MGR_NAMES_CACHE.indexOf(u) >= 0;
   }
 
-  window.signOutIdentity = function(){
-    var L = getLang();
-    var msg = ({
-      ko:'정말 로그아웃 하시겠습니까?\n다른 사람이 이 PC/폰을 쓸 때 필요합니다.',
-      en:'Sign out?\nUse this when someone else needs this PC/phone.',
-      es:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.'
-    })[L] || '로그아웃 하시겠습니까?';
-    if (!confirm(msg)) return;
-    // 🚪 race-free 로그아웃: Firebase signOut / IDB 삭제는 auth.html?fresh=1 에서 처리.
-    // 여기서 signOut 을 호출하면 auth-gate.js 의 onAuthStateChanged 가 먼저
-    // ./auth.html?return=/apps.html 로 redirect 해버려서 ?fresh=1 이 안 붙음.
-    try { localStorage.removeItem('chat.me'); } catch(_){}
-    try { localStorage.removeItem('hub.branch'); } catch(_){}
-    try { sessionStorage.clear(); } catch(_){}
-    location.replace('./auth.html?fresh=1');
-  };
-
-  window.saveIdentityPicker = function(){
-    var bsel = document.getElementById('idPickBranch');
-    var nsel = document.getElementById('idPickName');
-    var csel = document.getElementById('idPickCustom');
-    var branch = bsel.value;
-    var fromSel = nsel.value;
-    var fromCustom = (csel.value||'').trim();
-    var name = fromCustom || fromSel;
-    if (!branch || !name) {
-      alert(({ko:'지점과 이름을 모두 선택해주세요', en:'Please pick branch and name', es:'Seleccione sucursal y nombre'})[getLang()] || '지점과 이름을 모두 선택해주세요');
-      return;
-    }
-    var pickedRole = '';
-    if (nsel.selectedIndex >= 0 && nsel.options[nsel.selectedIndex]) {
-      pickedRole = nsel.options[nsel.selectedIndex].dataset.role || '';
-    }
-    try {
-      var existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
-      var MGR = ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'];
-      var isExistingMgr = _isMgrRoleSave(existing.role);
-      var isPickedMgr   = _isMgrRoleSave(pickedRole);
-      // 🔒 2026-05-15: 비매니저 — 본인 지점 외에는 저장 거부.
-      // dropdown 이 disabled 상태지만 DevTools 로 우회 가능성 차단.
-      if (!isExistingMgr && existing.branch && branch !== existing.branch) {
-        alert(({
-          ko:'⚠️ 본인 지점만 사용할 수 있습니다.\n다른 지점이 필요하면 매니저에게 문의하세요.',
-          en:'⚠️ Only your branch is allowed. Ask a manager if you need another.',
-          es:'⚠️ Solo tu sucursal está permitida. Habla con un gerente si necesitas otra.'
-        })[getLang()] || '본인 지점만 사용 가능');
-        return;
-      }
-      // 🔐 SECURITY FIX (2026-05-14): 3중 차단 (한/영/스페인어 라벨 모두 매칭)
-      // 1) role 사칭 — 매니저급 role 은 기존이 매니저였을 때만 허용
-      // 2) dropdown 이름 사칭 — 매니저급 role 선택 거부
-      // 3) custom 입력 사칭 — 알려진 매니저 이름(DJ, B.H.K, 전무, 점장 등) 직접 타이핑 거부
-      var blocked = isPickedMgr || isMgrNameBlocked(name, isExistingMgr);
-      if (blocked && !isExistingMgr) {
-        alert(({
-          ko:'⚠️ 매니저/오너 이름은 매니저만 사용할 수 있습니다.\n본인 이름으로 다시 입력하세요.',
-          en:'⚠️ Manager/owner names are reserved. Please use your own name.',
-          es:'⚠️ Los nombres de gerente/dueño son reservados. Use su propio nombre.'
-        })[getLang()] || '매니저 이름 사용 금지');
-        return;
-      }
-      var safeRole = existing.role || '';
-      if (pickedRole && (isExistingMgr || pickedRole === existing.role)) {
-        safeRole = pickedRole;
-      }
-      var next = Object.assign({}, existing, {
-        name: name,
-        branch: branch,
-        role: safeRole,
-        isManager: MGR.indexOf(String(safeRole||'').toUpperCase()) >= 0,
-      });
-      localStorage.setItem('chat.me', JSON.stringify(next));
-      try { localStorage.setItem('hub.branch', branch); } catch(_){}
-      try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
-    } catch(e){ console.warn('save identity failed', e); }
+  function saveIdentityPicker(){
+    var br = document.getElementById('idPickBranch');
+    var nm = document.getElementById('idPickName');
+    var cx = document.getElementById('idPickCustom');
+    if (!br || !nm) return;
+    var brVal = br.value;
+    var nmVal = nm.value || cx.value;
+    if (!nmVal || !brVal) return;
+    var me = { name: nmVal.trim(), branch: brVal };
+    try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(e){}
+    try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
     closeIdentityPicker();
-    var nm = document.getElementById('apps-user-name');
-    if (nm) nm.textContent = name + ' · ' + branch;
-  };
+  }
+
+  function signOutIdentity(){
+    var L = getLang();
+    var msg = ({ko:'정말 로그아웃 하시겠습니까?\n다른 사람이 이 PC/폰을 쓸 때 필요합니다.',en:'Sign out?\nUse this when someone else needs this PC/phone.',es:'¿Cerrar sesión?\nÚselo cuando otra persona necesite esta PC/teléfono.'})[L];
+    if (confirm(msg)) {
+      try { localStorage.removeItem('chat.me'); } catch(e){}
+      try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
+      closeIdentityPicker();
+    }
+  }
+
+  window.openIdentityPicker = openIdentityPicker;
+  window.closeIdentityPicker = closeIdentityPicker;
+  window.saveIdentityPicker = saveIdentityPicker;
+  window.signOutIdentity = signOutIdentity;
+
+  function onUserPillClick(){
+    openIdentityPicker();
+  }
+  window.onUserPillClick = onUserPillClick;
 })();
 </script>
+
 </body>
 </html>
