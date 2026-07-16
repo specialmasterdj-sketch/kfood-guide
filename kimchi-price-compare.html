@@ -583,6 +583,29 @@ const BCMaster = (function(){
       }
       console.info('[BCMaster] loaded', Object.keys(map).length, '저장된 바코드');
     } catch(e){ console.warn('[BCMaster] load 실패:', e.message); }
+    /* 🔗 바코드 참조 앱(barcode-reference.html)의 밴더별 참조도 병합 —
+       RHEE BROS 등 밴더코드→정확한 바코드 2,000+건. 참조 앱에서 고친 값이 우선. */
+    try {
+      const DB='https://kimchi-mart-order-default-rtdb.firebaseio.com';
+      const BASES=['/barcodeRef','/config/barcodeRef','/chat/barcodeRef'];
+      let cd=null;
+      for(const b of BASES){
+        try{ const r=await fetch(DB+b+'/data.json?t='+Date.now(),{cache:'no-store'});
+          if(r.ok){ const j=await r.json(); if(j&&j.ref){ cd=j; break; } } }catch(_){}
+      }
+      if(cd&&cd.ref){
+        let n=0;
+        for(const vendor in cd.ref){
+          const rows=cd.ref[vendor]; if(!Array.isArray(rows)) continue;
+          for(const row of rows){
+            const vc=vckey(row.code); const bc=digits(row.barcode);
+            if(!vc||bc.length<8) continue;
+            map[vc]={bc, name:row.name||''}; n++;   // 참조 앱 값이 우선(덮어씀)
+          }
+        }
+        console.info('[BCMaster] 바코드 참조 앱에서', n, '건 병합');
+      }
+    } catch(e){ console.warn('[BCMaster] 참조 병합 실패:', e.message); }
     return map;
   }
   // 인보이스 행의 바코드를 저장된 정확한 바코드로 채움/교체. 채운 개수 반환.
@@ -1159,9 +1182,21 @@ function normBC(v){ return String(v||'').replace(/\D/g,''); }
 
 function runCmp(){
   syncGridToState();
-  const inv=S.invData.filter(d=>d.eaPrice>0);
-  if(!inv.length){toast('❌ 인보이스 데이터가 없습니다 — 먼저 인보이스를 업로드해주세요');go(1);return;}
+  if(!S.invData.filter(d=>d.eaPrice>0).length){toast('❌ 인보이스 데이터가 없습니다 — 먼저 인보이스를 업로드해주세요');go(1);return;}
   if(!S.posData.length){toast('❌ POS 데이터를 먼저 업로드해주세요', 3000);go(2);return;}
+  showL('최신 바코드 참조 불러오는 중...');
+  /* 🔄 비교할 때마다 참조 앱의 최신 바코드를 다시 불러와 채움 —
+     참조 앱(폰 포함)에서 방금 고친 바코드가 즉시 반영됨 */
+  Promise.resolve().then(()=>BCMaster.load()).catch(()=>{}).then(()=>{
+    try{
+      const nFill=BCMaster.enrich(S.invData);
+      if(nFill){ console.info('[runCmp] 최신 참조로 바코드', nFill, '건 갱신'); if(typeof renderInvGrid==='function'){ try{ renderInvGrid(S.invData); }catch(e){} } }
+    }catch(e){}
+    __runCmpCore();
+  });
+}
+function __runCmpCore(){
+  const inv=S.invData.filter(d=>d.eaPrice>0);
   showL('가격 비교 중...');
 
   // ── DIAGNOSTICS: dump a few samples from each side so 0-match cases can be
@@ -1249,8 +1284,7 @@ function runCmp(){
       if (!f) for (const x of [...posKeys.fuzzy, ...vcKeys.fuzzy]){
         if(fuzzyBC.has(x)){ f=fuzzyBC.get(x); via='바코드≈'; break; }
       }
-      // tier 3 — vendor code fallback
-      if (!f && posVC && byVC.has(posVC)){ f=byVC.get(posVC); via='코드'; }
+      // (밴더코드 예비 매칭 제거 — 2026-07-16 전무님 지시: 오직 바코드 번호로만 비교)
       if (!f) return;
       if (used.has(f.i)) return;
       used.add(f.i);
