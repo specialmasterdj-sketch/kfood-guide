@@ -11158,6 +11158,37 @@ document.addEventListener('focusout', (e) => {
     }
   }
 }, true);
+// 🛡 2026-07-15 (사장님 지시: 매장 드롭다운 회색 에러) — 셀렉트 팝업 보호.
+//   드롭다운이 열려 있는 동안 5지점 실시간 데이터가 도착해 renderAll 이
+//   select.value/innerHTML 을 다시 만지면 열린 팝업이 회색 빈 박스로 죽음.
+//   셀렉트 상호작용 시작 후 8초(또는 선택/포커스아웃까지) 렌더를 유예.
+let __selectGuardUntil = 0;
+function isUserPickingSelect(){
+  try {
+    const ae = document.activeElement;
+    return !!(ae && ae.tagName === 'SELECT' && Date.now() < __selectGuardUntil);
+  } catch(_) { return false; }
+}
+document.addEventListener('mousedown', (e) => {
+  if (e.target && e.target.tagName === 'SELECT') __selectGuardUntil = Date.now() + 8000;
+}, true);
+document.addEventListener('keydown', () => {
+  const ae = document.activeElement;
+  if (ae && ae.tagName === 'SELECT') __selectGuardUntil = Date.now() + 8000;
+}, true);
+function __flushSelectDeferred(){
+  __selectGuardUntil = 0;
+  if (__RENDER_DEFERRED && !isUserTyping() && !(window.__PHOTO_UPLOADING > 0)) {
+    __RENDER_DEFERRED = false;
+    setTimeout(() => { try { renderAllNow(); } catch(_){} }, 50);
+  }
+}
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.tagName === 'SELECT') __flushSelectDeferred();
+}, true);
+document.addEventListener('focusout', (e) => {
+  if (e.target && e.target.tagName === 'SELECT') __flushSelectDeferred();
+}, true);
 
 function renderAllNow(){
   // 사진 업로드 후 RTDB onValue → renderAll → innerHTML 재구성 으로 페이지
@@ -11294,14 +11325,14 @@ function isUserScrolling(){ return Date.now() < __scrollingUntil; }
 //   120ms 안의 연속 호출을 1번 렌더로 합쳐 부하를 1/6로. 입력/사진/스크롤 가드는 그대로.
 let __renderDebounce = null;
 function renderAll(){
-  if (isUserTyping() || window.__PHOTO_UPLOADING > 0 || isUserScrolling()) {
+  if (isUserTyping() || isUserPickingSelect() || window.__PHOTO_UPLOADING > 0 || isUserScrolling()) {
     __RENDER_DEFERRED = true;
     return;
   }
   if (__renderDebounce) clearTimeout(__renderDebounce);
   __renderDebounce = setTimeout(() => {
     __renderDebounce = null;
-    if (isUserTyping() || window.__PHOTO_UPLOADING > 0 || isUserScrolling()) { __RENDER_DEFERRED = true; return; }
+    if (isUserTyping() || isUserPickingSelect() || window.__PHOTO_UPLOADING > 0 || isUserScrolling()) { __RENDER_DEFERRED = true; return; }
     try { renderAllNow(); } catch(_){}
   }, 120);
 }
