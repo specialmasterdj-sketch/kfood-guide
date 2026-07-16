@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>관리자 — base64 사진 Storage 이관 (2026-07-15)</title>
+<style>
+:root { --green:#1a5c3a; --orange:#f59e0b; --red:#dc2626; --gray:#6b7280; }
+body { font-family:'Pretendard','Segoe UI','Malgun Gothic',Arial,sans-serif; max-width:880px; margin:0 auto; padding:18px; color:#1f2937; background:#f8fafc; }
+h1 { font-size:1.4em; margin:0 0 4px; color:var(--green); }
+h2 { font-size:1.05em; margin:18px 0 8px; color:#0f172a; border-bottom:2px solid #e5e7eb; padding-bottom:6px; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+.steps { background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:12px 14px; border-radius:10px; font-size:.9em; line-height:1.55; }
+button { font-family:inherit; font-size:.95em; font-weight:700; padding:11px 18px; border-radius:10px; border:0; cursor:pointer; transition:.15s; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+.btn-primary { background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%); color:#fff; box-shadow:0 3px 10px rgba(245,158,11,.35); }
+.btn-apply { background:linear-gradient(135deg,#16a34a 0%,#15803d 100%); color:#fff; box-shadow:0 3px 10px rgba(22,163,74,.35); }
+.btn-stop { background:#fff; color:var(--red); border:1.5px solid #fca5a5; }
+.status { font-size:.85em; padding:8px 12px; border-radius:8px; margin-top:10px; }
+.status.ok { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+.status.err { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+.status.info { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; }
+#authStatus { font-size:.85em; padding:8px 12px; border-radius:8px; margin-bottom:14px; }
+#authStatus.unauth { background:#fee2e2; color:#991b1b; }
+#authStatus.auth { background:#dcfce7; color:#166534; }
+.muted { color:var(--gray); font-size:.85em; }
+table { width:100%; border-collapse:collapse; font-size:.85em; margin-top:8px; }
+th, td { padding:7px 10px; border-bottom:1px solid #e5e7eb; text-align:left; }
+th { background:#f9fafb; font-weight:700; font-size:.78em; color:var(--gray); }
+#progressWrap { display:none; margin-top:12px; }
+#progressBar { height:14px; background:#e5e7eb; border-radius:7px; overflow:hidden; }
+#progressFg { height:100%; width:0%; background:linear-gradient(90deg,#22c55e,#1a5c3a); transition:width .3s; }
+#progressTxt { font-size:.85em; font-weight:700; color:#15803d; margin-top:6px; }
+#log { font-family:Consolas,monospace; font-size:.76em; background:#0f172a; color:#a7f3d0; border-radius:10px; padding:12px; margin-top:10px; max-height:300px; overflow-y:auto; white-space:pre-wrap; display:none; }
+</style>
+</head>
+<body>
+
+<h1>📦 base64 사진 → Storage 이관 도구</h1>
+<p class="muted">2026-07-15 사장님 승인 — 채팅·업무 데이터 안에 통째로 저장된 옛 사진(base64)을 Firebase Storage 로 옮기고 링크로 교체. 앱 로딩 속도 근본 개선. 오너 전용.</p>
+
+<div id="authStatus" class="unauth">⏳ 인증 확인 중…</div>
+
+<div class="card steps">
+  <b>사용법 (2단계):</b><br>
+  1️⃣ <b>"스캔"</b> — 옮길 사진이 몇 장·몇 MB 인지 먼저 확인 (데이터 변경 없음)<br>
+  2️⃣ <b>"이관 시작"</b> — 한 장씩 Storage 업로드 → 성공 확인 후 링크로 교체<br>
+  · 사진은 삭제되지 않고 위치만 이동합니다. 업로드 실패 시 원본 그대로 유지.<br>
+  · 중간에 <b>중지</b>해도 안전 — 다시 열어 재시작하면 남은 것만 이어서 합니다.<br>
+  · 사진이 많으면 오래 걸립니다. <b>탭을 열어두고 두세요</b> (폰보다 PC 권장).
+</div>
+
+<div class="card">
+  <h2>1️⃣ 스캔 (변경 없음)</h2>
+  <label style="font-size:.88em;font-weight:700"><input type="checkbox" id="scanChat" checked> 💬 채팅 (chat/messages — 평가방 등 전체 방)</label><br>
+  <label style="font-size:.88em;font-weight:700"><input type="checkbox" id="scanTasks" checked> 📋 업무 (tasks — 5개 지점 전체 날짜)</label><br><br>
+  <button id="scanBtn" class="btn-primary" disabled>🔍 스캔 시작</button>
+  <div id="scanResult"></div>
+</div>
+
+<div class="card">
+  <h2>2️⃣ 이관</h2>
+  <p class="muted">한 장씩: Storage 업로드 → 응답 URL 확인 → 그 사진 칸만 링크로 교체 (다른 데이터는 안 건드림).</p>
+  <button id="migrateBtn" class="btn-apply" disabled>🚚 이관 시작</button>
+  <button id="stopBtn" class="btn-stop" style="display:none">⏸ 중지</button>
+  <div id="progressWrap">
+    <div id="progressBar"><div id="progressFg"></div></div>
+    <div id="progressTxt"></div>
+  </div>
+  <div id="result"></div>
+  <div id="log"></div>
+</div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, setPersistence, indexedDBLocalPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const auth = getAuth(app);
+const db = getDatabase(app);
+const FB = cfg.databaseURL;
+const STORAGE = 'https://firebasestorage.googleapis.com/v0/b/kimchi-mart-order.firebasestorage.app/o';
+// 채팅 uploadPhoto() 와 동일 기준 — 이 길이 넘는 data: 문자열만 이관 대상
+const HUGE = 5000;
+
+setPersistence(auth, indexedDBLocalPersistence).catch(() => setPersistence(auth, browserLocalPersistence)).catch(() => {});
+const $ = (id) => document.getElementById(id);
+let USER = null;
+let ITEMS = [];          // 스캔 결과: 노드 단위 [{kind, path, label, photoCount, bytes}]
+let STOP = false;
+
+onAuthStateChanged(auth, async (u) => {
+  if (!u || u.isAnonymous) {
+    $('authStatus').className = 'unauth';
+    $('authStatus').innerHTML = '⚠ 로그인 필요 — <button onclick="window.__doLogin()" style="background:#f59e0b;color:#fff;border:0;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer">Google 로그인</button>';
+    return;
+  }
+  try {
+    const snap = await get(ref(db, 'users/' + u.uid));
+    const p = snap.val() || {};
+    const role = String(p.role || '').toUpperCase();
+    if (!['OWNER','EXECUTIVE'].includes(role)) {
+      $('authStatus').className = 'unauth';
+      $('authStatus').textContent = `⚠ 이 도구는 OWNER 또는 EXECUTIVE 만 사용 가능. 현재 role: ${role || '없음'} (${u.email})`;
+      return;
+    }
+    USER = u;
+    $('authStatus').className = 'auth';
+    $('authStatus').textContent = `✅ 인증됨: ${u.email} (${role}) — 도구 사용 가능`;
+    $('scanBtn').disabled = false;
+  } catch(e) {
+    $('authStatus').className = 'unauth';
+    $('authStatus').textContent = '⚠ 권한 확인 실패: ' + e.message;
+  }
+});
+window.__doLogin = async () => {
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch(e) { alert('로그인 실패: ' + e.message); }
+};
+
+// ---------- 공용 ----------
+async function tok(){ return USER ? await USER.getIdToken() : ''; }
+async function rGet(path, params){
+  const t = await tok();
+  const q = (params ? params + '&' : '') + 'auth=' + encodeURIComponent(t);
+  const r = await fetch(`${FB}/${path}.json?${q}`);
+  if (!r.ok) throw new Error('GET ' + path + ' → HTTP ' + r.status);
+  return r.json();
+}
+async function rPut(path, value){
+  const t = await tok();
+  const r = await fetch(`${FB}/${path}.json?auth=` + encodeURIComponent(t), {
+    method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(value)
+  });
+  if (!r.ok) throw new Error('PUT ' + path + ' → HTTP ' + r.status);
+}
+function isHuge(u){ return typeof u === 'string' && u.length > HUGE && u.slice(0,5) === 'data:'; }
+function fmtMB(bytes){ return (bytes / 1048576).toFixed(1) + ' MB'; }
+function log(msg){
+  const el = $('log'); el.style.display = 'block';
+  el.textContent += msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// 노드(메시지/업무) 안의 base64 사진 위치를 전부 찾음 → [{subPath, dataUrl}]
+// subPath 는 노드 기준 상대 경로 (예: 'photos/2', 'replies/-Nx/photos/0', 'checklist/3/photo')
+function findHugeInNode(node){
+  const out = [];
+  const scanArr = (arr, base) => {
+    if (!Array.isArray(arr)) {
+      // RTDB 는 배열을 객체로 줄 수도 있음
+      if (arr && typeof arr === 'object') {
+        Object.keys(arr).forEach(k => { if (isHuge(arr[k])) out.push({ subPath: base + '/' + k, dataUrl: arr[k] }); });
+      }
+      return;
+    }
+    arr.forEach((u, i) => { if (isHuge(u)) out.push({ subPath: base + '/' + i, dataUrl: u }); });
+  };
+  if (node.photos) scanArr(node.photos, 'photos');
+  if (node.locationPhotos) scanArr(node.locationPhotos, 'locationPhotos');
+  if (node.completionPhotos) scanArr(node.completionPhotos, 'completionPhotos');
+  if (node.replies && typeof node.replies === 'object') {
+    Object.entries(node.replies).forEach(([rid, r]) => {
+      if (r && r.photos) scanArr(r.photos, 'replies/' + rid + '/photos');
+    });
+  }
+  const cl = node.checklist;
+  if (cl) {
+    const clArr = Array.isArray(cl) ? cl.map((c,i)=>[i,c]) : Object.entries(cl);
+    clArr.forEach(([ci, c]) => {
+      if (!c) return;
+      if (c.photos) scanArr(c.photos, 'checklist/' + ci + '/photos');
+      if (isHuge(c.photo)) out.push({ subPath: 'checklist/' + ci + '/photo', dataUrl: c.photo });
+    });
+  }
+  return out;
+}
+
+// ---------- 1) 스캔 ----------
+$('scanBtn').addEventListener('click', async () => {
+  $('scanBtn').disabled = true;
+  $('scanResult').innerHTML = '<div class="status info">🔍 스캔 중… (방·날짜가 많으면 몇 분 걸립니다)</div>';
+  ITEMS = [];
+  let totalPhotos = 0, totalBytes = 0;
+  const perGroup = {};   // label → {photos, bytes}
+  const bump = (label, n, b) => { const g = perGroup[label] = perGroup[label] || {photos:0, bytes:0}; g.photos += n; g.bytes += b; };
+  try {
+    // 💬 채팅 — 방 목록 shallow → 방마다 메시지 키 shallow → 100개씩 범위 조회
+    if ($('scanChat').checked) {
+      const rooms = Object.keys(await rGet('chat/messages', 'shallow=true') || {});
+      for (const room of rooms) {
+        if (STOP) break;
+        let keys = [];
+        try { keys = Object.keys(await rGet('chat/messages/' + encodeURIComponent(room), 'shallow=true') || {}).sort(); }
+        catch(e){ log('⚠ 방 키 조회 실패 ' + room + ': ' + e.message); continue; }
+        for (let s = 0; s < keys.length; s += 100) {
+          if (STOP) break;
+          const chunk = keys.slice(s, s + 100);
+          let msgs;
+          try {
+            msgs = await rGet('chat/messages/' + encodeURIComponent(room),
+              `orderBy=${encodeURIComponent('"$key"')}&startAt=${encodeURIComponent('"'+chunk[0]+'"')}&endAt=${encodeURIComponent('"'+chunk[chunk.length-1]+'"')}`);
+          } catch(e){ log('⚠ 메시지 조회 실패 ' + room + ' @' + s + ': ' + e.message); continue; }
+          Object.entries(msgs || {}).forEach(([mid, m]) => {
+            if (!m || typeof m !== 'object') return;
+            const found = findHugeInNode(m);
+            if (!found.length) return;
+            const bytes = found.reduce((a,f) => a + f.dataUrl.length, 0);
+            ITEMS.push({ kind:'chat', path:'chat/messages/' + room + '/' + mid, sPrefix:'chat/' + room + '/' + mid, label:'💬 ' + room, photoCount:found.length, bytes });
+            totalPhotos += found.length; totalBytes += bytes;
+            bump('💬 ' + room, found.length, bytes);
+          });
+          $('scanResult').innerHTML = `<div class="status info">🔍 채팅 스캔 중 — ${esc(room)} (${Math.min(s+100,keys.length)}/${keys.length}) · 지금까지 ${totalPhotos}장 · ${fmtMB(totalBytes)}</div>`;
+          await sleep(60);
+        }
+      }
+    }
+    // 📋 업무 — 지점 shallow → 날짜 shallow → 날짜별 통째 조회
+    if ($('scanTasks').checked) {
+      const branches = Object.keys(await rGet('tasks', 'shallow=true') || {}).filter(b => b !== '_config');
+      for (const br of branches) {
+        if (STOP) break;
+        let dates = [];
+        try { dates = Object.keys(await rGet('tasks/' + encodeURIComponent(br), 'shallow=true') || {}).sort(); }
+        catch(e){ log('⚠ 날짜 조회 실패 ' + br + ': ' + e.message); continue; }
+        for (const d of dates) {
+          if (STOP) break;
+          let day;
+          try { day = await rGet('tasks/' + encodeURIComponent(br) + '/' + encodeURIComponent(d), ''); }
+          catch(e){ log('⚠ 업무 조회 실패 ' + br + '/' + d + ': ' + e.message); continue; }
+          Object.entries(day || {}).forEach(([tid, t]) => {
+            if (!t || typeof t !== 'object') return;
+            const found = findHugeInNode(t);
+            if (!found.length) return;
+            const bytes = found.reduce((a,f) => a + f.dataUrl.length, 0);
+            ITEMS.push({ kind:'task', path:'tasks/' + br + '/' + d + '/' + tid, sPrefix:'tasks/' + br + '/' + d + '/' + tid, label:'📋 ' + br, photoCount:found.length, bytes });
+            totalPhotos += found.length; totalBytes += bytes;
+            bump('📋 ' + br, found.length, bytes);
+          });
+          $('scanResult').innerHTML = `<div class="status info">🔍 업무 스캔 중 — ${esc(br)} ${esc(d)} · 지금까지 ${totalPhotos}장 · ${fmtMB(totalBytes)}</div>`;
+          await sleep(40);
+        }
+      }
+    }
+    // 결과 표
+    const rows = Object.entries(perGroup).sort((a,b) => b[1].bytes - a[1].bytes)
+      .map(([label,g]) => `<tr><td>${esc(label)}</td><td>${g.photos}장</td><td>${fmtMB(g.bytes)}</td></tr>`).join('');
+    $('scanResult').innerHTML = totalPhotos
+      ? `<div class="status ok">✅ 스캔 완료 — <b>base64 사진 ${totalPhotos}장 · ${fmtMB(totalBytes)}</b> (노드 ${ITEMS.length}개). 아래 "이관 시작"을 누르세요.</div>
+         <table><tr><th>위치</th><th>사진</th><th>용량</th></tr>${rows}</table>`
+      : `<div class="status ok">✅ 스캔 완료 — 이관할 base64 사진이 없습니다. 이미 깨끗합니다!</div>`;
+    $('migrateBtn').disabled = totalPhotos === 0;
+  } catch(e) {
+    $('scanResult').innerHTML = `<div class="status err">❌ 스캔 실패: ${esc(e.message)}</div>`;
+  }
+  $('scanBtn').disabled = false;
+});
+
+// ---------- 2) 이관 ----------
+function mimeOf(dataUrl){
+  const m = /^data:(image\/[a-z0-9.+-]+)/i.exec(dataUrl);
+  return (m && m[1]) || 'image/jpeg';
+}
+function extOf(mime){
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('gif')) return 'gif';
+  return 'jpg';
+}
+async function uploadToStorage(dataUrl, sPath){
+  const blob = await (await fetch(dataUrl)).blob();
+  const url = `${STORAGE}?name=${encodeURIComponent(sPath)}&uploadType=media`;
+  let lastErr = '';
+  for (let a = 0; a < 4; a++) {
+    try {
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type': mimeOf(dataUrl)}, body: blob });
+      if (r.ok) {
+        const meta = await r.json();
+        return `${STORAGE}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+      }
+      lastErr = 'HTTP ' + r.status;
+      if (r.status === 403 || r.status === 404) break;
+    } catch(e){ lastErr = e.message || 'network'; }
+    await sleep(600 * (a+1));
+  }
+  throw new Error('Storage 업로드 실패: ' + lastErr);
+}
+$('stopBtn').addEventListener('click', () => { STOP = true; $('stopBtn').textContent = '⏳ 현재 장 마치고 중지…'; });
+$('migrateBtn').addEventListener('click', async () => {
+  if (!ITEMS.length) return;
+  if (!confirm(`base64 사진을 Storage 로 이관합니다.\n\n· 노드 ${ITEMS.length}개\n· 업로드 성공 확인 후에만 교체 (실패 시 원본 유지)\n· 탭을 닫지 마세요\n\n시작할까요?`)) return;
+  STOP = false;
+  $('migrateBtn').disabled = true; $('scanBtn').disabled = true;
+  $('stopBtn').style.display = ''; $('stopBtn').textContent = '⏸ 중지';
+  $('progressWrap').style.display = 'block';
+  let done = 0, migrated = 0, failed = 0, savedBytes = 0;
+  const t0 = Date.now();
+  for (const item of ITEMS) {
+    if (STOP) break;
+    try {
+      // 최신 상태 다시 읽기 — 스캔 후 바뀌었어도 안전, 이미 이관된 건 자동 스킵
+      const node = await rGet(item.path, '');
+      if (!node) { done++; continue; }
+      const found = findHugeInNode(node);
+      let idx = 0;
+      for (const f of found) {
+        if (STOP) break;
+        const mime = mimeOf(f.dataUrl);
+        const sPath = `${item.sPrefix}/mig_${Date.now()}_${idx++}.${extOf(mime)}`;
+        const newUrl = await uploadToStorage(f.dataUrl, sPath);
+        // 업로드 성공 → 그 사진 칸만 교체
+        await rPut(item.path + '/' + f.subPath, newUrl);
+        migrated++; savedBytes += f.dataUrl.length;
+        await sleep(120);
+      }
+      log(`✅ ${item.label} — ${found.length}장 (${item.path.split('/').pop()})`);
+    } catch(e) {
+      failed++;
+      log(`❌ ${item.label} ${item.path}: ${e.message}`);
+    }
+    done++;
+    const pct = Math.round(done / ITEMS.length * 100);
+    $('progressFg').style.width = pct + '%';
+    const elapsed = Math.round((Date.now() - t0) / 1000);
+    $('progressTxt').textContent = `${done}/${ITEMS.length} 노드 · 사진 ${migrated}장 이관 · ${fmtMB(savedBytes)} 절감 · 실패 ${failed} · ${Math.floor(elapsed/60)}분 ${elapsed%60}초 경과`;
+  }
+  $('stopBtn').style.display = 'none';
+  $('migrateBtn').disabled = false; $('scanBtn').disabled = false;
+  $('result').innerHTML = STOP
+    ? `<div class="status info">⏸ 중지됨 — 사진 ${migrated}장 이관 완료 (${fmtMB(savedBytes)}). 다시 "스캔 → 이관"으로 이어서 하면 됩니다.</div>`
+    : failed
+      ? `<div class="status err">⚠ 완료 (일부 실패 ${failed}건) — 사진 ${migrated}장 이관, ${fmtMB(savedBytes)} 절감. 실패 건은 다시 스캔→이관으로 재시도.</div>`
+      : `<div class="status ok">🎉 전체 완료 — 사진 ${migrated}장 이관, DB ${fmtMB(savedBytes)} 절감! 채팅·업무 앱이 훨씬 가벼워집니다.</div>`;
+  ITEMS = [];
+  $('migrateBtn').disabled = true;
+});
+</script>
+</body>
+</html>
