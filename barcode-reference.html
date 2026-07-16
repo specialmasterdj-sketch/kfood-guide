@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>밴더 바코드 참조 만들기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>if(window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}</script>
+<style>
+  :root{--green:#0f5132;--green2:#146c43;--green-l:#d1e7dd;--green-ll:#e8f3ec;--border:#cfe3d6;--gray:#6c757d;--bg:#f4f7f5;--red:#b02a37;--amber:#997404;--amber-bg:#fff3cd;--red-bg:#f8d7da;--ok-bg:#d1e7dd;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic","맑은 고딕",sans-serif;background:var(--bg);color:#1c2b22;font-size:14px;}
+  #busy{position:fixed;inset:0;background:rgba(255,255,255,.8);display:none;align-items:center;justify-content:center;z-index:100;font-weight:700;color:var(--green);font-size:15px;text-align:center;padding:20px;}
+  header{background:var(--green);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  header h1{font-size:18px;margin:0;font-weight:700;}
+  header .sub{font-size:12px;opacity:.85;}
+  .wrap{max-width:1120px;margin:0 auto;padding:16px;}
+  .card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.03);}
+  .card h2{font-size:15px;margin:0 0 12px;color:var(--green);display:flex;align-items:center;gap:8px;}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+  .tab{padding:11px 18px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:600;color:var(--green);font-size:14px;}
+  .tab.active{background:var(--green);color:#fff;border-color:var(--green);}
+  .tab .badge{background:#fff;color:var(--green);border-radius:10px;padding:1px 7px;font-size:11px;margin-left:6px;}
+  .tab.active .badge{background:rgba(255,255,255,.25);color:#fff;}
+  button{font-family:inherit;cursor:pointer;border-radius:8px;font-size:13px;}
+  .btn{background:var(--green);color:#fff;border:none;padding:9px 14px;font-weight:600;}
+  .btn:hover{background:var(--green2);}
+  .btn.sec{background:#fff;color:var(--green);border:1px solid var(--border);}
+  .btn.sec:hover{background:var(--green-ll);}
+  .btn.gray{background:#eef1ee;color:#333;border:1px solid #ddd;}
+  .btn.danger{background:#fff;color:var(--red);border:1px solid #f1c2c7;}
+  .btn.sm{padding:5px 10px;font-size:12px;}
+  .btn.tiny{padding:3px 8px;font-size:11px;}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .row.mb{margin-bottom:12px;}
+  label.fld{font-size:12px;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;}
+  select,input[type=text]{padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:#fff;}
+  select:focus,input:focus{outline:2px solid var(--green-l);border-color:var(--green);}
+  .note{background:var(--green-ll);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12.5px;color:#2c4a39;margin-bottom:12px;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{border-bottom:1px solid #eef1ee;padding:7px 8px;text-align:left;vertical-align:middle;}
+  th{background:var(--green-ll);color:var(--green);font-weight:700;position:sticky;top:0;font-size:12px;white-space:nowrap;}
+  td input{width:100%;border:1px solid transparent;background:transparent;padding:5px 6px;border-radius:6px;}
+  td input:hover{border-color:#e0e6e2;}
+  td input:focus{border-color:var(--green);background:#fff;}
+  .tbl-scroll{max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:8px;}
+  .muted{color:var(--gray);font-size:12px;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:700;white-space:nowrap;}
+  .pill.ok{background:var(--ok-bg);color:var(--green);}
+  .pill.warn{background:var(--amber-bg);color:var(--amber);}
+  .pill.bad{background:var(--red-bg);color:var(--red);}
+  .x{color:var(--red);cursor:pointer;border:none;background:none;font-size:16px;line-height:1;}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:16px;}
+  .modal-bg.show{display:flex;}
+  .modal{background:#fff;border-radius:12px;padding:20px;max-width:640px;width:100%;max-height:90vh;overflow:auto;}
+  .modal.wide{max-width:760px;}
+  .modal h3{margin:0 0 4px;color:var(--green);}
+  .map-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin:14px 0;}
+  .stat{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+  .stat .box{background:var(--green-ll);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:104px;}
+  .stat .box .n{font-size:21px;font-weight:800;color:var(--green);}
+  .stat .box .l{font-size:11.5px;color:var(--gray);}
+  .stat .box.warn{background:var(--amber-bg);border-color:#ffe69c;}.stat .box.warn .n{color:var(--amber);}
+  .stat .box.bad{background:var(--red-bg);border-color:#f1c2c7;}.stat .box.bad .n{color:var(--red);}
+  .hidden{display:none;}
+  .file-in{display:none;}
+  .hint{font-size:11px;color:var(--gray);}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;}
+  .grow{flex:1;min-width:150px;}
+  .right{margin-left:auto;}
+  .cand{border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:7px;cursor:pointer;display:flex;gap:10px;align-items:center;}
+  .cand:hover{background:var(--green-ll);border-color:var(--green);}
+  .cand .bc{font-weight:700;color:var(--green);min-width:130px;}
+  .cand .nm{flex:1;}
+  .flag{cursor:pointer;color:var(--amber);font-weight:700;border:1px dashed #e6cf7a;background:#fffdf5;border-radius:6px;padding:3px 8px;font-size:11.5px;}
+  .flag:hover{background:var(--amber-bg);}
+  @media(max-width:640px){.map-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div id="busy">처리 중…</div>
+<header>
+  <span style="font-size:22px;">🏷️</span>
+  <div>
+    <h1>밴더 바코드 참조 만들기</h1>
+    <div class="sub">POS를 정답 기준으로 · 밴더코드마다 정확한 바코드 연결 · 참조 엑셀 내보내기</div>
+  </div>
+  <div class="right" style="display:flex;gap:8px;align-items:center;">
+    <span class="sub" id="saveState">저장됨</span>
+    <button class="btn sec sm" onclick="exportBackup()">💾 전체 백업</button>
+    <label class="btn sec sm" style="margin:0;">📂 복원<input type="file" class="file-in" accept=".json" onchange="importBackup(event)"></label>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tabs">
+    <div class="tab active" data-tab="master" onclick="showTab('master')">🏬 POS 마스터 (정답 바코드) <span class="badge" id="masterCount">0</span></div>
+    <div class="tab" data-tab="ref" onclick="showTab('ref')">🏷️ 밴더 참조 만들기 <span class="badge" id="refCount">0</span></div>
+  </div>
+
+  <!-- ===== POS 마스터 ===== -->
+  <div id="tab-master">
+    <div class="card">
+      <h2>🏬 POS 마스터 — 정확한 바코드의 원천</h2>
+      <div class="note">
+        Vela POS 내보내기(CSV/엑셀)를 올리면 <b>CODE→FULL BARCODE · NAME→상품명</b>으로 자동 인식합니다.
+        여기 있는 바코드가 <b>정답</b>이며, 밴더 참조를 만들 때 이 목록에서 바코드를 찾아 연결하고 틀린 바코드를 검증합니다. (한 번만 올려두면 됩니다)
+      </div>
+      <div class="toolbar">
+        <label class="btn sec" style="margin:0;">📤 POS 엑셀/CSV 업로드<input type="file" class="file-in" accept=".xlsx,.xls,.csv" onchange="uploadFile(event,'master')"></label>
+        <button class="btn sec" onclick="addMasterRow()">➕ 행 추가</button>
+        <input type="text" id="masterSearch" class="grow" placeholder="바코드 · 상품명 검색" oninput="renderMaster()">
+        <div class="right"><button class="btn danger" onclick="clearMaster()">전체 삭제</button></div>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th style="width:40px;">#</th><th style="width:220px;">FULL BARCODE</th><th>상품명 (NAME)</th><th style="width:40px;"></th></tr></thead>
+          <tbody id="masterBody"></tbody>
+        </table>
+      </div>
+      <div class="muted" style="margin-top:8px;" id="masterInfo"></div>
+    </div>
+  </div>
+
+  <!-- ===== 밴더 참조 ===== -->
+  <div id="tab-ref" class="hidden">
+    <div class="card">
+      <div class="row mb">
+        <div><label class="fld">밴더 선택</label>
+          <select id="vendorSelect" onchange="switchVendor(this.value)" style="min-width:220px;"></select></div>
+        <div style="align-self:flex-end;display:flex;gap:8px;">
+          <button class="btn sec sm" onclick="addVendor()">➕ 밴더 추가</button>
+          <button class="btn sec sm" onclick="renameVendor()">✏️ 이름변경</button>
+          <button class="btn danger sm" onclick="deleteVendor()">🗑 삭제</button>
+        </div>
+      </div>
+      <h2>🏷️ <span id="refVendorName"></span> · 밴더코드 → 바코드 참조</h2>
+      <div class="note">
+        밴더코드마다 <b>정확한 FULL BARCODE</b>를 연결합니다. <b>🔎 찾기</b>를 누르면 <b>다른 밴더가 이미 연결한 같은 제품의 바코드를 먼저 추천</b>하고(그대로 클릭해 재사용 → 밴더가 달라도 같은 바코드로 일관되게), 없으면 POS에서 상품명으로 찾습니다.
+        완성된 엑셀(<b>FULL BARCODE · NAME · VENDOR CODE</b>)을 기존 인보이스 앱의 "바코드 참조 엑셀"에 올리면 됩니다.
+      </div>
+      <div class="toolbar">
+        <label class="btn sec" style="margin:0;">📤 참조/인보이스 업로드<input type="file" class="file-in" accept=".xlsx,.xls,.csv,.pdf" onchange="uploadFile(event,'ref')"></label>
+        <button class="btn sec" onclick="addRefRow()">➕ 행 추가</button>
+        <button class="btn" onclick="autoFillByName()">✨ 이름으로 바코드 자동 채우기</button>
+        <input type="text" id="refSearch" class="grow" placeholder="밴더코드 · 상품명 · 바코드 검색" oninput="renderRef()">
+        <div class="right" style="display:flex;gap:8px;">
+          <button class="btn" onclick="exportRef()">⬇️ 참조 엑셀 내보내기</button>
+          <button class="btn danger" onclick="clearRef()">전체 삭제</button>
+        </div>
+      </div>
+      <div class="stat" id="refStat"></div>
+      <div class="row mb">
+        <select id="refFilter" onchange="renderRef()">
+          <option value="all">전체 보기</option>
+          <option value="need">바코드 필요만 (미입력·POS에없음)</option>
+          <option value="ok">확인됨만</option>
+          <option value="bad">POS에 없음만</option>
+        </select>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr>
+            <th style="width:40px;">#</th>
+            <th style="width:140px;">VENDOR CODE</th>
+            <th>NAME (상품명)</th>
+            <th style="width:240px;">FULL BARCODE</th>
+            <th style="width:120px;">상태</th>
+            <th style="width:40px;"></th>
+          </tr></thead>
+          <tbody id="refBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 컬럼 매핑 모달 -->
+<div class="modal-bg" id="mapModal">
+  <div class="modal">
+    <h3>컬럼 연결</h3>
+    <p class="muted" id="mapDesc"></p>
+    <div class="map-grid" id="mapFields"></div>
+    <div class="note" id="mapPreview" style="max-height:150px;overflow:auto;"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:8px;">
+      <label class="row" style="margin-right:auto;font-size:12.5px;"><input type="checkbox" id="mapReplace" style="width:auto;"> 기존 데이터 지우고 새로 넣기</label>
+      <button class="btn gray" onclick="closeModal('mapModal')">취소</button>
+      <button class="btn" onclick="confirmMapping()">가져오기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 바코드 찾기 모달 -->
+<div class="modal-bg" id="findModal">
+  <div class="modal wide">
+    <h3>🔎 바코드 찾기 · POS에서 연결</h3>
+    <p class="muted" id="findCtx"></p>
+    <div class="row mb">
+      <input type="text" id="findSearch" class="grow" placeholder="상품명 또는 바코드로 검색" oninput="renderCandidates()">
+      <input type="text" id="findManual" placeholder="바코드 직접 입력" style="width:190px;">
+      <button class="btn" onclick="assignManual()">직접 연결</button>
+    </div>
+    <div id="findList" style="max-height:52vh;overflow:auto;"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px;"><button class="btn gray" onclick="closeModal('findModal')">닫기</button></div>
+  </div>
+</div>
+
+<script>
+/* ===== 저장 (IndexedDB) ===== */
+function blankData(){ return {vendors:['RHEE BROS'],current:'RHEE BROS',master:[],ref:{'RHEE BROS':[]}}; }
+let DATA=blankData();
+const DB_NAME='vbref_db',STORE='kv'; let _db=null;
+function idbOpen(){ return _db||(_db=new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1); r.onupgradeneeded=()=>r.result.createObjectStore(STORE); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); })); }
+async function idbGet(k){ const db=await idbOpen(); return new Promise((res,rej)=>{ const t=db.transaction(STORE,'readonly').objectStore(STORE).get(k); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); }); }
+async function idbSet(k,v){ const db=await idbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).put(v,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
+function setSaveState(t){ const s=document.getElementById('saveState'); if(s)s.textContent=t; }
+let dTimer=null,mTimer=null;
+function save(){ setSaveState('저장 중…'); clearTimeout(dTimer); dTimer=setTimeout(async()=>{ try{ await idbSet('data',{vendors:DATA.vendors,current:DATA.current,ref:DATA.ref}); setSaveState('저장됨 ✓'); }catch(e){ setSaveState('⚠ 저장 실패'); } },300); }
+function saveMaster(){ setSaveState('마스터 저장 중…'); clearTimeout(mTimer); mTimer=setTimeout(async()=>{ try{ await idbSet('master',DATA.master); setSaveState('저장됨 ✓'); }catch(e){ setSaveState('⚠ 마스터 저장 실패'); } },300); }
+async function initLoad(){
+  try{
+    const [m,d]=await Promise.all([idbGet('master'),idbGet('data')]);
+    if(Array.isArray(m)) DATA.master=m;
+    if(d&&d.vendors){ DATA.vendors=d.vendors; DATA.current=d.current; DATA.ref=d.ref||{}; }
+  }catch(e){ console.error(e); }
+  renderAll();
+}
+function showBusy(t){ const b=document.getElementById('busy'); if(b){ b.textContent=t||'처리 중…'; b.style.display='flex'; } }
+function hideBusy(){ const b=document.getElementById('busy'); if(b) b.style.display='none'; }
+const yield_=()=>new Promise(r=>setTimeout(r,30));
+
+/* ===== 유틸 ===== */
+function esc(s){ return (s==null?'':String(s)); }
+function normBar(b){ return String(b==null?'':b).replace(/[="]/g,'').trim(); }
+function normCode(c){ return String(c==null?'':c).trim().toUpperCase(); }
+function normName(s){ return String(s==null?'':s).toUpperCase().replace(/[^A-Z0-9가-힣 ]/g,' ').replace(/\s+/g,' ').trim(); }
+function scoreMatch(query,name){
+  const q=normName(query),n=normName(name);
+  if(!q||!n) return 0;
+  if(n===q) return 1000;
+  const qt=q.split(' ').filter(Boolean), nt=n.split(' ').filter(Boolean);
+  if(!qt.length||!nt.length) return 0;
+  const qs=new Set(qt);
+  let shared=0, partial=0;
+  nt.forEach(t=>{ if(qs.has(t)) shared++; else if(t.length>2 && qt.some(x=>x.length>2&&(x.includes(t)||t.includes(x)))) partial++; });
+  const matched=shared+partial*0.5;
+  if(matched<=0) return 0;
+  const covName=matched/nt.length;              // POS 이름이 얼마나 매칭됐나
+  const covQuery=matched/qt.length;             // 밴더 이름이 얼마나 매칭됐나
+  let s = shared*30 + partial*10 + Math.round((covName+covQuery)*120);
+  if(n.includes(q)||q.includes(n)) s += 40;     // 부분포함 소폭 가점(과하지 않게)
+  return s;
+}
+function masterBarSet(){ const s=new Set(); DATA.master.forEach(r=>{ const b=normBar(r.barcode); if(b) s.add(b); }); return s; }
+function curRef(){ return DATA.ref[DATA.current]||(DATA.ref[DATA.current]=[]); }
+/* 다른 밴더들이 이미 바코드를 연결한 항목 (같은 제품 재사용용) */
+function crossVendorEntries(){ const out=[]; DATA.vendors.forEach(v=>{ if(v===DATA.current) return; (DATA.ref[v]||[]).forEach(r=>{ const b=normBar(r.barcode); if(b) out.push({barcode:b,name:r.name||'',vendor:v,code:r.code||''}); }); }); return out; }
+
+/* ===== 밴더 ===== */
+function refreshVendorSelect(){ const el=document.getElementById('vendorSelect'); if(el) el.innerHTML=DATA.vendors.map(v=>`<option${v===DATA.current?' selected':''}>${esc(v)}</option>`).join(''); document.getElementById('refVendorName').textContent=DATA.current; }
+function switchVendor(v){ DATA.current=v; save(); renderAll(); }
+function addVendor(){ const n=(prompt('새 밴더 이름:')||'').trim(); if(!n)return; if(DATA.vendors.includes(n)){alert('이미 있는 밴더');return;} DATA.vendors.push(n); DATA.ref[n]=[]; DATA.current=n; save(); renderAll(); }
+function renameVendor(){ const old=DATA.current; const n=(prompt('밴더 이름 변경:',old)||'').trim(); if(!n||n===old)return; if(DATA.vendors.includes(n)){alert('이미 있는 밴더');return;} DATA.vendors=DATA.vendors.map(v=>v===old?n:v); DATA.ref[n]=DATA.ref[old]; delete DATA.ref[old]; DATA.current=n; save(); renderAll(); }
+function deleteVendor(){ if(DATA.vendors.length<=1){alert('마지막 밴더는 삭제할 수 없습니다.');return;} if(!confirm(`'${DATA.current}' 참조를 삭제할까요? (POS 마스터는 유지)`))return; const old=DATA.current; DATA.vendors=DATA.vendors.filter(v=>v!==old); delete DATA.ref[old]; DATA.current=DATA.vendors[0]; save(); renderAll(); }
+
+/* ===== 탭 ===== */
+function showTab(t){ document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===t)); ['master','ref'].forEach(x=>document.getElementById('tab-'+x).classList.toggle('hidden',x!==t)); if(t==='ref') renderRef(); }
+
+/* ===== POS 마스터 ===== */
+const MASTER_VIEW_LIMIT=300;
+function renderMaster(){
+  const q=(document.getElementById('masterSearch').value||'').trim().toLowerCase();
+  const body=document.getElementById('masterBody'); let html='',matched=0,shown=0;
+  for(let i=0;i<DATA.master.length;i++){
+    const r=DATA.master[i];
+    if(q && !((esc(r.barcode)+' '+esc(r.name)).toLowerCase().includes(q))) continue;
+    matched++; if(shown<MASTER_VIEW_LIMIT){ shown++;
+      html+=`<tr><td class="muted">${i+1}</td>
+        <td><input value="${esc(r.barcode)}" oninput="editMaster(${i},'barcode',this.value)"></td>
+        <td><input value="${esc(r.name)}" oninput="editMaster(${i},'name',this.value)"></td>
+        <td><button class="x" onclick="delMaster(${i})">×</button></td></tr>`;
+    }
+  }
+  body.innerHTML=html||`<tr><td colspan="4" class="muted" style="text-align:center;padding:24px;">POS 마스터가 없습니다. Vela CSV를 업로드하세요.</td></tr>`;
+  document.getElementById('masterCount').textContent=DATA.master.length;
+  document.getElementById('masterInfo').innerHTML=`총 <b>${DATA.master.length.toLocaleString()}</b>개 바코드`+(q?` · 검색 ${matched.toLocaleString()}개`:'')+(matched>MASTER_VIEW_LIMIT?` · <span style="color:var(--amber)">화면엔 ${MASTER_VIEW_LIMIT}개만 표시(검색으로 좁히세요)</span>`:'');
+}
+function editMaster(i,f,v){ const r=DATA.master[i]; if(!r)return; r[f]=(f==='barcode')?normBar(v):v; saveMaster(); }
+function delMaster(i){ DATA.master.splice(i,1); saveMaster(); renderMaster(); }
+function addMasterRow(){ DATA.master.unshift({barcode:'',name:''}); saveMaster(); renderMaster(); }
+function clearMaster(){ if(confirm('POS 마스터를 모두 삭제할까요?')){ DATA.master=[]; saveMaster(); renderMaster(); } }
+
+/* ===== 밴더 참조 ===== */
+function renderRef(){
+  const q=(document.getElementById('refSearch').value||'').trim().toLowerCase();
+  const f=document.getElementById('refFilter').value;
+  const rows=curRef(); const mset=masterBarSet();
+  let ok=0,bad=0,none=0;
+  rows.forEach(r=>{ const b=normBar(r.barcode); if(!b)none++; else if(mset.has(b))ok++; else bad++; });
+  document.getElementById('refStat').innerHTML=`
+    <div class="box"><div class="n">${rows.length}</div><div class="l">전체 코드</div></div>
+    <div class="box"><div class="n">${ok}</div><div class="l">POS 확인됨</div></div>
+    <div class="box bad"><div class="n">${bad}</div><div class="l">POS에 없음(의심)</div></div>
+    <div class="box warn"><div class="n">${none}</div><div class="l">바코드 미입력</div></div>`;
+  const body=document.getElementById('refBody'); let html='';
+  rows.forEach((r,i)=>{
+    const b=normBar(r.barcode);
+    const state = !b?'none':(mset.has(b)?'ok':'bad');
+    if(f==='need' && state==='ok') return;
+    if(f==='ok' && state!=='ok') return;
+    if(f==='bad' && state!=='bad') return;
+    if(q && !((esc(r.code)+' '+esc(r.name)+' '+esc(r.barcode)).toLowerCase().includes(q))) return;
+    let pill = state==='ok'?'<span class="pill ok">✓ POS 확인</span>':(state==='bad'?'<span class="pill bad">⚠ POS에 없음</span>':'<span class="pill warn">미입력</span>');
+    html+=`<tr>
+      <td class="muted">${i+1}</td>
+      <td><input value="${esc(r.code)}" oninput="editRef(${i},'code',this.value)"></td>
+      <td><input value="${esc(r.name)}" oninput="editRef(${i},'name',this.value)"></td>
+      <td style="display:flex;gap:5px;align-items:center;">
+        <input value="${esc(r.barcode)}" oninput="editRef(${i},'barcode',this.value)" style="flex:1;" placeholder="미입력">
+        <button class="btn tiny sec" onclick="openFind(${i})">🔎 찾기</button>
+      </td>
+      <td>${pill}</td>
+      <td><button class="x" onclick="delRef(${i})">×</button></td></tr>`;
+  });
+  body.innerHTML=html||`<tr><td colspan="6" class="muted" style="text-align:center;padding:24px;">참조가 없습니다. 참조/인보이스/PDF 업로드 또는 '행 추가'로 시작하세요.</td></tr>`;
+  document.getElementById('refCount').textContent=rows.length;
+}
+function editRef(i,f,v){ const r=curRef()[i]; if(!r)return; r[f]=(f==='barcode')?normBar(v):v; save(); if(f==='barcode')renderRef(); }
+function delRef(i){ curRef().splice(i,1); save(); renderRef(); }
+function addRefRow(){ curRef().unshift({code:'',name:'',barcode:''}); save(); renderRef(); }
+function clearRef(){ if(confirm(`${DATA.current} 참조를 모두 삭제할까요?`)){ DATA.ref[DATA.current]=[]; save(); renderRef(); } }
+
+/* 이름으로 바코드 자동 채우기 (확실한 것만) */
+function autoFillByName(){
+  const xv=crossVendorEntries();
+  if(!DATA.master.length && !xv.length){ alert('먼저 POS 마스터를 올리거나 다른 밴더 참조를 만들어 주세요.'); return; }
+  const mset=masterBarSet(); const rows=curRef();
+  let filled=0,xvFilled=0,skip=0;
+  rows.forEach(r=>{
+    const b=normBar(r.barcode);
+    if(b && mset.has(b)) return;               // 이미 POS 확인된 건 유지
+    if(!r.name || !r.name.trim()){ skip++; return; }
+    // 1) 다른 밴더가 이미 연결한 것 우선(사람이 검증한 값이라 신뢰도 높음)
+    let xb=null,xs=0,xs2=0;
+    for(const e of xv){ const s=scoreMatch(r.name,e.name); if(s>xs){ xs2=xs; xs=s; xb=e; } else if(s>xs2) xs2=s; }
+    if(xb && xs>=260 && xs>=xs2+80){ r.barcode=normBar(xb.barcode); xvFilled++; return; }
+    // 2) POS 마스터 이름 매칭
+    let best=null,bestS=0,second=0;
+    for(const m of DATA.master){ const s=scoreMatch(r.name,m.name); if(s>bestS){ second=bestS; bestS=s; best=m; } else if(s>second) second=s; }
+    if(best && bestS>=260 && bestS>=second+120){ r.barcode=normBar(best.barcode); filled++; return; }
+    skip++;
+  });
+  save(); renderRef();
+  alert(`✨ 자동 연결 완료\n· 다른 밴더 재사용: ${xvFilled}건\n· POS 이름매칭: ${filled}건\n· 확실하지 않아 남긴 것: ${skip}건 (각 행 🔎로 연결)`);
+}
+
+/* ===== 바코드 찾기 ===== */
+let findIdx=null;
+function openFind(i){
+  findIdx=i; const r=curRef()[i];
+  document.getElementById('findCtx').innerHTML=`밴더코드 <b>${esc(r.code)||'(없음)'}</b> · 상품명 <b>${esc(r.name)||'(없음)'}</b> → 맞는 제품을 클릭하면 바코드가 연결됩니다.`;
+  document.getElementById('findSearch').value=r.name||'';
+  document.getElementById('findManual').value='';
+  renderCandidates(); openModal('findModal');
+  setTimeout(()=>document.getElementById('findSearch').focus(),50);
+}
+function renderCandidates(){
+  const q=(document.getElementById('findSearch').value||'').trim();
+  const el=document.getElementById('findList');
+  const mset=masterBarSet();
+  // 1) 다른 밴더에서 이미 연결한 바코드 추천
+  let xvHtml='';
+  if(q){
+    const seen=new Set();
+    const xv=crossVendorEntries().map(e=>({e,s:scoreMatch(q,e.name)+(e.barcode.includes(q)?200:0)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+    const picks=[]; for(const x of xv){ if(seen.has(x.e.barcode))continue; seen.add(x.e.barcode); picks.push(x); if(picks.length>=6)break; }
+    if(picks.length){
+      xvHtml=`<div class="muted" style="font-weight:700;margin:0 0 6px;color:var(--green);">💡 다른 밴더에서 이미 연결됨 · 같은 제품이면 그대로 클릭</div>`
+        + picks.map(x=>`<div class="cand" style="border-color:#8fb39d;background:#eef8f1;" onclick="assignFromMaster('${encodeURIComponent(x.e.barcode)}','${encodeURIComponent(x.e.name)}')">
+            <span class="bc">${esc(x.e.barcode)}</span>
+            <span class="nm">${esc(x.e.name)} <span class="muted">· ${esc(x.e.vendor)} · ${esc(x.e.code)}</span></span>
+            <span class="pill ${mset.has(x.e.barcode)?'ok':'warn'}">${mset.has(x.e.barcode)?'POS ✓':'POS?'}</span></div>`).join('')
+        + `<div class="muted" style="font-weight:700;margin:10px 0 6px;">🏬 POS 마스터에서 찾기</div>`;
+    }
+  }
+  // 2) POS 마스터 후보
+  if(!DATA.master.length){ el.innerHTML=xvHtml+'<div class="muted" style="padding:12px;">POS 마스터가 비어 있습니다. 먼저 업로드하세요.</div>'; return; }
+  let list;
+  if(q){ list=DATA.master.map(m=>({m,s:scoreMatch(q,m.name)+(normBar(m.barcode).includes(q)?300:0)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,60); }
+  else list=DATA.master.slice(0,60).map(m=>({m,s:0}));
+  const posHtml = list.length ? list.map(x=>`<div class="cand" onclick="assignFromMaster('${encodeURIComponent(x.m.barcode)}','${encodeURIComponent(x.m.name||'')}')">
+      <span class="bc">${esc(x.m.barcode)}</span><span class="nm">${esc(x.m.name)}</span></div>`).join('')
+    : '<div class="muted" style="padding:12px;">검색 결과가 없습니다. 다른 단어로 검색하거나 바코드를 직접 입력하세요.</div>';
+  el.innerHTML=xvHtml+posHtml;
+}
+function assignFromMaster(bc,nm){ doAssign(decodeURIComponent(bc),decodeURIComponent(nm)); }
+function assignManual(){ const bc=normBar(document.getElementById('findManual').value); if(!bc){alert('바코드를 입력하세요.');return;} doAssign(bc,''); }
+function doAssign(barcode,posName){
+  if(findIdx==null) return; const r=curRef()[findIdx];
+  r.barcode=normBar(barcode);
+  if((!r.name||!r.name.trim())&&posName) r.name=posName;
+  save(); closeModal('findModal'); renderRef();
+}
+
+/* ===== 파일 업로드 (엑셀/CSV/PDF) → 매핑 ===== */
+let pendingHeaders=null,pendingRows=null,pendingTarget=null;
+async function uploadFile(ev,target){
+  const file=ev.target.files[0]; if(!file)return; ev.target.value='';
+  const isPdf=/\.pdf$/i.test(file.name);
+  showBusy(`파일 읽는 중… (${(file.size/1048576).toFixed(1)}MB)`); await yield_();
+  try{
+    if(isPdf){
+      if(!window.pdfjsLib){ hideBusy(); alert('PDF 라이브러리를 불러오지 못했습니다. 새로고침 후 다시 시도하세요.'); return; }
+      const {headers,rows,totalChars,pages}=await extractPdfGrid(await file.arrayBuffer());
+      hideBusy();
+      if(totalChars<60){ alert('⚠ 글자가 거의 추출되지 않았습니다 (스캔본·사진 PDF). 엑셀/CSV로 바꾼 뒤 올려주세요.'); return; }
+      if(!rows.length){ alert('표에서 행을 찾지 못했습니다.'); return; }
+      pendingHeaders=headers.map((h,i)=>({idx:i,label:(h&&h.trim())||('열'+(i+1))})); pendingRows=rows; pendingTarget=target; openMapping();
+      document.getElementById('mapDesc').innerHTML=`PDF 표 인식 · ${pages}페이지 · ${rows.length}행 · 열 ${headers.length}개`;
+    } else {
+      const buf=await file.arrayBuffer(); await yield_();
+      const wb=XLSX.read(buf,{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]];
+      const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      const first=arr.findIndex(r=>r.some(c=>String(c).trim()!==''));
+      if(first<0){ hideBusy(); alert('빈 파일입니다.'); return; }
+      pendingHeaders=arr[first].map((h,i)=>({idx:i,label:String(h).trim()||('열'+(i+1))}));
+      pendingRows=arr.slice(first+1).filter(r=>r.some(c=>String(c).trim()!==''));
+      pendingTarget=target; hideBusy(); openMapping();
+    }
+  }catch(err){ hideBusy(); alert('파일 처리 실패: '+err.message); }
+}
+function guessCol(keys){ for(const h of pendingHeaders){ const l=h.label.toLowerCase(); if(keys.some(k=>l.includes(k))) return h.idx; } return -1; }
+function openMapping(){
+  const opt=idx=>`<option value="-1">(없음)</option>`+pendingHeaders.map(h=>`<option value="${h.idx}"${h.idx===idx?' selected':''}>${esc(h.label)}</option>`).join('');
+  const fields=document.getElementById('mapFields');
+  if(pendingTarget==='master'){
+    const gBar=guessCol(['full barcode','barcode','바코드','upc','ean','plu','code','스캔','sku']);
+    const gName=guessCol(['name','상품','품명','product','description']);
+    fields.innerHTML=`
+      <div><label class="fld">FULL BARCODE 열</label><select id="mCol0">${opt(gBar)}</select></div>
+      <div><label class="fld">상품명(NAME) 열</label><select id="mCol1">${opt(gName)}</select></div>`;
+    document.getElementById('mapReplace').checked=true;
+    document.getElementById('mapDesc').textContent=`POS 마스터 · 총 ${pendingRows.length.toLocaleString()}행 · 열 ${pendingHeaders.length}개`;
+  } else {
+    const gCode=guessCol(['vendor code','밴더','벤더','vendor','code','코드','item no','no.','no','item','#']);
+    let gName=guessCol(['description','name','품명','상품','product','desc']); // 제품명 우선(브랜드보다)
+    if(gName<0) gName=guessCol(['brand','item']);
+    const gBar=guessCol(['full barcode','바코드','barcode','upc','ean','sku','스캔']);
+    fields.innerHTML=`
+      <div><label class="fld">VENDOR CODE 열</label><select id="mCol0">${opt(gCode)}</select></div>
+      <div><label class="fld">상품명(NAME) 열</label><select id="mCol1">${opt(gName)}</select></div>
+      <div><label class="fld">바코드 열 (있으면)</label><select id="mCol2">${opt(gBar)}</select></div>`;
+    document.getElementById('mapReplace').checked=false;
+    document.getElementById('mapDesc').textContent=`${DATA.current} 밴더 참조 · 총 ${pendingRows.length.toLocaleString()}행 · 열 ${pendingHeaders.length}개`;
+  }
+  const head='<tr>'+pendingHeaders.map(h=>`<th>${esc(h.label)}</th>`).join('')+'</tr>';
+  const body=pendingRows.slice(0,4).map(r=>'<tr>'+pendingHeaders.map(h=>`<td>${esc(r[h.idx])}</td>`).join('')+'</tr>').join('');
+  document.getElementById('mapPreview').innerHTML=`<div style="font-weight:700;margin-bottom:4px;">미리보기 (상위 4행)</div><table style="font-size:11px;">${head}${body}</table>`;
+  openModal('mapModal');
+}
+async function confirmMapping(){
+  const gv=id=>{ const el=document.getElementById(id); return el?+el.value:-1; };
+  const c0=gv('mCol0'),c1=gv('mCol1'),c2=gv('mCol2');
+  const get=(r,i)=> i<0?'':String(r[i]==null?'':r[i]).trim();
+  const replace=document.getElementById('mapReplace').checked; const tgt=pendingTarget;
+  closeModal('mapModal');
+  if(tgt==='master'){
+    if(pendingRows.length>2000){ showBusy(`POS 마스터 ${pendingRows.length.toLocaleString()}행 처리 중…`); await yield_(); }
+    const rows=pendingRows.map(r=>({barcode:normBar(get(r,c0)),name:get(r,c1)})).filter(x=>x.barcode||x.name);
+    DATA.master=replace?rows:DATA.master.concat(rows); saveMaster(); hideBusy(); renderMaster();
+  } else {
+    const rows=pendingRows.map(r=>({code:get(r,c0),name:get(r,c1),barcode:normBar(get(r,c2))})).filter(x=>x.code||x.name);
+    DATA.ref[DATA.current]=replace?rows:curRef().concat(rows); save(); renderRef();
+  }
+  pendingHeaders=pendingRows=pendingTarget=null;
+}
+
+/* ===== PDF 표 파서 (헤더 앵커 기준) ===== */
+const HEADER_KW=['no','no.','item','brand','description','desc','size','qty','qty.','quantity','um','uom','type','unit','each','price','cost','total','amount','barcode','vendor','code','품명','상품','규격','수량','단가','금액','합계','코드','바코드'];
+async function extractPdfGrid(buf){
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let totalChars=0; const lines=[];
+  for(let pg=1;pg<=pdf.numPages;pg++){
+    const page=await pdf.getPage(pg); const tc=await page.getTextContent();
+    const items=tc.items.map(it=>({str:(it.str||'').trim(),x:it.transform[4],y:it.transform[5]})).filter(it=>it.str);
+    items.forEach(it=>totalChars+=it.str.replace(/\s/g,'').length);
+    const byY={}; items.forEach(it=>{ const k=Math.round(it.y/3)*3; (byY[k]=byY[k]||[]).push(it); });
+    Object.keys(byY).map(Number).sort((a,b)=>b-a).forEach(k=>{ lines.push({items:byY[k].sort((a,b)=>a.x-b.x)}); });
+  }
+  if(totalChars<60) return {headers:[],rows:[],totalChars,pages:pdf.numPages};
+  const isKw=s=>HEADER_KW.includes(String(s).toLowerCase().replace(/\.$/,'').trim());
+  let hi=-1,hb=2,hiItems=null;
+  lines.forEach((ln,i)=>{ const k=ln.items.filter(it=>isKw(it.str)).length; if(k>hb){hb=k;hi=i;hiItems=ln.items;} });
+  let anchors,headers;
+  if(hi>=0){ const its=hiItems.slice().sort((a,b)=>a.x-b.x); anchors=its.map(it=>it.x); headers=its.map(it=>it.str); }
+  else { const xs=[]; lines.forEach(ln=>ln.items.forEach(it=>xs.push(it.x))); xs.sort((a,b)=>a-b); anchors=[xs[0]]; for(let i=1;i<xs.length;i++){ if(xs[i]-anchors[anchors.length-1]>40) anchors.push(xs[i]); } headers=anchors.map((_,i)=>'열'+(i+1)); }
+  const nCol=anchors.length;
+  const colOf=x=>{ let b=0,bd=1e9; for(let i=0;i<nCol;i++){ const d=Math.abs(x-anchors[i]); if(d<bd){bd=d;b=i;} } return b; };
+  const toCells=ln=>{ const cells=Array(nCol).fill(''); ln.items.forEach(it=>{ const c=colOf(it.x); cells[c]=(cells[c]?cells[c]+' ':'')+it.str; }); return cells; };
+  const kwCount=cells=>cells.reduce((a,c)=>a+(isKw(c)?1:0),0);
+  const isNoise=cells=>{ const j=cells.join(' '); return /\b(page|invoice no|order no|due date|salesperson|customer|external|remit|thank you|subtotal|balance|amount due|terms|finance|past due|claim|receipt|bill to|ship to|합계|소계|총액|페이지|청구)\b/i.test(j); };
+  const hasNum=cells=>cells.some(c=>/\d[\d,]*\.\d{1,2}\b/.test(c));
+  const validCode=c=>c && /[0-9]/.test(c) && c.replace(/\s/g,'').length>=3 && !isKw(c);
+  const out=[];
+  lines.forEach((ln,i)=>{
+    if(i===hi) return; const cells=toCells(ln);
+    if(kwCount(cells)>=3) return;
+    const code=cells[0];
+    if(!validCode(code)){
+      if(out.length && !isNoise(cells) && cells.some(c=>c&&/[A-Za-z가-힣]/.test(c))){ const prev=out[out.length-1]; cells.forEach((c,ci)=>{ if(c&&ci>0&&!/\d[\d,]*\.\d{1,2}/.test(c)&&c.length<40) prev[ci]=(prev[ci]?prev[ci]+' ':'')+c; }); }
+      return;
+    }
+    if(isNoise(cells)) return;
+    if(!hasNum(cells)) return;
+    out.push(cells.slice());
+  });
+  return {headers,rows:out,totalChars,pages:pdf.numPages};
+}
+
+/* ===== 내보내기 ===== */
+function exportRef(){
+  const rows=curRef();
+  if(!rows.length){ alert('내보낼 참조가 없습니다.'); return; }
+  const none=rows.filter(r=>!normBar(r.barcode)).length;
+  if(none && !confirm(`바코드 미입력 ${none}건이 포함됩니다. 그래도 내보낼까요?\n(취소 후 🔎 찾기로 채운 뒤 다시 내보낼 수 있습니다)`)) return;
+  const out=rows.map(r=>({'FULL BARCODE':normBar(r.barcode),'NAME':r.name||'','VENDOR CODE':r.code||''}));
+  const ws=XLSX.utils.json_to_sheet(out,{header:['FULL BARCODE','NAME','VENDOR CODE']});
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'참조');
+  XLSX.writeFile(wb,`바코드참조_${DATA.current}.xlsx`);
+}
+function exportBackup(){ const blob=new Blob([JSON.stringify(DATA)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='바코드참조_백업.json'; a.click(); }
+function importBackup(ev){ const f=ev.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=e=>{ try{ const d=JSON.parse(e.target.result); if(d.vendors&&d.master!==undefined&&d.ref){ DATA=d; saveMaster(); save(); renderAll(); alert('복원 완료'); } else alert('올바른 백업 파일이 아닙니다.'); }catch(err){ alert('복원 실패: '+err.message);} }; r.readAsText(f); ev.target.value=''; }
+
+/* ===== 모달/렌더 ===== */
+function openModal(id){ document.getElementById(id).classList.add('show'); }
+function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+function renderAll(){ refreshVendorSelect(); renderMaster(); renderRef(); }
+initLoad();
+</script>
+</body>
+</html>
