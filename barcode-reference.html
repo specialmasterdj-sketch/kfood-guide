@@ -158,6 +158,11 @@
           <option value="ok">확인됨만</option>
           <option value="bad">POS에 없음만</option>
         </select>
+        <select id="refSort" onchange="renderRef()">
+          <option value="code" selected>정렬: 밴더코드 순</option>
+          <option value="name">정렬: 상품명 순</option>
+          <option value="orig">정렬: 원래 순서</option>
+        </select>
       </div>
       <div class="tbl-scroll">
         <table>
@@ -387,7 +392,12 @@ function renderRef(){
     <div class="box bad"><div class="n">${bad}</div><div class="l">POS에 없음(의심)</div></div>
     <div class="box warn"><div class="n">${none}</div><div class="l">바코드 미입력</div></div>`;
   const body=document.getElementById('refBody'); let html='';
-  rows.forEach((r,i)=>{
+  const sortBy=(document.getElementById('refSort')||{}).value||'code';
+  let order=rows.map((r,i)=>({r,i}));
+  if(sortBy==='code') order.sort((a,b)=>String(a.r.code||'').localeCompare(String(b.r.code||''),undefined,{numeric:true}));
+  else if(sortBy==='name') order.sort((a,b)=>String(a.r.name||'').localeCompare(String(b.r.name||'')));
+  let dispNo=0;
+  order.forEach(({r,i})=>{
     const b=normBar(r.barcode);
     const state = !b?'none':(mset.has(b)?'ok':'bad');
     if(f==='need' && state==='ok') return;
@@ -395,8 +405,9 @@ function renderRef(){
     if(f==='bad' && state!=='bad') return;
     if(q && !((esc(r.code)+' '+esc(r.name)+' '+esc(r.barcode)).toLowerCase().includes(q))) return;
     let pill = state==='ok'?'<span class="pill ok">✓ POS 확인</span>':(state==='bad'?'<span class="pill bad">⚠ POS에 없음</span>':'<span class="pill warn">미입력</span>');
+    dispNo++;
     html+=`<tr>
-      <td class="muted">${i+1}</td>
+      <td class="muted">${dispNo}</td>
       <td><input value="${esc(r.code)}" oninput="editRef(${i},'code',this.value)"></td>
       <td><input value="${esc(r.name)}" oninput="editRef(${i},'name',this.value)"></td>
       <td style="display:flex;gap:5px;align-items:center;">
@@ -562,7 +573,23 @@ async function confirmMapping(){
     if(costOnly) alert(`COST 있는 상품 ${out.length.toLocaleString()}개만 가져왔습니다. (전체 ${before.toLocaleString()}개 중)`);
   } else {
     const rows=pendingRows.map(r=>({code:get(r,c0),name:get(r,c1),barcode:normBar(get(r,c2))})).filter(x=>x.code||x.name);
-    DATA.ref[DATA.current]=replace?rows:curRef().concat(rows); save(); renderRef();
+    if(replace){ DATA.ref[DATA.current]=rows; }
+    else{
+      /* 새 인보이스: 새 밴더코드만 추가, 이미 있는 코드는 그대로 유지(중복 방지) */
+      const cur=curRef(); const byCode={};
+      cur.forEach(r=>{ const k=normCode(r.code); if(k) byCode[k]=r; });
+      let added=0,kept=0,filled=0;
+      rows.forEach(x=>{
+        const k=normCode(x.code);
+        if(k && byCode[k]){
+          const ex=byCode[k]; kept++;
+          if(!normBar(ex.barcode)&&x.barcode){ ex.barcode=x.barcode; filled++; }
+          if((!ex.name||!ex.name.trim())&&x.name) ex.name=x.name;
+        } else { cur.push(x); if(k) byCode[k]=x; added++; }
+      });
+      alert('🆕 새 밴더코드 '+added+'건 추가 · 이미 있는 코드 '+kept+'건 그대로 유지'+(filled?(' · 빈 바코드 '+filled+'건 채움'):'')+'\n\n새 코드는 ✨자동 채우기 또는 🔎찾기/📷스캔으로 연결하세요.');
+    }
+    save(); renderRef();
   }
   pendingHeaders=pendingRows=pendingTarget=null;
 }
