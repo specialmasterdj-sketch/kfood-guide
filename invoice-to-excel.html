@@ -681,6 +681,8 @@ function loadRefForVendor(vendor){
   // across every matching computer — staff upload once anywhere, commit to
   // GitHub, and other branches pull it automatically on the next page load.
   if (!REF) { tryFetchSharedRef(vendor); }
+  // 🔗 바코드 참조 앱 클라우드가 더 새로우면 자동 갱신
+  if (typeof brPull === 'function') brPull(vendor); else setTimeout(()=>{ if(typeof brPull==='function') brPull(vendor); },800);
 }
 
 async function tryFetchSharedRef(vendor){
@@ -906,6 +908,7 @@ function onRefFile(f){
       try {
         const json = JSON.stringify(REF);
         localStorage.setItem(refKeyFor(currentVendor), json);
+        if (typeof brPush === 'function') brPush();
         const back = localStorage.getItem(refKeyFor(currentVendor));
         saved = back && back.length === json.length;
       } catch(e){ console.warn('localStorage save failed:', e); }
@@ -1069,6 +1072,7 @@ function saveRefEditor(){
     count++;
   });
   REF = { byVC, byName, count, ts: Date.now(), vendor: currentVendor };
+  if (typeof brPush === 'function') brPush();
   try { localStorage.setItem(refKeyFor(currentVendor), JSON.stringify(REF)); }
   catch(e){ console.warn('localStorage full:', e); toast('❌ 저장 실패 — localStorage 용량 초과'); return; }
   renderRefInfo();
@@ -3664,6 +3668,24 @@ function cellChange(ri, key, inp, type){
   // Update warn class
   const tr = inp.closest('tr');
   if(tr) tr.classList.toggle('warn', !ROWS[ri].barcode);
+  // 🔗 행에서 바코드를 고치면 참조에도 저장 → 클라우드로 전송 (바코드앱·폰에 반영)
+  if(key==='barcode'){
+    try{
+      const row=ROWS[ri];
+      const vc=String(row.vendorCode||'').trim().toUpperCase();
+      const bc=String(row.barcode||'').trim();
+      if(vc && bc){
+        if(!REF||!REF.byVC) REF={byVC:{},byName:{},count:0,ts:0,vendor:currentVendor};
+        const e=REF.byVC[vc]||(REF.byVC[vc]={name:row.name||'',nameEN:row.name||'',nameKR:row.name||''});
+        e.barcode=bc;
+        if(row.name) REF.byName[String(row.name).toUpperCase()]={barcode:bc,vc:vc};
+        REF.count=Object.keys(REF.byVC).length;
+        try{ localStorage.setItem(refKeyFor(currentVendor),JSON.stringify(REF)); }catch(e2){}
+        if(typeof renderRefInfo==='function') renderRefInfo();
+        if(typeof brPush==='function') brPush();
+      }
+    }catch(e){}
+  }
 }
 
 function renameCol(k, newLabel){
@@ -3908,6 +3930,68 @@ function show(i){ id(i)?.classList.remove('hidden'); }
 function hide(i){ id(i)?.classList.add('hidden'); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtSz(b){ return b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB'; }
+/* ===== 🔗 바코드 참조 앱(barcode-reference.html)과 양방향 클라우드 연동 =====
+   - 열 때/공급사 바꿀 때: 클라우드가 더 새로우면 참조 자동 갱신
+   - 참조 업로드/편집 저장/행에서 바코드 수정: 클라우드로 자동 전송 → 폰·바코드앱에 반영 */
+const BR_DB='https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BR_BASES=['/barcodeRef','/config/barcodeRef','/chat/barcodeRef'];
+let _brBase=null; try{ _brBase=localStorage.getItem('vbref_fbbase'); }catch(e){}
+async function _brTryGet(b){ try{ const r=await fetch(BR_DB+b+'/data.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) return undefined; return await r.json(); }catch(e){ return undefined; } }
+async function _brTryPut(b,v){ try{ const r=await fetch(BR_DB+b+'/data.json',{method:'PUT',body:JSON.stringify(v)}); return r.ok; }catch(e){ return false; } }
+async function brGet(){ if(_brBase){ const v=await _brTryGet(_brBase); if(v!==undefined) return v; }
+  for(const b of BR_BASES){ if(b===_brBase) continue; const v=await _brTryGet(b);
+    if(v!==undefined&&v!==null){ _brBase=b; try{localStorage.setItem('vbref_fbbase',b);}catch(e){} return v; } }
+  return null; }
+async function brPut(d){ if(_brBase&&await _brTryPut(_brBase,d)) return true;
+  for(const b of BR_BASES){ if(b===_brBase) continue; if(await _brTryPut(b,d)){ _brBase=b; try{localStorage.setItem('vbref_fbbase',b);}catch(e){} return true; } }
+  return false; }
+const BR_VENDOR_ALIAS={rhee_bros:'RHEE BROS',wang_global:'WANG GLOBAL',welluck:'WELL LUCK',walong:'WALONG',two_bros:'TWO BROS',seoul_trading:'SEOUL TRADING',wismettac:'WISMETTAC',jfc:'JFC',eastland:'EASTLAND',haitai:'HAITAI'};
+function brVendorName(vid){ return BR_VENDOR_ALIAS[vid]||String((VENDORS_PARSER[vid]&&VENDORS_PARSER[vid].name)||vid).toUpperCase(); }
+function brNorm(x){ return String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function brFindKey(refObj,vid){ const want=brNorm(brVendorName(vid)); for(const k of Object.keys(refObj||{})){ if(brNorm(k)===want) return k; } return null; }
+function brRowsToRef(rows,vid){ const byVC={},byName={}; let n=0;
+  (rows||[]).forEach(r=>{ const vc=String(r.code||'').trim().toUpperCase(); if(!vc)return;
+    const bc=String(r.barcode||'').trim(), nm=String(r.name||'').trim();
+    byVC[vc]={barcode:bc,name:nm,nameEN:nm,nameKR:String(r.kr||nm)};
+    if(nm) byName[nm.toUpperCase()]={barcode:bc,vc}; n++; });
+  return {byVC,byName,count:n,vendor:vid}; }
+function brRefToRows(ref){ return Object.keys(ref.byVC||{}).map(vc=>{ const e=ref.byVC[vc]||{};
+    const row={code:vc,name:e.nameEN||e.name||e.nameKR||'',barcode:e.barcode||''};
+    if(e.nameKR&&e.nameKR!==row.name) row.kr=e.nameKR;
+    return row; }); }
+let _brCloud=null;
+async function brPull(vid){
+  try{
+    const cd=await brGet(); if(!cd||!cd.ref) return; _brCloud=cd;
+    const key=brFindKey(cd.ref,vid); if(!key) return;
+    const cloudTs=cd.updatedAt||0, localTs=(REF&&REF.ts)||0;
+    if(cloudTs>localTs){
+      const built=brRowsToRef(cd.ref[key],vid);
+      REF=Object.assign(built,{ts:cloudTs,vendor:vid,cloud:true});
+      try{ localStorage.setItem(refKeyFor(vid),JSON.stringify(REF)); }catch(e){}
+      if(typeof renderRefInfo==='function') renderRefInfo();
+      if(typeof toast==='function') toast('🔄 바코드 참조 앱과 동기화 ('+built.count+'건)');
+    }
+  }catch(e){}
+}
+let _brPushT=null;
+function brPush(){ clearTimeout(_brPushT); _brPushT=setTimeout(async()=>{
+  try{
+    if(!REF||!REF.byVC) return;
+    const vid=currentVendor;
+    const cd=(await brGet())||_brCloud||{vendors:[],ref:{}};
+    if(!cd.ref) cd.ref={}; if(!Array.isArray(cd.vendors)) cd.vendors=[];
+    let key=brFindKey(cd.ref,vid); if(!key) key=brVendorName(vid);
+    cd.ref[key]=brRefToRows(REF);
+    if(!cd.vendors.includes(key)) cd.vendors.push(key);
+    cd.updatedAt=Date.now(); REF.ts=cd.updatedAt;
+    try{ localStorage.setItem(refKeyFor(vid),JSON.stringify(REF)); }catch(e){}
+    const ok=await brPut(cd); _brCloud=cd;
+    if(ok&&typeof toast==='function') toast('📱 바코드 참조 앱으로 전송됨');
+  }catch(e){}
+},800); }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') brPull(currentVendor); });
+
 function toast(m,d=2500){
   const t=id('toast'); t.textContent=m; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),d);
