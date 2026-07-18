@@ -1023,7 +1023,16 @@ async function fetchChat(agg, since, until){
       const r = await fetch(`${FB_DB}/chat/rooms.json${aq}`, { cache:'no-store' });
       if (r.ok) rooms = (await r.json()) || {};
     } catch(e){ console.warn('[lb] rooms', e); }
-    const ids = Object.keys(rooms);
+    // ⚡ 2026-07-18 속도 개선(전무님 요청): 조회 기간(since) 이후 활동(lastTs)이 없는 방은
+    //   메시지 조회를 건너뜀 — 방이 499개까지 늘며(업무 알림방 누적) 몇 분씩 걸리던 문제.
+    //   메시지·댓글 모두 방 lastTs 를 갱신하므로 안전. 늦은 좋아요 대비 7일 여유.
+    //   '전체' 기간(since=0)은 기존대로 모든 방 조회 (과거 정확성 유지).
+    const _ltMargin = 7*24*60*60*1000;
+    const ids = Object.keys(rooms).filter(rid => {
+      if (!since) return true;
+      const lt = (rooms[rid] && rooms[rid].lastTs) || 0;
+      return !lt || lt >= (since - _ltMargin);
+    });
     if (!ids.length) return;
     const _failsBefore = CHAT_FAILS;
     const collected = {};
