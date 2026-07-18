@@ -56,6 +56,7 @@
 
   const LINKS = [
     { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
+    { ic: '⊞',  lbl: { ko:'모든 앱',      en:'All Apps',    es:'Todas Apps' },  href: './apps.html', highlight: true },
     { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
     { ic: '📅', lbl: { ko:'스케줄',       en:'Schedule',    es:'Horario' },     href: './shifts.html' },
     // 🔒 2026-05-27 전무님 지시: 급여 메뉴는 매니저앱 사이드바에서 완전 제거.
@@ -106,7 +107,6 @@
     { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/', target: '_blank' },
     { ic: '📋', lbl: { ko:'플래노그램',    en:'Planogram', es:'Planograma' }, href: './planogram.html' },
     { ic: '🏪', lbl: { ko:'Floor Plan',    en:'Floor Plan', es:'Plano de Tienda' }, href: './floorplan/' },
-    { ic: '⊞',  lbl: { ko:'모든 앱',       en:'All Apps',  es:'Todas Apps' }, href: './apps.html' },
   ];
 
   const W = 200;
