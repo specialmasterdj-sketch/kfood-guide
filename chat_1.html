@@ -3458,27 +3458,21 @@ window.submitLogistics = function(){
 // ============ ⭐ 구글 리뷰 제보 자동 +5점 (2026-07-17 전무님 지시) ============
 // ⭐방에 사진과 함께 올리면 기본 5점 자동 지급 (업무지시 점수판 mgrBonus 에 기록).
 // 이름 나온 리뷰 50점은 전무님이 확인 후 '상점 주기'로 직접 지급.
-// 중복 방지: ① 같은 사진(해시) 재제보 차단 — 본인·타직원 모두 ② 1인 하루 1회.
+// 중복 방지: 같은 사진(해시) 재제보 차단 — 본인·타직원 모두.
+// (2026-07-17 전무님 지시: 하루 횟수 제한 없음 — 새 리뷰면 몇 건이든 5점씩)
 const REVIEW_ROOM_ID='google_review_praise';
-const REVIEW_LOG='chat/messages/zz_review_awards';   // 중복 장부 (채팅 화면엔 안 보임)
+const REVIEW_LOG='chat/messages/zz_review_awards';
 async function _sha256s(str){ const d=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,40); }
 async function awardReviewPoint(imgDataUrls, ts){
   try{
     if(!me||!me.name||!imgDataUrls||!imgDataUrls.length) return;
-    const day=new Date(ts).toISOString().slice(0,10).replace(/-/g,'');
-    const who=String(me.name).replace(/[^A-Za-z0-9가-힣]/g,'').toUpperCase()||'X';
-    // ① 같은 사진 재제보 차단
     const hashes=[];
     for(const du of imgDataUrls){ try{ hashes.push(await _sha256s(du)); }catch(_){} }
     for(const h of hashes){
       try{ const r=await fetch(`${FB_DB_URL}/${REVIEW_LOG}/img_${h}.json?t=${Date.now()}`,{cache:'no-store'});
         if(r.ok && await r.json()){ showStatus('ℹ️ 이미 제보된 리뷰예요 — 포인트는 첫 제보자에게만! / Already submitted — first reporter only!'); setTimeout(hideStatus,5000); return; } }catch(_){}
     }
-    // (2026-07-17 전무님 지시: 하루 횟수 제한 없음 — 새 리뷰면 몇 건이든 5점씩.
-    //  같은 사진 중복만 차단.)
-    // 장부 기록
     for(const h of hashes){ fetch(`${FB_DB_URL}/${REVIEW_LOG}/img_${h}.json`,{method:'PUT',body:JSON.stringify({by:me.name,br:me.branch||'',ts})}).catch(()=>{}); }
-    // ⭐ 기본 5점 — 상점과 같은 장부(mgrBonus)에 기록되어 점수판에 바로 반영
     const award={to:me.name,points:5,note:'⭐ 구글리뷰 제보 (자동 5점)',reason:'⭐ 구글리뷰 제보 (자동 5점)',by:'SYSTEM',byRole:'AUTO',branch:me.branch||'할리우드',ts:ts,kind:'review_auto'};
     let ok=false;
     try{ if(window.__fb&&window.__fb.push&&window.__fb.ref&&window.__fb.db){ await window.__fb.push(window.__fb.ref(window.__fb.db,'mgrBonus/'+award.branch),award); ok=true; } }catch(e){ console.warn('[reviewAward] SDK 실패',e); }
@@ -3565,7 +3559,7 @@ async function sendMessage(){
     });
     // PATCH 가 실패해도 메시지 자체는 저장됐으니 사용자에게는 성공으로 안내
     if (!r2.ok) console.warn('[sendMessage] room PATCH failed', r2.status);
-    // ⭐ 구글 리뷰 방: 사진 제보 시 자동 +5점 (중복·하루1회 체크는 함수 안에서)
+    // ⭐ 구글 리뷰 방: 사진 제보 시 자동 +5점 (같은 사진 중복 차단은 함수 안에서)
     if (ACTIVE_ROOM===REVIEW_ROOM_ID && msg.photos.length>0){
       try{ const _imgs=ATTACH.filter(a=>a.type!=='file'&&a.dataUrl).map(a=>a.dataUrl); awardReviewPoint(_imgs, ts); }catch(_){}
     }
