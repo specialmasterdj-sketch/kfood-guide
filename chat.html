@@ -1033,7 +1033,7 @@ let __unsubMsgs = null;
 // ============ DEFAULT ROOMS ============
 const DEFAULT_ROOMS = [
   { id:'general',       name:{ko:'전체 공지',              en:'General Announcement',       es:'Anuncio General'},           desc:{ko:'모든 지점 공통',            en:'All branches',               es:'Todas las sucursales'}, icon:'📢' },
-  { id:'google_review_praise', name:{ko:'⭐ 구글 리뷰 칭찬 보고', en:'⭐ Google Review Praise', es:'⭐ Reseñas de Google'}, desc:{ko:'내 이름 나온 칭찬 리뷰 캡처 올리면 50포인트!', en:'Post a review naming you — earn 50 points!', es:'Sube una reseña con tu nombre — ¡50 puntos!'}, icon:'⭐' },
+  { id:'google_review_praise', name:{ko:'⭐ 구글 리뷰 칭찬 보고', en:'⭐ Google Review Praise', es:'⭐ Reseñas de Google'}, desc:{ko:'새 리뷰 캡처 5점 · 내 이름 나오면 확인 후 50점!', en:'New review = 5pts · Named = 50pts after check!', es:'Reseña nueva = 5pts · Con tu nombre = ¡50pts!'}, icon:'⭐' },
   { id:'need_overstock',name:{ko:'재고 부족/과다',          en:'Need and over stock',         es:'Exceso/Falta de stock'},      desc:{ko:'재고 부족/과다 보고',        en:'Stock shortage / overstock',  es:'Reporte de inventario'}, icon:'📦' },
   { id:'managers',      name:{ko:'매니저 룸',               en:'Supervisors & Managers',      es:'Supervisores y Gerentes'},    desc:{ko:'매니저 / 슈퍼바이저',        en:'Managers / Supervisors',      es:'Gerentes / Supervisores'}, icon:'👔' },
   // 🔒 2026-05-27 전무님 지시: 채팅 방 목록에서 현금 급여 보고 방 완전 제거.
@@ -3455,6 +3455,34 @@ window.submitLogistics = function(){
   if (typeof sendMessage === 'function') sendMessage();
 };
 
+// ============ ⭐ 구글 리뷰 제보 자동 +5점 (2026-07-17 전무님 지시) ============
+// ⭐방에 사진과 함께 올리면 기본 5점 자동 지급 (업무지시 점수판 mgrBonus 에 기록).
+// 이름 나온 리뷰 50점은 전무님이 확인 후 '상점 주기'로 직접 지급.
+// 중복 방지: 같은 사진(해시) 재제보 차단 — 본인·타직원 모두.
+// (2026-07-17 전무님 지시: 하루 횟수 제한 없음 — 새 리뷰면 몇 건이든 5점씩)
+const REVIEW_ROOM_ID='google_review_praise';
+const REVIEW_LOG='chat/messages/zz_review_awards';
+async function _sha256s(str){ const d=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,40); }
+async function awardReviewPoint(imgDataUrls, ts){
+  try{
+    if(!me||!me.name||!imgDataUrls||!imgDataUrls.length) return;
+    const hashes=[];
+    for(const du of imgDataUrls){ try{ hashes.push(await _sha256s(du)); }catch(_){} }
+    for(const h of hashes){
+      try{ const r=await fetch(`${FB_DB_URL}/${REVIEW_LOG}/img_${h}.json?t=${Date.now()}`,{cache:'no-store'});
+        if(r.ok && await r.json()){ showStatus('ℹ️ 이미 제보된 리뷰예요 — 포인트는 첫 제보자에게만! / Already submitted — first reporter only!'); setTimeout(hideStatus,5000); return; } }catch(_){}
+    }
+    for(const h of hashes){ fetch(`${FB_DB_URL}/${REVIEW_LOG}/img_${h}.json`,{method:'PUT',body:JSON.stringify({by:me.name,br:me.branch||'',ts})}).catch(()=>{}); }
+    const award={to:me.name,points:5,note:'⭐ 구글리뷰 제보 (자동 5점)',reason:'⭐ 구글리뷰 제보 (자동 5점)',by:'SYSTEM',byRole:'AUTO',branch:me.branch||'할리우드',ts:ts,kind:'review_auto'};
+    let ok=false;
+    try{ if(window.__fb&&window.__fb.push&&window.__fb.ref&&window.__fb.db){ await window.__fb.push(window.__fb.ref(window.__fb.db,'mgrBonus/'+award.branch),award); ok=true; } }catch(e){ console.warn('[reviewAward] SDK 실패',e); }
+    if(!ok){ try{ const rr=await fetch(`${FB_DB_URL}/mgrBonus/${encodeURIComponent(award.branch)}.json`,{method:'POST',body:JSON.stringify(award)}); ok=rr.ok; }catch(_){}
+    }
+    if(ok){ showStatus('⭐ 리뷰 제보 +5포인트! 이름 나온 리뷰는 확인 후 +50! / +5pts! Named review → +50 after check!'); setTimeout(hideStatus,6500); }
+    else { showStatus('⭐ 제보 접수! 포인트는 확인 후 지급돼요 / Submitted — points after review'); setTimeout(hideStatus,6500); }
+  }catch(e){ console.warn('[reviewAward]',e); }
+}
+
 async function sendMessage(){
   console.log('[sendMessage] me=', me?.name, 'room=', ACTIVE_ROOM, 'attach=', ATTACH.length);
   if (!ensureMe()) { console.warn('[sendMessage] ensureMe failed → openMeModal'); return; }
@@ -3531,6 +3559,10 @@ async function sendMessage(){
     });
     // PATCH 가 실패해도 메시지 자체는 저장됐으니 사용자에게는 성공으로 안내
     if (!r2.ok) console.warn('[sendMessage] room PATCH failed', r2.status);
+    // ⭐ 구글 리뷰 방: 사진 제보 시 자동 +5점 (같은 사진 중복 차단은 함수 안에서)
+    if (ACTIVE_ROOM===REVIEW_ROOM_ID && msg.photos.length>0){
+      try{ const _imgs=ATTACH.filter(a=>a.type!=='file'&&a.dataUrl).map(a=>a.dataUrl); awardReviewPoint(_imgs, ts); }catch(_){}
+    }
     document.getElementById('msgInput').value = '';
     document.getElementById('msgInput').style.height = 'auto';
     ATTACH = [];
