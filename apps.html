@@ -30,7 +30,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'apps_2026_07_16_menu_btn';   // 화장실 청소 스케줄 카드 제거 — 직접 URL 만
+    var BUST = 'apps_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지
     var KEY = 'kmtools_bust_apps';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -41,12 +41,36 @@
         return;
       }
     } catch(e){}
+    // 🛑 2026-07-18 — 사용 중 강제 리로드 금지: 입력 중/최근 2분 조작 시 연기, 한가할 때만 적용
+    var __lastAct = Date.now();
+    ['pointerdown','keydown','touchstart','wheel'].forEach(function(ev){
+      window.addEventListener(ev, function(){ __lastAct = Date.now(); }, {passive:true, capture:true});
+    });
+    var __pendingBust = null;
+    function __busy(){
+      try {
+        var el = document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file'))) return true;
+        var tas = document.querySelectorAll('textarea');
+        for (var i = 0; i < tas.length; i++) if (tas[i].value) return true;
+        if (Date.now() - __lastAct < 120000) return true;
+      } catch(e){}
+      return false;
+    }
+    function __applyBust(){
+      if (!__pendingBust) return;
+      if (__busy()) { setTimeout(__applyBust, 60000); return; }
+      try { localStorage.setItem(KEY, __pendingBust); } catch(e){}
+      (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+        .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+        .catch(function(){ location.reload(); });
+    }
     function pollBust(){
       fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
         .then(function(r){ return r.text(); })
         .then(function(t){
           var m = t.match(/var BUST = '([^']+)'/);
-          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+          if (m && m[1] !== BUST && m[1] !== __pendingBust) { console.log('[bust-poll] 새 버전 대기:', m[1]); __pendingBust = m[1]; __applyBust(); }
         }).catch(function(){});
     }
     setInterval(pollBust, 5 * 60 * 1000);
@@ -1577,21 +1601,22 @@ document.addEventListener('DOMContentLoaded', function(){
     } catch(_){}
     // RTDB 보강
     try {
-      var r = await fetch(FB_DB_URL + '/schedules/' + branchId + '.json', { cache:'no-store' });
+      // 🚀 2026-07-18 — 지점 스케줄 통째(⛔ 금지 패턴) → employees 만
+      var r = await fetch(FB_DB_URL + '/schedules/' + branchId + '/employees.json', { cache:'no-store' });
       if (r.ok) {
         var d = await r.json();
-        if (d && d.employees) {
-          var fresh = normalizeEmployees(d.employees);
+        if (d) {
+          var fresh = normalizeEmployees(d);
           if (fresh.length) employees = fresh;
         }
       }
     } catch(_){}
     if (!owners.length) {
       try {
-        var rg = await fetch(FB_DB_URL + '/schedules/_global.json', { cache:'no-store' });
+        var rg = await fetch(FB_DB_URL + '/schedules/_global/owners.json', { cache:'no-store' });
         if (rg.ok) {
           var dg = await rg.json();
-          if (dg && dg.owners) owners = normalizeEmployees(dg.owners);
+          if (dg) owners = normalizeEmployees(dg);
         }
       } catch(_){}
     }

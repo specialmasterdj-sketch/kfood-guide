@@ -8,14 +8,36 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST = 'priceaudit_2026_06_27_v12_score20';
+  var BUST = 'priceaudit_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지
   try {
     var KEY='priceaudit.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
+    // 🛑 2026-07-18 — 입력 중/최근 2분 조작 시 연기, 한가할 때만 리로드
+    var __lastAct = Date.now();
+    ['pointerdown','keydown','touchstart','wheel'].forEach(function(ev){
+      window.addEventListener(ev, function(){ __lastAct = Date.now(); }, {passive:true, capture:true});
+    });
+    var __pendingBust = null;
+    function __busy(){
+      try {
+        var el = document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file'))) return true;
+        var tas = document.querySelectorAll('textarea');
+        for (var i = 0; i < tas.length; i++) if (tas[i].value) return true;
+        if (Date.now() - __lastAct < 120000) return true;
+      } catch(e){}
+      return false;
+    }
+    function __applyBust(){
+      if (!__pendingBust) return;
+      if (__busy()) { setTimeout(__applyBust, 60000); return; }
+      try { localStorage.setItem(KEY, __pendingBust); } catch(e){}
+      location.reload();
+    }
     setInterval(function(){
       fetch('./price-audit.html?bust='+Date.now(),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
         var m=t.match(/var BUST = '([^']+)'/);
-        if(m&&m[1]!==BUST){console.log('[bust]',m[1]);location.reload();}
+        if(m&&m[1]!==BUST&&m[1]!==__pendingBust){console.log('[bust] 새 버전 대기',m[1]);__pendingBust=m[1];__applyBust();}
       }).catch(function(){});
     },90000);
   } catch(e){}

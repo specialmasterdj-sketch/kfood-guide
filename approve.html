@@ -201,14 +201,18 @@ async function loadEmployees(){
   const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
   const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
   try {
-    const r = await fetch(cfg.databaseURL + '/schedules.json' + authQ, { cache:'no-store' });
-    if (!r.ok) return;
-    const data = await r.json() || {};
+    // 🚀 2026-07-18 — schedules 루트 통째(전지점 전체 shifts 포함, 최악의 ⛔ 패턴)
+    //   → 지점별 employees.json 만 병렬 fetch
     const next = {};
-    for (const [branchId, payload] of Object.entries(data)){
-      if (branchId === '_global') continue;
-      if (payload && Array.isArray(payload.employees)) next[branchId] = payload.employees;
-    }
+    await Promise.all(BRANCHES.map(async b => {
+      try {
+        const r = await fetch(cfg.databaseURL + '/schedules/' + b.id + '/employees.json' + authQ, { cache:'no-store' });
+        if (!r.ok) return;
+        const emp = await r.json();
+        const arr = Array.isArray(emp) ? emp : (emp && typeof emp === 'object' ? Object.values(emp) : null);
+        if (arr && arr.length) next[b.id] = arr;
+      } catch(_){}
+    }));
     EMPLOYEES_BY_BRANCH = next;
   } catch(_){}
 }

@@ -166,13 +166,33 @@ if (_isIOS || _isStandalone) {
 // immediately instead of having to close + reopen the PWA. Guarded with a
 // session flag so two SW activations in a row don't loop.
 if ('serviceWorker' in navigator) {
+  // 🛑 2026-07-18 — 사용 중 강제 리로드 금지: 입력 중이거나 최근 2분 내 조작이
+  // 있으면 리로드를 연기하고 한가해지면 적용. (사장님 신고 — 작업 중 페이지 사라짐)
+  let __swReloadPending = false;
+  function __swUserBusy(){
+    try {
+      const el = document.activeElement;
+      if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file'))) return true;
+      const tas = document.querySelectorAll('textarea');
+      for (let i = 0; i < tas.length; i++) if (tas[i].value) return true;
+      if (window.__kmLastActivity && Date.now() - window.__kmLastActivity < 120000) return true;
+    } catch (_) {}
+    return false;
+  }
+  function __swApplyReload(){
+    if (!__swReloadPending) return;
+    if (__swUserBusy()) { setTimeout(__swApplyReload, 60000); return; }
+    try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch (_) {}
+    location.reload();
+  }
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e && e.data && e.data.type === 'sw-updated') {
       try {
         if (sessionStorage.getItem('__swReloaded') === '1') return;
         sessionStorage.setItem('__swReloaded', '1');
       } catch (_) {}
-      location.reload();
+      __swReloadPending = true;
+      __swApplyReload();
     }
   });
   // 페이지 로드마다 + 5분마다 SW 강제 업데이트 체크 — PWA 가 옛 코드에 갇히는 문제 방지.

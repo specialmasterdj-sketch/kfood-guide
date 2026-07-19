@@ -184,19 +184,33 @@
   // false 라면 (= 첫 SW 등록) 그 직후 한 번의 controllerchange는 정상이므로 무시.
   var hadControllerOnLoad = !!navigator.serviceWorker.controller;
   var reloaded = false;
-  function safeReload(reason){
-    if (reloaded) return;
-    // form 입력 중인 사용자 보호: 활성 textarea/text input 에 값이 있으면 리로드 1분 지연
+  // 🛑 2026-07-18 — 사용 중 강제 리로드 금지 강화 (사장님 신고: 작업 중 페이지 사라짐).
+  //   기존: 활성 입력칸에 값 있을 때만 1회 연기(재시도 없음 → 사실상 즉시 리로드).
+  //   변경: 입력값이 어디든 있거나 최근 2분 내 조작이 있으면 연기, 60초마다 재확인,
+  //   한가할 때만 리로드. 리로드 직전 보던 위치 저장(__kmSaveResumeState) 호출.
+  function userBusy(){
     try {
       var el = document.activeElement;
-      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.value && el.value.length > 0) {
-        // 사용자 작업 끝날 때까지 잠시 대기 → 다음 update 사이클에서 다시 시도
-        return;
-      }
+      if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file')) && el.value) return true;
+      var tas = document.querySelectorAll('textarea');
+      for (var i = 0; i < tas.length; i++) if (tas[i].value) return true;
+      if (window.__kmLastActivity && Date.now() - window.__kmLastActivity < 120000) return true;
     } catch(_){}
+    return false;
+  }
+  var pendingReloadReason = null;
+  function tryPendingReload(){
+    if (reloaded || !pendingReloadReason) return;
+    if (userBusy()) { setTimeout(tryPendingReload, 60000); return; }
     reloaded = true;
-    try { console.log('[sw-autoreload]', reason); } catch(e){}
+    try { console.log('[sw-autoreload]', pendingReloadReason); } catch(e){}
+    try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch(e){}
     setTimeout(function(){ try { location.reload(); } catch(e){} }, 300);
+  }
+  function safeReload(reason){
+    if (reloaded) return;
+    pendingReloadReason = reason;
+    tryPendingReload();
   }
   // 1) sw.js가 보내는 'sw-updated' 메시지 수신
   navigator.serviceWorker.addEventListener('message', function(e){

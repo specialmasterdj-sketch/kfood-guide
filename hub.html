@@ -7,7 +7,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'hub_2026_05_28_no_auto_reports';
+    var BUST = 'hub_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지
     var KEY = 'kmtools_bust_hub';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -18,12 +18,36 @@
         return;
       }
     } catch(e){}
+    // 🛑 2026-07-18 — 사용 중 강제 리로드 금지: 입력 중/최근 2분 조작 시 연기, 한가할 때만 적용
+    var __lastAct = Date.now();
+    ['pointerdown','keydown','touchstart','wheel'].forEach(function(ev){
+      window.addEventListener(ev, function(){ __lastAct = Date.now(); }, {passive:true, capture:true});
+    });
+    var __pendingBust = null;
+    function __busy(){
+      try {
+        var el = document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file'))) return true;
+        var tas = document.querySelectorAll('textarea');
+        for (var i = 0; i < tas.length; i++) if (tas[i].value) return true;
+        if (Date.now() - __lastAct < 120000) return true;
+      } catch(e){}
+      return false;
+    }
+    function __applyBust(){
+      if (!__pendingBust) return;
+      if (__busy()) { setTimeout(__applyBust, 60000); return; }
+      try { localStorage.setItem(KEY, __pendingBust); } catch(e){}
+      (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+        .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+        .catch(function(){ location.reload(); });
+    }
     function pollBust(){
       fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
         .then(function(r){ return r.text(); })
         .then(function(t){
           var m = t.match(/var BUST = '([^']+)'/);
-          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+          if (m && m[1] !== BUST && m[1] !== __pendingBust) { console.log('[bust-poll] 새 버전 대기:', m[1]); __pendingBust = m[1]; __applyBust(); }
         }).catch(function(){});
     }
     setInterval(pollBust, 5 * 60 * 1000);
@@ -2231,14 +2255,16 @@ async function loginScheduleCheck(){
   const flagKey = `scheduleCheck_${today}_${normName(m.name)}`;
   if (localStorage.getItem(flagKey)) return;
   const branch = m.branch || BRANCH;
-  let data = null;
+  // 🚀 2026-07-18 — 지점 스케줄 통째(⛔ 금지 패턴) → employees + 오늘 내 시프트 1건만
+  let empList = null;
   try {
-    const r = await fetch(`${FB}/schedules/${branch}.json`);
-    data = await r.json();
+    const r = await fetch(`${FB}/schedules/${branch}/employees.json`);
+    empList = await r.json();
   } catch(e){ console.warn('[loginScheduleCheck] fetch failed', e); return; }
-  if (!data || !data.employees) return;
+  if (!empList) return;
+  const empArr = Array.isArray(empList) ? empList : Object.values(empList);
   const meKey = normName(m.name);
-  const matched = data.employees.find(e => normName(e.name) === meKey);
+  const matched = empArr.find(e => e && normName(e.name) === meKey);
   localStorage.setItem(flagKey, '1');
   // 결과는 attendance/alerts/{date}/{branch}/{key} 에 저장 — 채팅 게시 안 함.
   // Time Clock UI 에서 이 노드를 읽어 노출하면 됨.
@@ -2247,7 +2273,11 @@ async function loginScheduleCheck(){
   if (!matched) {
     alertObj = { type:'no_schedule', name:m.name, branch:branch, ts:Date.now() };
   } else {
-    const shift = (data.shifts || {})[`${matched.id}@${today}`];
+    let shift = null;
+    try {
+      const sr = await fetch(`${FB}/schedules/${branch}/shifts/${encodeURIComponent(matched.id + '@' + today)}.json`);
+      shift = await sr.json();
+    } catch(_){}
     if (!shift || shift.unavail) {
       alertObj = { type:'no_shift_today', name:m.name, branch:branch, ts:Date.now() };
     } else {

@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 폴링 — 매장 직원 폰까지 자동 업데이트 (캐시로 옛 버전 보던 문제 해결)
   (function(){
-    var BUST = 'expiry_2026_06_03_403fix';
+    var BUST = 'expiry_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지 + 상세뷰 base64 사진 안전 렌더
     var KEY = 'kmtools_bust_expiry';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -20,12 +20,36 @@
         return;
       }
     } catch(e){}
+    // 🛑 2026-07-18 — 사용 중 강제 리로드 금지: 입력 중/최근 2분 조작 시 연기, 한가할 때만 적용
+    var __lastAct = Date.now();
+    ['pointerdown','keydown','touchstart','wheel'].forEach(function(ev){
+      window.addEventListener(ev, function(){ __lastAct = Date.now(); }, {passive:true, capture:true});
+    });
+    var __pendingBust = null;
+    function __busy(){
+      try {
+        var el = document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file'))) return true;
+        var tas = document.querySelectorAll('textarea');
+        for (var i = 0; i < tas.length; i++) if (tas[i].value) return true;
+        if (Date.now() - __lastAct < 120000) return true;
+      } catch(e){}
+      return false;
+    }
+    function __applyBust(){
+      if (!__pendingBust) return;
+      if (__busy()) { setTimeout(__applyBust, 60000); return; }
+      try { localStorage.setItem(KEY, __pendingBust); } catch(e){}
+      (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+        .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+        .catch(function(){ location.reload(); });
+    }
     function pollBust(){
       fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
         .then(function(r){ return r.text(); })
         .then(function(t){
           var m = t.match(/var BUST = '([^']+)'/);
-          if (m && m[1] !== BUST) { location.reload(); }
+          if (m && m[1] !== BUST && m[1] !== __pendingBust) { __pendingBust = m[1]; __applyBust(); }
         }).catch(function(){});
     }
     setInterval(pollBust, 5 * 60 * 1000);
@@ -1760,7 +1784,10 @@ function openPhoto(url){
     lb.onclick = () => lb.style.display = 'none';
     document.body.appendChild(lb);
   }
-  lb.innerHTML = `<img src="${url}" style="max-width:96vw;max-height:92vh;border-radius:10px">`;
+  // 🔧 2026-07-18 — base64 URL 을 HTML 문자열에 넣지 않고 프로퍼티로 주입
+  lb.innerHTML = `<img style="max-width:96vw;max-height:92vh;border-radius:10px">`;
+  const _lbImg = lb.querySelector('img');
+  if (_lbImg) _lbImg.src = url;
   lb.style.display = 'flex';
 }
 window.openPhoto = openPhoto;
@@ -1790,10 +1817,14 @@ function openProductDetail(id){
   const ddCls = (kind === 'd0') ? 'danger' : (kind === 'd1' || kind === 'd3') ? 'warn' : '';
   const photoEl = $('detailPhoto');
   if (p.photo) {
+    // 🔧 2026-07-18 — base64 사진을 HTML 문자열(src + onclick)에 2중 삽입하던 것
+    //   → 빈 img 로 렌더 후 JS 프로퍼티로 주입 (chat.html 탭 크래시와 같은 패턴 제거)
     photoEl.innerHTML = `
-      <img src="${p.photo}" alt="" onclick="openPhoto('${p.photo.replace(/'/g,"\\'")}')">
+      <img id="detailPhotoImg" alt="" style="cursor:zoom-in">
       <div class="dd-badge ${ddCls}">${lbl}</div>
       <div class="zoom-hint">${t('detZoomHint')}</div>`;
+    const _dim = document.getElementById('detailPhotoImg');
+    if (_dim) { _dim.src = p.photo; _dim.onclick = () => { try { openPhoto(p.photo); } catch(_){} }; }
   } else {
     photoEl.innerHTML = `
       <div style="text-align:center">
