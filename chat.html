@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_18_rxn_smooth';   // ⚡ 리액션(👍) 낙관적 반영 — 전체 재렌더 없이 칩만 갱신 (깜빡임 제거) + 기기캐시/whiteout fix 포함
+    var BUST = 'chat_2026_07_18_stable_scroll';   // 🧷 세션 중 메시지 순서 고정(댓글에 순간이동 X) + 답글 스레드만 부분갱신 + 입력초안·커서 보존
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2254,6 +2254,7 @@ function msgCachePut(roomId, msgs){
 // ============ MESSAGES ============
 function subscribeMessages(roomId){
   if (__unsubMsgs) { try { __unsubMsgs(); } catch(e){} __unsubMsgs = null; }
+  __roomOrderMap = {}; __roomOrderSeq = 0;   // 🧷 방 새로 열 때 순서맵 초기화 (활동순 재정렬 시점)
   // 🔧 2026-05-31 — 방 메시지를 통째로 받던 것을 '최근 N개'로 제한.
   //   메시지/사진이 많이 쌓인 방(grocery_eval 등)에서 전체 다운로드가
   //   너무 커 폰이 받다 멈추거나 RangeError 로 방이 안 열리던 문제 해결.
@@ -2278,6 +2279,8 @@ function subscribeMessages(roomId){
   msgCacheGet(roomId).then(cached => {
     if (!cached || !cached.length) return;
     if (ACTIVE_ROOM !== roomId || __fullArrived || MSGS.length) return;
+    // 🧷 캐시 순서를 세션 순서맵에 등록 — 네트워크 도착 시 재정렬로 튀지 않게
+    for (const m of cached) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = __roomOrderSeq++;
     MSGS = cached;
     renderMessages();
   }).catch(()=>{});
@@ -2327,24 +2330,43 @@ function subscribeMessages(roomId){
   __unsubMsgs = onValue(target, snap => {
     __fullArrived = true;
     const newMsgs = msgsFromObj(snap.val());
-    // ⚡ 2026-07-18 (깜빡임 제거) — 리액션(👍)만 바뀐 스냅샷이면 전체 재렌더 대신
-    //   해당 칩만 교체. (점수 줄 때 화면 깜빡 + 스크롤 튐 원인 제거)
-    const reactionOnly = !__renderT && __lastRenderSig && _msgListSig(newMsgs) === __lastRenderSig;
-    MSGS = newMsgs;
-    if (reactionOnly) {
+    // ⚡ 2026-07-18 (깜빡임 제거) — 바뀐 것이:
+    //   ① 리액션(👍)뿐 → 칩만 교체  ② 답글뿐 → 그 스레드만 교체
+    //   그 외(새 메시지·삭제·본문 편집)만 전체 재렌더.
+    const patchable = !__renderT && __lastRenderSig;
+    if (patchable && _msgListSig(newMsgs) === __lastRenderSig) {
+      MSGS = newMsgs;
       _patchAllReactions();
+    } else if (patchable && _coreListSig(newMsgs) === __lastRenderCoreSig) {
+      const oldById = {};
+      for (const om of MSGS) oldById[om.id] = om;
+      MSGS = newMsgs;
+      _patchAllReactions();
+      for (const m of MSGS) {
+        const om = oldById[m.id];
+        if (!om || _replySig(om) !== _replySig(m)) _patchMsgReplies(m);
+      }
+      __lastRenderSig = _msgListSig(MSGS);   // 패치 반영분 시그니처 최신화
     } else {
+      MSGS = newMsgs;
       if (__renderT) clearTimeout(__renderT);
       __renderT = setTimeout(() => { __renderT = null; renderMessages(); }, 80);
     }
     msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시 (25초 스로틀 내장)
   });
 }
+// 🧷 2026-07-18 — 세션 내 메시지 순서 고정 맵. 방을 새로 열 때 초기화.
+//   기존: 댓글 달리면 그 메시지가 즉시 맨 아래로 재정렬 → 보고 있던 화면이
+//   내려가거나 순간이동 (사장님 신고: 점수 주기·답글 때마다 화면 이동).
+//   변경: '활동순 정렬'은 방을 여는 순간에만 반영, 열려 있는 동안에는 각 메시지가
+//   처음 표시된 위치를 유지하고 새 메시지만 아래에 추가.
+let __roomOrderMap = {};
+let __roomOrderSeq = 0;
 function msgsFromObj(d){
   if (!d) return [];
-  return Object.entries(d).map(([id, m]) => {
+  const arr = Object.entries(d).map(([id, m]) => {
     const obj = Object.assign({ id }, m);
-    // 정렬은 (원본 시각, 가장 최근 댓글 시각) 중 최대 — 옛 메시지에 댓글 달면 맨 아래로 이동
+    // 활동 시각 = (원본 시각, 가장 최근 댓글 시각) 중 최대 — 방 처음 열 때의 정렬 기준
     let latest = obj.ts || 0;
     if (obj.replies) {
       for (const r of Object.values(obj.replies)) {
@@ -2354,6 +2376,9 @@ function msgsFromObj(d){
     obj._latestActivity = latest;
     return obj;
   }).sort((a,b) => (a._latestActivity||0) - (b._latestActivity||0));
+  for (const m of arr) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = __roomOrderSeq++;
+  arr.sort((a,b) => __roomOrderMap[a.id] - __roomOrderMap[b.id]);
+  return arr;
 }
 // Payroll 메시지 다국어 렌더러 — 보는 사람 LANG 으로 즉시 포맷.
 // 1) payrollMeta 필드 있으면 (새 메시지) 그대로 사용
@@ -2833,7 +2858,20 @@ function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
   var prevScrollTop = cont.scrollTop;
-  __lastRenderSig = _msgListSig(MSGS);   // ⚡ 리액션-만-변경 감지용 (깜빡임 제거)
+  __lastRenderSig = _msgListSig(MSGS);       // ⚡ 리액션-만-변경 감지용 (깜빡임 제거)
+  __lastRenderCoreSig = _coreListSig(MSGS);  // ⚡ 답글-만-변경 감지용
+  // ✍️ 2026-07-18 — 재렌더로 입력 중이던 댓글 초안·커서가 날아가던 문제: 보존 후 복원
+  const _draftVals = {};
+  let _draftFocusId = null, _dSelS = 0, _dSelE = 0;
+  try {
+    cont.querySelectorAll('.reply-input textarea').forEach(t => {
+      if (t.value) _draftVals[t.id] = t.value;
+      if (document.activeElement === t) {
+        _draftFocusId = t.id;
+        try { _dSelS = t.selectionStart; _dSelE = t.selectionEnd; } catch(_){}
+      }
+    });
+  } catch(_){}
   HUGE_PHOTO_MAP = {}; HUGE_PHOTO_SEQ = 0;   // 매 렌더 초기화
   if (ACTIVE_ROOM === 'expired') {
     renderExpiredCards();
@@ -2974,6 +3012,17 @@ function renderMessages(){
   Object.keys(REPLY_ATTACH).forEach(pid => {
     if (REPLY_ATTACH[pid] && REPLY_ATTACH[pid].length) renderReplyPreviews(pid);
   });
+  // ✍️ 입력 중이던 댓글 초안·커서 복원
+  try {
+    Object.keys(_draftVals).forEach(id => {
+      const t = document.getElementById(id);
+      if (t && !t.value) t.value = _draftVals[id];
+    });
+    if (_draftFocusId) {
+      const t = document.getElementById(_draftFocusId);
+      if (t) { try { t.focus({preventScroll:true}); } catch(_) { t.focus(); } try { t.setSelectionRange(_dSelS, _dSelE); } catch(_){} }
+    }
+  } catch(_){}
   if (wasNearBottom) cont.scrollTop = cont.scrollHeight;
   else cont.scrollTop = prevScrollTop;
   // 자동 번역 토글바 — 채팅방에 진입했고 viewer LANG 이 ko 외이거나 메시지가 있는 경우
@@ -3819,7 +3868,8 @@ function toggleReplies(msgId){
     if (sessionStorage.getItem(k) === '1') sessionStorage.removeItem(k);
     else sessionStorage.setItem(k, '1');
   }
-  renderMessages();
+  // ⚡ 2026-07-18 — 전체 재렌더 대신 이 스레드만 갱신 (깜빡임·스크롤 튐 제거)
+  if (!m || !_patchMsgReplies(m)) renderMessages();
   setTimeout(() => {
     const inp = document.getElementById('reply-' + msgId);
     if (inp) inp.focus();
@@ -3894,6 +3944,17 @@ async function sendReply(parentMsgId){
     // 답글 보낸 후엔 펼친 상태 유지 (collapsed 플래그 제거)
     sessionStorage.removeItem('thread.collapsed.' + parentMsgId);
     sessionStorage.setItem('thread.openInput.' + parentMsgId, '1');
+    // ⚡ 2026-07-18 — 서버 에코를 기다리지 않고 이 스레드만 즉시 갱신
+    //   (전체 재렌더 없음 → 깜빡임·화면 이동 없이 내 댓글이 바로 보임)
+    try {
+      const mm = MSGS.find(x => x.id === parentMsgId);
+      if (mm) {
+        mm.replies = mm.replies || {};
+        mm.replies[replyId] = reply;
+        _patchMsgReplies(mm);
+        __lastRenderSig = _msgListSig(MSGS);   // 에코가 '변경 없음'으로 인식되게
+      }
+    } catch(_){}
   } catch(e){
     hideStatus();
     alert('답글 전송 실패: ' + (e.message||''));
@@ -4057,15 +4118,28 @@ function reactionUserKey(){
 //   다시 그리지 않고(=깜빡임·스크롤 튐 원인) 해당 메시지의 리액션 칩만 교체.
 //   시그니처 = 리액션 제외한 내용 요약. 서버 스냅샷의 시그니처가 마지막 렌더와 같으면
 //   "리액션만 변경"으로 판단.
-let __lastRenderSig = '';
+let __lastRenderSig = '';       // 전체(본문+답글) 시그니처
+let __lastRenderCoreSig = '';   // 본문만 (답글 제외) — "답글만 변경" 감지용
+function _coreSig(m){
+  return m.id + ':' + (m.ts||0) + ':' + ((m.text||'').length) + ':' + ((m.photos&&m.photos.length)||0) + ':' + (m.editedAt||0);
+}
+function _replySig(m){
+  if (!m.replies) return '0';
+  let s = '';
+  for (const rid of Object.keys(m.replies)) {
+    const r = m.replies[rid] || {};
+    s += rid + ',' + ((r.text||'').length) + ',' + ((r.photos&&r.photos.length)||0) + ',' + (r.editedAt||0) + ';';
+  }
+  return s;
+}
 function _msgListSig(list){
   let s = '';
-  for (const m of list) {
-    let rl = 0;
-    if (m.replies) for (const r of Object.values(m.replies)) rl += ((r && r.text) || '').length + 1;
-    s += m.id + ':' + (m.ts||0) + ':' + ((m.text||'').length) + ':' + ((m.photos&&m.photos.length)||0)
-       + ':' + (m.replies?Object.keys(m.replies).length:0) + ':' + rl + ':' + (m.editedAt||0) + '|';
-  }
+  for (const m of list) s += _coreSig(m) + '§' + _replySig(m) + '|';
+  return s;
+}
+function _coreListSig(list){
+  let s = '';
+  for (const m of list) s += _coreSig(m) + '|';
   return s;
 }
 function _patchMsgReactions(m){
@@ -4080,6 +4154,39 @@ function _patchMsgReactions(m){
 }
 function _patchAllReactions(){
   for (const m of MSGS) _patchMsgReactions(m);
+}
+// ⚡ 2026-07-18 — 답글(댓글)만 바뀐 메시지는 그 스레드 DOM 만 교체.
+//   전체 재렌더(깜빡임 + 입력 초안 소실 + 스크롤 튐) 없이 자연스럽게 갱신.
+function _patchMsgReplies(m){
+  try {
+    const row = document.querySelector('.msg[data-msg-id="' + m.id + '"]');
+    if (!row) return false;
+    const body = row.querySelector('.body');
+    if (!body) return false;
+    const tog = body.querySelector('.reply-toggle');
+    if (!tog) return false;
+    // 입력 중이던 초안·커서 보존
+    const oldInp = document.getElementById('reply-' + m.id);
+    const oldVal = oldInp ? oldInp.value : '';
+    const hadFocus = oldInp && document.activeElement === oldInp;
+    let selS = 0, selE = 0;
+    if (hadFocus) { try { selS = oldInp.selectionStart; selE = oldInp.selectionEnd; } catch(_){} }
+    const rep = body.querySelector('.replies');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = renderReplies(m);
+    const frag = document.createDocumentFragment();
+    while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+    if (rep) rep.remove();
+    tog.replaceWith(frag);
+    const newInp = document.getElementById('reply-' + m.id);
+    if (newInp && oldVal) newInp.value = oldVal;
+    if (newInp && hadFocus) { try { newInp.focus({preventScroll:true}); } catch(_) { newInp.focus(); } try { newInp.setSelectionRange(selS, selE); } catch(_){} }
+    // 새로 들어온 답글 사진(base64 placeholder) lazy load 연결
+    try { applyHugePhotos(document.getElementById('msgs')); } catch(_){}
+    // 첨부 중이던 사진 미리보기 복구
+    try { if (REPLY_ATTACH[m.id] && REPLY_ATTACH[m.id].length) renderReplyPreviews(m.id); } catch(_){}
+    return true;
+  } catch(_){ return false; }
 }
 function renderReactions(m){
   var rx = m.reactions || {};
