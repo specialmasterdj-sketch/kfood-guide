@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지(한가할 때만 업데이트) + 리로드 후 보던 방·메시지 위치 자동 복귀
+    var BUST = 'chat_2026_07_18_auto_migrate';   // 📦 오너 세션 백그라운드 base64→Storage 자동 이관 (+no_kick/stable_scroll/캐시 포함)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -4738,6 +4738,174 @@ window.setRoomFilter = setRoomFilter;
 window.filterRooms = filterRooms;
 window.openPinAdmin = openPinAdmin;
 window.resetEmpPin = resetEmpPin;
+
+// ============ 📦 base64 → Storage 자동 이관 (오너 기기 백그라운드) ============
+// 2026-07-18 사장님 지시("구글 이관 너가 해") — 별도 로그인 없이, 이미 로그인된
+// 오너의 채팅 앱 세션 안에서 조용히 실행. admin-base64-migrate.html 과 동일 로직·
+// 동일 안전장치: 업로드 성공 확인 후에만 그 사진 칸 하나를 교체, 실패 시 원본
+// 그대로, 아무것도 삭제하지 않음. 오너 이메일 세션(isDjOwner)에서만 발동.
+// 동시 실행 방지: chat/messages/zz_b64migrate/state 락(하트비트 30초, 2.5분 만료).
+// 진행 상황: Storage 의 admin/b64migrate/progress.json 에 기록 (외부에서 확인 가능).
+(function(){
+  const MIG_HUGE = 5000;
+  const MIG_STATE = 'chat/messages/zz_b64migrate/state';
+  const mSleep = (ms) => new Promise(r => setTimeout(r, ms));
+  function migIsHuge(u){ return typeof u === 'string' && u.length > MIG_HUGE && u.slice(0,5) === 'data:'; }
+  async function mGet(path, params){
+    const r = await fetch(`${FB_DB_URL}/${path}.json${params ? ('?' + params) : ''}`);
+    if (!r.ok) throw new Error('GET ' + path + ' HTTP ' + r.status);
+    return r.json();
+  }
+  async function mPut(path, value){
+    const r = await fetch(`${FB_DB_URL}/${path}.json`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(value) });
+    if (!r.ok) throw new Error('PUT ' + path + ' HTTP ' + r.status);
+  }
+  // 노드 안 base64 사진 위치 전부 → [{subPath, dataUrl}] (admin 도구와 동일)
+  function migFind(node){
+    const out = [];
+    const scanArr = (arr, base) => {
+      if (!Array.isArray(arr)) {
+        if (arr && typeof arr === 'object') Object.keys(arr).forEach(k => { if (migIsHuge(arr[k])) out.push({ subPath: base + '/' + k, dataUrl: arr[k] }); });
+        return;
+      }
+      arr.forEach((u, i) => { if (migIsHuge(u)) out.push({ subPath: base + '/' + i, dataUrl: u }); });
+    };
+    if (node.photos) scanArr(node.photos, 'photos');
+    if (node.locationPhotos) scanArr(node.locationPhotos, 'locationPhotos');
+    if (node.completionPhotos) scanArr(node.completionPhotos, 'completionPhotos');
+    if (node.replies && typeof node.replies === 'object') {
+      Object.entries(node.replies).forEach(([rid, r]) => { if (r && r.photos) scanArr(r.photos, 'replies/' + rid + '/photos'); });
+    }
+    const cl = node.checklist;
+    if (cl) {
+      const clArr = Array.isArray(cl) ? cl.map((c,i)=>[i,c]) : Object.entries(cl);
+      clArr.forEach(([ci, c]) => {
+        if (!c) return;
+        if (c.photos) scanArr(c.photos, 'checklist/' + ci + '/photos');
+        if (migIsHuge(c.photo)) out.push({ subPath: 'checklist/' + ci + '/photo', dataUrl: c.photo });
+      });
+    }
+    return out;
+  }
+  function migMime(dataUrl){ const m = /^data:(image\/[a-z0-9.+-]+)/i.exec(dataUrl); return (m && m[1]) || 'image/jpeg'; }
+  function migExt(mime){ return mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : mime.includes('gif') ? 'gif' : 'jpg'; }
+  async function migUpload(dataUrl, sPath){
+    const blob = await (await fetch(dataUrl)).blob();
+    const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(sPath)}&uploadType=media`;
+    let lastErr = '';
+    for (let a = 0; a < 4; a++) {
+      try {
+        const r = await fetch(url, { method:'POST', headers:{'Content-Type': migMime(dataUrl)}, body: blob });
+        if (r.ok) {
+          const meta = await r.json();
+          return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+        }
+        lastErr = 'HTTP ' + r.status;
+        if (r.status === 403 || r.status === 404) break;
+      } catch(e){ lastErr = (e && e.message) || 'network'; }
+      await mSleep(600 * (a + 1));
+    }
+    throw new Error('Storage 업로드 실패: ' + lastErr);
+  }
+  async function migProgress(p){
+    try {
+      const body = new Blob([JSON.stringify(Object.assign({ at: new Date().toISOString(), by: (me && me.name) || '' }, p))], { type:'application/json' });
+      await fetch(`${FB_STORAGE_URL}?name=${encodeURIComponent('admin/b64migrate/progress.json')}&uploadType=media`, { method:'POST', headers:{'Content-Type':'application/json'}, body });
+    } catch(_){}
+  }
+  async function migNode(path, sPrefix, stats){
+    const node = await mGet(path, '');       // 최신 상태 재확인 — 이미 이관된 칸 자동 스킵
+    if (!node) return;
+    const found = migFind(node);
+    let idx = 0;
+    for (const f of found) {
+      const mime = migMime(f.dataUrl);
+      const sPath = `${sPrefix}/mig_${Date.now()}_${idx++}.${migExt(mime)}`;
+      const newUrl = await migUpload(f.dataUrl, sPath);
+      await mPut(path + '/' + f.subPath, newUrl);   // 업로드 성공 후에만 교체
+      stats.migrated++; stats.bytes += f.dataUrl.length;
+      await mSleep(250);
+    }
+  }
+  async function migRun(stats){
+    // 💬 채팅 — 방 목록 → 키 50개씩 범위 조회 (메모리 절약)
+    const rooms = Object.keys(await mGet('chat/messages', 'shallow=true') || {}).filter(r => r !== 'zz_b64migrate');
+    for (const room of rooms) {
+      let keys = [];
+      try { keys = Object.keys(await mGet('chat/messages/' + encodeURIComponent(room), 'shallow=true') || {}).sort(); }
+      catch(e){ stats.failed++; continue; }
+      for (let s = 0; s < keys.length; s += 50) {
+        const chunk = keys.slice(s, s + 50);
+        let msgs = null;
+        try {
+          msgs = await mGet('chat/messages/' + encodeURIComponent(room),
+            `orderBy=${encodeURIComponent('"$key"')}&startAt=${encodeURIComponent('"' + chunk[0] + '"')}&endAt=${encodeURIComponent('"' + chunk[chunk.length-1] + '"')}`);
+        } catch(e){ stats.failed++; continue; }
+        for (const [mid, m] of Object.entries(msgs || {})) {
+          if (!m || typeof m !== 'object') continue;
+          stats.scanned++;
+          if (!migFind(m).length) continue;
+          try { await migNode('chat/messages/' + room + '/' + mid, 'chat/' + room + '/' + mid, stats); }
+          catch(e){ stats.failed++; console.warn('[b64mig]', room, mid, (e && e.message)); }
+        }
+        try { await mPut(MIG_STATE + '/lockTs', Date.now()); } catch(_){}
+        await mSleep(150);
+      }
+      stats.phase = '💬 ' + room + ' 완료';
+      migProgress(stats);
+    }
+    // 📋 업무 — 지점 → 날짜별 통째 조회
+    const branches = Object.keys(await mGet('tasks', 'shallow=true') || {}).filter(b => b !== '_config');
+    for (const br of branches) {
+      let dates = [];
+      try { dates = Object.keys(await mGet('tasks/' + encodeURIComponent(br), 'shallow=true') || {}).sort(); }
+      catch(e){ stats.failed++; continue; }
+      for (const d of dates) {
+        let day = null;
+        try { day = await mGet('tasks/' + encodeURIComponent(br) + '/' + encodeURIComponent(d), ''); }
+        catch(e){ stats.failed++; continue; }
+        for (const [tid, t] of Object.entries(day || {})) {
+          if (!t || typeof t !== 'object') continue;
+          stats.scanned++;
+          if (!migFind(t).length) continue;
+          try { await migNode('tasks/' + br + '/' + d + '/' + tid, 'tasks/' + br + '/' + d + '/' + tid, stats); }
+          catch(e){ stats.failed++; console.warn('[b64mig] task', br, d, tid, (e && e.message)); }
+        }
+        try { await mPut(MIG_STATE + '/lockTs', Date.now()); } catch(_){}
+        await mSleep(120);
+      }
+      stats.phase = '📋 ' + br + ' 완료';
+      migProgress(stats);
+    }
+  }
+  async function migMaybeStart(){
+    try {
+      if (typeof isDjOwner !== 'function' || !isDjOwner()) return;
+      const t = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
+      if (!t) return;   // 로그인 세션 없음
+      let st = null;
+      try { st = await mGet(MIG_STATE, ''); } catch(_){}
+      const now = Date.now();
+      if (st && st.done && now - (st.doneTs || 0) < 7 * 86400000) return;   // 최근 완료 — 7일 휴식
+      if (st && st.lockTs && now - st.lockTs < 150000) return;              // 다른 기기 실행 중
+      await mPut(MIG_STATE, { lockTs: now, by: (me && me.name) || 'OWNER', startedTs: now });
+      console.info('[b64mig] 🚚 base64 → Storage 자동 이관 시작 (백그라운드, 앱 사용에 지장 없음)');
+      const stats = { phase:'시작', scanned:0, migrated:0, bytes:0, failed:0 };
+      migProgress(stats);
+      await migRun(stats);
+      await mPut(MIG_STATE, { done:true, doneTs: Date.now(), migrated: stats.migrated, bytes: stats.bytes, failed: stats.failed });
+      stats.phase = stats.failed ? '완료(일부 실패 — 다음 실행 때 재시도)' : '🎉 전체 완료';
+      migProgress(stats);
+      console.info('[b64mig] 완료 — 사진 ' + stats.migrated + '장, ' + (stats.bytes/1048576).toFixed(1) + 'MB 절감, 실패 ' + stats.failed);
+    } catch(e){
+      console.warn('[b64mig] 중단:', (e && e.message) || e);
+      try { migProgress({ phase:'중단/오류', error: String((e && e.message) || e) }); } catch(_){}
+      try { await mPut(MIG_STATE + '/lockTs', 0); } catch(_){}
+    }
+  }
+  // 페이지 로드 60초 후 시작 — 초기 로딩/업무에 지장 없게
+  setTimeout(migMaybeStart, 60000);
+})();
 
 // ============ INIT ============
 // On mobile (narrow screens), don't auto-restore the last room — show the
