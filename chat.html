@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_18_auto_migrate';   // 📦 오너 세션 백그라운드 base64→Storage 자동 이관 (+no_kick/stable_scroll/캐시 포함)
+    var BUST = 'chat_2026_07_19_order_fix';   // 🔧 새로고침 시 옛 날짜가 아래로 정렬되던 순서 버그 수정 (순서키=활동시각 고정값)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2323,7 +2323,7 @@ function msgCachePut(roomId, msgs){
 // ============ MESSAGES ============
 function subscribeMessages(roomId){
   if (__unsubMsgs) { try { __unsubMsgs(); } catch(e){} __unsubMsgs = null; }
-  __roomOrderMap = {}; __roomOrderSeq = 0;   // 🧷 방 새로 열 때 순서맵 초기화 (활동순 재정렬 시점)
+  __roomOrderMap = {};   // 🧷 방 새로 열 때 순서맵 초기화 (활동순 재정렬 시점)
   window.__kmFullArrived = false;            // 📍 리로드 복귀는 전체 데이터 도착 후에만
   // 🔧 2026-05-31 — 방 메시지를 통째로 받던 것을 '최근 N개'로 제한.
   //   메시지/사진이 많이 쌓인 방(grocery_eval 등)에서 전체 다운로드가
@@ -2349,8 +2349,9 @@ function subscribeMessages(roomId){
   msgCacheGet(roomId).then(cached => {
     if (!cached || !cached.length) return;
     if (ACTIVE_ROOM !== roomId || __fullArrived || MSGS.length) return;
-    // 🧷 캐시 순서를 세션 순서맵에 등록 — 네트워크 도착 시 재정렬로 튀지 않게
-    for (const m of cached) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = __roomOrderSeq++;
+    // 🧷 캐시 메시지의 순서 키(활동시각 고정값) 등록 — 네트워크 도착 시 재정렬로 튀지 않게
+    for (const m of cached) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = m._latestActivity || m.ts || 0;
+    cached.sort((a,b) => (__roomOrderMap[a.id] - __roomOrderMap[b.id]) || ((a.ts||0) - (b.ts||0)));
     MSGS = cached;
     renderMessages();
   }).catch(()=>{});
@@ -2426,17 +2427,19 @@ function subscribeMessages(roomId){
   });
 }
 // 🧷 2026-07-18 — 세션 내 메시지 순서 고정 맵. 방을 새로 열 때 초기화.
-//   기존: 댓글 달리면 그 메시지가 즉시 맨 아래로 재정렬 → 보고 있던 화면이
-//   내려가거나 순간이동 (사장님 신고: 점수 주기·답글 때마다 화면 이동).
-//   변경: '활동순 정렬'은 방을 여는 순간에만 반영, 열려 있는 동안에는 각 메시지가
-//   처음 표시된 위치를 유지하고 새 메시지만 아래에 추가.
+//   댓글 달리면 그 메시지가 즉시 맨 아래로 재정렬 → 보던 화면이 순간이동하던 문제.
+//   '활동순 정렬'은 각 메시지를 처음 본 순간의 활동시각으로 1회 고정.
+// 🔧 2026-07-19 버그 수정 (사장님 신고: 새로고침하면 일주일 전 날짜가 아래에 나옴):
+//   기존 seq 카운터 방식은 "최근 30개 먼저 → 나중에 과거 170개 도착" 순서로 받으면
+//   과거 메시지가 뒤 seq 를 받아 최신 메시지보다 아래로 정렬되는 치명적 오류.
+//   수정: 순서 키 = 처음 본 시점의 활동시각(고정값). 과거 메시지는 자연히 위로,
+//   새 메시지는 아래로, 댓글이 달려도 키가 고정이라 순간이동 없음 — 두 목적 모두 충족.
 let __roomOrderMap = {};
-let __roomOrderSeq = 0;
 function msgsFromObj(d){
   if (!d) return [];
   const arr = Object.entries(d).map(([id, m]) => {
     const obj = Object.assign({ id }, m);
-    // 활동 시각 = (원본 시각, 가장 최근 댓글 시각) 중 최대 — 방 처음 열 때의 정렬 기준
+    // 활동 시각 = (원본 시각, 가장 최근 댓글 시각) 중 최대
     let latest = obj.ts || 0;
     if (obj.replies) {
       for (const r of Object.values(obj.replies)) {
@@ -2445,9 +2448,9 @@ function msgsFromObj(d){
     }
     obj._latestActivity = latest;
     return obj;
-  }).sort((a,b) => (a._latestActivity||0) - (b._latestActivity||0));
-  for (const m of arr) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = __roomOrderSeq++;
-  arr.sort((a,b) => __roomOrderMap[a.id] - __roomOrderMap[b.id]);
+  });
+  for (const m of arr) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = m._latestActivity || 0;
+  arr.sort((a,b) => (__roomOrderMap[a.id] - __roomOrderMap[b.id]) || ((a.ts||0) - (b.ts||0)));
   return arr;
 }
 // Payroll 메시지 다국어 렌더러 — 보는 사람 LANG 으로 즉시 포맷.
