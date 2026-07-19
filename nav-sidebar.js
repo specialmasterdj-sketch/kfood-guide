@@ -443,7 +443,9 @@
     try {
       // 현재 페이지가 updates.html 이면 배지 항상 0
       if (here === 'updates.html') { setBadge('updates', 0); return; }
-      const res = await fetch(FB_DB + '/updates.json?t=' + Date.now(), { cache: 'no-store' });
+      // 🚀 2026-07-18 — 전체 노드 통째(글 누적 시 payload 증가) → 최근 60개만.
+      //   배지 카운트는 lastSeenTs 이후 새 글만 세므로 최근 60개면 충분.
+      const res = await fetch(FB_DB + '/updates.json?orderBy=' + encodeURIComponent('"$key"') + '&limitToLast=60&t=' + Date.now(), { cache: 'no-store' });
       if (!res.ok) return;
       const d = await res.json();
       if (!d) { setBadge('updates', 0); return; }

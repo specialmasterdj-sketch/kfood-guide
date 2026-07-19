@@ -7,7 +7,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'hub_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지
+    var BUST = 'hub_2026_07_18_no_kick_v2';   // 🛑 no_kick + 출퇴근 현황 변경 감지(무의미 60초 전체 재렌더 제거)
     var KEY = 'kmtools_bust_hub';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1214,11 +1214,18 @@ let _clockDetailView = null;
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function fmtClockTime(ts){ if (!ts) return ''; const d = new Date(ts); return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
 
+let __lastClockSig = null;
 async function refreshAll(){
   try {
     const r = await fetch(`${FB}/clockins/${todayStr()}.json?t=${Date.now()}`, {cache:'no-store'});
-    _clockData = (await r.json()) || {};
-  } catch(e){ _clockData = {}; }
+    const raw = await r.text();
+    // 🚀 2026-07-18 — 데이터가 안 바뀌었으면 60초 틱마다 리스트 전체 재생성(깜빡임·
+    //   스크롤 리셋) 하지 않음. 지점 필터/언어가 바뀌면 시그니처가 달라져 재렌더됨.
+    const sig = BRANCH + '|' + LANG + '|' + raw;
+    if (sig === __lastClockSig) return;
+    __lastClockSig = sig;
+    _clockData = JSON.parse(raw) || {};
+  } catch(e){ _clockData = {}; __lastClockSig = null; }
 
   // Sync current user's clock record (uid 우선, name fallback)
   const myKey = myClockKey();
