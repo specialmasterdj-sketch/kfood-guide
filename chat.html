@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_18_speed_cache';   // 💾 방 메시지 기기캐시(재방문 즉시표시) + 첫페인트 30 + 자동번역 40캡 (+ 오전 whiteout fix 포함)
+    var BUST = 'chat_2026_07_18_rxn_smooth';   // ⚡ 리액션(👍) 낙관적 반영 — 전체 재렌더 없이 칩만 갱신 (깜빡임 제거) + 기기캐시/whiteout fix 포함
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2326,9 +2326,17 @@ function subscribeMessages(roomId){
   let __renderT = null;
   __unsubMsgs = onValue(target, snap => {
     __fullArrived = true;
-    MSGS = msgsFromObj(snap.val());
-    if (__renderT) clearTimeout(__renderT);
-    __renderT = setTimeout(() => { __renderT = null; renderMessages(); }, 80);
+    const newMsgs = msgsFromObj(snap.val());
+    // ⚡ 2026-07-18 (깜빡임 제거) — 리액션(👍)만 바뀐 스냅샷이면 전체 재렌더 대신
+    //   해당 칩만 교체. (점수 줄 때 화면 깜빡 + 스크롤 튐 원인 제거)
+    const reactionOnly = !__renderT && __lastRenderSig && _msgListSig(newMsgs) === __lastRenderSig;
+    MSGS = newMsgs;
+    if (reactionOnly) {
+      _patchAllReactions();
+    } else {
+      if (__renderT) clearTimeout(__renderT);
+      __renderT = setTimeout(() => { __renderT = null; renderMessages(); }, 80);
+    }
     msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시 (25초 스로틀 내장)
   });
 }
@@ -2825,6 +2833,7 @@ function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
   var prevScrollTop = cont.scrollTop;
+  __lastRenderSig = _msgListSig(MSGS);   // ⚡ 리액션-만-변경 감지용 (깜빡임 제거)
   HUGE_PHOTO_MAP = {}; HUGE_PHOTO_SEQ = 0;   // 매 렌더 초기화
   if (ACTIVE_ROOM === 'expired') {
     renderExpiredCards();
@@ -4044,6 +4053,34 @@ function reactionUserKey(){
   if (!me) return '';
   return ((me.branch||'') + '_' + (me.name||'')).replace(/[.\/\[\]#$\s]/g, '_');
 }
+// ⚡ 2026-07-18 (깜빡임 제거) — 리액션(👍 등)만 바뀐 업데이트는 200개 메시지 전체를
+//   다시 그리지 않고(=깜빡임·스크롤 튐 원인) 해당 메시지의 리액션 칩만 교체.
+//   시그니처 = 리액션 제외한 내용 요약. 서버 스냅샷의 시그니처가 마지막 렌더와 같으면
+//   "리액션만 변경"으로 판단.
+let __lastRenderSig = '';
+function _msgListSig(list){
+  let s = '';
+  for (const m of list) {
+    let rl = 0;
+    if (m.replies) for (const r of Object.values(m.replies)) rl += ((r && r.text) || '').length + 1;
+    s += m.id + ':' + (m.ts||0) + ':' + ((m.text||'').length) + ':' + ((m.photos&&m.photos.length)||0)
+       + ':' + (m.replies?Object.keys(m.replies).length:0) + ':' + rl + ':' + (m.editedAt||0) + '|';
+  }
+  return s;
+}
+function _patchMsgReactions(m){
+  try {
+    const row = document.querySelector('.msg[data-msg-id="' + m.id + '"]');
+    if (!row) return;
+    const box = row.querySelector('.reactions');
+    const html = renderReactions(m);
+    if (!box) return;
+    box.outerHTML = html;
+  } catch(_){}
+}
+function _patchAllReactions(){
+  for (const m of MSGS) _patchMsgReactions(m);
+}
 function renderReactions(m){
   var rx = m.reactions || {};
   var keys = Object.keys(rx).filter(function(k){ return rx[k] && Object.keys(rx[k]).length; });
@@ -4093,14 +4130,42 @@ async function toggleReaction(msgId, emoji){
   var key = reactionUserKey();
   var url = FB_DB_URL+'/chat/messages/'+ACTIVE_ROOM+'/'+msgId+'/reactions/'+encodeURIComponent(emoji)+'/'+key+'.json';
   var existing = m.reactions && m.reactions[emoji] && m.reactions[emoji][key];
+  var _hrR = hrSender();
+  var myName = _hrR ? _hrR.name : me.name;
+  // ⚡ 2026-07-18 — 낙관적 반영: 서버 응답을 기다리지 않고 이 메시지의 칩만 즉시
+  //   갱신 (전체 재렌더 없음 → 깜빡임·스크롤 튐 제거). 실패하면 되돌림.
+  try {
+    if (existing){
+      delete m.reactions[emoji][key];
+      if (!Object.keys(m.reactions[emoji]).length) delete m.reactions[emoji];
+    } else {
+      m.reactions = m.reactions || {};
+      m.reactions[emoji] = m.reactions[emoji] || {};
+      m.reactions[emoji][key] = myName;
+    }
+    _patchMsgReactions(m);
+  } catch(_){}
   try {
     if (existing){
       await fetch(url, {method:'DELETE'});
     } else {
-      var _hrR = hrSender();
-      await fetch(url, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(_hrR ? _hrR.name : me.name)});
+      await fetch(url, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(myName)});
     }
-  } catch(err){ console.warn('reaction failed', err); }
+  } catch(err){
+    console.warn('reaction failed', err);
+    // 서버 반영 실패 — 낙관적 변경 롤백 후 칩 원상복구
+    try {
+      if (existing){
+        m.reactions = m.reactions || {};
+        m.reactions[emoji] = m.reactions[emoji] || {};
+        m.reactions[emoji][key] = existing;
+      } else if (m.reactions && m.reactions[emoji]) {
+        delete m.reactions[emoji][key];
+        if (!Object.keys(m.reactions[emoji]).length) delete m.reactions[emoji];
+      }
+      _patchMsgReactions(m);
+    } catch(_){}
+  }
 }
 // 바깥 클릭으로 picker 닫기
 document.addEventListener('click', function(e){
