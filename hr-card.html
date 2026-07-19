@@ -536,17 +536,32 @@ window.addNote = async function(){
 };
 
 // ---- 📈 부서 매출 관리 (지점 공통 — 한 번 입력, 담당 전원 카드 반영) ----
+const DS_PRESETS = ['PRODUCE','MEAT','SEAFOOD','SUSHI','K-FOOD','GROCERY','FROZEN','BAKERY','BBQ','CASHIER'];
+let DS_ROSTER = [];   // 이 지점 직원 이름 목록
 window.openDeptSales = async function(){
   await loadDeptData(true);
+  // 직원 명단 (chip 선택용)
+  try {
+    const data = await fbGet('schedules/'+BRANCH+'/employees');
+    const arr = Array.isArray(data) ? data : (data && typeof data==='object' ? Object.values(data) : []);
+    DS_ROSTER = arr.filter(e=>e&&e.name).map(e=>String(e.name)).sort((a,b)=>a.localeCompare(b));
+  } catch(_){ DS_ROSTER = []; }
   let m = document.getElementById('dsOv');
   if (!m){ m=document.createElement('div'); m.id='dsOv';
     m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 10px';
     document.body.appendChild(m); }
   const b = BRANCHES.find(x=>x.id===BRANCH);
+  const staffChips = (dk, staffStr) => {
+    const sel = String(staffStr||'').split(/[,;/]+/).map(s=>s.trim()).filter(Boolean);
+    const isSel = nm => sel.some(s=>nameMatch(s,nm));
+    return DS_ROSTER.map(nm=>{
+      const on = isSel(nm);
+      return `<span onclick="dsToggleStaff('${esc(dk)}','${esc(nm)}')" style="display:inline-block;margin:2px;padding:5px 10px;border-radius:12px;font-size:.8em;font-weight:800;cursor:pointer;border:1.5px solid ${on?'#1a5c3a':'#e2e8f0'};background:${on?'#1a5c3a':'#fff'};color:${on?'#fff':'#64748b'}">${on?'✓ ':''}${esc(nm)}</span>`;
+    }).join('');
+  };
   const mapRows = Object.entries(DEPT_MAP||{}).map(([dk,dm])=>`
-    <tr><td><b>${esc(dm.name||dk)}</b></td>
-    <td><input data-dept="${esc(dk)}" class="ds-staff" value="${esc(dm.staff||'')}" style="width:100%;border:1.5px solid #e2e8f0;border-radius:7px;padding:6px 8px;background:#fffde7"></td>
-    <td><button class="btn danger" onclick="dsDelDept('${esc(dk)}')">${t('del')}</button></td></tr>`).join('');
+    <tr><td style="vertical-align:top"><b>${esc(dm.name||dk)}</b><br><button class="btn danger" style="margin-top:5px" onclick="dsDelDept('${esc(dk)}')">${t('del')}</button></td>
+    <td>${staffChips(dk, dm.staff)||'<span class="muted">직원 명단 없음</span>'}</td></tr>`).join('');
   const salesRows = [];
   Object.entries(DEPT_SALES||{}).forEach(([dk,months])=>{
     const dm=(DEPT_MAP||{})[dk]||{};
@@ -562,13 +577,12 @@ window.openDeptSales = async function(){
       <h3 style="flex:1;color:#1a5c3a">📈 부서 매출 관리 — ${esc(b?b.ko:BRANCH)}</h3>
       <button class="btn sec2 small" onclick="document.getElementById('dsOv').remove()">✕</button>
     </div>
-    <div style="font-weight:900;color:#1a5c3a;margin:6px 0">① 부서 · 담당 직원 (쉼표로 여러 명)</div>
-    <table><tr><th style="width:130px">부서</th><th>담당 직원</th><th style="width:56px"></th></tr>${mapRows||''}</table>
+    <div style="font-weight:900;color:#1a5c3a;margin:6px 0">① 부서 · 담당 직원 <span style="font-weight:600;color:#94a3b8;font-size:.8em">이름을 눌러 선택/해제 — 바로 저장됨</span></div>
+    <table><tr><th style="width:110px">부서</th><th>담당 직원 (클릭 선택)</th></tr>${mapRows||''}</table>
     <div class="addrow">
-      <input id="dsNewDept" placeholder="부서 이름 (예: PRODUCE)" style="width:150px">
-      <input id="dsNewStaff" placeholder="담당 직원 (쉼표 구분)" style="flex:1;min-width:150px">
-      <button class="btn" onclick="dsAddDept()">＋ 부서</button>
-      <button class="btn sec2" onclick="dsSaveStaff()">💾 담당 저장</button>
+      <select id="dsNewDept" style="width:170px">${DS_PRESETS.filter(p=>!(DEPT_MAP||{})[dsKey(p)]).map(p=>`<option value="${p}">${p}</option>`).join('')}<option value="__custom__">직접 입력…</option></select>
+      <input id="dsNewDeptCustom" placeholder="부서 이름 직접 입력" style="width:160px;display:none">
+      <button class="btn" onclick="dsAddDept()">＋ 부서 추가</button>
     </div>
     <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">② 월별 매출 입력</div>
     <table><tr><th style="width:90px">월</th><th>부서</th><th>매출</th><th style="width:56px"></th></tr>${sRows||''}</table>
@@ -584,22 +598,28 @@ MEAT,2026-04,14931.83"></textarea>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dsBulkAdd()">📥 일괄 추가</button>
   </div>`;
   m.style.display='flex';
+  const nd=document.getElementById('dsNewDept');
+  if (nd) nd.onchange = function(){ document.getElementById('dsNewDeptCustom').style.display = this.value==='__custom__' ? '' : 'none'; };
 };
 function dsKey(n){ return String(n||'').toUpperCase().replace(/[^A-Z0-9가-힣]+/g,'_').replace(/^_+|_+$/g,''); }
 window.dsAddDept = async function(){
-  const n=document.getElementById('dsNewDept').value.trim(); if(!n){ alert('부서 이름 필요'); return; }
-  const staff=document.getElementById('dsNewStaff').value.trim();
-  await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/'+dsKey(n)), {name:n.toUpperCase(), staff});
+  const selEl=document.getElementById('dsNewDept');
+  let n=selEl.value;
+  if (n==='__custom__') n=document.getElementById('dsNewDeptCustom').value.trim();
+  if(!n){ alert('부서를 선택하거나 이름을 입력하세요'); return; }
+  await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/'+dsKey(n)), {name:n.toUpperCase(), staff:''});
   toast('＋ '+n); openDeptSales();
 };
-window.dsSaveStaff = async function(){
-  const inputs=[...document.querySelectorAll('#dsOv .ds-staff')];
-  for (const inp of inputs){
-    const dk=inp.dataset.dept;
-    const cur=(DEPT_MAP||{})[dk]||{};
-    await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/'+dk), {name:cur.name||dk, staff:inp.value.trim()});
-  }
-  toast('💾 담당 저장됨'); DEPT_MAP=null;
+window.dsToggleStaff = async function(dk, nm){
+  const cur=(DEPT_MAP||{})[dk]||{};
+  let sel=String(cur.staff||'').split(/[,;/]+/).map(s=>s.trim()).filter(Boolean);
+  if (sel.some(s=>nameMatch(s,nm))) sel = sel.filter(s=>!nameMatch(s,nm));
+  else sel.push(nm);
+  const staff = sel.join(', ');
+  await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/'+dk), {name:cur.name||dk, staff});
+  DEPT_MAP[dk] = {name:cur.name||dk, staff};
+  toast((sel.length?'✓ ':'')+ (cur.name||dk) + ' — ' + (staff||'담당 없음'));
+  openDeptSales();
 };
 window.dsDelDept = async function(dk){
   if(!confirm('이 부서와 담당 매핑을 삭제할까요? (매출 기록은 남음)')) return;
