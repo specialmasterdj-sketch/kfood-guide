@@ -117,7 +117,7 @@
       </div>
     </div>
 
-    <div class="card"><h2>④ 분기 평가 이력</h2>
+    <div class="card"><h2>④ 분기 평가 이력 <span class="h-act"><button class="btn small" style="background:#fff;color:var(--green)" onclick="openScoring()">📝 새 평가 채점</button></span></h2>
       <div class="sec">
         <table id="evalTbl"></table>
         <div class="addrow">
@@ -424,6 +424,91 @@ window.addNote = async function(){
   if(!nDate.value||!nTxt.value.trim()){ alert('날짜·내용은 필수'); return; }
   await pushItem('notes', { date:nDate.value, type:nType.value, txt:nTxt.value.trim(), act:nAct.value.trim() });
   nTxt.value=nAct.value=''; refresh('notes'); toast('＋ 추가됨');
+};
+
+// ---- 📝 앱 내 평가 채점 (엑셀 평가표와 동일 배점: A30 · B40(매출30) · C20 · D10) ----
+const EVAL_ITEMS = [
+  { sec:'A. 업무 성과 (30점)', items:[
+    ['a1','업무지시 포인트 (분기 · 지점 순위)',10,'업무 앱 활동순위·리더보드'],
+    ['a2','업무 완료율·기한 준수',7,'업무 앱 리포트'],
+    ['a3','근태 — 지각·결근·스케줄 준수',8,'근태·스케줄 기록'],
+    ['a4','고객 칭찬 — 리뷰 이름·상점',5,'카드 ⑤ 상벌 기록'] ]},
+  { sec:'B. 부서·매장 성과 (40점)', items:[
+    ['b1','⭐ 담당 부서 매출 증가',30,'카드 ③ 월별 매출 표'],
+    ['b2','로스 관리 — 폐기·감모',5,'유통기한 앱'],
+    ['b3','진열·가격표 감사',5,'가격표 감사 앱'] ]},
+  { sec:'C. 근무 태도 (20점)', items:[
+    ['c1','고객 응대·친절',4,''],['c2','팀워크·협업',4,''],['c3','주도성·문제 해결',4,''],
+    ['c4','청결·안전·규정 준수',4,''],['c5','제품 지식',4,''] ]},
+  { sec:'D. 성장·리더십 (10점)', items:[
+    ['d1','신입 교육·멘토링',4,''],['d2','개선 제안·멀티스킬',3,''],['d3','리더십 잠재력',3,''] ]},
+];
+let SC = {};   // 항목별 1~5
+function scGrade(t){ return t>=90?'S':t>=80?'A':t>=70?'B':t>=60?'C':'D'; }
+function scCalc(){
+  let total=0, sales=0, done=0, cnt=0;
+  EVAL_ITEMS.forEach(g=>g.items.forEach(([k,_,w])=>{
+    cnt++;
+    if (SC[k]){ done++; const pts=Math.round(SC[k]/5*w*10)/10; total+=pts; if(k==='b1') sales=pts; }
+  }));
+  total = Math.round(total*10)/10;
+  return { total, sales, done, cnt };
+}
+window.openScoring = function(){
+  if (!EMP) return;
+  let m = document.getElementById('scOv');
+  if (!m){
+    m = document.createElement('div'); m.id='scOv';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 10px';
+    document.body.appendChild(m);
+  }
+  SC = {};
+  const q = (new Date());
+  const defPeriod = q.getFullYear()+' '+(Math.floor(q.getMonth()/3)+1)+'분기';
+  const rows = EVAL_ITEMS.map(g =>
+    `<div style="background:#e8f5ee;color:#1a5c3a;font-weight:900;padding:7px 10px;border-radius:8px;margin:10px 0 6px;font-size:.9em">${g.sec}</div>` +
+    g.items.map(([k,label,w,src])=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f1f5f9;flex-wrap:wrap">
+        <div style="flex:1;min-width:170px;font-size:.88em;font-weight:600">${label} <span style="color:#94a3b8;font-weight:700">(${w}점)</span>${src?`<div style="font-size:.72em;color:#94a3b8">${src}</div>`:''}</div>
+        <div style="display:flex;gap:4px">${[1,2,3,4,5].map(n=>`<button type="button" data-k="${k}" data-n="${n}" onclick="scPick(this)" style="width:38px;height:36px;border:1.5px solid #e2e8f0;background:#fff;border-radius:8px;font-weight:800;cursor:pointer">${n}</button>`).join('')}</div>
+      </div>`).join('')
+  ).join('');
+  m.innerHTML = `<div style="background:#fff;border-radius:16px;max-width:640px;width:100%;padding:16px 18px;margin:auto 0">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <h3 style="flex:1;color:#1a5c3a">📝 ${esc(EMP.name)} — 분기 평가 채점</h3>
+      <button class="btn sec2 small" onclick="document.getElementById('scOv').remove()">✕ 닫기</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="scPeriod" value="${defPeriod}" style="border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-weight:700;width:140px;background:#fffde7">
+      <span style="font-size:.8em;color:#64748b">1(매우 미흡) ~ 5(최우수) — 전 항목 선택하면 저장 가능</span>
+    </div>
+    ${rows}
+    <div id="scLive" style="margin:12px 0;background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;font-weight:900;color:#92400e">총점 0 / 100 · 채점 0/15</div>
+    <input id="scCmt" placeholder="핵심 코멘트 (예: 매출 목표 의식 필요)" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:9px 10px;background:#fffde7;margin-bottom:10px">
+    <button class="btn" style="width:100%;padding:13px" onclick="saveScoring()">💾 채점 완료 — 평가 이력에 저장</button>
+  </div>`;
+  m.style.display='flex';
+};
+window.scPick = function(btn){
+  const k=btn.dataset.k, n=+btn.dataset.n;
+  SC[k]=n;
+  document.querySelectorAll(`#scOv button[data-k="${k}"]`).forEach(b=>{
+    const on = +b.dataset.n===n;
+    b.style.background = on?'#1a5c3a':'#fff'; b.style.color = on?'#fff':'#1e293b'; b.style.borderColor = on?'#1a5c3a':'#e2e8f0';
+  });
+  const c = scCalc();
+  document.getElementById('scLive').textContent = `총점 ${c.total} / 100 (${scGrade(c.total)}등급${c.done<c.cnt?' — 진행중':''}) · 채점 ${c.done}/${c.cnt} · 매출 항목 ${c.sales}점`;
+};
+window.saveScoring = async function(){
+  const c = scCalc();
+  if (c.done < c.cnt){ alert('아직 채점 안 한 항목이 '+(c.cnt-c.done)+'개 있어요'); return; }
+  const period = document.getElementById('scPeriod').value.trim() || '기간 미입력';
+  const grade = scGrade(c.total);
+  try {
+    await pushItem('evals', { period, total:String(c.total), grade, sales:String(c.sales), cmt:document.getElementById('scCmt').value.trim(), date:period, detail:Object.assign({},SC) });
+    document.getElementById('scOv').remove();
+    refresh('evals'); toast('💾 저장됨 — '+c.total+'점 ('+grade+'등급)');
+  } catch(e){ alert('저장 실패: '+(e.message||e)); }
 };
 
 // ---- ⑤ 면담 ----
