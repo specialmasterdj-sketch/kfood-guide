@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_07_19_cat_field_fix';   // 새 지시 모달 카테고리 칸 사라짐 픽스 + 활동순위 월간 기본 유지
+    var BUST = 'tasks_2026_07_19_name_merge';   // 카테고리 칸 픽스 + ⭐+50 + 전무 상점권한 + 활동순위 동일인 이름 합침
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -4294,6 +4294,34 @@ function renderTeamRank(){
     if (!bcur.branch && a.branch) bcur.branch = _branchName(a.branch);
     agg.set(bk, bcur);
   });
+  // 🔗 2026-07-19 전무님 지시 — 같은 사람이 'steven' / 'Steven Olivas' 처럼 두 이름으로
+  //   잡히면 하나로 합침. 조건: 짧은 이름 토큰이 긴 이름 토큰의 부분집합(업무 배정 매칭과
+  //   동일 규칙) + 같은 매장. 다른 매장의 동명이인은 안 합쳐짐. 표시는 긴(풀네임) 쪽.
+  try {
+    const _mgTk = s => String(s||'').toLowerCase().split(/[^a-z0-9가-힣]+/).filter(t=>t.length>=2);
+    const _mgKeys = Array.from(agg.keys());
+    for (let _i=0; _i<_mgKeys.length; _i++){
+      for (let _j=_i+1; _j<_mgKeys.length; _j++){
+        const A = agg.get(_mgKeys[_i]), B = agg.get(_mgKeys[_j]);
+        if (!A || !B) continue;
+        const ta=_mgTk(A.name), tb=_mgTk(B.name);
+        if (!ta.length || !tb.length) continue;
+        const [sh,lg] = ta.length<=tb.length ? [ta,tb] : [tb,ta];
+        const lgSet = new Set(lg);
+        if (!sh.every(t=>lgSet.has(t))) continue;
+        const ab=[...(A.branches||[])], bb=[...(B.branches||[])];
+        if (ab.length && bb.length && !ab.some(x=>bb.includes(x))) continue;
+        const keepA = String(A.name).length >= String(B.name).length;
+        const keep = keepA ? A : B, drop = keepA ? B : A;
+        keep.score += drop.score;
+        keep.count += drop.count;
+        keep.bonus = (keep.bonus||0) + (drop.bonus||0);
+        (drop.branches||new Set()).forEach(x=>keep.branches.add(x));
+        if (!keep.branch) keep.branch = drop.branch;
+        agg.delete(keepA ? _mgKeys[_j] : _mgKeys[_i]);
+      }
+    }
+  } catch(_){}
   const rows = Array.from(agg.values()).map(r => {
     // 매니저 통합 뷰에서 한 직원이 여러 매장 일했으면 표시 보강
     if (r.branches && r.branches.size > 1) {
