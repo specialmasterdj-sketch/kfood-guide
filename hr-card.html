@@ -83,6 +83,7 @@
       <span style="flex:1"></span>
       <button class="btn sec2" onclick="window.print()">🖨 인쇄 / PDF</button>
     </div>
+    <div id="cardSummary" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>
 
     <div class="card"><h2>① 인적 사항 <span class="h-act"><button class="btn small" style="background:#fff;color:var(--green)" onclick="saveProfile()">💾 저장</button></span></h2>
       <div class="sec profile-grid" id="profileGrid"></div>
@@ -102,7 +103,21 @@
       </div>
     </div>
 
-    <div class="card"><h2>③ 분기 평가 이력</h2>
+    <div class="card"><h2>③ 월별 부서 매출 — 인상·승진 1순위 지표 <span style="font-size:.75em;font-weight:600;opacity:.9">증가율 자동 계산</span></h2>
+      <div class="sec">
+        <table id="salesTbl"></table>
+        <div class="addrow">
+          <input id="sMonth" type="month" style="width:150px">
+          <input id="sDept" placeholder="부서 (정육, K-Food…)" style="width:150px">
+          <input id="sAmt" placeholder="월 매출 $" style="width:120px">
+          <select id="sScore" style="width:130px"><option value="">평가점수</option><option value="5">5 최우수</option><option value="4">4 우수</option><option value="3">3 보통</option><option value="2">2 미흡</option><option value="1">1 매우미흡</option></select>
+          <input id="sMemo" placeholder="메모 (프로모션·계절 요인 등)" style="flex:1;min-width:140px">
+          <button class="btn" onclick="addSales()">＋ 추가</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><h2>④ 분기 평가 이력</h2>
       <div class="sec">
         <table id="evalTbl"></table>
         <div class="addrow">
@@ -116,7 +131,7 @@
       </div>
     </div>
 
-    <div class="card"><h2>④ 상벌 기록 <span style="font-size:.75em;font-weight:600;opacity:.9">⭐상점·구글리뷰 = 자동</span></h2>
+    <div class="card"><h2>⑤ 상벌 기록 <span style="font-size:.75em;font-weight:600;opacity:.9">⭐상점·구글리뷰 = 자동</span></h2>
       <div class="sec">
         <table id="meritTbl"></table>
         <div class="addrow">
@@ -129,7 +144,7 @@
       </div>
     </div>
 
-    <div class="card"><h2>⑤ 면담 기록</h2>
+    <div class="card"><h2>⑥ 면담 기록</h2>
       <div class="sec">
         <table id="talkTbl"></table>
         <div class="addrow">
@@ -183,6 +198,19 @@ let BRANCH = localStorage.getItem('hr.branch') || 'MIAMI';
 let EMP = null;      // { name, role }
 let BONUS = null;    // mgrBonus cache for BRANCH
 let booted = false;
+// 카드 상단 요약 — 상벌·평가 로드될 때마다 갱신
+let SUM = { pts:null, revs:null, warns:null, evalTotal:null, evalGrade:null, evalPeriod:null, sales:null, salesMonth:null };
+function renderSummary(){
+  const el = document.getElementById('cardSummary'); if(!el) return;
+  const chip = (bg,fg,txt) => `<span style="background:${bg};color:${fg};border-radius:12px;padding:7px 14px;font-weight:800;font-size:.92em">${txt}</span>`;
+  let h = '';
+  if (SUM.pts != null) h += chip('#fef3c7','#92400e','⭐ 상점·리뷰 합계 +'+SUM.pts+'pt ('+SUM.revs+'회 리뷰)');
+  if (SUM.sales != null){ const p=parseFloat(SUM.sales); h += chip(p>=0?'#dcfce7':'#fee2e2', p>=0?'#15803d':'#b91c1c', '📈 부서 매출 '+(p>0?'+':'')+p+'% ('+(SUM.salesMonth||'')+')'); }
+  if (SUM.evalTotal != null) h += chip('#e8f5ee','#1a5c3a','📋 최근 평가 '+SUM.evalTotal+'점 · '+ (SUM.evalGrade||'') + (SUM.evalPeriod?' ('+SUM.evalPeriod+')':''));
+  else h += chip('#f1f5f9','#64748b','📋 평가 기록 없음');
+  h += chip(SUM.warns ? '#fee2e2' : '#f1f5f9', SUM.warns ? '#b91c1c' : '#64748b', '⚠ 경고 '+(SUM.warns||0)+'회');
+  el.innerHTML = h;
+}
 
 window.__hrBoot = function(){
   if (booted) return;
@@ -227,13 +255,16 @@ window.openCard = async function(name, role){
   document.getElementById('cardName').textContent = name;
   const b = BRANCHES.find(x=>x.id===BRANCH);
   document.getElementById('cardBranch').textContent = (b?b.ko:BRANCH) + (role?' · '+role:'');
-  renderProfile({}); renderWage({}); renderEvals({}); renderTalks({});
+  SUM = { pts:null, revs:null, warns:null, evalTotal:null, evalGrade:null, evalPeriod:null, sales:null, salesMonth:null };
+  renderSummary();
+  renderProfile({}); renderWage({}); renderEvals({}); renderSales({}); renderTalks({});
   document.getElementById('meritTbl').innerHTML = '<tr><td class="muted">불러오는 중…</td></tr>';
   const base = 'hr/'+BRANCH+'/'+slug(name);
   // 병렬 로드
   fbGet(base+'/profile').then(p=>renderProfile(p||{})).catch(()=>{});
   fbGet(base+'/wage').then(w=>renderWage(w||{})).catch(()=>{});
   fbGet(base+'/evals').then(v=>renderEvals(v||{})).catch(()=>{});
+  fbGet(base+'/sales').then(v=>renderSales(v||{})).catch(()=>{});
   fbGet(base+'/talks').then(t=>renderTalks(t||{})).catch(()=>{});
   loadMerits(name, base);
 };
@@ -276,6 +307,7 @@ function refresh(kind){
   const base='hr/'+BRANCH+'/'+slug(EMP.name);
   if (kind==='wage') fbGet(base+'/wage').then(w=>renderWage(w||{}));
   if (kind==='evals') fbGet(base+'/evals').then(v=>renderEvals(v||{}));
+  if (kind==='sales') fbGet(base+'/sales').then(v=>renderSales(v||{}));
   if (kind==='talks') fbGet(base+'/talks').then(t=>renderTalks(t||{}));
   if (kind==='notes') loadMerits(EMP.name, base);
 }
@@ -301,9 +333,42 @@ window.addWage = async function(){
   wRole.value=wPay.value=wPct.value=wWhy.value=''; refresh('wage'); toast('＋ 추가됨');
 };
 
+// ---- ③ 매출 (월별, 증가율 자동) ----
+function renderSales(v){
+  const rows = Object.entries(v||{}).map(([id,x])=>Object.assign({id},x)).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||'')));
+  // 최신 증가율 요약칩
+  if (rows.length && rows[0].pct != null && rows[0].pct !== '') { SUM.sales = rows[0].pct; SUM.salesMonth = rows[0].month; }
+  else { SUM.sales = null; SUM.salesMonth = null; }
+  renderSummary();
+  document.getElementById('salesTbl').innerHTML =
+    '<tr><th style="width:90px">월</th><th>부서</th><th>월 매출</th><th>전월 대비</th><th>점수(1~5)</th><th>메모</th><th style="width:56px"></th></tr>' +
+    (rows.length ? rows.map(r=>{
+      const pctN = parseFloat(r.pct);
+      const pctS = (r.pct==null||r.pct==='') ? '<span class="muted">첫 달</span>'
+        : `<b style="color:${pctN>=0?'#15803d':'#dc2626'}">${pctN>0?'+':''}${pctN}%</b>`;
+      return `<tr><td>${esc(r.month)}</td><td>${esc(r.dept)}</td><td><b>$${esc(r.amt)}</b></td><td>${pctS}</td><td style="text-align:center"><b>${esc(r.score||'')}</b></td><td>${esc(r.memo)}</td><td><button class="btn danger" onclick="delItem('sales','${r.id}')">삭제</button></td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="muted">기록 없음 — 매월 초 POS 부서 매출을 한 줄씩 추가하세요 (증가율은 자동)</td></tr>');
+}
+window.addSales = async function(){
+  const month=sMonth.value, dept=sDept.value.trim(), amtRaw=sAmt.value.replace(/[^0-9.]/g,'');
+  if(!month||!dept||!amtRaw){ alert('월·부서·매출은 필수'); return; }
+  const amt = parseFloat(amtRaw);
+  // 전월(같은 부서, 이전 달 중 가장 최근) 매출 찾아 증가율 자동 계산
+  let pct = '';
+  try {
+    const all = await fbGet('hr/'+BRANCH+'/'+slug(EMP.name)+'/sales') || {};
+    const prev = Object.values(all).filter(x=>x && x.dept===dept && x.month < month).sort((a,b)=>String(b.month).localeCompare(String(a.month)))[0];
+    if (prev && parseFloat(prev.amt) > 0) pct = Math.round((amt - parseFloat(prev.amt)) / parseFloat(prev.amt) * 1000) / 10;
+  } catch(_){}
+  await pushItem('sales', { month, dept, amt:String(amt), pct:String(pct), score:sScore.value, memo:sMemo.value.trim(), date:month });
+  sAmt.value=sMemo.value=''; refresh('sales'); toast(pct!=='' ? ('＋ 추가됨 · 전월 대비 '+(pct>0?'+':'')+pct+'%') : '＋ 추가됨 (첫 달 — 다음 달부터 증가율 자동)');
+};
 // ---- ③ 평가 ----
 function renderEvals(v){
   const rows = Object.entries(v||{}).map(([id,x])=>Object.assign({id},x)).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')));
+  if (rows.length){ SUM.evalTotal = rows[0].total; SUM.evalGrade = rows[0].grade; SUM.evalPeriod = rows[0].period; }
+  else { SUM.evalTotal = SUM.evalGrade = SUM.evalPeriod = null; }
+  renderSummary();
   document.getElementById('evalTbl').innerHTML =
     '<tr><th>평가 기간</th><th>총점</th><th>등급</th><th>매출(30)</th><th>코멘트</th><th style="width:56px"></th></tr>' +
     (rows.length ? rows.map(r=>`<tr><td>${esc(r.period)}</td><td><b>${esc(r.total)}</b></td><td><b>${esc(r.grade)}</b></td><td>${esc(r.sales)}</td><td>${esc(r.cmt)}</td><td><button class="btn danger" onclick="delItem('evals','${r.id}')">삭제</button></td></tr>`).join('')
@@ -329,6 +394,12 @@ async function loadMerits(name, base){
   try { manual = listRows(await fbGet(base+'/notes')); } catch(_){}
   const rows = auto.concat(manual.map(m=>({ id:m.id, auto:false, date:m.date, type:m.type==='warn'?'warn':'star', txt:m.txt, act:m.act, by:m.by })))
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  // 요약 계산 — 자동(상점·리뷰) 포인트 합 + 리뷰 횟수 + 경고 횟수
+  SUM.pts = auto.reduce((s,r)=>s+(parseInt(String(r.act).replace(/[^0-9-]/g,''),10)||0),0);
+  SUM.revs = auto.filter(r=>r.type==='rev').length;
+  SUM.warns = rows.filter(r=>r.type==='warn').length;
+  renderSummary();
+  const sumRow = `<tr><td colspan="3" style="background:#e8f5ee;font-weight:900;color:#1a5c3a">합계 (자동 상점·리뷰)</td><td style="background:#e8f5ee;font-weight:900;color:#1a5c3a">+${SUM.pts}pt</td><td colspan="2" style="background:#e8f5ee"></td></tr>`;
   document.getElementById('meritTbl').innerHTML =
     '<tr><th style="width:100px">날짜</th><th style="width:90px">구분</th><th>내용</th><th>조치/포인트</th><th>기록자</th><th style="width:56px"></th></tr>' +
     (rows.length ? rows.map(r=>{
@@ -337,7 +408,7 @@ async function loadMerits(name, base){
         ? `<span style="font-size:.72em;color:#94a3b8">자동</span> <button class="btn danger" onclick="delMerit('${r.mid}')">삭제</button>`
         : `<button class="btn danger" onclick="delItem('notes','${r.id}')">삭제</button>`;
       return `<tr${r.auto?' class="auto"':''}><td>${esc(r.date)}</td><td>${pill}</td><td>${esc(r.txt)}</td><td><b>${esc(r.act)}</b></td><td>${esc(r.by)}</td><td>${del}</td></tr>`;
-    }).join('') : '<tr><td colspan="6" class="muted">기록 없음 — 상점을 주면 자동으로 여기 쌓입니다</td></tr>');
+    }).join('') + sumRow : '<tr><td colspan="6" class="muted">기록 없음 — 상점을 주면 자동으로 여기 쌓입니다</td></tr>');
 }
 window.delMerit = async function(mid){
   if (!EMP || !mid) return;
