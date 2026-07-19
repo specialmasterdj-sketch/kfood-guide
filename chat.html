@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_18_whiteout_fix';   // base64 사진 렌더 폭발 5곳 수정 (갤러리·유통기한 카드·모달·need카드·공유썸네일) + 화면 밖 사진 unload
+    var BUST = 'chat_2026_07_18_speed_cache';   // 💾 방 메시지 기기캐시(재방문 즉시표시) + 첫페인트 30 + 자동번역 40캡 (+ 오전 whiteout fix 포함)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2186,6 +2186,71 @@ function openRoom(id){
   renderRooms();
 }
 
+// ============ 💾 방 메시지 로컬 캐시 (IndexedDB) ============
+// 🚀 2026-07-18 — 사진 많은 방(grocery_eval 등)은 옛 base64 사진 때문에 네트워크
+//   다운로드 자체가 수십 MB → 코드가 아무리 빨라도 'Loading messages…' 가 김.
+//   해결: 방을 열 때마다 최근 메시지를 기기(IndexedDB)에 저장해두고, 다음에 열면
+//   ① 캐시로 0.1초 만에 즉시 표시 → ② 네트워크 도착하면 최신으로 교체.
+//   (base64 → Storage 이관이 끝나면 다운로드도 가벼워져 첫 방문도 빨라짐)
+const MSG_CACHE_DB = 'km_chat_msgcache_v1';
+let __msgCacheDb = null;
+function msgCacheOpen(){
+  return new Promise(res => {
+    if (__msgCacheDb) return res(__msgCacheDb);
+    if (!window.indexedDB) return res(null);
+    try {
+      const rq = indexedDB.open(MSG_CACHE_DB, 1);
+      rq.onupgradeneeded = () => { try { rq.result.createObjectStore('rooms'); } catch(_){} };
+      rq.onsuccess = () => { __msgCacheDb = rq.result; res(rq.result); };
+      rq.onerror = () => res(null);
+      rq.onblocked = () => res(null);
+    } catch(_) { res(null); }
+  });
+}
+function msgCacheGet(roomId){
+  return msgCacheOpen().then(db => new Promise(res => {
+    if (!db) return res(null);
+    try {
+      const rq = db.transaction('rooms','readonly').objectStore('rooms').get(roomId);
+      rq.onsuccess = () => res(rq.result || null);
+      rq.onerror = () => res(null);
+    } catch(_) { res(null); }
+  }));
+}
+// 캐시 용량 다이어트: 최근 40개만, 사진 문자열 합계 ~12MB 예산 초과분은
+// 사진만 빼고 텍스트 저장 (_photosStripped 표시 → 네트워크 도착 시 사진 복원됨)
+function _msgCacheSlim(msgs){
+  const out = [];
+  let budget = 12000000;
+  for (let i = msgs.length - 1; i >= 0 && out.length < 40; i--) {
+    const m = msgs[i];
+    let phCost = 0;
+    if (m.photos) for (const p of m.photos) phCost += (typeof p === 'string' ? p.length : 0);
+    const base = (m.text || '').length + 800;
+    if (base + phCost > budget && phCost > 0) {
+      out.unshift(Object.assign({}, m, { photos: [], _photosStripped: (m.photos||[]).length }));
+      budget -= base;
+    } else {
+      out.unshift(m);
+      budget -= base + phCost;
+    }
+    if (budget <= 0) break;
+  }
+  return out;
+}
+const __msgCacheLastWrite = {};
+function msgCachePut(roomId, msgs){
+  if (!roomId || !msgs || !msgs.length) return;
+  // 방마다 최대 25초에 1번만 기록 — 메시지 올 때마다 대용량 디스크 쓰기 방지
+  const now = Date.now();
+  if (__msgCacheLastWrite[roomId] && now - __msgCacheLastWrite[roomId] < 25000) return;
+  __msgCacheLastWrite[roomId] = now;
+  msgCacheOpen().then(db => {
+    if (!db) return;
+    try { db.transaction('rooms','readwrite').objectStore('rooms').put(_msgCacheSlim(msgs), roomId); } catch(_){}
+  });
+}
+
 // ============ MESSAGES ============
 function subscribeMessages(roomId){
   if (__unsubMsgs) { try { __unsubMsgs(); } catch(e){} __unsubMsgs = null; }
@@ -2200,7 +2265,8 @@ function subscribeMessages(roomId){
   //   수 초간 이전 방 화면/빈 화면이 보이던 문제.
   //   1단계: 최근 FAST_FIRST_LIMIT 개만 먼저 받아 즉시 렌더 (첫 페인트 단축)
   //   2단계: 기존 400개 구독이 도착하면 그대로 교체 — 검색/갤러리 범위 불변.
-  const FAST_FIRST_LIMIT = 60;
+  // 🚀 2026-07-18 — 60 → 30: base64 사진 방 첫 페인트 더 빠르게 (캐시가 그 이상을 커버)
+  const FAST_FIRST_LIMIT = 30;
   let __fullArrived = false;
   // 이전 방 메시지가 남아 보이지 않게 비우고 로딩 표시 (즉각 피드백)
   MSGS = [];
@@ -2208,6 +2274,13 @@ function subscribeMessages(roomId){
     const _loadingMsg = {ko:'⏳ 메시지 불러오는 중…', en:'⏳ Loading messages…', es:'⏳ Cargando mensajes…'};
     document.getElementById('msgs').innerHTML = `<div class="empty-chat">${_loadingMsg[LANG] || _loadingMsg.ko}</div>`;
   } catch(_){}
+  // 💾 0단계 — 기기 캐시 즉시 페인트 (재방문 방은 0.1초 표시, 네트워크 도착 시 교체)
+  msgCacheGet(roomId).then(cached => {
+    if (!cached || !cached.length) return;
+    if (ACTIVE_ROOM !== roomId || __fullArrived || MSGS.length) return;
+    MSGS = cached;
+    renderMessages();
+  }).catch(()=>{});
   if (!window.__fb) {
     // REST fallback — 1단계 빠른 첫 페인트
     fetch(`${FB_DB_URL}/chat/messages/${roomId}.json?orderBy="$key"&limitToLast=${FAST_FIRST_LIMIT}`)
@@ -2223,6 +2296,7 @@ function subscribeMessages(roomId){
         __fullArrived = true;
         if (ACTIVE_ROOM !== roomId) return;
         MSGS = msgsFromObj(d); renderMessages();
+        msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시
       })
       .catch(() => {
         // 쿼리 실패 시 전체 fallback (인덱스 규칙 없을 때)
@@ -2230,6 +2304,7 @@ function subscribeMessages(roomId){
           __fullArrived = true;
           if (ACTIVE_ROOM !== roomId) return;
           MSGS = msgsFromObj(d); renderMessages();
+          msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시
         }).catch(()=>{});
       });
     return;
@@ -2254,6 +2329,7 @@ function subscribeMessages(roomId){
     MSGS = msgsFromObj(snap.val());
     if (__renderT) clearTimeout(__renderT);
     __renderT = setTimeout(() => { __renderT = null; renderMessages(); }, 80);
+    msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시 (25초 스로틀 내장)
   });
 }
 function msgsFromObj(d){
@@ -2415,7 +2491,10 @@ function needsTranslate(text){
 // 한 번에 너무 많이 API 호출하지 않게 순차 처리.
 async function applyAutoTranslate(){
   if (!AUTO_TRANSLATE) return;
-  const els = document.querySelectorAll('.msg .text[data-original]');
+  // 🚀 2026-07-18 (속도) — 방 열 때마다 최대 200개를 순차 번역 API 호출하던 것을
+  //   최근 40개로 제한. (EN/ES 모드에서 한국어 방 열면 수십 초 네트워크 폭주 + MyMemory
+  //   일일 한도 소진 원인.) 옛 메시지는 🌐 번역 버튼으로 개별 번역.
+  const els = Array.from(document.querySelectorAll('.msg .text[data-original]')).slice(-40);
   for (const el of els){
     if (el.dataset.translatedText) continue;   // 이미 번역됨
     const text = el.dataset.original || '';
@@ -2816,7 +2895,8 @@ function renderMessages(){
           const all = JSON.stringify(m.photos).replace(/"/g,'&quot;');
           return `<div class="photo-grid ${cls}">${m.photos.map((u,i) => `<img src="${u}" loading="lazy" onclick="openLightbox(${all}, ${i})">`).join('')}</div>${n > 6 ? '<div style="font-size:.74em;color:#9ca3af;margin-top:2px">📷 '+n+'장 · 좌우로 넘기기</div>' : ''}`;
         })()
-      : '';
+      // 💾 캐시 다이어트로 사진이 잠시 생략된 메시지 — 네트워크 도착하면 자동 표시
+      : (m._photosStripped ? `<div style="font-size:.8em;color:#9ca3af;background:#f3f4f6;border-radius:8px;padding:8px 10px">📷 ${m._photosStripped}${({ko:'장 불러오는 중…',en:' photos loading…',es:' fotos cargando…'}[LANG]||'장 불러오는 중…')}</div>` : '');
     const fileHtml = (m.files && m.files.length)
       ? m.files.map(f => {
           const ic = (typeof fileIconFor === 'function') ? fileIconFor(f.name, f.mime) : '📁';
