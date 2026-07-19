@@ -323,7 +323,7 @@ async function loadMerits(name, base){
   }
   const auto = Object.entries(BONUS).map(([id,a])=>Object.assign({id},a))
     .filter(a=>a && a.to && nameMatch(a.to, name))
-    .map(a=>({ auto:true, date:fmtD(a.ts), type:(String(a.note||a.reason||'').includes('구글리뷰')||a.kind==='review_auto')?'rev':'star',
+    .map(a=>({ auto:true, mid:a.id, date:fmtD(a.ts), type:(String(a.note||a.reason||'').includes('구글리뷰')||a.kind==='review_auto')?'rev':'star',
                txt:(a.note||a.reason||'상점'), act:'+'+(a.points||0)+'pt', by:a.by||'' }));
   let manual = [];
   try { manual = listRows(await fbGet(base+'/notes')); } catch(_){}
@@ -333,10 +333,22 @@ async function loadMerits(name, base){
     '<tr><th style="width:100px">날짜</th><th style="width:90px">구분</th><th>내용</th><th>조치/포인트</th><th>기록자</th><th style="width:56px"></th></tr>' +
     (rows.length ? rows.map(r=>{
       const pill = r.type==='warn' ? '<span class="pill warn">⚠ 경고</span>' : r.type==='rev' ? '<span class="pill rev">📸 리뷰</span>' : '<span class="pill star">⭐ 상점</span>';
-      const del = r.auto ? '<span style="font-size:.72em;color:#94a3b8">자동</span>' : `<button class="btn danger" onclick="delItem('notes','${r.id}')">삭제</button>`;
+      const del = r.auto
+        ? `<span style="font-size:.72em;color:#94a3b8">자동</span> <button class="btn danger" onclick="delMerit('${r.mid}')">삭제</button>`
+        : `<button class="btn danger" onclick="delItem('notes','${r.id}')">삭제</button>`;
       return `<tr${r.auto?' class="auto"':''}><td>${esc(r.date)}</td><td>${pill}</td><td>${esc(r.txt)}</td><td><b>${esc(r.act)}</b></td><td>${esc(r.by)}</td><td>${del}</td></tr>`;
     }).join('') : '<tr><td colspan="6" class="muted">기록 없음 — 상점을 주면 자동으로 여기 쌓입니다</td></tr>');
 }
+window.delMerit = async function(mid){
+  if (!EMP || !mid) return;
+  if (!confirm('⭐ 이 상점 기록을 삭제할까요?\n\n중복 지급된 기록을 지우는 용도입니다.\n삭제하면 그 포인트도 리더보드·활동순위에서 회수됩니다.')) return;
+  try {
+    await window.__fb.remove(window.__fb.ref(window.__fb.db, 'mgrBonus/'+BRANCH+'/'+mid));
+    BONUS = null;   // 캐시 비우고 다시 로드
+    await loadMerits(EMP.name, 'hr/'+BRANCH+'/'+slug(EMP.name));
+    toast('↩️ 삭제됨 (포인트 회수)');
+  } catch(e){ alert('삭제 실패: '+(e.message||e)); }
+};
 window.addNote = async function(){
   if(!nDate.value||!nTxt.value.trim()){ alert('날짜·내용은 필수'); return; }
   await pushItem('notes', { date:nDate.value, type:nType.value, txt:nTxt.value.trim(), act:nAct.value.trim() });
