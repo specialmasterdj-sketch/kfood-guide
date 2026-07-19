@@ -689,8 +689,36 @@ function scCalc(){
   total = Math.round(total*10)/10;
   return { total, sales, done, cnt };
 }
+// 매출 항목(b1) 자동 제안 — 직원 담당 부서 최근 3개월 증가율 vs 매장 전체(TOTAL) 증가율
+function salesAutoScore(name){
+  try {
+    const deptPcts = [], storePcts = [];
+    const collect = (dk, arr) => {
+      const months = Object.entries((DEPT_SALES||{})[dk]||{}).map(([m,x])=>({month:m, amt:parseFloat((x&&x.amt!=null)?x.amt:x)}))
+        .filter(r=>r.month && isFinite(r.amt)).sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+      const recent = months.slice(-4);   // 최근 4개월 → 증가율 3개
+      for (let i=1;i<recent.length;i++){
+        if (recent[i-1].amt>0) arr.push((recent[i].amt-recent[i-1].amt)/recent[i-1].amt*100);
+      }
+    };
+    Object.entries(DEPT_MAP||{}).forEach(([dk,dm])=>{
+      if (dk==='TOTAL' || !dm || !dm.staff) return;
+      const staff = String(dm.staff).split(/[,;/]+/).map(s=>s.trim()).filter(Boolean);
+      if (staff.some(s=>nameMatch(s,name))) collect(dk, deptPcts);
+    });
+    if ((DEPT_SALES||{}).TOTAL) collect('TOTAL', storePcts);
+    if (!deptPcts.length) return null;
+    const avg = a=>a.reduce((s,x)=>s+x,0)/a.length;
+    const d = avg(deptPcts);
+    const st = storePcts.length ? avg(storePcts) : null;
+    const diff = st==null ? d : d - st;
+    const score = diff>=10?5 : diff>=3?4 : diff>=-3?3 : diff>=-10?2 : 1;
+    return { score, d:Math.round(d*10)/10, st:st==null?null:Math.round(st*10)/10, diff:Math.round(diff*10)/10 };
+  } catch(_){ return null; }
+}
 window.openScoring = function(){
   if (!EMP) return;
+  if (!DEPT_MAP || !DEPT_SALES){ loadDeptData().then(()=>openScoring()); return; }
   let m = document.getElementById('scOv');
   if (!m){
     m = document.createElement('div'); m.id='scOv';
@@ -708,6 +736,7 @@ window.openScoring = function(){
         <div style="display:flex;gap:4px">${[1,2,3,4,5].map(n=>`<button type="button" data-k="${k}" data-n="${n}" onclick="scPick(this)" style="width:38px;height:36px;border:1.5px solid #e2e8f0;background:#fff;border-radius:8px;font-weight:800;cursor:pointer">${n}</button>`).join('')}</div>
       </div>`).join('')
   ).join('');
+  const autoB1 = salesAutoScore(EMP.name);
   m.innerHTML = `<div style="background:#fff;border-radius:16px;max-width:640px;width:100%;padding:16px 18px;margin:auto 0">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <h3 style="flex:1;color:#1a5c3a">📝 ${esc(EMP.name)} — ${t('scTitle')}</h3>
@@ -717,12 +746,15 @@ window.openScoring = function(){
       <input id="scPeriod" value="${defPeriod}" style="border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-weight:700;width:140px;background:#fffde7">
       <span style="font-size:.8em;color:#64748b">${t('scScale')}</span>
     </div>
+    ${autoB1 ? `<div style="background:#dbeafe;border:1.5px solid #3b82f6;border-radius:10px;padding:9px 12px;margin-top:10px;font-size:.85em;font-weight:700;color:#1d4ed8">
+      🤖 매출 항목 자동 제안: <b>${autoB1.score}점</b> — 부서 평균 ${autoB1.d>0?'+':''}${autoB1.d}%${autoB1.st!=null?` vs 매장 전체 ${autoB1.st>0?'+':''}${autoB1.st}% (차이 ${autoB1.diff>0?'+':''}${autoB1.diff}%p)`:' (매장 TOTAL 미입력 — 절대 기준)'} · 아래에서 수정 가능</div>` : ''}
     ${rows}
     <div id="scLive" style="margin:12px 0;background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;font-weight:900;color:#92400e">${t('scLive')(0,'-',0,15,0)}</div>
     <input id="scCmt" placeholder="${t('scCmtPh')}" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:9px 10px;background:#fffde7;margin-bottom:10px">
     <button class="btn" style="width:100%;padding:13px" onclick="saveScoring()">${t('scSave')}</button>
   </div>`;
   m.style.display='flex';
+  if (autoB1){ const b=document.querySelector(`#scOv button[data-k="b1"][data-n="${autoB1.score}"]`); if(b) scPick(b); }
 };
 window.scPick = function(btn){
   const k=btn.dataset.k, n=+btn.dataset.n;
