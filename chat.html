@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_18_stable_scroll';   // 🧷 세션 중 메시지 순서 고정(댓글에 순간이동 X) + 답글 스레드만 부분갱신 + 입력초안·커서 보존
+    var BUST = 'chat_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지(한가할 때만 업데이트) + 리로드 후 보던 방·메시지 위치 자동 복귀
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -20,12 +20,46 @@
         return;
       }
     } catch(e){}
+    // 🛑 2026-07-18 사장님 신고 — 새 버전 감지 즉시 location.reload() 하던 것이
+    //   답글 입력 순간(창 포커스 = 폴링 타이밍)에 페이지를 날려 작업이 엉망 됨.
+    //   변경: 사용 중(입력 중이거나 최근 2분 내 조작)에는 절대 리로드하지 않고
+    //   한가해질 때까지 연기. 리로드 직전엔 보던 방/메시지 위치 저장(__kmSaveResumeState)
+    //   → 리로드 후 자동 복귀.
+    window.__kmLastActivity = Date.now();
+    ['pointerdown','keydown','touchstart','wheel'].forEach(function(ev){
+      window.addEventListener(ev, function(){ window.__kmLastActivity = Date.now(); }, {passive:true, capture:true});
+    });
+    var pendingBust = null;
+    function userBusy(){
+      try {
+        var el = document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'file'))) return true;
+        var tas = document.querySelectorAll('textarea');
+        for (var i = 0; i < tas.length; i++) if (tas[i].value) return true;
+        if (Date.now() - (window.__kmLastActivity || 0) < 120000) return true;
+      } catch(e){}
+      return false;
+    }
+    function applyBustIfIdle(){
+      if (!pendingBust) return;
+      if (userBusy()) { setTimeout(applyBustIfIdle, 60000); return; }
+      try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch(e){}
+      try { localStorage.setItem(KEY, pendingBust); } catch(e){}
+      // 캐시 비우고 한 번에 새 버전 로드 (reload 는 SW 캐시로 옛 버전이 다시 뜰 수 있음)
+      (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : Promise.resolve())
+        .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
+        .catch(function(){ location.reload(); });
+    }
     function pollBust(){
       fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
         .then(function(r){ return r.text(); })
         .then(function(t){
           var m = t.match(/var BUST = '([^']+)'/);
-          if (m && m[1] !== BUST) { console.log('[bust-poll] 새 버전:', m[1]); location.reload(); }
+          if (m && m[1] !== BUST && m[1] !== pendingBust) {
+            console.log('[bust-poll] 새 버전 대기 (한가할 때 적용):', m[1]);
+            pendingBust = m[1];
+            applyBustIfIdle();
+          }
         }).catch(function(){});
     }
     setInterval(pollBust, 5 * 60 * 1000);
@@ -2186,6 +2220,41 @@ function openRoom(id){
   renderRooms();
 }
 
+// ============ 📍 리로드 복귀 (보던 방 + 보던 메시지 위치) ============
+// 🛑 2026-07-18 — 버전 업데이트 리로드 직전에 호출됨 (상단 bust 스크립트).
+//   화면 맨 위에 보이던 메시지 id + 오프셋을 저장 → 리로드 후 그 자리로 복귀.
+window.__kmSaveResumeState = function(){
+  try {
+    if (!ACTIVE_ROOM) return;
+    const cont = document.getElementById('msgs');
+    if (!cont) return;
+    let anchor = null, delta = 0;
+    const rows = cont.querySelectorAll('.msg[data-msg-id]');
+    for (const r of rows) {
+      if (r.offsetTop + r.offsetHeight > cont.scrollTop) {
+        anchor = r.getAttribute('data-msg-id');
+        delta = cont.scrollTop - r.offsetTop;
+        break;
+      }
+    }
+    sessionStorage.setItem('km.resume', JSON.stringify({ room: ACTIVE_ROOM, anchor, delta, ts: Date.now() }));
+  } catch(_){}
+};
+function _kmTryResumeScroll(cont){
+  try {
+    if (window.__kmResumeDone || !window.__kmFullArrived) return;
+    const rs = JSON.parse(sessionStorage.getItem('km.resume') || 'null');
+    if (!rs || Date.now() - (rs.ts||0) > 300000) { window.__kmResumeDone = true; try { sessionStorage.removeItem('km.resume'); } catch(_){} return; }
+    if (rs.room !== ACTIVE_ROOM) return;   // 다른 방을 열었으면 그대로 두고, 그 방 오면 복귀
+    if (rs.anchor) {
+      const el = cont.querySelector('.msg[data-msg-id="' + rs.anchor + '"]');
+      if (el) cont.scrollTop = el.offsetTop + (rs.delta || 0);
+    }
+    window.__kmResumeDone = true;
+    sessionStorage.removeItem('km.resume');
+  } catch(_){}
+}
+
 // ============ 💾 방 메시지 로컬 캐시 (IndexedDB) ============
 // 🚀 2026-07-18 — 사진 많은 방(grocery_eval 등)은 옛 base64 사진 때문에 네트워크
 //   다운로드 자체가 수십 MB → 코드가 아무리 빨라도 'Loading messages…' 가 김.
@@ -2255,6 +2324,7 @@ function msgCachePut(roomId, msgs){
 function subscribeMessages(roomId){
   if (__unsubMsgs) { try { __unsubMsgs(); } catch(e){} __unsubMsgs = null; }
   __roomOrderMap = {}; __roomOrderSeq = 0;   // 🧷 방 새로 열 때 순서맵 초기화 (활동순 재정렬 시점)
+  window.__kmFullArrived = false;            // 📍 리로드 복귀는 전체 데이터 도착 후에만
   // 🔧 2026-05-31 — 방 메시지를 통째로 받던 것을 '최근 N개'로 제한.
   //   메시지/사진이 많이 쌓인 방(grocery_eval 등)에서 전체 다운로드가
   //   너무 커 폰이 받다 멈추거나 RangeError 로 방이 안 열리던 문제 해결.
@@ -2296,7 +2366,7 @@ function subscribeMessages(roomId){
     fetch(`${FB_DB_URL}/chat/messages/${roomId}.json?orderBy="$key"&limitToLast=${MSG_FETCH_LIMIT}`)
       .then(r => r.json())
       .then(d => {
-        __fullArrived = true;
+        __fullArrived = true; window.__kmFullArrived = true;
         if (ACTIVE_ROOM !== roomId) return;
         MSGS = msgsFromObj(d); renderMessages();
         msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시
@@ -2304,7 +2374,7 @@ function subscribeMessages(roomId){
       .catch(() => {
         // 쿼리 실패 시 전체 fallback (인덱스 규칙 없을 때)
         fetch(`${FB_DB_URL}/chat/messages/${roomId}.json`).then(r => r.json()).then(d => {
-          __fullArrived = true;
+          __fullArrived = true; window.__kmFullArrived = true;
           if (ACTIVE_ROOM !== roomId) return;
           MSGS = msgsFromObj(d); renderMessages();
           msgCachePut(roomId, MSGS);   // 💾 다음 방문용 캐시
@@ -2328,7 +2398,7 @@ function subscribeMessages(roomId){
   //   여러 명이 동시에 보내면 80ms 동안 합쳐서 한 번만 렌더 → 폰 layout thrashing 감소.
   let __renderT = null;
   __unsubMsgs = onValue(target, snap => {
-    __fullArrived = true;
+    __fullArrived = true; window.__kmFullArrived = true;
     const newMsgs = msgsFromObj(snap.val());
     // ⚡ 2026-07-18 (깜빡임 제거) — 바뀐 것이:
     //   ① 리액션(👍)뿐 → 칩만 교체  ② 답글뿐 → 그 스레드만 교체
@@ -3025,6 +3095,7 @@ function renderMessages(){
   } catch(_){}
   if (wasNearBottom) cont.scrollTop = cont.scrollHeight;
   else cont.scrollTop = prevScrollTop;
+  _kmTryResumeScroll(cont);   // 📍 버전 업데이트 리로드 후 보던 자리 복귀 (1회)
   // 자동 번역 토글바 — 채팅방에 진입했고 viewer LANG 이 ko 외이거나 메시지가 있는 경우
   const atBar = document.getElementById('autoTranslateBar');
   if (atBar){
