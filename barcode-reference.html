@@ -115,12 +115,12 @@
       <div class="toolbar">
         <label class="btn sec" style="margin:0;">📤 POS 엑셀/CSV 업로드<input type="file" class="file-in" accept=".xlsx,.xls,.csv" onchange="uploadFile(event,'master')"></label>
         <button class="btn sec" onclick="addMasterRow()">➕ 행 추가</button>
-        <input type="text" id="masterSearch" class="grow" placeholder="바코드 · 상품명 검색" oninput="renderMaster()">
+        <input type="text" id="masterSearch" class="grow" data-i18n-ph="masterSearchPh" placeholder="제품번호 · 바코드 · 상품명 검색" oninput="renderMaster()">
         <div class="right"><button class="btn danger" onclick="clearMaster()">전체 삭제</button></div>
       </div>
       <div class="tbl-scroll">
         <table>
-          <thead><tr><th style="width:40px;">#</th><th style="width:220px;">FULL BARCODE</th><th>상품명 (NAME)</th><th style="width:40px;"></th></tr></thead>
+          <thead><tr><th style="width:40px;">#</th><th style="width:130px;" data-i18n="thItemNo">제품번호 (ITEM#)</th><th style="width:200px;">FULL BARCODE</th><th data-i18n="thName2">상품명 (NAME)</th><th style="width:40px;"></th></tr></thead>
           <tbody id="masterBody"></tbody>
         </table>
       </div>
@@ -389,15 +389,16 @@ function renderMaster(){
   const body=document.getElementById('masterBody'); let html='',matched=0,shown=0;
   for(let i=0;i<DATA.master.length;i++){
     const r=DATA.master[i];
-    if(q && !((esc(r.barcode)+' '+esc(r.name)).toLowerCase().includes(q))) continue;
+    if(q && !((esc(r.barcode)+' '+esc(r.name)+' '+esc(r.code||'')).toLowerCase().includes(q))) continue;
     matched++; if(shown<MASTER_VIEW_LIMIT){ shown++;
       html+=`<tr><td class="muted">${i+1}</td>
+        <td><input value="${esc(r.code||'')}" oninput="editMaster(${i},'code',this.value)" placeholder="—"></td>
         <td><input value="${esc(r.barcode)}" oninput="editMaster(${i},'barcode',this.value)"></td>
         <td><input value="${esc(r.name)}" oninput="editMaster(${i},'name',this.value)"></td>
         <td><button class="x" onclick="delMaster(${i})">×</button></td></tr>`;
     }
   }
-  body.innerHTML=html||`<tr><td colspan="4" class="muted" style="text-align:center;padding:24px;">POS 마스터가 없습니다. Vela CSV를 업로드하세요.</td></tr>`;
+  body.innerHTML=html||`<tr><td colspan="5" class="muted" style="text-align:center;padding:24px;">POS 마스터가 없습니다. Vela CSV를 업로드하세요.</td></tr>`;
   document.getElementById('masterCount').textContent=DATA.master.length;
   document.getElementById('masterInfo').innerHTML=`총 <b>${DATA.master.length.toLocaleString()}</b>개 바코드`+(q?` · 검색 ${matched.toLocaleString()}개`:'')+(matched>MASTER_VIEW_LIMIT?` · <span style="color:var(--amber)">화면엔 ${MASTER_VIEW_LIMIT}개만 표시(검색으로 좁히세요)</span>`:'');
 }
@@ -516,10 +517,18 @@ function renderCandidates(){
   // 2) POS 마스터 후보
   if(!DATA.master.length){ el.innerHTML=xvHtml+'<div class="muted" style="padding:12px;">POS 마스터가 비어 있습니다. 먼저 업로드하세요.</div>'; return; }
   let list;
-  if(q){ list=DATA.master.map(m=>({m,s:scoreMatch(q,m.name)+(normBar(m.barcode).includes(q)?300:0)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,60); }
+  if(q){
+    const ql=q.toLowerCase();
+    list=DATA.master.map(m=>{
+      const code=String(m.code||'');
+      // 제품번호 매칭: 완전일치 최우선, 부분일치도 인정
+      let cs=0; if(code){ if(code.toLowerCase()===ql) cs=1000; else if(code.toLowerCase().includes(ql)) cs=250; }
+      return {m,s:scoreMatch(q,m.name)+(normBar(m.barcode).includes(q)?300:0)+cs};
+    }).filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,60);
+  }
   else list=DATA.master.slice(0,60).map(m=>({m,s:0}));
   const posHtml = list.length ? list.map(x=>`<div class="cand" onclick="assignFromMaster('${encodeURIComponent(x.m.barcode)}','${encodeURIComponent(x.m.name||'')}')">
-      <span class="bc">${esc(x.m.barcode)}</span><span class="nm">${esc(x.m.name)}</span></div>`).join('')
+      <span class="bc">${esc(x.m.barcode)}</span><span class="nm">${esc(x.m.name)}${x.m.code?` <span class="muted">· #${esc(x.m.code)}</span>`:''}</span></div>`).join('')
     : '<div class="muted" style="padding:12px;">검색 결과가 없습니다. 다른 단어로 검색하거나 바코드를 직접 입력하세요.</div>';
   el.innerHTML=xvHtml+posHtml;
 }
@@ -564,10 +573,12 @@ function openMapping(){
   const opt=idx=>`<option value="-1">(없음)</option>`+pendingHeaders.map(h=>`<option value="${h.idx}"${h.idx===idx?' selected':''}>${esc(h.label)}</option>`).join('');
   const fields=document.getElementById('mapFields');
   if(pendingTarget==='master'){
-    const gBar=guessCol(['full barcode','barcode','바코드','upc','ean','plu','code','스캔','sku']);
+    const gBar=guessCol(['full barcode','barcode','바코드','upc','ean','plu','스캔']);
     const gName=guessCol(['name','상품','품명','product','description']);
     const gCost=guessCol(['cost','원가','매입']);
+    const gItem=guessCol(['item no','item#','item number','item','제품번호','상품번호','품번','code','코드','sku','plu','no.']);
     fields.innerHTML=`
+      <div><label class="fld" data-i18n="mFieldItem">제품번호(ITEM#) 열 — 있으면</label><select id="mCol3">${opt(gItem)}</select></div>
       <div><label class="fld">FULL BARCODE 열</label><select id="mCol0">${opt(gBar)}</select></div>
       <div><label class="fld">상품명(NAME) 열</label><select id="mCol1">${opt(gName)}</select></div>
       <div><label class="fld">COST 열</label><select id="mCol2">${opt(gCost)}</select></div>
@@ -593,17 +604,17 @@ function openMapping(){
 }
 async function confirmMapping(){
   const gv=id=>{ const el=document.getElementById(id); return el?+el.value:-1; };
-  const c0=gv('mCol0'),c1=gv('mCol1'),c2=gv('mCol2');
+  const c0=gv('mCol0'),c1=gv('mCol1'),c2=gv('mCol2'),c3=gv('mCol3');
   const get=(r,i)=> i<0?'':String(r[i]==null?'':r[i]).trim();
   const replace=document.getElementById('mapReplace').checked; const tgt=pendingTarget;
   closeModal('mapModal');
   if(tgt==='master'){
     if(pendingRows.length>2000){ showBusy(`POS 마스터 ${pendingRows.length.toLocaleString()}행 처리 중…`); await yield_(); }
     const costOnly=!!(document.getElementById('mCostOnly')&&document.getElementById('mCostOnly').checked)&&c2>=0;
-    let rows=pendingRows.map(r=>({barcode:normBar(get(r,c0)),name:get(r,c1),_c:num(get(r,c2))})).filter(x=>x.barcode||x.name);
+    let rows=pendingRows.map(r=>({barcode:normBar(get(r,c0)),name:get(r,c1),code:get(r,c3),_c:num(get(r,c2))})).filter(x=>x.barcode||x.name);
     const before=rows.length;
     if(costOnly) rows=rows.filter(x=>x._c!=null&&x._c>0);
-    const out=rows.map(x=>({barcode:x.barcode,name:x.name}));
+    const out=rows.map(x=>({barcode:x.barcode,name:x.name,code:x.code||''}));
     DATA.master=replace?out:DATA.master.concat(out); saveMaster(); hideBusy(); renderMaster();
     if(costOnly) alert(`COST 있는 상품 ${out.length.toLocaleString()}개만 가져왔습니다. (전체 ${before.toLocaleString()}개 중)`);
   } else {
@@ -810,7 +821,11 @@ const I18N = {
   thName:{ko:'NAME (상품명)',en:'NAME',es:'NOMBRE'},
   thState:{ko:'상태',en:'Status',es:'Estado'},
   findTitle:{ko:'🔎 바코드 찾기 · POS에서 연결',en:'🔎 Find barcode · link from POS',es:'🔎 Buscar código · vincular del POS'},
-  findSearchPh:{ko:'상품명 또는 바코드로 검색',en:'Search by name or barcode',es:'Buscar por nombre o código'},
+  findSearchPh:{ko:'제품번호 · 상품명 · 바코드로 검색',en:'Search by item#, name or barcode',es:'Buscar por #, nombre o código'},
+  masterSearchPh:{ko:'제품번호 · 바코드 · 상품명 검색',en:'Search item#, barcode, name',es:'Buscar #, código, nombre'},
+  thItemNo:{ko:'제품번호 (ITEM#)',en:'Item #',es:'# Producto'},
+  thName2:{ko:'상품명 (NAME)',en:'NAME',es:'NOMBRE'},
+  mFieldItem:{ko:'제품번호(ITEM#) 열 — 있으면',en:'Item # column — if any',es:'Columna # producto — si hay'},
   findManualPh:{ko:'바코드 직접 입력',en:'Type barcode',es:'Escribir código'},
   assignManual:{ko:'직접 연결',en:'Link',es:'Vincular'},
   scanBtn:{ko:'📷 스캔',en:'📷 Scan',es:'📷 Escanear'},
