@@ -154,6 +154,7 @@
       <div class="row mb">
         <select id="refFilter" onchange="renderRef()">
           <option value="all">전체 보기</option>
+          <option value="suspect">🚨 오류 의심만 (글자·짧음·중복)</option>
           <option value="need">바코드 필요만 (미입력·POS에없음)</option>
           <option value="ok">확인됨만</option>
           <option value="bad">POS에 없음만</option>
@@ -321,6 +322,27 @@ const yield_=()=>new Promise(r=>setTimeout(r,30));
 function esc(s){ return (s==null?'':String(s)); }
 function num(v){ if(v==null||v==='')return null; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
 function normBar(b){ return String(b==null?'':b).replace(/[="]/g,'').trim(); }
+// 🩹 2026-07-22 바코드 오류 검사 — 직원이 밴더코드/바코드 칸을 바꿔넣거나 오타내면 자동 감지.
+//   반환: {state, msg}  state = ok|bad|none|suspect|dup
+function refBarIssues(rows, mset){
+  // 바코드별 등장 횟수 (중복 감지) — 빈 값 제외
+  const seen={};
+  rows.forEach(r=>{ const b=normBar(r.barcode); if(b) seen[b]=(seen[b]||0)+1; });
+  return rows.map(r=>{
+    const raw=String(r.barcode==null?'':r.barcode);
+    const b=normBar(r.barcode);
+    if(!b) return {state:'none', msg:''};
+    const digits=b.replace(/\D/g,'');
+    // 문자가 섞임 → 밴더코드를 바코드 칸에 넣었을 가능성 (예: 00002D)
+    if(/[A-Za-z]/.test(b)) return {state:'suspect', msg:'글자 포함 — 밴더코드를 바코드칸에 넣었나요?'};
+    // 너무 짧음 (실제 바코드는 보통 8자리 이상) → 밴더코드일 가능성
+    if(digits.length < 8) return {state:'suspect', msg:'너무 짧음('+digits.length+'자) — 밴더코드 아닌가요?'};
+    // 같은 바코드가 여러 밴더코드에 → 하나는 오타일 가능성
+    if(seen[b] > 1) return {state:'dup', msg:'바코드 중복('+seen[b]+'건) — 하나는 오타?'};
+    if(mset.has(b)) return {state:'ok', msg:''};
+    return {state:'bad', msg:''};
+  });
+}
 function normCode(c){ return String(c==null?'':c).trim().toUpperCase(); }
 function normName(s){ return String(s==null?'':s).toUpperCase().replace(/[^A-Z0-9가-힣 ]/g,' ').replace(/\s+/g,' ').trim(); }
 function scoreMatch(query,name){
@@ -384,11 +406,13 @@ function renderRef(){
   const q=(document.getElementById('refSearch').value||'').trim().toLowerCase();
   const f=document.getElementById('refFilter').value;
   const rows=curRef(); const mset=masterBarSet();
-  let ok=0,bad=0,none=0;
-  rows.forEach(r=>{ const b=normBar(r.barcode); if(!b)none++; else if(mset.has(b))ok++; else bad++; });
+  const issues=refBarIssues(rows, mset);
+  let ok=0,bad=0,none=0,suspect=0;
+  issues.forEach(x=>{ if(x.state==='none')none++; else if(x.state==='ok')ok++; else if(x.state==='suspect'||x.state==='dup')suspect++; else bad++; });
   document.getElementById('refStat').innerHTML=`
     <div class="box"><div class="n">${rows.length}</div><div class="l">전체 코드</div></div>
     <div class="box"><div class="n">${ok}</div><div class="l">POS 확인됨</div></div>
+    ${suspect?`<div class="box bad" style="border:2px solid var(--red)"><div class="n">${suspect}</div><div class="l">🚨 오류 의심</div></div>`:''}
     <div class="box bad"><div class="n">${bad}</div><div class="l">POS에 없음(의심)</div></div>
     <div class="box warn"><div class="n">${none}</div><div class="l">바코드 미입력</div></div>`;
   const body=document.getElementById('refBody'); let html='';
@@ -398,23 +422,28 @@ function renderRef(){
   else if(sortBy==='name') order.sort((a,b)=>String(a.r.name||'').localeCompare(String(b.r.name||'')));
   let dispNo=0;
   order.forEach(({r,i})=>{
-    const b=normBar(r.barcode);
-    const state = !b?'none':(mset.has(b)?'ok':'bad');
+    const iss=issues[i]||{state:'none',msg:''};
+    const state=iss.state;
+    const isErr=(state==='suspect'||state==='dup');
     if(f==='need' && state==='ok') return;
     if(f==='ok' && state!=='ok') return;
     if(f==='bad' && state!=='bad') return;
+    if(f==='suspect' && !isErr) return;
     if(q && !((esc(r.code)+' '+esc(r.name)+' '+esc(r.barcode)).toLowerCase().includes(q))) return;
-    let pill = state==='ok'?'<span class="pill ok">✓ POS 확인</span>':(state==='bad'?'<span class="pill bad">⚠ POS에 없음</span>':'<span class="pill warn">미입력</span>');
+    let pill = state==='ok'?'<span class="pill ok">✓ POS 확인</span>'
+      :(isErr?`<span class="pill bad" title="${esc(iss.msg)}">🚨 ${state==='dup'?'중복':'오류의심'}</span>`
+      :(state==='bad'?'<span class="pill bad">⚠ POS에 없음</span>':'<span class="pill warn">미입력</span>'));
+    const barStyle=isErr?'flex:1;border:2px solid var(--red);background:var(--red-bg);':'flex:1;';
     dispNo++;
-    html+=`<tr>
+    html+=`<tr${isErr?' style="background:var(--red-bg)"':''}>
       <td class="muted">${dispNo}</td>
       <td><input value="${esc(r.code)}" oninput="editRef(${i},'code',this.value)"></td>
       <td><input value="${esc(r.name)}" oninput="editRef(${i},'name',this.value)"></td>
       <td style="display:flex;gap:5px;align-items:center;">
-        <input value="${esc(r.barcode)}" oninput="editRef(${i},'barcode',this.value)" style="flex:1;" placeholder="미입력">
+        <input value="${esc(r.barcode)}" oninput="editRef(${i},'barcode',this.value)" style="${barStyle}" placeholder="미입력">
         <button class="btn tiny sec" onclick="openFind(${i})">🔎 찾기</button>
       </td>
-      <td>${pill}</td>
+      <td>${pill}${isErr?`<div class="muted" style="font-size:10.5px;color:var(--red);margin-top:2px;max-width:150px;">${esc(iss.msg)}</div>`:''}</td>
       <td><button class="x" onclick="delRef(${i})">×</button></td></tr>`;
   });
   body.innerHTML=html||`<tr><td colspan="6" class="muted" style="text-align:center;padding:24px;">참조가 없습니다. 참조/인보이스/PDF 업로드 또는 '행 추가'로 시작하세요.</td></tr>`;
@@ -641,6 +670,10 @@ function exportRef(){
   const rows=curRef();
   if(!rows.length){ alert('내보낼 참조가 없습니다.'); return; }
   const none=rows.filter(r=>!normBar(r.barcode)).length;
+  // 🚨 내보내기 전 오류 의심 차단 — 잘못된 바코드가 가격비교로 넘어가면 안 됨
+  const iss=refBarIssues(rows, masterBarSet());
+  const susp=iss.filter(x=>x.state==='suspect'||x.state==='dup').length;
+  if(susp && !confirm(`🚨 오류 의심 ${susp}건이 있습니다 (글자 포함·너무 짧음·바코드 중복).\n잘못된 바코드가 가격비교로 넘어가면 안 됩니다.\n\n필터에서 '🚨 오류 의심만'을 골라 먼저 고치는 걸 강력히 권합니다.\n그래도 지금 내보낼까요?`)) return;
   if(none && !confirm(`바코드 미입력 ${none}건이 포함됩니다. 그래도 내보낼까요?\n(취소 후 🔎 찾기로 채운 뒤 다시 내보낼 수 있습니다)`)) return;
   const out=rows.map(r=>({'FULL BARCODE':normBar(r.barcode),'NAME':r.name||'','VENDOR CODE':r.code||''}));
   const ws=XLSX.utils.json_to_sheet(out,{header:['FULL BARCODE','NAME','VENDOR CODE']});
