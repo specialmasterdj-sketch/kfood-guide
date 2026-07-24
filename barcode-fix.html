@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_24_v2';
+  var BUST = 'barcodefix_2026_07_24_v3';
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -122,8 +122,9 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
 .banner.mis .st{color:var(--red)}
 .banner.nf{border-color:var(--amber);background:rgba(242,169,59,.10)}
 .banner.nf .st{color:var(--amber)}
-#reader{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px;background:#000}
-#reader:empty{display:none}
+#reader{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px}
+#reader.live{background:#000;min-height:240px}
+#reader video{width:100%!important;border-radius:14px}
 .manual{display:flex;gap:8px;margin-bottom:14px}
 .manual input{flex:1}
 .si{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface)}
@@ -444,26 +445,33 @@ function toggleScan(){ if(window.__scanning) stopScan(); else startScan(); }
 function startScan(){
   if(!(PROCESSED&&PROCESSED.length)){ alert('먼저 ① 탭에서 파일을 올려주세요.'); return; }
   if(typeof Html5Qrcode==='undefined'){ alert('스캐너 로딩 실패 — 인터넷 확인 후 새로고침 해주세요.'); return; }
+  var reader=document.getElementById('reader');
+  reader.classList.add('live');          // 크기 확보 — 0px 컨테이너면 카메라 실패
   SCANNER=new Html5Qrcode('reader');
   var fmts;
-  try{ fmts=[Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39]; }catch(e){ fmts=undefined; }
-  SCANNER.start({facingMode:'environment'},
-    { fps:10, qrbox:{width:280,height:170}, formatsToSupport:fmts, aspectRatio:1.4 },
-    function(txt){ handleScan(txt); },
-    function(){}
-  ).then(function(){
-    window.__scanning=true;
-    document.getElementById('scanBtn').textContent='⏹ 스캔 정지';
-  }).catch(function(err){
-    SCANNER=null;
-    alert('카메라를 열 수 없습니다: '+err+'\n\n· 카메라 권한을 허용했는지 확인\n· 아이폰은 홈화면 앱이 아니라 Safari 브라우저에서 열어주세요');
-  });
+  try{ fmts=[Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,Html5QrcodeSupportedFormats.ITF]; }catch(e){ fmts=undefined; }
+  // qrbox 를 화면 크기에 맞게 — 컨테이너보다 크면 일부 기기서 에러
+  function qb(vw,vh){ var w=Math.max(160,Math.min((vw||300)-30,320)); return {width:w,height:Math.round(w*0.6)}; }
+  var config={ fps:10, qrbox:qb, formatsToSupport:fmts };
+  function onOk(){ window.__scanning=true; document.getElementById('scanBtn').textContent='⏹ 스캔 정지'; }
+  function onFail(err){
+    // 후면 카메라 직접 지정으로 재시도 (facingMode 가 일부 기기서 실패)
+    Html5Qrcode.getCameras().then(function(cams){
+      if(!cams||!cams.length){ throw new Error('카메라 없음'); }
+      var back=cams.find(function(c){ return /back|rear|environment|후면/i.test(c.label||''); }) || cams[cams.length-1];
+      return SCANNER.start(back.id, config, function(t){handleScan(t);}, function(){});
+    }).then(onOk).catch(function(e2){
+      reader.classList.remove('live'); SCANNER=null;
+      alert('카메라를 열 수 없습니다.\n\n원인: '+(err&&err.message||err)+'\n\n확인해주세요:\n· 카메라 권한 "허용"을 눌렀는지\n· 아이폰은 홈화면 앱이 아니라 Safari 브라우저에서 열었는지\n· 다른 앱이 카메라를 쓰고 있지 않은지');
+    });
+  }
+  SCANNER.start({facingMode:'environment'}, config, function(t){handleScan(t);}, function(){}).then(onOk).catch(onFail);
 }
 function stopScan(){
   window.__scanning=false;
   document.getElementById('scanBtn').textContent='📷 스캔 시작';
   if(SCANNER){ try{ SCANNER.stop().then(function(){ try{SCANNER.clear();}catch(e){} SCANNER=null; }).catch(function(){ SCANNER=null; }); }catch(e){ SCANNER=null; } }
-  document.getElementById('reader').innerHTML='';
+  var reader=document.getElementById('reader'); reader.innerHTML=''; reader.classList.remove('live');
 }
 function handleScan(raw){
   var code=onlyDigits(raw);
