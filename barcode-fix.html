@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_25_v6';
+  var BUST = 'barcodefix_2026_07_25_v7';
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -221,11 +221,12 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
           앞자리 0·끝자리 차이로 '없음'처럼 보이던 상품은 <b style="color:#7CB8F2">🔎 없음→찾음</b>으로 실제 상품을 찾아드려요.
         </div>
         <div id="catSource" style="font-size:12px;color:var(--mute);margin-bottom:12px"></div>
-        <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stats" style="grid-template-columns:repeat(5,1fr)">
           <div class="stat"><div class="n" id="scTotal">0</div><div class="l">목록 상품</div></div>
           <div class="stat"><div class="n" id="scOk" style="color:var(--mint)">0</div><div class="l">확인됨</div></div>
           <div class="stat"><div class="n" id="scMis" style="color:var(--red)">0</div><div class="l">불일치</div></div>
           <div class="stat"><div class="n" id="scFound" style="color:#7CB8F2">0</div><div class="l">없음→찾음</div></div>
+          <div class="stat"><div class="n" id="scNoCost" style="color:#F2A93B">0</div><div class="l">원가없음</div></div>
         </div>
         <div id="banner" class="banner hidden"></div>
         <div class="btns" style="margin-top:0;margin-bottom:12px">
@@ -402,6 +403,7 @@ function runConversion(){
     return {
       name:(name==null?'':''+name),
       posDigits:onlyDigits(rawBarcode),   // POS 원본(마지막 자리 없음)
+      noCost:!hasCostValue(r),            // 원가(cost) 없음 → 나중에 코스트 넣을 목록
       type:resolved.type, status:resolved.status, full:resolved.full, note:resolved.note,
       row:r
     };
@@ -475,7 +477,7 @@ function shareCatalog(){
   if(!(PROCESSED&&PROCESSED.length)||!FB) return;
   if(!confirm(BRANCH+' 지점에 이 목록('+PROCESSED.length+'개)을 공유할까요?\n다른 직원 폰에서도 파일 없이 스캔할 수 있게 됩니다.\n(기존 공유 목록은 새 것으로 대체됩니다)')) return;
   var items={};
-  PROCESSED.forEach(function(p){ if(p.posDigits) items[p.posDigits]=p.name||''; });
+  PROCESSED.forEach(function(p){ if(p.posDigits) items[p.posDigits]=(p.noCost?'*':'')+(p.name||''); });
   var at=Date.now();
   var payload={ items:items, meta:{ by:meName(), at:at, count:Object.keys(items).length, file:FILE_NAME } };
   var btn=document.getElementById('shareCatBtn');
@@ -524,7 +526,9 @@ function loadSharedCatalog(){
 function applyCatalog(items, meta){
   PROCESSED=Object.keys(items).map(function(pos){
     var rb=resolveBarcode(pos);
-    return { name:items[pos]||'', posDigits:pos, full:rb.full, type:rb.type, status:rb.status };
+    var val=items[pos]||'', nc=false;
+    if(val.charAt(0)==='*'){ nc=true; val=val.slice(1); }
+    return { name:val, posDigits:pos, full:rb.full, type:rb.type, status:rb.status, noCost:nc };
   });
   buildIndex();
   FILE_NAME=(meta&&meta.file)||'공유목록';
@@ -589,6 +593,7 @@ function handleScan(raw){
     var key=item.posDigits||code;
     var entry={ name:item.name||'(이름없음)', pos:item.posDigits||'', computed:computedFull||'', scanned:code, state:state, by:meName(), at:Date.now() };
     if(foundReason) entry.reason=foundReason;
+    if(item.noCost) entry.nocost=1;
     SCANNED[key]=entry;  // 낙관적
     renderScanned();
     FB.update(FB.ref(FB.db,'barcodeChecklist/'+BRANCH+'/scanned/'+key), entry).catch(function(){});
@@ -619,18 +624,21 @@ function renderScanned(){
   var ok=arr.filter(function(e){return e.state==='ok';}).length;
   var mis=arr.filter(function(e){return e.state==='mismatch';}).length;
   var found=arr.filter(function(e){return e.state==='found';}).length;
+  var nocostN=arr.filter(function(e){return e.nocost;}).length;
   document.getElementById('scOk').textContent=ok;
   document.getElementById('scMis').textContent=mis;
   var scf=document.getElementById('scFound'); if(scf) scf.textContent=found;
+  var scn=document.getElementById('scNoCost'); if(scn) scn.textContent=nocostN;
   arr.sort(function(a,b){ return (b.at||0)-(a.at||0); });
   var html='';
   arr.slice(0,400).forEach(function(e){
     var mism=e.state==='mismatch';
     var fnd=e.state==='found';
     var ic=mism?'⚠️':(fnd?'🔎':'✅');
+    var costTag=e.nocost?' <span style="color:#F2A93B">💲원가없음</span>':'';
     html+='<div class="si'+(mism?' mis':'')+'" style="margin-bottom:8px">'+
       '<div class="ico">'+ic+'</div>'+
-      '<div class="nm"><div class="n1">'+esc(e.name)+'</div>'+
+      '<div class="nm"><div class="n1">'+esc(e.name)+costTag+'</div>'+
       '<div class="bc"><b>'+esc(e.scanned)+'</b>'+((mism||fnd)?(' · 계산 '+esc(e.computed)):'')+(e.by?(' · '+esc(e.by)):'')+'</div></div></div>';
   });
   if(arr.length>400) html+='<div class="empty" style="padding:14px">…최근 400개만 표시 (전체 '+arr.length+'개는 엑셀로 확인)</div>';
@@ -649,6 +657,7 @@ function exportVerified(){
       '확정 풀바코드':e.scanned,          // 실제 스캔값 = POS에 넣을 값
       '계산값':e.computed,
       '상태':e.state==='mismatch'?'불일치(실제 사용)':(e.state==='found'?'없음→상품확인(실제 사용)':'확인'),
+      '원가':e.nocost?'없음(입력필요)':'있음',
       '확인자':e.by||''
     };
   });
