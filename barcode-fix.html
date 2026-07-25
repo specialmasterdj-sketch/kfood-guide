@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_25_v8';
+  var BUST = 'barcodefix_2026_07_25_v9';
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -175,6 +175,9 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
         <div class="fld">상품명이 들어있는 열</div>
         <select class="sel" id="selName"></select>
         <div class="gap"></div>
+        <div class="fld">벤더(공급사) 열 — 선택 (어느 회사 제품인지, 상품 찾을 때 도움)</div>
+        <select class="sel" id="selVendor"></select>
+        <div class="gap"></div>
         <div class="fld">원가(cost)가 들어있는 열</div>
         <select class="sel" id="selCost"></select>
         <label class="chk hidden" id="costChkWrap">
@@ -250,7 +253,7 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
 <script>
 /* ==================== 상태 ==================== */
 var TAB='convert';
-var RAW=null, HEADERS=[], BARCODE_COL=0, NAME_COL=0, COST_COL=-1, ONLY_COST=true;
+var RAW=null, HEADERS=[], BARCODE_COL=0, NAME_COL=0, COST_COL=-1, VENDOR_COL=-1, ONLY_COST=true;
 var PROCESSED=null, FILE_NAME='';
 var IDX_FULL={};      // 계산된 풀바코드 → item
 var IDX_POS={};       // POS 원본(자를 것) → item
@@ -313,6 +316,38 @@ function bestColumnGuess(rows, headers, predicate){
   });
   return bestIdx;
 }
+function guessBarcodeCol(rows, headers){
+  function isPidLike(i){
+    var h=String(headers[i]||'').toLowerCase().replace(/\s/g,'');
+    if(h.indexOf('pid')>=0) return true;
+    var n=0,p=0;
+    rows.slice(0,40).forEach(function(r){ var d=onlyDigits(r[i]); if(d.length>=10){ n++; if(d.charAt(0)==='9'&&d.slice(0,4)==='9000') p++; } });
+    return n>0 && p/n>0.7;
+  }
+  var byName=-1;
+  headers.forEach(function(h,i){
+    if(byName>=0) return;
+    var hl=String(h||'').toLowerCase().replace(/\s/g,'');
+    if(hl==='code'||hl==='barcode'||hl==='바코드'||hl==='upc'||hl==='ean'||hl==='gtin'||hl==='scancode') byName=i;
+  });
+  if(byName>=0 && !isPidLike(byName)) return byName;
+  var bestIdx=-1,bestScore=-1;
+  headers.forEach(function(_,i){
+    if(isPidLike(i)) return;
+    var score=0; rows.slice(0,40).forEach(function(r){ var d=onlyDigits(r[i]); if(d.length>=8&&d.length<=13) score++; });
+    if(score>bestScore){ bestScore=score; bestIdx=i; }
+  });
+  return bestIdx>=0?bestIdx:0;
+}
+function guessVendorCol(headers){
+  var vi=-1;
+  headers.forEach(function(h,i){
+    if(vi>=0) return;
+    var hl=String(h||'').toLowerCase().replace(/\s/g,'');
+    if(hl==='vendor'||hl==='벤더'||hl==='공급사'||hl==='제조사'||hl==='브랜드'||hl==='supplier'||hl==='brand') vi=i;
+  });
+  return vi;
+}
 function tagColor(type){ return type==='UPC-A'?'#7CB8F2':(type==='EAN-13'?'#F2A93B':'#F2645A'); }
 function statusColor(status){ return status==='이미 완성'?'#34D399':(status==='계산됨'?'#F2A93B':'#F2645A'); }
 function tagHtml(type){ var c=tagColor(type); return '<span class="tag" style="background:'+c+'22;color:'+c+'">'+esc(type)+'</span>'; }
@@ -355,9 +390,10 @@ function handleFile(file){
     if(!rows.length) return;
     HEADERS=rows[0].map(function(h,i){ return h?String(h):('열 '+(i+1)); });
     RAW=rows.slice(1).filter(function(r){ return r.some(function(c){return c!=='';}); });
-    BARCODE_COL=bestColumnGuess(RAW,HEADERS,function(v){ var d=onlyDigits(v); return d.length>=10&&d.length<=13; });
+    BARCODE_COL=guessBarcodeCol(RAW,HEADERS);
     NAME_COL=bestColumnGuess(RAW,HEADERS,function(v){ var s=(v==null?'':''+v); return s.length>1 && onlyDigits(s).length<s.length/2; });
     COST_COL=HEADERS.findIndex(function(h){ return /cost|원가|단가|매입/i.test(h); });
+    VENDOR_COL=guessVendorCol(HEADERS);
     PROCESSED=null;
     renderCols();
   };
@@ -377,15 +413,17 @@ function renderCols(){
   fillSelect(document.getElementById('selBarcode'),BARCODE_COL,false);
   fillSelect(document.getElementById('selName'),NAME_COL,false);
   fillSelect(document.getElementById('selCost'),COST_COL,true);
+  fillSelect(document.getElementById('selVendor'),VENDOR_COL,true);
   document.getElementById('costChkWrap').classList.toggle('hidden',COST_COL<0);
   document.getElementById('onlyCost').checked=ONLY_COST;
 }
 document.getElementById('selBarcode').addEventListener('change',function(e){ BARCODE_COL=+e.target.value; });
 document.getElementById('selName').addEventListener('change',function(e){ NAME_COL=+e.target.value; });
 document.getElementById('selCost').addEventListener('change',function(e){ COST_COL=+e.target.value; document.getElementById('costChkWrap').classList.toggle('hidden',COST_COL<0); });
+document.getElementById('selVendor').addEventListener('change',function(e){ VENDOR_COL=+e.target.value; });
 document.getElementById('onlyCost').addEventListener('change',function(e){ ONLY_COST=e.target.checked; });
 function resetFile(){
-  RAW=null;PROCESSED=null;HEADERS=[];FILE_NAME='';IDX_FULL={};IDX_POS={};
+  RAW=null;PROCESSED=null;HEADERS=[];FILE_NAME='';IDX_FULL={};IDX_POS={};IDX_CORE={};VENDOR_COL=-1;
   document.getElementById('fileIn').value='';
   document.getElementById('cfg').classList.add('hidden');
   document.getElementById('results').classList.add('hidden');
@@ -407,8 +445,10 @@ function runConversion(){
   PROCESSED=source.map(function(r){
     var rawBarcode=r[BARCODE_COL], name=r[NAME_COL];
     var resolved=resolveBarcode(rawBarcode);
+    var vendor=(VENDOR_COL>=0 && r[VENDOR_COL]!=null)?(''+r[VENDOR_COL]):'';
     return {
       name:(name==null?'':''+name),
+      vendor:vendor,
       posDigits:onlyDigits(rawBarcode),   // POS 원본(마지막 자리 없음)
       noCost:!hasCostValue(r),            // 원가(cost) 없음 → 나중에 코스트 넣을 목록
       type:resolved.type, status:resolved.status, full:resolved.full, note:resolved.note,
@@ -484,7 +524,7 @@ function shareCatalog(){
   if(!(PROCESSED&&PROCESSED.length)||!FB) return;
   if(!confirm(BRANCH+' 지점에 이 목록('+PROCESSED.length+'개)을 공유할까요?\n다른 직원 폰에서도 파일 없이 스캔할 수 있게 됩니다.\n(기존 공유 목록은 새 것으로 대체됩니다)')) return;
   var items={};
-  PROCESSED.forEach(function(p){ if(p.posDigits) items[p.posDigits]=(p.noCost?'*':'')+(p.name||''); });
+  PROCESSED.forEach(function(p){ if(p.posDigits) items[p.posDigits]=(p.noCost?'*':'')+(p.name||'')+((p.vendor)?('\u001f'+p.vendor):''); });
   var at=Date.now();
   var payload={ items:items, meta:{ by:meName(), at:at, count:Object.keys(items).length, file:FILE_NAME } };
   var btn=document.getElementById('shareCatBtn');
@@ -535,7 +575,8 @@ function applyCatalog(items, meta){
     var rb=resolveBarcode(pos);
     var val=items[pos]||'', nc=false;
     if(val.charAt(0)==='*'){ nc=true; val=val.slice(1); }
-    return { name:val, posDigits:pos, full:rb.full, type:rb.type, status:rb.status, noCost:nc };
+    var vp=val.split('\u001f');
+    return { name:vp[0]||'', vendor:vp[1]||'', posDigits:pos, full:rb.full, type:rb.type, status:rb.status, noCost:nc };
   });
   buildIndex();
   FILE_NAME=(meta&&meta.file)||'공유목록';
@@ -598,7 +639,7 @@ function handleScan(raw){
 
   if(state!=='notfound' && item && FB){
     var key=item.posDigits||code;
-    var entry={ name:item.name||'(이름없음)', pos:item.posDigits||'', computed:computedFull||'', scanned:code, state:state, by:meName(), at:Date.now() };
+    var entry={ name:item.name||'(이름없음)', vendor:item.vendor||'', pos:item.posDigits||'', computed:computedFull||'', scanned:code, state:state, by:meName(), at:Date.now() };
     if(foundReason) entry.reason=foundReason;
     if(item.noCost) entry.nocost=1;
     SCANNED[key]=entry;  // 낙관적
@@ -611,14 +652,16 @@ function showBanner(state, item, code, computedFull, foundReason){
   b.classList.remove('hidden','ok','mis','nf','fd');
   if(state==='ok'){
     b.classList.add('ok');
-    b.innerHTML='<div class="st">✅ 확인 — 바코드 맞음</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div><div class="bc">'+esc(code)+'</div>';
+    b.innerHTML='<div class="st">✅ 확인 — 바코드 맞음</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div>'+(item.vendor?'<div style="font-size:12px;color:var(--mute)">벤더: '+esc(item.vendor)+'</div>':'')+'<div class="bc">'+esc(code)+'</div>';
   } else if(state==='mismatch'){
     b.classList.add('mis');
     b.innerHTML='<div class="st">⚠️ 불일치 — 실제 바코드로 기록</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div>'+
+      (item.vendor?'<div style="font-size:12px;color:var(--mute)">벤더: '+esc(item.vendor)+'</div>':'')+
       '<div class="bc">실제: <b style="color:var(--mint)">'+esc(code)+'</b><br>계산: <span style="color:var(--red)">'+esc(computedFull)+'</span></div>';
   } else if(state==='found'){
     b.classList.add('fd');
     b.innerHTML='<div class="st">🔎 목록엔 "없음"이었지만 — 실제 상품 확인됨</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div>'+
+      (item.vendor?'<div style="font-size:12px;color:var(--mute)">벤더: '+esc(item.vendor)+'</div>':'')+
       '<div class="bc">스캔: <b style="color:var(--mint)">'+esc(code)+'</b><br>POS 코드: '+esc(item.posDigits||'')+'<br>올바른 바코드: <b style="color:var(--amber)">'+esc(computedFull)+'</b>'+(foundReason?('<br><span style="color:var(--mute)">사유: '+esc(foundReason)+'</span>'):'')+'</div>';
   } else {
     b.classList.add('nf');
@@ -646,7 +689,7 @@ function renderScanned(){
     html+='<div class="si'+(mism?' mis':'')+'" style="margin-bottom:8px">'+
       '<div class="ico">'+ic+'</div>'+
       '<div class="nm"><div class="n1">'+esc(e.name)+costTag+'</div>'+
-      '<div class="bc"><b>'+esc(e.scanned)+'</b>'+((mism||fnd)?(' · 계산 '+esc(e.computed)):'')+(e.by?(' · '+esc(e.by)):'')+'</div></div></div>';
+      '<div class="bc"><b>'+esc(e.scanned)+'</b>'+(e.vendor?(' · '+esc(e.vendor)):'')+((mism||fnd)?(' · 계산 '+esc(e.computed)):'')+(e.by?(' · '+esc(e.by)):'')+'</div></div></div>';
   });
   if(arr.length>400) html+='<div class="empty" style="padding:14px">…최근 400개만 표시 (전체 '+arr.length+'개는 엑셀로 확인)</div>';
   if(!arr.length) html='<div class="empty"><div class="ico">🛒</div>아직 스캔한 제품이 없어요.<br>스캔 시작을 누르고 제품을 찍어보세요.</div>';
@@ -660,6 +703,7 @@ function exportVerified(){
   var outRows=arr.map(function(e){
     return {
       '상품명':e.name,
+      '벤더':e.vendor||'',
       'POS 바코드(원본)':e.pos,
       '확정 풀바코드':e.scanned,          // 실제 스캔값 = POS에 넣을 값
       '계산값':e.computed,
