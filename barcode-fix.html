@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_24_v5';
+  var BUST = 'barcodefix_2026_07_25_v6';
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -122,6 +122,8 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
 .banner.mis .st{color:var(--red)}
 .banner.nf{border-color:var(--amber);background:rgba(242,169,59,.10)}
 .banner.nf .st{color:var(--amber)}
+.banner.fd{border-color:#7CB8F2;background:rgba(124,184,242,.10)}
+.banner.fd .st{color:#7CB8F2}
 #reader{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px}
 #reader.live{background:#000;min-height:240px}
 #reader video{width:100%!important;border-radius:14px}
@@ -215,13 +217,15 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
       <div id="scanReady" class="hidden">
         <div class="note">
           📷 <b>스캔 시작</b>을 누르고 제품 바코드를 카메라에 비추세요.<br>
-          맞으면 <b style="color:var(--mint)">✅ 확인</b>, POS 계산값과 다르면 <b style="color:var(--red)">⚠️ 불일치</b>(실제 바코드로 기록), 목록에 없으면 <b style="color:var(--amber)">❓</b> 표시됩니다.
+          맞으면 <b style="color:var(--mint)">✅ 확인</b>, POS 계산값과 다르면 <b style="color:var(--red)">⚠️ 불일치</b>(실제 바코드로 기록), 목록에 없으면 <b style="color:var(--amber)">❓</b> 표시됩니다.<br>
+          앞자리 0·끝자리 차이로 '없음'처럼 보이던 상품은 <b style="color:#7CB8F2">🔎 없음→찾음</b>으로 실제 상품을 찾아드려요.
         </div>
         <div id="catSource" style="font-size:12px;color:var(--mute);margin-bottom:12px"></div>
-        <div class="stats" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stats" style="grid-template-columns:repeat(4,1fr)">
           <div class="stat"><div class="n" id="scTotal">0</div><div class="l">목록 상품</div></div>
           <div class="stat"><div class="n" id="scOk" style="color:var(--mint)">0</div><div class="l">확인됨</div></div>
           <div class="stat"><div class="n" id="scMis" style="color:var(--red)">0</div><div class="l">불일치</div></div>
+          <div class="stat"><div class="n" id="scFound" style="color:#7CB8F2">0</div><div class="l">없음→찾음</div></div>
         </div>
         <div id="banner" class="banner hidden"></div>
         <div class="btns" style="margin-top:0;margin-bottom:12px">
@@ -249,6 +253,7 @@ var RAW=null, HEADERS=[], BARCODE_COL=0, NAME_COL=0, COST_COL=-1, ONLY_COST=true
 var PROCESSED=null, FILE_NAME='';
 var IDX_FULL={};      // 계산된 풀바코드 → item
 var IDX_POS={};       // POS 원본(자를 것) → item
+var IDX_CORE={};      // 정규화(앞자리 0 제거) → item : '없음' 뜨는 상품 찾기용
 var SCANNED={};       // Firebase 공유: {posDigits:{name,pos,computed,scanned,state,by,at}}
 var BRANCH='HOLLYWOOD';
 var FB=null, UNSUB=null, SCANNER=null;
@@ -275,6 +280,19 @@ function resolveBarcode(raw){
     return {type:'EAN-13',status:'불일치',full:d,note:'체크디지트가 맞지 않음 — 직접 확인 필요'};
   }
   return {type:'알수없음',status:'확인필요',full:d,note:'자릿수 '+len+'개 — 표준 길이(11/12/13) 아님'};
+}
+
+/* ========== '없음(미등록)' 스마트 찾기 : 목록엔 있는데 앞자리0·끝자리 차이로 안 잡히던 상품 ========== */
+function normCore(v){ var s=onlyDigits(v).replace(/^0+/,''); return s||'0'; }
+function smartFind(code){
+  var k=normCore(code);
+  if(IDX_CORE[k]) return { item:IDX_CORE[k], reason:'앞자리 0 차이' };
+  if(code.length>1){ var k2=normCore(code.slice(0,-1)); if(IDX_CORE[k2]) return { item:IDX_CORE[k2], reason:'끝자리(체크숫자) 차이' }; }
+  var withCd='';
+  if(code.length===11) withCd=code+upcaCheckDigit(code);
+  else if(code.length===12) withCd=code+ean13CheckDigit(code);
+  if(withCd){ var k3=normCore(withCd); if(IDX_CORE[k3]) return { item:IDX_CORE[k3], reason:'끝자리(체크숫자) 빠짐' }; }
+  return null;
 }
 
 /* ==================== 헬퍼 ==================== */
@@ -392,10 +410,12 @@ function runConversion(){
   renderResults();
 }
 function buildIndex(){
-  IDX_FULL={}; IDX_POS={};
+  IDX_FULL={}; IDX_POS={}; IDX_CORE={};
   (PROCESSED||[]).forEach(function(p){
     if(p.full) IDX_FULL[p.full]=p;
     if(p.posDigits) IDX_POS[p.posDigits]=p;
+    if(p.posDigits){ var kc=normCore(p.posDigits); if(!(kc in IDX_CORE)) IDX_CORE[kc]=p; }
+    if(p.full){ var kf=normCore(p.full); if(!(kf in IDX_CORE)) IDX_CORE[kf]=p; }
   });
 }
 function renderResults(){
@@ -552,26 +572,31 @@ function handleScan(raw){
   if(code===LAST.code && now-LAST.t<2500) return;  // 같은 코드 연속 무시
   LAST={code:code,t:now};
 
-  var item=null, state='', scannedFull=code, computedFull='';
+  var item=null, state='', scannedFull=code, computedFull='', foundReason='';
   if(IDX_FULL[code]){ item=IDX_FULL[code]; state='ok'; computedFull=item.full; }
   else if(IDX_POS[code.slice(0,-1)]){ item=IDX_POS[code.slice(0,-1)]; computedFull=item.full; state=(item.full===code)?'ok':'mismatch'; }
   else if(IDX_POS[code]){ item=IDX_POS[code]; computedFull=item.full; state=(item.full===code)?'ok':'mismatch'; }
-  else { state='notfound'; }
+  else {
+    var sf=smartFind(code);
+    if(sf){ item=sf.item; computedFull=item.full; state='found'; foundReason=sf.reason; }
+    else { state='notfound'; }
+  }
 
-  showBanner(state, item, code, computedFull);
+  showBanner(state, item, code, computedFull, foundReason);
   beep(state!=='notfound');
 
   if(state!=='notfound' && item && FB){
     var key=item.posDigits||code;
     var entry={ name:item.name||'(이름없음)', pos:item.posDigits||'', computed:computedFull||'', scanned:code, state:state, by:meName(), at:Date.now() };
+    if(foundReason) entry.reason=foundReason;
     SCANNED[key]=entry;  // 낙관적
     renderScanned();
     FB.update(FB.ref(FB.db,'barcodeChecklist/'+BRANCH+'/scanned/'+key), entry).catch(function(){});
   }
 }
-function showBanner(state, item, code, computedFull){
+function showBanner(state, item, code, computedFull, foundReason){
   var b=document.getElementById('banner');
-  b.classList.remove('hidden','ok','mis','nf');
+  b.classList.remove('hidden','ok','mis','nf','fd');
   if(state==='ok'){
     b.classList.add('ok');
     b.innerHTML='<div class="st">✅ 확인 — 바코드 맞음</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div><div class="bc">'+esc(code)+'</div>';
@@ -579,6 +604,10 @@ function showBanner(state, item, code, computedFull){
     b.classList.add('mis');
     b.innerHTML='<div class="st">⚠️ 불일치 — 실제 바코드로 기록</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div>'+
       '<div class="bc">실제: <b style="color:var(--mint)">'+esc(code)+'</b><br>계산: <span style="color:var(--red)">'+esc(computedFull)+'</span></div>';
+  } else if(state==='found'){
+    b.classList.add('fd');
+    b.innerHTML='<div class="st">🔎 목록엔 "없음"이었지만 — 실제 상품 확인됨</div><div class="pn">'+esc(item.name||'(이름없음)')+'</div>'+
+      '<div class="bc">스캔: <b style="color:var(--mint)">'+esc(code)+'</b><br>POS 코드: '+esc(item.posDigits||'')+'<br>올바른 바코드: <b style="color:var(--amber)">'+esc(computedFull)+'</b>'+(foundReason?('<br><span style="color:var(--mute)">사유: '+esc(foundReason)+'</span>'):'')+'</div>';
   } else {
     b.classList.add('nf');
     b.innerHTML='<div class="st">❓ 목록에 없는 바코드</div><div class="bc">'+esc(code)+'</div><div class="pn" style="font-size:12px;color:var(--mute);margin-top:6px">이 파일에 없는 상품이거나 다른 벤더 제품일 수 있어요</div>';
@@ -589,16 +618,20 @@ function renderScanned(){
   var arr=scannedArray();
   var ok=arr.filter(function(e){return e.state==='ok';}).length;
   var mis=arr.filter(function(e){return e.state==='mismatch';}).length;
+  var found=arr.filter(function(e){return e.state==='found';}).length;
   document.getElementById('scOk').textContent=ok;
   document.getElementById('scMis').textContent=mis;
+  var scf=document.getElementById('scFound'); if(scf) scf.textContent=found;
   arr.sort(function(a,b){ return (b.at||0)-(a.at||0); });
   var html='';
   arr.slice(0,400).forEach(function(e){
     var mism=e.state==='mismatch';
+    var fnd=e.state==='found';
+    var ic=mism?'⚠️':(fnd?'🔎':'✅');
     html+='<div class="si'+(mism?' mis':'')+'" style="margin-bottom:8px">'+
-      '<div class="ico">'+(mism?'⚠️':'✅')+'</div>'+
+      '<div class="ico">'+ic+'</div>'+
       '<div class="nm"><div class="n1">'+esc(e.name)+'</div>'+
-      '<div class="bc"><b>'+esc(e.scanned)+'</b>'+(mism?(' · 계산 '+esc(e.computed)):'')+(e.by?(' · '+esc(e.by)):'')+'</div></div></div>';
+      '<div class="bc"><b>'+esc(e.scanned)+'</b>'+((mism||fnd)?(' · 계산 '+esc(e.computed)):'')+(e.by?(' · '+esc(e.by)):'')+'</div></div></div>';
   });
   if(arr.length>400) html+='<div class="empty" style="padding:14px">…최근 400개만 표시 (전체 '+arr.length+'개는 엑셀로 확인)</div>';
   if(!arr.length) html='<div class="empty"><div class="ico">🛒</div>아직 스캔한 제품이 없어요.<br>스캔 시작을 누르고 제품을 찍어보세요.</div>';
@@ -607,14 +640,15 @@ function renderScanned(){
 function exportVerified(){
   var arr=scannedArray();
   if(!arr.length){ alert('아직 스캔한 제품이 없어요.'); return; }
-  arr.sort(function(a,b){ return (a.state==='mismatch'?0:1)-(b.state==='mismatch'?0:1); });
+  function _rank(st){ return st==='mismatch'?0:(st==='found'?1:2); }
+  arr.sort(function(a,b){ return _rank(a.state)-_rank(b.state); });
   var outRows=arr.map(function(e){
     return {
       '상품명':e.name,
       'POS 바코드(원본)':e.pos,
       '확정 풀바코드':e.scanned,          // 실제 스캔값 = POS에 넣을 값
       '계산값':e.computed,
-      '상태':e.state==='mismatch'?'불일치(실제 사용)':'확인',
+      '상태':e.state==='mismatch'?'불일치(실제 사용)':(e.state==='found'?'없음→상품확인(실제 사용)':'확인'),
       '확인자':e.by||''
     };
   });
