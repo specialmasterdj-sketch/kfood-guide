@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_25_v9';
+  var BUST = 'barcodefix_2026_07_27_v10_allshare';
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -200,7 +200,7 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
         </div>
         <div class="btns" style="margin-top:0;margin-bottom:16px">
           <button class="bp" onclick="setTab('scan')">📷 매장에서 스캔 확인 →</button>
-          <button class="bg bga" id="shareCatBtn" onclick="shareCatalog()">📤 지점에 목록 공유 (다른 폰도 스캔)</button>
+          <button class="bg bga" id="shareCatBtn" onclick="shareCatalog()">📤 전 지점에 목록 공유</button>
           <button class="bg bga" onclick="downloadFile()">⬇ 완성 파일(전체) 다운로드</button>
           <button class="bg" onclick="backToCols()">열 다시 선택</button>
           <button class="bg" onclick="resetFile()">다른 파일</button>
@@ -260,6 +260,7 @@ var IDX_POS={};       // POS 원본(자를 것) → item
 var IDX_CORE={};      // 정규화(앞자리 0 제거) → item : '없음' 뜨는 상품 찾기용
 var SCANNED={};       // Firebase 공유: {posDigits:{name,pos,computed,scanned,state,by,at}}
 var BRANCH='HOLLYWOOD';
+var SCOPE='ALL';   // 🌐 전 지점 공동 목록/스캔 (지점별 분리 대신 하나로 공유)
 var FB=null, UNSUB=null, SCANNER=null;
 var LAST={code:'',t:0};
 var DBURL='https://kimchi-mart-order-default-rtdb.firebaseio.com';
@@ -517,34 +518,34 @@ function renderScanTab(){
 }
 function renderCatSource(){
   var el=document.getElementById('catSource'); if(!el) return;
-  el.textContent=(CATALOG_SHARED?'🔗 지점 공유 목록':'📄 내 파일')+' · '+PROCESSED.length+'개'+(FILE_NAME?(' ('+FILE_NAME+')'):'');
+  el.textContent=(CATALOG_SHARED?'🔗 전 지점 공유 목록':'📄 내 파일')+' · '+PROCESSED.length+'개'+(FILE_NAME?(' ('+FILE_NAME+')'):'');
 }
 /* --- 지점 카탈로그 공유 (사진 없는 텍스트라 안전) --- */
 function shareCatalog(){
   if(!(PROCESSED&&PROCESSED.length)||!FB) return;
-  if(!confirm(BRANCH+' 지점에 이 목록('+PROCESSED.length+'개)을 공유할까요?\n다른 직원 폰에서도 파일 없이 스캔할 수 있게 됩니다.\n(기존 공유 목록은 새 것으로 대체됩니다)')) return;
+  if(!confirm('모든 지점에 이 목록('+PROCESSED.length+'개)을 공유할까요?\n전 지점(마이애미·헐리우드 등) 직원 폰에서도 파일 없이 스캔할 수 있게 됩니다.\n(기존 공유 목록은 새 것으로 대체됩니다)')) return;
   var items={};
   PROCESSED.forEach(function(p){ if(p.posDigits) items[p.posDigits]=(p.noCost?'*':'')+(p.name||'')+((p.vendor)?('\u001f'+p.vendor):''); });
   var at=Date.now();
   var payload={ items:items, meta:{ by:meName(), at:at, count:Object.keys(items).length, file:FILE_NAME } };
   var btn=document.getElementById('shareCatBtn');
   if(btn){ btn.disabled=true; btn.textContent='📤 공유 중… ('+payload.meta.count+'개)'; }
-  fetch(DBURL+'/barcodeChecklist/'+BRANCH+'/catalog.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+  fetch(DBURL+'/barcodeChecklist/'+SCOPE+'/catalog.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
     .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status);
-      try{ localStorage.setItem('bccat.'+BRANCH, JSON.stringify({at:at,items:items})); }catch(e){}
-      if(btn){ btn.disabled=false; btn.textContent='✅ 공유 완료! ('+payload.meta.count+'개)'; setTimeout(function(){ btn.textContent='📤 지점에 목록 공유 (다른 폰도 스캔)'; },3000); }
+      try{ localStorage.setItem('bccat.'+SCOPE, JSON.stringify({at:at,items:items})); }catch(e){}
+      if(btn){ btn.disabled=false; btn.textContent='✅ 공유 완료! ('+payload.meta.count+'개)'; setTimeout(function(){ btn.textContent='📤 전 지점에 목록 공유'; },3000); }
     })
-    .catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='📤 지점에 목록 공유 (다른 폰도 스캔)'; } alert('공유 실패: '+(e.message||e)+'\n로그인 상태/인터넷을 확인해주세요.'); });
+    .catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='📤 전 지점에 목록 공유'; } alert('공유 실패: '+(e.message||e)+'\n로그인 상태/인터넷을 확인해주세요.'); });
 }
 function checkSharedCatalog(){
   var box=document.getElementById('sharedCatBox'); if(!box||!FB){ if(box) box.innerHTML=''; return; }
   box.innerHTML='<div style="color:var(--mute);font-size:12px;margin-bottom:14px">⏳ 공유 목록 확인 중…</div>';
-  fetch(DBURL+'/barcodeChecklist/'+BRANCH+'/catalog/meta.json',{cache:'no-store'})
+  fetch(DBURL+'/barcodeChecklist/'+SCOPE+'/catalog/meta.json',{cache:'no-store'})
     .then(function(r){ return r.ok?r.json():null; })
     .then(function(meta){
       if(!meta){ box.innerHTML=''; return; }
       var d=new Date(meta.at||0);
-      box.innerHTML='<button class="bp" onclick="loadSharedCatalog()">📥 지점 공유 목록 불러오기 ('+(meta.count||'?')+'개)</button>'+
+      box.innerHTML='<button class="bp" onclick="loadSharedCatalog()">📥 전 지점 공유 목록 불러오기 ('+(meta.count||'?')+'개)</button>'+
         '<div style="color:var(--mute);font-size:12px;margin:8px 0 18px">'+esc(meta.by||'')+' 님이 '+d.toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 공유</div>';
     }).catch(function(){ box.innerHTML=''; });
 }
@@ -553,18 +554,18 @@ function loadSharedCatalog(){
   var box=document.getElementById('sharedCatBox');
   var msg=function(t){ if(box) box.innerHTML='<div style="color:var(--mute);font-size:13px;margin-bottom:14px">'+t+'</div>'; };
   msg('⏳ 공유 목록 불러오는 중…');
-  fetch(DBURL+'/barcodeChecklist/'+BRANCH+'/catalog/meta.json',{cache:'no-store'})
+  fetch(DBURL+'/barcodeChecklist/'+SCOPE+'/catalog/meta.json',{cache:'no-store'})
     .then(function(r){ return r.ok?r.json():null; })
     .then(function(meta){
       if(!meta){ msg('공유된 목록이 없어요.'); return; }
-      var cached=null; try{ cached=JSON.parse(localStorage.getItem('bccat.'+BRANCH)||'null'); }catch(e){}
+      var cached=null; try{ cached=JSON.parse(localStorage.getItem('bccat.'+SCOPE)||'null'); }catch(e){}
       if(cached && cached.at===meta.at && cached.items){ applyCatalog(cached.items, meta); return; }
       msg('⏳ 목록 다운로드 중… ('+(meta.count||'')+'개, 잠시만요)');
-      return fetch(DBURL+'/barcodeChecklist/'+BRANCH+'/catalog/items.json',{cache:'no-store'})
+      return fetch(DBURL+'/barcodeChecklist/'+SCOPE+'/catalog/items.json',{cache:'no-store'})
         .then(function(r){ return r.ok?r.json():null; })
         .then(function(items){
           if(!items){ msg('목록 다운로드 실패 — 다시 시도해주세요.'); return; }
-          try{ localStorage.setItem('bccat.'+BRANCH, JSON.stringify({at:meta.at,items:items})); }catch(e){}
+          try{ localStorage.setItem('bccat.'+SCOPE, JSON.stringify({at:meta.at,items:items})); }catch(e){}
           applyCatalog(items, meta);
         });
     })
@@ -639,12 +640,12 @@ function handleScan(raw){
 
   if(state!=='notfound' && item && FB){
     var key=item.posDigits||code;
-    var entry={ name:item.name||'(이름없음)', vendor:item.vendor||'', pos:item.posDigits||'', computed:computedFull||'', scanned:code, state:state, by:meName(), at:Date.now() };
+    var entry={ name:item.name||'(이름없음)', vendor:item.vendor||'', pos:item.posDigits||'', computed:computedFull||'', scanned:code, state:state, by:meName(), branch:meBranch(), at:Date.now() };
     if(foundReason) entry.reason=foundReason;
     if(item.noCost) entry.nocost=1;
     SCANNED[key]=entry;  // 낙관적
     renderScanned();
-    FB.update(FB.ref(FB.db,'barcodeChecklist/'+BRANCH+'/scanned/'+key), entry).catch(function(){});
+    FB.update(FB.ref(FB.db,'barcodeChecklist/'+SCOPE+'/scanned/'+key), entry).catch(function(){});
   }
 }
 function showBanner(state, item, code, computedFull, foundReason){
@@ -721,18 +722,18 @@ function clearScanned(){
   if(!FB) return;
   var n=Object.keys(SCANNED).length;
   if(!n){ alert('지울 스캔 기록이 없어요.'); return; }
-  var ans=prompt('⚠️ '+BRANCH+' 지점의 스캔 기록 '+n+'개를 전부 삭제합니다.\n여러 명이 스캔한 기록이 모두 사라지고, 되돌릴 수 없습니다.\n\n정말 지우려면 아래에 "삭제" 라고 입력하세요:');
+  var ans=prompt('⚠️ 전 지점 공유 스캔 기록 '+n+'개를 전부 삭제합니다.\n모든 지점이 스캔한 기록이 함께 사라지고, 되돌릴 수 없습니다.\n\n정말 지우려면 아래에 "삭제" 라고 입력하세요:');
   if(ans===null) return;
   if(ans.trim()!=='삭제'){ alert('취소됐어요. ("삭제" 를 정확히 입력해야 지워집니다)'); return; }
   SCANNED={}; renderScanned();
-  FB.remove(FB.ref(FB.db,'barcodeChecklist/'+BRANCH+'/scanned')).catch(function(){});
+  FB.remove(FB.ref(FB.db,'barcodeChecklist/'+SCOPE+'/scanned')).catch(function(){});
 }
 
 /* ==================== Firebase 구독 (스캔 기록 공유) ==================== */
 function subscribeScanned(){
   if(!FB) return;
   if(UNSUB){ try{UNSUB();}catch(e){} UNSUB=null; }
-  UNSUB=FB.onValue(FB.ref(FB.db,'barcodeChecklist/'+BRANCH+'/scanned'), function(snap){
+  UNSUB=FB.onValue(FB.ref(FB.db,'barcodeChecklist/'+SCOPE+'/scanned'), function(snap){
     SCANNED=snap.val()||{};
     if(TAB==='scan') renderScanned();
   }, function(){});
