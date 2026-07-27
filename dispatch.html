@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST='dispatch_2026_07_26_v8';
+  var BUST='dispatch_2026_07_27_v9';
   try{
     var KEY='dispatch.bust'; if(localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
     var last=Date.now();
@@ -212,6 +212,11 @@
 var FB=null, ORDERS={}, FILTER='all', LANG='ko', PICK_TYPE='meat';
 var PHOTO_TARGET=null, PHOTO_STAGE='send', PENDING_PICS=[], LB_PICS=[], LB_I=0;
 var BRANCHES=['HOLLYWOOD','MIAMI','CORAL SPRINGS','PEMBROKE PINES','LAS OLAS','PALM BEACH'];
+/* 보고 방 라우팅 — 2026-07-26 수정: 키워드 '평가'가 이름에 '평가' 들어간 모든 방과
+   매칭돼 (알파벳순 첫 방인) 베이커리 평가방에 기타 발송 보고가 잘못 꽂히던 버그.
+   → chat.html DEFAULT_ROOMS 의 정확한 방 ID 를 1순위로 쓰고, 키워드는 방 ID 가
+   없을 때만 쓰는 폴백으로 강등 + 너무 넓은 '평가'/'기타' 키워드 제거. */
+var REPORT_ROOM_IDS={ meat:['meat_evalution_room'], fish:['seafood_evalution_room'], other:['grocery_eval'] };
 var REPORT_KW={ meat:['정육','고기','meat','carn'], fish:['해산물','수산','생선','seafood','fish','marisco','pescado'], other:['그로서리','grocery','grocer'] };
 
 var I18N={
@@ -282,9 +287,13 @@ function delOrder(id){ if(!FB) return; if(!confirm(t('delConfirm'))) return; FB.
 function reportToChat(id, o){
   if(!FB) return;
   var kws=REPORT_KW[o.type]||REPORT_KW.other;
+  var wantIds=REPORT_ROOM_IDS[o.type]||REPORT_ROOM_IDS.other;
   FB.get(FB.ref(FB.db,'chat/rooms')).then(function(snap){
     var rooms=snap.val()||{}; var roomId=null, roomName='';
-    Object.keys(rooms).forEach(function(rid){ if(roomId) return; var nm=((rooms[rid]&&rooms[rid].name)||'').toLowerCase(); for(var i=0;i<kws.length;i++){ if(nm.indexOf(kws[i].toLowerCase())>=0){ roomId=rid; roomName=rooms[rid].name; break; } } });
+    // 1순위: 정확한 방 ID (제품종류→평가방 고정 매핑)
+    for(var w=0;w<wantIds.length;w++){ if(rooms[wantIds[w]]){ roomId=wantIds[w]; roomName=(rooms[roomId].name)||roomId; break; } }
+    // 2순위(폴백): 방 ID 가 없을 때만 이름 키워드 검색. 1:1 DM 방은 제외.
+    if(!roomId){ Object.keys(rooms).forEach(function(rid){ if(roomId||rid.indexOf('dm__')===0) return; var nm=((rooms[rid]&&rooms[rid].name)||'').toLowerCase(); for(var i=0;i<kws.length;i++){ if(nm.indexOf(kws[i].toLowerCase())>=0){ roomId=rid; roomName=rooms[rid].name; break; } } }); }
     if(!roomId){ console.warn('[dispatch] no report room'); return; }
     var ts=Date.now(); var msgId='m'+ts+Math.floor(Math.random()*900);
     var text='🚚 ['+t('repMsg')+'] '+(TYPE_ICON[o.type]||'')+' '+o.item+(o.qty?(' ('+o.qty+')'):'')+' → '+o.branch+'\n· '+typeLabel(o.type)+' · '+t('sentBy')+': '+meName()+(o.photoCount?(' · 📷'+o.photoCount):'');
