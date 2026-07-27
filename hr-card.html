@@ -38,6 +38,22 @@
   .addrow{ display:flex; gap:7px; flex-wrap:wrap; margin-top:9px; align-items:center; }
   .addrow input, .addrow select, .addrow textarea{ border:1.5px solid var(--bd); border-radius:8px; padding:8px 10px; font-size:.88em; background:#fffde7; }
   .addrow input:focus, .addrow textarea:focus{ outline:2px solid var(--green); }
+  /* 전 지점 매출 비교 */
+  .cmp-sec{ margin-bottom:16px; }
+  .cmp-sec h4{ color:#1a5c3a; font-size:.98em; margin:2px 0 7px; }
+  table.cmp{ width:100%; border-collapse:collapse; font-size:.8em; }
+  table.cmp th{ background:var(--green); color:#fff; padding:6px 8px; text-align:right; white-space:nowrap; position:sticky; top:0; }
+  table.cmp th:first-child{ text-align:left; }
+  table.cmp td{ padding:6px 8px; border:1px solid var(--bd); text-align:right; white-space:nowrap; }
+  table.cmp td.mo{ text-align:left; font-weight:800; background:var(--lgreen); color:var(--green); }
+  table.cmp td.na{ color:#cbd5e1; text-align:center; }
+  .pct{ display:inline-block; font-size:.85em; font-weight:800; margin-left:5px; }
+  .pct.up{ color:#15803d; } .pct.dn{ color:#dc2626; }
+  .rankrow{ display:flex; align-items:center; gap:10px; margin:6px 0; }
+  .rankrow .bn{ width:120px; font-weight:800; font-size:.86em; flex-shrink:0; }
+  .rankbar{ flex:1; background:#eef2f0; border-radius:8px; height:22px; position:relative; overflow:hidden; min-width:60px; }
+  .rankbar>span{ position:absolute; top:0; bottom:0; left:0; background:linear-gradient(90deg,#1a5c3a,#2e8b57); border-radius:8px; }
+  .rankrow .amt{ width:110px; text-align:right; font-weight:800; font-size:.86em; flex-shrink:0; }
   .profile-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:9px; }
   .pf label{ display:block; font-size:.76em; font-weight:800; color:#64748b; margin-bottom:3px; }
   .pf input{ width:100%; border:1.5px solid var(--bd); border-radius:8px; padding:8px 10px; font-size:.9em; background:#fffde7; }
@@ -77,6 +93,7 @@
   <div id="empPick">
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn" onclick="openDeptSales()">📈 부서 매출 관리 (월 1회 입력 → 담당 전원 카드 자동 반영)</button>
+      <button class="btn sec2" onclick="openSalesCompare()">📊 전 지점 매출 비교</button>
     </div>
     <div class="notice" id="L_notice">직원을 선택하면 기록 카드가 열립니다. ⭐ 상점·구글리뷰 기록은 자동으로 쌓여요 — 시급·평가·면담은 여기서 직접 추가하면 클라우드에 저장됩니다 (모든 기기에서 동일하게 보임).</div>
     <div class="emp-grid" id="empGrid"><div class="muted">직원 명단 불러오는 중…</div></div>
@@ -709,6 +726,82 @@ window.dsBulkAdd = async function(){
   alert('✅ '+ok+'건 저장'+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
   openDeptSales();
 };
+
+// ================= 📊 전 지점 매출 비교 =================
+window.openSalesCompare = async function(){
+  let m=document.getElementById('scmpOv');
+  if(!m){ m=document.createElement('div'); m.id='scmpOv';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px 8px';
+    document.body.appendChild(m); }
+  m.innerHTML='<div style="background:#fff;border-radius:16px;max-width:1040px;width:100%;padding:22px;margin:auto 0;text-align:center;color:#64748b">⏳ 전 지점 매출 불러오는 중…</div>';
+  m.style.display='flex';
+  const all={};
+  await Promise.all(BRANCHES.map(async b=>{ try{ all[b.id]=await fbGet('hr/'+b.id+'/deptSales')||{}; }catch(_){ all[b.id]={}; } }));
+  m.innerHTML=renderSalesCompare(all);
+};
+window.scmpClose=function(){ const m=document.getElementById('scmpOv'); if(m) m.remove(); };
+function _cAmt(x){ const a=(x&&x.amt!=null)?x.amt:x; const n=parseFloat(a); return isNaN(n)?null:n; }
+function _cFmt(n){ return Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+function _bLbl(b){ return LANG==='ko'?b.ko:String(b.id).replace(/_/g,' '); }
+function _metricByBranch(all, pick){
+  const out={};
+  BRANCHES.forEach(b=>{
+    const ds=all[b.id]||{}; const byMo={};
+    Object.entries(ds).forEach(([dk,months])=>{
+      if(!pick(dk)) return;
+      Object.entries(months||{}).forEach(([mo,x])=>{ const v=_cAmt(x); if(v!=null) byMo[mo]=(byMo[mo]||0)+v; });
+    });
+    out[b.id]=byMo;
+  });
+  return out;
+}
+function _cmpTable(dataByBranch){
+  const ms=new Set();
+  BRANCHES.forEach(b=>Object.keys(dataByBranch[b.id]||{}).forEach(mo=>ms.add(mo)));
+  const months=[...ms].sort().reverse();
+  if(!months.length) return '<div class="muted" style="padding:8px 0">기록 없음</div>';
+  const pctMap={};
+  BRANCHES.forEach(b=>{ const mm=Object.keys(dataByBranch[b.id]||{}).sort(); pctMap[b.id]={};
+    mm.forEach((mo,i)=>{ if(i>0){ const p=dataByBranch[b.id][mm[i-1]], c=dataByBranch[b.id][mo]; if(p>0) pctMap[b.id][mo]=Math.round((c-p)/p*1000)/10; } }); });
+  let h='<div style="overflow-x:auto"><table class="cmp"><tr><th>월</th>'+BRANCHES.map(b=>`<th>${esc(_bLbl(b))}</th>`).join('')+'</tr>';
+  months.forEach(mo=>{
+    h+='<tr><td class="mo">'+esc(mo)+'</td>'+BRANCHES.map(b=>{
+      const v=(dataByBranch[b.id]||{})[mo];
+      if(v==null) return '<td class="na">–</td>';
+      const pct=pctMap[b.id][mo];
+      const ps=(pct==null)?'':`<span class="pct ${pct>=0?'up':'dn'}">${pct>0?'▲':pct<0?'▼':''}${Math.abs(pct)}%</span>`;
+      return `<td>$${_cFmt(v)}${ps}</td>`;
+    }).join('')+'</tr>';
+  });
+  return h+'</table></div>';
+}
+function renderSalesCompare(all){
+  const totalData=_metricByBranch(all, dk=>_isTotalDept(dk,null));
+  const deptSet=new Set();
+  BRANCHES.forEach(b=>Object.keys(all[b.id]||{}).forEach(dk=>{ if(!_isTotalDept(dk,null)) deptSet.add(dk.toUpperCase()); }));
+  const ORDER=['PRODUCE','MEAT','SEAFOOD','SUSHI','K_FOOD','K-FOOD','KFOOD','GROCERY','FROZEN','BAKERY','BBQ','CASHIER'];
+  const depts=[...deptSet].sort((a,b)=>{ const ia=ORDER.indexOf(a), ib=ORDER.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib) || a.localeCompare(b); });
+  const totMs=new Set(); BRANCHES.forEach(b=>Object.keys(totalData[b.id]||{}).forEach(mo=>totMs.add(mo)));
+  const latest=[...totMs].sort().reverse()[0];
+  let snap='';
+  if(latest){
+    const rows=BRANCHES.map(b=>({b, v:(totalData[b.id]||{})[latest]})).filter(r=>r.v!=null).sort((x,y)=>y.v-x.v);
+    const max=rows.length?rows[0].v:0;
+    snap=`<div class="cmp-sec"><h4>🏆 최신 총매출 (${esc(latest)})</h4>`+
+      (rows.length? rows.map(r=>`<div class="rankrow"><div class="bn">${esc(_bLbl(r.b))}</div><div class="rankbar"><span style="width:${max>0?Math.round(r.v/max*100):0}%"></span></div><div class="amt">$${_cFmt(r.v)}</div></div>`).join('') : '<div class="muted">총매출(TOTAL) 입력이 아직 없어요</div>')+'</div>';
+  }
+  return `<div style="background:#f6f8f7;border-radius:16px;max-width:1040px;width:100%;padding:16px 18px;margin:auto 0">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <h3 style="flex:1;color:#1a5c3a">📊 전 지점 매출 비교 <span style="font-weight:600;color:#94a3b8;font-size:.7em">총매출·부서별 월별 변동 (나머지 제외)</span></h3>
+      <button class="btn sec2 small" onclick="scmpClose()">✕</button>
+    </div>
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px">
+      ${snap}
+      <div class="cmp-sec"><h4>💰 총매출 (월별)</h4>${_cmpTable(totalData)}</div>
+      ${depts.map(d=>{ const data=_metricByBranch(all, dk=>!_isTotalDept(dk,null) && dk.toUpperCase()===d); return `<div class="cmp-sec"><h4>📦 ${esc(d.replace(/_/g,'-'))}</h4>${_cmpTable(data)}</div>`; }).join('')}
+    </div>
+  </div>`;
+}
 
 // ---- 📝 앱 내 평가 채점 (엑셀 평가표와 동일 배점: A30 · B40(매출30) · C20 · D10) ----
 const EVAL_ITEMS = [
