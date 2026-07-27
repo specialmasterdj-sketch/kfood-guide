@@ -213,6 +213,8 @@ const I18N = {
  emptyMerit:{ko:'기록 없음 — 상점을 주면 자동으로 여기 쌓입니다',en:'No records — merits you give appear here automatically',es:'Sin registros — los méritos aparecen automáticamente'},
  emptyTalk:{ko:'기록 없음 — 분기 면담 후 요약 추가',en:'No records — add a summary after each interview',es:'Sin registros — agregue después de cada entrevista'},
  firstMonth:{ko:'첫 달',en:'1st month',es:'1er mes'},
+ lblTotal:{ko:'총매출',en:'Total sales',es:'Ventas totales'},
+ lblOther:{ko:'나머지',en:'Other',es:'Otro'},
  p_warn:{ko:'⚠ 경고',en:'⚠ Warning',es:'⚠ Advertencia'}, p_rev:{ko:'📸 리뷰',en:'📸 Review',es:'📸 Reseña'}, p_star:{ko:'⭐ 상점',en:'⭐ Merit',es:'⭐ Mérito'},
  sumRow:{ko:'합계 (자동 상점·리뷰)',en:'Total (auto merits·reviews)',es:'Total (automático)'},
  chipPts:{ko:(n,r)=>'⭐ 상점·리뷰 합계 +'+n+'pt ('+r+'회 리뷰)',en:(n,r)=>'⭐ Merits & reviews +'+n+'pt ('+r+' reviews)',es:(n,r)=>'⭐ Méritos y reseñas +'+n+'pt ('+r+')'},
@@ -440,9 +442,42 @@ function myDeptRows(name){
   });
   return out;
 }
+// 매니저(총매출) 판별 — MANAGER 만. ASSISTANT MANAGER / SUPERVISOR(SENIOR 포함) 은 제외 → 나머지.
+function isMgrRole(role){
+  const r=String(role||'').toUpperCase();
+  if(r.indexOf('ASSIST')>=0||r.indexOf('어시')>=0||r.indexOf('보조')>=0) return false;
+  if(r.indexOf('SUPERVISOR')>=0||r.indexOf('슈퍼')>=0||r.indexOf('감독')>=0) return false;
+  return r.indexOf('MANAGER')>=0||r.indexOf('매니저')>=0||r.indexOf('점장')>=0;
+}
+function _amt(x){ const a=(x&&x.amt!=null)?x.amt:x; const n=parseFloat(a); return isNaN(n)?null:n; }
+function totalSalesMonths(){
+  const t=(DEPT_SALES||{})['__TOTAL__']||{};
+  return Object.entries(t).map(([m,x])=>({month:m, amt:_amt(x)})).filter(r=>r.month&&r.amt!=null);
+}
+function deptSumForMonth(mo){
+  let sum=0;
+  Object.entries(DEPT_SALES||{}).forEach(([dk,months])=>{ if(dk==='__TOTAL__') return; const n=_amt((months||{})[mo]); if(n!=null) sum+=n; });
+  return sum;
+}
+function buildAutoRows(arr, label){
+  const a=arr.filter(r=>r.amt!=null).slice().sort((x,y)=>String(x.month).localeCompare(String(y.month)));
+  const out=[];
+  a.forEach((r,i)=>{
+    let pct='';
+    if(i>0 && parseFloat(a[i-1].amt)>0) pct=Math.round((parseFloat(r.amt)-parseFloat(a[i-1].amt))/parseFloat(a[i-1].amt)*1000)/10;
+    out.push({deptAuto:true, month:r.month, dept:label, amt:String(r.amt), pct:String(pct), score:'', memo:''});
+  });
+  return out;
+}
+function autoSalesRows(name, role){
+  if(isMgrRole(role)) return buildAutoRows(totalSalesMonths(), t('lblTotal'));   // 매니저 → 총매출
+  const dept=myDeptRows(name);
+  if(dept.length) return dept;                                                    // 부서 담당 → 부서 매출
+  return buildAutoRows(totalSalesMonths().map(r=>({month:r.month, amt:(r.amt!=null)?(r.amt-deptSumForMonth(r.month)):null})), t('lblOther')); // 나머지 = 총매출 − 부서합계
+}
 function renderSales(v){
   const manual = Object.entries(v||{}).map(([id,x])=>Object.assign({id},x));
-  const rows = myDeptRows(EMP?EMP.name:'').concat(manual).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||'')));
+  const rows = autoSalesRows(EMP?EMP.name:'', EMP?EMP.role:'').concat(manual).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||'')));
   // 최신 증가율 요약칩
   const withPct = rows.filter(r=>r.pct!=null && r.pct!=='');
   if (withPct.length) { SUM.sales = withPct[0].pct; SUM.salesMonth = withPct[0].month; }
@@ -564,11 +599,19 @@ window.openDeptSales = async function(){
     <td>${staffChips(dk, dm.staff)||'<span class="muted">직원 명단 없음</span>'}</td></tr>`).join('');
   const salesRows = [];
   Object.entries(DEPT_SALES||{}).forEach(([dk,months])=>{
+    if(dk==='__TOTAL__') return;   // 총매출은 아래 ④ 섹션에서 별도 관리
     const dm=(DEPT_MAP||{})[dk]||{};
     Object.entries(months||{}).forEach(([mo,x])=>{
       salesRows.push({dk, dept:dm.name||dk, month:mo, amt:(x&&x.amt!=null)?x.amt:x});
     });
   });
+  // ④ 총매출(=__TOTAL__) 표 + 나머지(총매출−부서합계) 자동 표시
+  const totList = Object.entries((DEPT_SALES||{})['__TOTAL__']||{}).map(([mo,x])=>({month:mo, amt:(x&&x.amt!=null)?x.amt:x})).sort((a,b)=>String(b.month).localeCompare(String(a.month)));
+  const tRows = totList.map(r=>{
+    let ds=0; Object.entries(DEPT_SALES||{}).forEach(([dk,ms])=>{ if(dk==='__TOTAL__')return; const y=(ms||{})[r.month]; if(y!=null){ const n=parseFloat((y&&y.amt!=null)?y.amt:y); if(!isNaN(n)) ds+=n; } });
+    const other=parseFloat(r.amt)-ds;
+    return `<tr><td>${esc(r.month)}</td><td><b>$${esc(Number(r.amt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}))}</b></td><td style="color:${other<0?'#dc2626':'#1a5c3a'}">$${esc(Number(other).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}))}</td><td><button class="btn danger" onclick="dsDelTotal('${esc(r.month)}')">${t('del')}</button></td></tr>`;
+  }).join('');
   salesRows.sort((a,b)=>String(b.month).localeCompare(String(a.month))||String(a.dept).localeCompare(String(b.dept)));
   const sRows = salesRows.map(r=>`<tr><td>${esc(r.month)}</td><td>${esc(r.dept)}</td><td>$${esc(Number(r.amt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}))}</td>
     <td><button class="btn danger" onclick="dsDelSale('${esc(r.dk)}','${esc(r.month)}')">${t('del')}</button></td></tr>`).join('');
@@ -596,6 +639,13 @@ window.openDeptSales = async function(){
     <textarea id="dsBulk" rows="5" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="PRODUCE,2026-04,29659.84
 MEAT,2026-04,14931.83"></textarea>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dsBulkAdd()">📥 일괄 추가</button>
+    <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">④ 총매출 입력 <span style="font-weight:600;color:#94a3b8;font-size:.8em">매니저 카드에 반영 · 나머지 = 총매출 − 부서합계 (자동)</span></div>
+    <table><tr><th style="width:90px">월</th><th>총매출</th><th>나머지 (자동)</th><th style="width:56px"></th></tr>${tRows||''}</table>
+    <div class="addrow">
+      <input id="dsTotMonth" type="month" style="width:150px">
+      <input id="dsTotAmt" placeholder="총매출 $" style="width:120px">
+      <button class="btn" onclick="dsAddTotal()">＋ 총매출 추가</button>
+    </div>
   </div>`;
   m.style.display='flex';
   const nd=document.getElementById('dsNewDept');
@@ -635,6 +685,17 @@ window.dsAddSale = async function(){
 window.dsDelSale = async function(dk,mo){
   if(!confirm(mo+' '+dk+' 매출 기록을 삭제할까요?')) return;
   await window.__fb.remove(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptSales/'+dk+'/'+mo));
+  openDeptSales();
+};
+window.dsAddTotal = async function(){
+  const mo=document.getElementById('dsTotMonth').value, amt=parseFloat(document.getElementById('dsTotAmt').value.replace(/[^0-9.]/g,''));
+  if(!mo||!(amt>=0)){ alert('월·총매출 필요'); return; }
+  await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptSales/__TOTAL__/'+mo), {amt});
+  toast('＋ 총매출 추가됨'); openDeptSales();
+};
+window.dsDelTotal = async function(mo){
+  if(!confirm(mo+' 총매출 기록을 삭제할까요?')) return;
+  await window.__fb.remove(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptSales/__TOTAL__/'+mo));
   openDeptSales();
 };
 window.dsBulkAdd = async function(){
