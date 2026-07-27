@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_27_v12_reader';
+  var BUST = 'barcodefix_2026_07_27_v13_delperson';
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -244,6 +244,7 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
         </div>
         <div class="btns" style="margin-top:0;margin-bottom:14px">
           <button class="bg bga" onclick="exportVerified()">⬇ 확인된 바코드 엑셀 (POS 업데이트용)</button>
+          <button class="bg bgd hidden" id="delPersonBtn" onclick="deleteByPerson()">🧹 특정 직원 스캔 삭제</button>
         </div>
         <div id="scanList"></div>
       </div>
@@ -355,6 +356,32 @@ function statusColor(status){ return status==='이미 완성'?'#34D399':(status=
 function tagHtml(type){ var c=tagColor(type); return '<span class="tag" style="background:'+c+'22;color:'+c+'">'+esc(type)+'</span>'; }
 function statusHtml(status){ var c=statusColor(status); return '<span class="tag" style="background:'+c+'22;color:'+c+'">'+esc(status)+'</span>'; }
 function meName(){ try{ return (JSON.parse(localStorage.getItem('chat.me')||'null')||{}).name||'직원'; }catch(e){ return '직원'; } }
+function meIsManager(){ try{ var me=JSON.parse(localStorage.getItem('chat.me')||'null'); if(!me||!me.role) return false; var r=String(me.role).toUpperCase(); var TK=['OWNER','BOSS','오너','사장','대표','MANAGER','GERENTE','매니저','점장','부매니저','EXECUTIVE','전무','VICE PRESIDENT','VP','SUPERVISOR']; return TK.some(function(x){ return r.indexOf(x.toUpperCase())>=0; }); }catch(e){ return false; } }
+/* 🧹 특정 직원 스캔만 삭제 (리더기 오류 등으로 잘못 찍은 사람 것만 정리 — 전체 삭제 아님) */
+function deleteByPerson(){
+  if(!FB){ alert('로그인이 필요해요.'); return; }
+  var arr=scannedArray();
+  if(!arr.length){ alert('스캔 기록이 없어요.'); return; }
+  var by={}; arr.forEach(function(e){ var n=e.by||'(이름없음)'; by[n]=(by[n]||0)+1; });
+  var names=Object.keys(by).sort(function(a,b){ return by[b]-by[a]; });
+  var listStr=names.map(function(n,i){ return (i+1)+'. '+n+' — '+by[n]+'개'; }).join('\n');
+  var pick=prompt('어느 직원이 찍은 스캔을 삭제할까요?\n번호 또는 이름을 정확히 입력하세요:\n\n'+listStr);
+  if(pick===null) return;
+  pick=(''+pick).trim(); if(!pick) return;
+  var target=null;
+  if(/^\d+$/.test(pick)){ var i=parseInt(pick,10)-1; if(i>=0&&i<names.length) target=names[i]; }
+  if(!target){ names.forEach(function(n){ if(n.toLowerCase()===pick.toLowerCase()) target=n; }); }
+  if(!target){ alert('해당 직원을 찾지 못했어요: '+pick); return; }
+  var keys=arr.filter(function(e){ return (e.by||'(이름없음)')===target; }).map(function(e){ return e._key; });
+  if(!keys.length){ alert('"'+target+'" 님의 스캔이 없어요.'); return; }
+  if(!confirm('⚠️ "'+target+'" 님이 찍은 스캔 '+keys.length+'개를 삭제합니다.\n다른 사람 기록은 그대로 유지됩니다.\n되돌릴 수 없어요. 진행할까요?')) return;
+  var patch={}; keys.forEach(function(k){ patch[k]=null; });
+  FB.update(FB.ref(FB.db,'barcodeChecklist/'+SCOPE+'/scanned'), patch).then(function(){
+    keys.forEach(function(k){ delete SCANNED[k]; });
+    renderScanned();
+    alert('✅ "'+target+'" 님 스캔 '+keys.length+'개 삭제 완료. 리더기 고친 뒤 다시 스캔하면 돼요.');
+  }).catch(function(e){ alert('삭제 실패: '+(e.message||e)); });
+}
 function meBranch(){ try{ var b=(JSON.parse(localStorage.getItem('chat.me')||'null')||{}).branch; return (b&&b!=='*')?b:'HOLLYWOOD'; }catch(e){ return 'HOLLYWOOD'; } }
 function beep(ok){
   try{
@@ -757,6 +784,7 @@ function subscribeScanned(){
 function boot(){
   BRANCH=meBranch();
   document.getElementById('branchLbl').textContent=BRANCH;
+  try{ var dpb=document.getElementById('delPersonBtn'); if(dpb && meIsManager()) dpb.classList.remove('hidden'); }catch(e){}
   if(window.__fb){ FB=window.__fb; subscribeScanned(); }
 }
 window.addEventListener('fb-ready', boot);
