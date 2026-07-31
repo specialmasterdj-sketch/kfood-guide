@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_31_v14_ocr';   // 🔢 숫자 촬영(OCR) — 바코드 막대 없이 숫자만 있을 때 카메라로 숫자 읽어 확인
+  var BUST = 'barcodefix_2026_07_31_v15_ocr_fast';   // 🔢 OCR 엔진 재사용(빠름) + 대비강화 + 한줄모드
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -676,7 +676,7 @@ function startScan(){
   SCANNER.start({facingMode:'environment'}, config, function(t){handleScan(t);}, function(){}).then(onOk).catch(onFail);
 }
 /* ==================== 🔢 숫자 촬영 (OCR) ==================== */
-var OCR_STREAM=null, OCR_LOADING=null, OCR_WORKER=null;
+var OCR_STREAM=null, OCR_LOADING=null, OCR_WORKER=null, OCR_WORKER_P=null;
 function loadTesseract(){
   if(window.Tesseract) return Promise.resolve();
   if(OCR_LOADING) return OCR_LOADING;
@@ -697,6 +697,20 @@ function loadTesseract(){
   });
   return OCR_LOADING;
 }
+// 🚀 엔진(worker)을 한 번만 켜서 재사용 — 매번 새로 켜지 않아 훨씬 빠름
+function getOcrWorker(){
+  if(OCR_WORKER) return Promise.resolve(OCR_WORKER);
+  if(OCR_WORKER_P) return OCR_WORKER_P;
+  OCR_WORKER_P=loadTesseract().then(function(){
+    return Tesseract.createWorker('eng');
+  }).then(function(w){
+    return w.setParameters({
+      tessedit_char_whitelist:'0123456789',
+      tessedit_pageseg_mode:'7'   // 한 줄 텍스트 모드 — 바코드 숫자에 최적, 속도↑
+    }).then(function(){ OCR_WORKER=w; return w; });
+  });
+  return OCR_WORKER_P;
+}
 function openOcr(){
   if(!(PROCESSED&&PROCESSED.length)){ alert('먼저 ① 탭에서 파일을 올려주세요.'); return; }
   if(window.__scanning){ try{ stopScan(); }catch(e){} }
@@ -710,8 +724,11 @@ function openOcr(){
     alert('카메라를 열 수 없습니다.\n· 카메라 권한 "허용"\n· 아이폰은 Safari 브라우저에서 열기\n('+(e&&e.message||e)+')');
     closeOcr();
   });
-  // 라이브러리 미리 로드
-  loadTesseract().catch(function(){});
+  // 🚀 엔진 미리 켜두기 — 창 열 때 준비 → 촬영은 즉시
+  document.getElementById('ocrStatus').textContent='🔧 숫자 인식 엔진 준비 중… (처음 한 번만)';
+  getOcrWorker().then(function(){
+    var st=document.getElementById('ocrStatus'); if(st.textContent.indexOf('엔진 준비')>=0) st.textContent='✅ 준비 완료 — 숫자 맞추고 📸';
+  }).catch(function(){});
 }
 function closeOcr(){
   var ov=document.getElementById('ocrOv'); ov.style.display='none';
@@ -722,27 +739,29 @@ function ocrCapture(){
   var v=document.getElementById('ocrVideo');
   if(!v||!v.videoWidth){ document.getElementById('ocrStatus').textContent='카메라 준비 중… 잠시 후 다시'; return; }
   var btn=document.getElementById('ocrShot'); btn.disabled=true;
-  document.getElementById('ocrStatus').textContent='📖 숫자 읽는 중… (처음엔 몇 초 걸려요)';
+  document.getElementById('ocrStatus').textContent='📖 숫자 읽는 중…';
   // 보라색 가이드 영역(가로 8~92%, 세로 42~58%)만 잘라서 인식 정확도↑
   var vw=v.videoWidth, vh=v.videoHeight;
   var cx=Math.round(vw*0.08), cy=Math.round(vh*0.42), cw=Math.round(vw*0.84), ch=Math.round(vh*0.16);
-  var scale=2; // 확대 → 작은 숫자 인식률↑
+  var scale=3; // 확대 → 작은 숫자 인식률↑
   var cv=document.getElementById('ocrCanvas'); cv.width=cw*scale; cv.height=ch*scale;
   var ctx=cv.getContext('2d');
   ctx.drawImage(v, cx,cy,cw,ch, 0,0,cw*scale,ch*scale);
-  // 흑백 대비 강화
+  // 흑백 대비 강화 (평균 밝기 기준 임계값 — 조명 편차에 강함)
   try{
-    var img=ctx.getImageData(0,0,cv.width,cv.height), d=img.data;
-    for(var i=0;i<d.length;i+=4){ var g=(d[i]*0.3+d[i+1]*0.59+d[i+2]*0.11); var bw=g>128?255:0; d[i]=d[i+1]=d[i+2]=bw; }
+    var img=ctx.getImageData(0,0,cv.width,cv.height), d=img.data, sum=0, n=d.length/4;
+    for(var k=0;k<d.length;k+=4){ d[k]=d[k+1]=d[k+2]=(d[k]*0.3+d[k+1]*0.59+d[k+2]*0.11); sum+=d[k]; }
+    var thr=(sum/n)*0.92;
+    for(var j=0;j<d.length;j+=4){ var bw=d[j]>thr?255:0; d[j]=d[j+1]=d[j+2]=bw; }
     ctx.putImageData(img,0,0);
   }catch(e){}
-  loadTesseract().then(function(){
-    return Tesseract.recognize(cv, 'eng', { tessedit_char_whitelist:'0123456789' });
+  getOcrWorker().then(function(w){
+    return w.recognize(cv);   // 재사용 worker — 빠름
   }).then(function(r){
     btn.disabled=false;
     var txt=(r&&r.data&&r.data.text)||'';
     // 가장 긴 숫자 덩어리 추출 (8~14자리 바코드)
-    var runs=(txt.match(/\d{6,14}/g)||[]).sort(function(a,b){return b.length-a.length;});
+    var runs=(txt.replace(/\s/g,'').match(/\d{6,14}/g)||[]).sort(function(a,b){return b.length-a.length;});
     var code=runs[0]||'';
     if(!code){ document.getElementById('ocrStatus').textContent='❌ 숫자를 못 읽었어요 — 더 가까이·밝게·수평으로 다시 📸'; return; }
     document.getElementById('ocrStatus').innerHTML='✅ 읽은 숫자: <b style="color:#fff;font-size:15px">'+code+'</b> — 확인 중…';
