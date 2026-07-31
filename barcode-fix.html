@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_27_v13_delperson';
+  var BUST = 'barcodefix_2026_07_31_v14_ocr';   // 🔢 숫자 촬영(OCR) — 바코드 막대 없이 숫자만 있을 때 카메라로 숫자 읽어 확인
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -232,8 +232,12 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
           <div class="stat"><div class="n" id="scNoCost" style="color:#F2A93B">0</div><div class="l">원가없음</div></div>
         </div>
         <div id="banner" class="banner hidden"></div>
-        <div class="btns" style="margin-top:0;margin-bottom:12px">
-          <button class="bp" id="scanBtn" onclick="toggleScan()">📷 스캔 시작</button>
+        <div class="btns" style="margin-top:0;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="bp" id="scanBtn" onclick="toggleScan()" style="flex:1;min-width:150px">📷 바코드 스캔</button>
+          <button class="bp" id="ocrBtn" onclick="openOcr()" style="flex:1;min-width:150px;background:linear-gradient(135deg,#7c3aed,#6d28d9)">🔢 숫자 촬영 (바코드 없을 때)</button>
+        </div>
+        <div class="note" style="margin-bottom:12px;font-size:12px">
+          바코드 막대가 지워졌거나 없고 <b>숫자만</b> 있으면 <b style="color:#a78bfa">🔢 숫자 촬영</b>을 누르고 그 숫자를 카메라로 비추세요 — 숫자를 읽어 자동 확인해요.
         </div>
         <div id="reader"></div>
         <div class="manual">
@@ -249,6 +253,26 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
         <div id="scanList"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 🔢 숫자 촬영(OCR) 모달 -->
+<div id="ocrOv" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;flex-direction:column;align-items:center;justify-content:center;padding:16px">
+  <div style="width:100%;max-width:460px;background:#0f172a;border:1px solid #334155;border-radius:16px;padding:14px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="font-weight:800;color:#e2e8f0;flex:1;font-size:15px">🔢 숫자를 카메라에 비추세요</div>
+      <button onclick="closeOcr()" style="background:#334155;color:#fff;border:0;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer">✕ 닫기</button>
+    </div>
+    <div style="position:relative;border-radius:12px;overflow:hidden;background:#000">
+      <video id="ocrVideo" playsinline muted style="width:100%;display:block;max-height:52vh;object-fit:cover"></video>
+      <div style="position:absolute;left:8%;right:8%;top:42%;height:16%;border:2px solid #a78bfa;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.25);pointer-events:none"></div>
+    </div>
+    <div style="font-size:12px;color:#94a3b8;margin:8px 2px;text-align:center">보라색 칸 안에 <b>숫자 줄</b>을 맞추고 📸 를 누르세요. 밝은 곳에서 흔들림 없이!</div>
+    <div id="ocrStatus" style="font-size:13px;color:#a78bfa;font-weight:700;text-align:center;min-height:20px;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px">
+      <button id="ocrShot" onclick="ocrCapture()" style="flex:2;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:12px;padding:14px;font-weight:800;font-size:15px;cursor:pointer">📸 촬영해서 숫자 읽기</button>
+    </div>
+    <canvas id="ocrCanvas" style="display:none"></canvas>
   </div>
 </div>
 
@@ -651,6 +675,87 @@ function startScan(){
   }
   SCANNER.start({facingMode:'environment'}, config, function(t){handleScan(t);}, function(){}).then(onOk).catch(onFail);
 }
+/* ==================== 🔢 숫자 촬영 (OCR) ==================== */
+var OCR_STREAM=null, OCR_LOADING=null, OCR_WORKER=null;
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  if(OCR_LOADING) return OCR_LOADING;
+  var urls=[
+    'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+    'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js'
+  ];
+  OCR_LOADING=new Promise(function(res,rej){
+    var i=0;
+    (function tryNext(){
+      if(i>=urls.length){ rej(new Error('load fail')); return; }
+      var s=document.createElement('script'); s.src=urls[i++];
+      s.onload=function(){ window.Tesseract?res():tryNext(); };
+      s.onerror=tryNext;
+      document.head.appendChild(s);
+    })();
+  });
+  return OCR_LOADING;
+}
+function openOcr(){
+  if(!(PROCESSED&&PROCESSED.length)){ alert('먼저 ① 탭에서 파일을 올려주세요.'); return; }
+  if(window.__scanning){ try{ stopScan(); }catch(e){} }
+  var ov=document.getElementById('ocrOv'); ov.style.display='flex';
+  document.getElementById('ocrStatus').textContent='카메라 켜는 중…';
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(function(st){
+    OCR_STREAM=st; var v=document.getElementById('ocrVideo'); v.srcObject=st; v.play();
+    document.getElementById('ocrStatus').textContent='';
+  }).catch(function(e){
+    document.getElementById('ocrStatus').textContent='';
+    alert('카메라를 열 수 없습니다.\n· 카메라 권한 "허용"\n· 아이폰은 Safari 브라우저에서 열기\n('+(e&&e.message||e)+')');
+    closeOcr();
+  });
+  // 라이브러리 미리 로드
+  loadTesseract().catch(function(){});
+}
+function closeOcr(){
+  var ov=document.getElementById('ocrOv'); ov.style.display='none';
+  if(OCR_STREAM){ OCR_STREAM.getTracks().forEach(function(t){t.stop();}); OCR_STREAM=null; }
+  var v=document.getElementById('ocrVideo'); try{ v.srcObject=null; }catch(e){}
+}
+function ocrCapture(){
+  var v=document.getElementById('ocrVideo');
+  if(!v||!v.videoWidth){ document.getElementById('ocrStatus').textContent='카메라 준비 중… 잠시 후 다시'; return; }
+  var btn=document.getElementById('ocrShot'); btn.disabled=true;
+  document.getElementById('ocrStatus').textContent='📖 숫자 읽는 중… (처음엔 몇 초 걸려요)';
+  // 보라색 가이드 영역(가로 8~92%, 세로 42~58%)만 잘라서 인식 정확도↑
+  var vw=v.videoWidth, vh=v.videoHeight;
+  var cx=Math.round(vw*0.08), cy=Math.round(vh*0.42), cw=Math.round(vw*0.84), ch=Math.round(vh*0.16);
+  var scale=2; // 확대 → 작은 숫자 인식률↑
+  var cv=document.getElementById('ocrCanvas'); cv.width=cw*scale; cv.height=ch*scale;
+  var ctx=cv.getContext('2d');
+  ctx.drawImage(v, cx,cy,cw,ch, 0,0,cw*scale,ch*scale);
+  // 흑백 대비 강화
+  try{
+    var img=ctx.getImageData(0,0,cv.width,cv.height), d=img.data;
+    for(var i=0;i<d.length;i+=4){ var g=(d[i]*0.3+d[i+1]*0.59+d[i+2]*0.11); var bw=g>128?255:0; d[i]=d[i+1]=d[i+2]=bw; }
+    ctx.putImageData(img,0,0);
+  }catch(e){}
+  loadTesseract().then(function(){
+    return Tesseract.recognize(cv, 'eng', { tessedit_char_whitelist:'0123456789' });
+  }).then(function(r){
+    btn.disabled=false;
+    var txt=(r&&r.data&&r.data.text)||'';
+    // 가장 긴 숫자 덩어리 추출 (8~14자리 바코드)
+    var runs=(txt.match(/\d{6,14}/g)||[]).sort(function(a,b){return b.length-a.length;});
+    var code=runs[0]||'';
+    if(!code){ document.getElementById('ocrStatus').textContent='❌ 숫자를 못 읽었어요 — 더 가까이·밝게·수평으로 다시 📸'; return; }
+    document.getElementById('ocrStatus').innerHTML='✅ 읽은 숫자: <b style="color:#fff;font-size:15px">'+code+'</b> — 확인 중…';
+    closeOcr();
+    handleScan(code);   // 바코드 스캔과 똑같은 대조·기록 파이프라인
+  }).catch(function(e){
+    btn.disabled=false;
+    document.getElementById('ocrStatus').textContent='';
+    alert('숫자 인식 실패 — 인터넷 확인 후 다시 시도해주세요.\n('+(e&&e.message||e)+')');
+  });
+}
+window.openOcr=openOcr; window.closeOcr=closeOcr; window.ocrCapture=ocrCapture;
+
 function stopScan(){
   window.__scanning=false;
   document.getElementById('scanBtn').textContent='📷 스캔 시작';
