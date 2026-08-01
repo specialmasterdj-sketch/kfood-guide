@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_08_01_v18_remaining';   // ➕ 안 찍은 상품(남은 목록)·진행률 표시 추가
+  var BUST = 'barcodefix_2026_08_01_v19_branchfilter';   // ➕ 마스터 목록 공유 + 지점별 '안 찍은 상품' 필터 (STORES 열)
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -234,7 +234,7 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
         <!-- ➕ 진행률 + 안 찍은 상품(남은 목록) -->
         <div id="progWrap" style="margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--mute);margin-bottom:5px">
-            <span>스캔 진행률</span><span id="progPct">—</span>
+            <span id="progWho">스캔 진행률</span><span id="progPct">—</span>
           </div>
           <div style="background:var(--surface2);border:1px solid var(--line);border-radius:8px;height:14px;overflow:hidden">
             <div id="progBar" style="height:100%;width:0%;background:linear-gradient(90deg,#34D399,#F2A93B);transition:width .3s"></div>
@@ -276,7 +276,7 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
 <script>
 /* ==================== 상태 ==================== */
 var TAB='convert';
-var RAW=null, HEADERS=[], BARCODE_COL=0, NAME_COL=0, COST_COL=-1, VENDOR_COL=-1, ONLY_COST=true;
+var RAW=null, HEADERS=[], BARCODE_COL=0, NAME_COL=0, COST_COL=-1, VENDOR_COL=-1, STORES_COL=-1, ONLY_COST=true;
 var PROCESSED=null, FILE_NAME='';
 var IDX_FULL={};      // 계산된 풀바코드 → item
 var IDX_POS={};       // POS 원본(자를 것) → item
@@ -444,6 +444,7 @@ function handleFile(file){
     NAME_COL=bestColumnGuess(RAW,HEADERS,function(v){ var s=(v==null?'':''+v); return s.length>1 && onlyDigits(s).length<s.length/2; });
     COST_COL=HEADERS.findIndex(function(h){ return /cost|원가|단가|매입/i.test(h); });
     VENDOR_COL=guessVendorCol(HEADERS);
+    STORES_COL=HEADERS.findIndex(function(h){ return /^\s*(stores?|지점|매장|branch(es)?)\s*$/i.test(String(h||'')); });
     PROCESSED=null;
     renderCols();
   };
@@ -473,7 +474,7 @@ document.getElementById('selCost').addEventListener('change',function(e){ COST_C
 document.getElementById('selVendor').addEventListener('change',function(e){ VENDOR_COL=+e.target.value; });
 document.getElementById('onlyCost').addEventListener('change',function(e){ ONLY_COST=e.target.checked; });
 function resetFile(){
-  RAW=null;PROCESSED=null;HEADERS=[];FILE_NAME='';IDX_FULL={};IDX_POS={};IDX_CORE={};VENDOR_COL=-1;
+  RAW=null;PROCESSED=null;HEADERS=[];FILE_NAME='';IDX_FULL={};IDX_POS={};IDX_CORE={};VENDOR_COL=-1;STORES_COL=-1;
   document.getElementById('fileIn').value='';
   document.getElementById('cfg').classList.add('hidden');
   document.getElementById('results').classList.add('hidden');
@@ -496,9 +497,12 @@ function runConversion(){
     var rawBarcode=r[BARCODE_COL], name=r[NAME_COL];
     var resolved=resolveBarcode(rawBarcode);
     var vendor=(VENDOR_COL>=0 && r[VENDOR_COL]!=null)?(''+r[VENDOR_COL]):'';
+    var storesRaw=(STORES_COL>=0 && r[STORES_COL]!=null)?(''+r[STORES_COL]):'';
+    var stores=storesRaw? storesRaw.split(/[|,;/]/).map(function(s){return s.trim().toUpperCase();}).filter(Boolean) : null;
     return {
       name:(name==null?'':''+name),
       vendor:vendor,
+      stores:stores,                      // 이 상품을 파는 지점들 (없으면 전 지점 공통)
       posDigits:onlyDigits(rawBarcode),   // POS 원본(마지막 자리 없음)
       noCost:!hasCostValue(r),            // 원가(cost) 없음 → 나중에 코스트 넣을 목록
       type:resolved.type, status:resolved.status, full:resolved.full, note:resolved.note,
@@ -587,7 +591,14 @@ function shareCatalog(){
   if(!(PROCESSED&&PROCESSED.length)||!FB) return;
   if(!confirm('모든 지점에 이 목록('+PROCESSED.length+'개)을 공유할까요?\n전 지점(마이애미·헐리우드 등) 직원 폰에서도 파일 없이 스캔할 수 있게 됩니다.\n(기존 공유 목록은 새 것으로 대체됩니다)')) return;
   var items={};
-  PROCESSED.forEach(function(p){ if(p.posDigits) items[p.posDigits]=(p.noCost?'*':'')+(p.name||'')+((p.vendor)?('\u001f'+p.vendor):''); });
+  PROCESSED.forEach(function(p){
+    if(!p.posDigits) return;
+    var v=(p.noCost?'*':'')+(p.name||'');
+    var hasStores=p.stores&&p.stores.length;
+    if(p.vendor||hasStores) v+='\u001f'+(p.vendor||'');
+    if(hasStores) v+='\u001f'+p.stores.join('|');
+    items[p.posDigits]=v;
+  });
   var at=Date.now();
   var payload={ items:items, meta:{ by:meName(), at:at, count:Object.keys(items).length, file:FILE_NAME } };
   var btn=document.getElementById('shareCatBtn');
@@ -639,7 +650,8 @@ function applyCatalog(items, meta){
     var val=items[pos]||'', nc=false;
     if(val.charAt(0)==='*'){ nc=true; val=val.slice(1); }
     var vp=val.split('\u001f');
-    return { name:vp[0]||'', vendor:vp[1]||'', posDigits:pos, full:rb.full, type:rb.type, status:rb.status, noCost:nc };
+    var st=(vp[2]!=null&&vp[2]!=='')?vp[2].split('|').map(function(x){return x.trim().toUpperCase();}).filter(Boolean):null;
+    return { name:vp[0]||'', vendor:vp[1]||'', stores:st, posDigits:pos, full:rb.full, type:rb.type, status:rb.status, noCost:nc };
   });
   buildIndex();
   FILE_NAME=(meta&&meta.file)||'공유목록';
@@ -763,24 +775,54 @@ function renderScanned(){
   if(!document.getElementById('remainWrap').classList.contains('hidden')) renderRemaining();
 }
 
-/* ➕ 안 찍은 상품(남은 목록) — 목록 상품 중 아직 스캔 안 된 것 */
+/* ➕ 안 찍은 상품(남은 목록) — 목록 상품 중 아직 스캔 안 된 것 (지점별 필터) */
 function catalogScannable(){ return (PROCESSED||[]).filter(function(p){ return p.posDigits; }); }
-function remainingItems(){
-  var cat=catalogScannable();
-  if(!cat.length) return [];
+/* 이 상품이 내 지점 취급인가? (STORES 정보 없으면 전 지점 공통으로 간주) */
+function branchMatch(stores){
+  if(!stores || !stores.length) return true;
+  var b=(meBranch()||'').toUpperCase();
+  if(!b) return true;
+  var bc=b.split('_')[0];
+  for(var i=0;i<stores.length;i++){
+    var s=(stores[i]||'').toUpperCase();
+    if(s===b) return true;
+    if(bc && s.split('_')[0]===bc) return true;   // CORAL↔CORAL_SPRINGS, PEMBROKE↔PEMBROKE_PINES 관대 매칭
+  }
+  return false;
+}
+/* 내 지점이 실제 취급하는 상품만 (마스터 공유 목록에서 골라냄). 매칭 0이면 지점코드 불일치로 보고 전체 폴백 */
+function branchItems(){
+  var all=catalogScannable();
+  var hasStoreInfo=all.some(function(p){ return p.stores && p.stores.length; });
+  if(!hasStoreInfo) return all;
+  var f=all.filter(function(p){ return branchMatch(p.stores); });
+  return f.length ? f : all;
+}
+function scannedDoneMap(){
   var done={};
   Object.keys(SCANNED).forEach(function(k){ var e=SCANNED[k]; done[k]=1; if(e&&e.pos) done[e.pos]=1; });
+  return done;
+}
+function remainingItems(){
+  var cat=branchItems();
+  if(!cat.length) return [];
+  var done=scannedDoneMap();
   return cat.filter(function(p){ return !done[p.posDigits]; });
 }
 function updateProgress(){
-  var total=catalogScannable().length;
+  var total=branchItems().length;
   var remN=remainingItems().length;
   var done=total-remN;
   var pct= total? Math.round(done/total*1000)/10 : 0;
-  var pctEl=document.getElementById('progPct'), barEl=document.getElementById('progBar'), remEl=document.getElementById('remainN');
+  var pctEl=document.getElementById('progPct'), barEl=document.getElementById('progBar'), remEl=document.getElementById('remainN'), whoEl=document.getElementById('progWho');
   if(pctEl) pctEl.textContent= total? (done.toLocaleString()+' / '+total.toLocaleString()+' ('+pct+'%)') : '—';
   if(barEl) barEl.style.width=(total?pct:0)+'%';
   if(remEl) remEl.textContent= total? remN.toLocaleString() : '—';
+  if(whoEl){
+    var all=catalogScannable();
+    var branchScoped = all.some(function(p){ return p.stores && p.stores.length; }) && branchItems().length!==all.length;
+    whoEl.textContent = branchScoped ? ((meBranch()||'')+' 취급 상품 스캔 진행률') : '스캔 진행률';
+  }
 }
 function remainSort(a,b){ return (a.vendor||'￿').localeCompare(b.vendor||'￿')||(a.name||'').localeCompare(b.name||''); }
 function renderRemaining(){
