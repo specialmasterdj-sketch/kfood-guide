@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_07_31_v17_no_ocr';   // 숫자 OCR 기능 제거 (오른쪽 반만 읽는 오류 — 바코드 스캔만 유지)
+  var BUST = 'barcodefix_2026_08_01_v18_remaining';   // ➕ 안 찍은 상품(남은 목록)·진행률 표시 추가
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -230,6 +230,27 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
           <div class="stat"><div class="n" id="scMis" style="color:var(--red)">0</div><div class="l">불일치</div></div>
           <div class="stat"><div class="n" id="scFound" style="color:#7CB8F2">0</div><div class="l">없음→찾음</div></div>
           <div class="stat"><div class="n" id="scNoCost" style="color:#F2A93B">0</div><div class="l">원가없음</div></div>
+        </div>
+        <!-- ➕ 진행률 + 안 찍은 상품(남은 목록) -->
+        <div id="progWrap" style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--mute);margin-bottom:5px">
+            <span>스캔 진행률</span><span id="progPct">—</span>
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--line);border-radius:8px;height:14px;overflow:hidden">
+            <div id="progBar" style="height:100%;width:0%;background:linear-gradient(90deg,#34D399,#F2A93B);transition:width .3s"></div>
+          </div>
+          <div style="text-align:center;font-size:13px;margin-top:9px">
+            아직 안 찍은 상품 <b id="remainN" style="color:var(--amber);font-size:17px">—</b> 개
+            <button class="bg bga" style="padding:6px 12px;font-size:12px;margin-left:8px" onclick="toggleRemain()">📋 남은 목록 보기</button>
+          </div>
+        </div>
+        <div id="remainWrap" class="hidden" style="margin-bottom:14px">
+          <div class="btns" style="margin-top:0;margin-bottom:10px">
+            <button class="bg bga" onclick="exportRemaining()">⬇ 안 찍은 상품 엑셀 다운로드</button>
+            <button class="bg" onclick="toggleRemain()">닫기</button>
+          </div>
+          <div class="note">이 목록의 상품을 매장에서 찾아 스캔하면 남은 개수가 줄어듭니다. <b>벤더(공급사)별로 묶여</b> 있어서 한 회사 제품끼리 찾으면 빨라요. ⬜ 표시가 아직 안 찍은 상품입니다.</div>
+          <div id="remainList"></div>
         </div>
         <div id="banner" class="banner hidden"></div>
         <div class="btns" style="margin-top:0;margin-bottom:12px">
@@ -738,6 +759,62 @@ function renderScanned(){
   if(arr.length>400) html+='<div class="empty" style="padding:14px">…최근 400개만 표시 (전체 '+arr.length+'개는 엑셀로 확인)</div>';
   if(!arr.length) html='<div class="empty"><div class="ico">🛒</div>아직 스캔한 제품이 없어요.<br>스캔 시작을 누르고 제품을 찍어보세요.</div>';
   document.getElementById('scanList').innerHTML=html;
+  updateProgress();
+  if(!document.getElementById('remainWrap').classList.contains('hidden')) renderRemaining();
+}
+
+/* ➕ 안 찍은 상품(남은 목록) — 목록 상품 중 아직 스캔 안 된 것 */
+function catalogScannable(){ return (PROCESSED||[]).filter(function(p){ return p.posDigits; }); }
+function remainingItems(){
+  var cat=catalogScannable();
+  if(!cat.length) return [];
+  var done={};
+  Object.keys(SCANNED).forEach(function(k){ var e=SCANNED[k]; done[k]=1; if(e&&e.pos) done[e.pos]=1; });
+  return cat.filter(function(p){ return !done[p.posDigits]; });
+}
+function updateProgress(){
+  var total=catalogScannable().length;
+  var remN=remainingItems().length;
+  var done=total-remN;
+  var pct= total? Math.round(done/total*1000)/10 : 0;
+  var pctEl=document.getElementById('progPct'), barEl=document.getElementById('progBar'), remEl=document.getElementById('remainN');
+  if(pctEl) pctEl.textContent= total? (done.toLocaleString()+' / '+total.toLocaleString()+' ('+pct+'%)') : '—';
+  if(barEl) barEl.style.width=(total?pct:0)+'%';
+  if(remEl) remEl.textContent= total? remN.toLocaleString() : '—';
+}
+function remainSort(a,b){ return (a.vendor||'￿').localeCompare(b.vendor||'￿')||(a.name||'').localeCompare(b.name||''); }
+function renderRemaining(){
+  var wrap=document.getElementById('remainList'); if(!wrap) return;
+  var rem=remainingItems(); rem.sort(remainSort);
+  var html='', lim=Math.min(rem.length,400), curV=null;
+  for(var i=0;i<lim;i++){ var p=rem[i];
+    var v=p.vendor||'(벤더 없음)';
+    if(v!==curV){ curV=v; html+='<div style="font-size:11px;font-weight:700;color:var(--amber);margin:12px 0 6px;letter-spacing:.04em">🏷 '+esc(v)+'</div>'; }
+    html+='<div class="si" style="margin-bottom:8px"><div class="ico">⬜</div>'+
+      '<div class="nm"><div class="n1">'+esc(p.name||'(이름없음)')+'</div>'+
+      '<div class="bc"><b>'+esc(p.full||p.posDigits)+'</b></div></div></div>';
+  }
+  if(rem.length>lim) html+='<div class="empty" style="padding:14px">…앞 '+lim+'개만 표시 (전체 '+rem.length.toLocaleString()+'개는 엑셀로 받으세요)</div>';
+  if(!rem.length) html='<div class="empty"><div class="ico">🎉</div>모든 상품을 다 찍었어요!<br>남은 상품이 없습니다.</div>';
+  wrap.innerHTML=html;
+}
+function toggleRemain(){
+  var w=document.getElementById('remainWrap'); if(!w) return;
+  if(w.classList.contains('hidden')){ renderRemaining(); w.classList.remove('hidden'); }
+  else w.classList.add('hidden');
+}
+function exportRemaining(){
+  if(!(PROCESSED&&PROCESSED.length)){ alert('먼저 ① 탭에서 파일을 올리거나 공유 목록을 불러오세요.'); return; }
+  var rem=remainingItems();
+  if(!rem.length){ alert('🎉 남은 상품이 없어요! 전부 스캔 완료했습니다.'); return; }
+  rem.sort(remainSort);
+  var outRows=rem.map(function(p){ return {
+    '벤더':p.vendor||'', '상품명':p.name||'', 'POS 바코드':p.posDigits||'', '완성 바코드':p.full||'', '원가':p.noCost?'없음':'있음'
+  };});
+  var ws=XLSX.utils.json_to_sheet(outRows);
+  var wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'안찍은상품');
+  XLSX.writeFile(wb,'안찍은상품_남은목록_'+BRANCH+'_'+rem.length+'개.xlsx');
 }
 function exportVerified(){
   var arr=scannedArray();
