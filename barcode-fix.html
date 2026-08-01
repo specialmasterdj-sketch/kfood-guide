@@ -11,7 +11,7 @@
 <!-- 🔄 자가 업데이트 (사용 중 강제 리로드 금지 — 입력 중/최근 2분 조작 시 연기) -->
 <script>
 (function(){
-  var BUST = 'barcodefix_2026_08_01_v19_branchfilter';   // ➕ 마스터 목록 공유 + 지점별 '안 찍은 상품' 필터 (STORES 열)
+  var BUST = 'barcodefix_2026_08_01_v20_branchpick';   // ➕ 관리자용 지점 선택(다른 지점 남은 목록 보기)
   try {
     var KEY='barcodefix.bust';
     if (localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
@@ -231,6 +231,11 @@ select.sel,input.txt{width:100%;padding:10px 12px;border-radius:10px;border:1px 
           <div class="stat"><div class="n" id="scFound" style="color:#7CB8F2">0</div><div class="l">없음→찾음</div></div>
           <div class="stat"><div class="n" id="scNoCost" style="color:#F2A93B">0</div><div class="l">원가없음</div></div>
         </div>
+        <!-- ➕ 관리자용: 어느 지점 남은 목록을 볼지 선택 -->
+        <div id="branchPick" class="hidden" style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--mute);margin-bottom:5px">👁 지점 선택 (관리자) — 다른 지점 남은 목록 보기</div>
+          <select class="sel" id="viewBranchSel" onchange="onViewBranch()"></select>
+        </div>
         <!-- ➕ 진행률 + 안 찍은 상품(남은 목록) -->
         <div id="progWrap" style="margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--mute);margin-bottom:5px">
@@ -288,6 +293,16 @@ var FB=null, UNSUB=null, SCANNER=null;
 var LAST={code:'',t:0};
 var DBURL='https://kimchi-mart-order-default-rtdb.firebaseio.com';
 var CATALOG_SHARED=false;   // 현재 목록이 지점 공유본인지(true) 내 파일인지(false)
+var VIEW_BRANCH='';          // 관리자가 다른 지점 남은 목록을 볼 때 (''=내 지점, '__ALL__'=전체)
+var BRANCHES=[
+  {code:'HOLLYWOOD',ko:'헐리우드'},
+  {code:'MIAMI',ko:'마이애미'},
+  {code:'CORAL_SPRINGS',ko:'코럴스프링'},
+  {code:'LASOLAS',ko:'라스올라스'},
+  {code:'PEMBROKE_PINES',ko:'펨브록'}
+];
+function branchKo(code){ for(var i=0;i<BRANCHES.length;i++) if(BRANCHES[i].code===code) return BRANCHES[i].ko; return code||''; }
+function currentViewBranch(){ return VIEW_BRANCH || (meBranch()||''); }
 window.__scanning=false;
 
 /* ==================== 체크디지트 수학 ==================== */
@@ -580,6 +595,7 @@ function renderScanTab(){
   document.getElementById('scanReady').classList.toggle('hidden',!hasList);
   if(hasList){ document.getElementById('scTotal').textContent=PROCESSED.length; renderCatSource(); focusScan(); }
   else { checkSharedCatalog(); }
+  populateBranchPick();
   renderScanned();
 }
 function renderCatSource(){
@@ -777,10 +793,12 @@ function renderScanned(){
 
 /* ➕ 안 찍은 상품(남은 목록) — 목록 상품 중 아직 스캔 안 된 것 (지점별 필터) */
 function catalogScannable(){ return (PROCESSED||[]).filter(function(p){ return p.posDigits; }); }
-/* 이 상품이 내 지점 취급인가? (STORES 정보 없으면 전 지점 공통으로 간주) */
+/* 이 상품이 (보고 있는) 지점 취급인가? (STORES 정보 없으면 전 지점 공통으로 간주) */
 function branchMatch(stores){
+  var vb=currentViewBranch();
+  if(vb==='__ALL__') return true;               // 전체 보기
   if(!stores || !stores.length) return true;
-  var b=(meBranch()||'').toUpperCase();
+  var b=(vb||'').toUpperCase();
   if(!b) return true;
   var bc=b.split('_')[0];
   for(var i=0;i<stores.length;i++){
@@ -820,8 +838,8 @@ function updateProgress(){
   if(remEl) remEl.textContent= total? remN.toLocaleString() : '—';
   if(whoEl){
     var all=catalogScannable();
-    var branchScoped = all.some(function(p){ return p.stores && p.stores.length; }) && branchItems().length!==all.length;
-    whoEl.textContent = branchScoped ? ((meBranch()||'')+' 취급 상품 스캔 진행률') : '스캔 진행률';
+    var hasStoreInfo = all.some(function(p){ return p.stores && p.stores.length; });
+    whoEl.textContent = hasStoreInfo ? (viewBranchLabel()+' 취급 상품 스캔 진행률') : '스캔 진행률';
   }
 }
 function remainSort(a,b){ return (a.vendor||'￿').localeCompare(b.vendor||'￿')||(a.name||'').localeCompare(b.name||''); }
@@ -845,6 +863,26 @@ function toggleRemain(){
   if(w.classList.contains('hidden')){ renderRemaining(); w.classList.remove('hidden'); }
   else w.classList.add('hidden');
 }
+/* 관리자용 지점 선택 — 다른 지점 남은 목록을 볼 수 있게 */
+function populateBranchPick(){
+  var wrap=document.getElementById('branchPick'), sel=document.getElementById('viewBranchSel');
+  if(!wrap||!sel) return;
+  if(!meIsManager()){ wrap.classList.add('hidden'); return; }
+  var mine=(meBranch()||'').toUpperCase();
+  var html='<option value="">내 지점 · '+esc(branchKo(mine)||mine||'—')+'</option>';
+  BRANCHES.forEach(function(b){ html+='<option value="'+b.code+'"'+(VIEW_BRANCH===b.code?' selected':'')+'>'+esc(b.ko)+'</option>'; });
+  html+='<option value="__ALL__"'+(VIEW_BRANCH==='__ALL__'?' selected':'')+'>전체 (모든 지점 합계)</option>';
+  sel.innerHTML=html;
+  wrap.classList.remove('hidden');
+}
+function onViewBranch(){
+  var sel=document.getElementById('viewBranchSel');
+  VIEW_BRANCH=sel?sel.value:'';
+  updateProgress();
+  var rw=document.getElementById('remainWrap');
+  if(rw && !rw.classList.contains('hidden')) renderRemaining();
+}
+function viewBranchLabel(){ var vb=currentViewBranch(); return vb==='__ALL__'?'전체':(branchKo(vb)||vb); }
 function exportRemaining(){
   if(!(PROCESSED&&PROCESSED.length)){ alert('먼저 ① 탭에서 파일을 올리거나 공유 목록을 불러오세요.'); return; }
   var rem=remainingItems();
@@ -856,7 +894,7 @@ function exportRemaining(){
   var ws=XLSX.utils.json_to_sheet(outRows);
   var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'안찍은상품');
-  XLSX.writeFile(wb,'안찍은상품_남은목록_'+BRANCH+'_'+rem.length+'개.xlsx');
+  XLSX.writeFile(wb,'안찍은상품_'+viewBranchLabel()+'_'+rem.length+'개.xlsx');
 }
 function exportVerified(){
   var arr=scannedArray();
