@@ -11,7 +11,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_07_28_review_chip';   // ⭐구글리뷰 이름언급 사유 원클릭 버튼 추가 (+이전 픽스 유지)
+    var BUST = 'tasks_2026_08_02_lastmonth_rank';   // ➕ 대시보드 월간 활동순위에 '지난 달' 탭 추가(구글리뷰 상점 포함)
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1109,6 +1109,7 @@ button{font-family:inherit;cursor:pointer}
         <button type="button" class="trc-tab" data-period="today" onclick="setTeamRankPeriod('today')" id="trcTabToday">오늘</button>
         <button type="button" class="trc-tab" data-period="week" onclick="setTeamRankPeriod('week')" id="trcTabWeek">주간</button>
         <button type="button" class="trc-tab active" data-period="month" onclick="setTeamRankPeriod('month')" id="trcTabMonth">월간</button>
+        <button type="button" class="trc-tab" data-period="lastmonth" onclick="setTeamRankPeriod('lastmonth')" id="trcTabLastMonth">지난 달</button>
       </div>
       <!-- 포디움: 1·2·3위 -->
       <div class="trc-podium" id="teamRankPodium"></div>
@@ -4160,10 +4161,12 @@ function setTeamRankPeriod(p){
   document.querySelectorAll('#teamRankTabs .trc-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.period === p);
   });
+  // 🆕 '지난 달'은 오늘 TASKS 에 없는 지난달 완료업무를 별도로 불러와야 함 (구글리뷰 상점은 MGR_BONUS 전체 이력에 이미 있음)
+  if (p === 'lastmonth' && !TEAM_RANK_LM_TASKS && !TEAM_RANK_LM_LOADING) { _loadLastMonthTasks(); }
   try { renderTeamRank(); } catch(e){ console.warn('[teamRank]', e); }
 }
 window.setTeamRankPeriod = setTeamRankPeriod;
-// 선택 기간의 시작 시각(ms) — 로컬 기준. week=이번 주 월요일 0시, month=이번 달 1일 0시
+// 선택 기간의 시작 시각(ms) — 로컬 기준. week=이번 주 월요일 0시, month=이번 달 1일 0시, lastmonth=지난 달 1일 0시
 function teamRankStartMs(period){
   const n = new Date();
   if (period === 'week'){
@@ -4173,7 +4176,40 @@ function teamRankStartMs(period){
     return d.getTime();
   }
   if (period === 'month') return new Date(n.getFullYear(), n.getMonth(), 1).getTime();
+  if (period === 'lastmonth') return new Date(n.getFullYear(), n.getMonth() - 1, 1).getTime();
   return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); // today
+}
+// 기간 끝(상한, exclusive). 'lastmonth' 만 상한(이번 달 1일)이 있고 나머지는 무한대(지금까지).
+function teamRankEndMs(period){
+  if (period === 'lastmonth'){ const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1).getTime(); }
+  return Infinity;
+}
+// 🆕 지난 달 완료업무 캐시 — 전 지점에서 지난 달 완료분만 모아옴 (413-안전 fetch 재사용).
+let TEAM_RANK_LM_TASKS = null;
+let TEAM_RANK_LM_LOADING = false;
+async function _loadLastMonthTasks(){
+  if (TEAM_RANK_LM_TASKS || TEAM_RANK_LM_LOADING) return;
+  TEAM_RANK_LM_LOADING = true;
+  try {
+    const start = teamRankStartMs('lastmonth');
+    const end   = teamRankEndMs('lastmonth');
+    const out = [];
+    for (const b of (BRANCHES || [])) {
+      const data = await _fetchBranchTasksSince(b.id, start);   // start-7d 부터 (경계 대비), 413 자동 분할
+      if (data && typeof data === 'object') {
+        Object.values(data).forEach(day => {
+          if (!day || typeof day !== 'object') return;
+          Object.values(day).forEach(t => {
+            if (!t || !t.completedAt || !t.completedBy) return;
+            if (t.completedAt < start || t.completedAt >= end) return;
+            out.push(Object.assign({ branchId: b.id, branchName: b.ko }, t));
+          });
+        });
+      }
+    }
+    TEAM_RANK_LM_TASKS = out;
+  } catch(e){ console.warn('[teamRank] lastmonth tasks', e); TEAM_RANK_LM_TASKS = TEAM_RANK_LM_TASKS || []; }
+  finally { TEAM_RANK_LM_LOADING = false; try { renderTeamRank(); } catch(_){} }
 }
 function renderTeamRank(){
   const podiumEl = document.getElementById('teamRankPodium');
@@ -4183,16 +4219,22 @@ function renderTeamRank(){
   // 🏆 2026-05-30 — 선택 기간 (오늘/주간/월간)
   const period  = TEAM_RANK_PERIOD || 'today';
   const startMs = teamRankStartMs(period);
+  const endMs   = teamRankEndMs(period);
+  // 🆕 '지난 달'은 별도 캐시(지난달 완료업무)에서, 그 외는 오늘 TASKS 에서 집계
+  const SRC_TASKS = (period === 'lastmonth') ? (TEAM_RANK_LM_TASKS || []) : (Array.isArray(TASKS) ? TASKS : []);
+  const _lmLoading = (period === 'lastmonth' && TEAM_RANK_LM_LOADING && !TEAM_RANK_LM_TASKS);
   const _lang   = (typeof LANG === 'string' && LANG) ? LANG : 'ko';
   const P_TITLE = {
     today: { ko:'오늘의 활동 순위', en:"Today's Activity Ranking", es:'Ranking de actividad hoy' },
     week:  { ko:'주간 활동 순위',   en:'Weekly Activity Ranking',  es:'Ranking de actividad semanal' },
     month: { ko:'월간 활동 순위',   en:'Monthly Activity Ranking', es:'Ranking de actividad mensual' },
+    lastmonth: { ko:'지난 달 활동 순위', en:'Last Month Activity Ranking', es:'Ranking del mes pasado' },
   };
   const P_EMPTY = {
     today: { ko:'오늘 첫 완료자가 되어보세요!',   en:'Be the first to finish today!', es:'¡Sé el primero en terminar hoy!' },
     week:  { ko:'이번 주 첫 완료자가 되어보세요!', en:'Be the first this week!',       es:'¡Sé el primero esta semana!' },
     month: { ko:'이번 달 첫 완료자가 되어보세요!', en:'Be the first this month!',      es:'¡Sé el primero este mes!' },
+    lastmonth: { ko:'지난 달 활동 불러오는 중…',  en:'Loading last month…',           es:'Cargando mes pasado…' },
   };
   const _pT = (P_TITLE[period] || P_TITLE.today), _pE = (P_EMPTY[period] || P_EMPTY.today);
   // 🌐 i18n 라벨 동기화 — 매니저는 "전 매장 통합" 부제 표시
@@ -4219,10 +4261,10 @@ function renderTeamRank(){
     _setTxt('teamRankLink',     gt('teamRankLink'));
     _setTxt('teamRankEmptyMsg', _pE[_lang] || _pE.ko);
   } catch(e){}
-  const _hasBonusInPeriod = Array.isArray(window.MGR_BONUS) && window.MGR_BONUS.some(a => a && a.to && a.kind === 'owner' && (a.ts||0) >= startMs);
-  if ((!Array.isArray(TASKS) || !TASKS.length) && !_hasBonusInPeriod){
+  const _hasBonusInPeriod = Array.isArray(window.MGR_BONUS) && window.MGR_BONUS.some(a => a && a.to && a.kind === 'owner' && (a.ts||0) >= startMs && (a.ts||0) < endMs);
+  if ((!SRC_TASKS.length) && !_hasBonusInPeriod){
     podiumEl.innerHTML = ''; listEl.innerHTML = '';
-    if (emptyEl) emptyEl.style.display = '';
+    if (emptyEl){ emptyEl.style.display = ''; if (_lmLoading){ const _m=document.getElementById('teamRankEmptyMsg'); if(_m) _m.textContent = (P_EMPTY.lastmonth[_lang]||P_EMPTY.lastmonth.ko); } }
     return;
   }
   // 1) 완료된 업무만 집계
@@ -4240,11 +4282,11 @@ function renderTeamRank(){
     const b = (typeof BRANCHES !== 'undefined' ? BRANCHES : []).find(x => x.id === bid);
     return b ? (b[LANG] || b.ko || b.id) : (bid || '');
   }
-  TASKS.forEach(t => {
+  SRC_TASKS.forEach(t => {
     if (!t || !t.completedAt) return;
-    // 🏆 2026-05-30 — 선택 기간(오늘/주간/월간) 밖이면 제외
+    // 🏆 2026-05-30 — 선택 기간(오늘/주간/월간/지난달) 밖이면 제외
     const _cAt = new Date(t.completedAt).getTime();
-    if (!isFinite(_cAt) || _cAt < startMs) return;
+    if (!isFinite(_cAt) || _cAt < startMs || _cAt >= endMs) return;
     // 일반 직원 = 본인 매장 / 매니저·오너 = 선택한 매장(CURRENT STORE) 필터.
     if (!isMgr && myBranch && t.branchId && t.branchId !== myBranch) return;
     if (isMgr && mgrBranch && t.branchId && t.branchId !== mgrBranch) return;
@@ -4280,7 +4322,7 @@ function renderTeamRank(){
   (window.MGR_BONUS || []).forEach(a => {
     if (!a || !a.to || a.kind !== 'owner') return;
     if (_isLeadershipName(a.to)) return;   // 🆕 오너·임원은 활동 순위 제외
-    if ((a.ts || 0) < startMs) return;
+    if ((a.ts || 0) < startMs || (a.ts || 0) >= endMs) return;   // 🆕 지난 달 상한 적용
     if (!isMgr && myBranch && a.branch && a.branch !== myBranch) return;
     if (isMgr && mgrBranch && a.branch && a.branch !== mgrBranch) return;
     const bpts = (typeof a.points === 'number') ? a.points : 0;
