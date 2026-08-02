@@ -616,6 +616,11 @@ function rangeEnd(){
   }
   return Infinity;
 }
+// 🔧 2026-08-02 전무님: '지난 달' 옛 규칙 보존은 새 규칙 시행(2026-06-01) '이전' 월(=5월 이하)에만
+//    적용해야 함. 지금까지는 CUR_RANGE==='lastmonth' 이기만 하면 무조건 옛 규칙을 적용해서,
+//    8월 시점의 '지난 달=7월'(이미 새 규칙 월)까지 옛 유통기한 가중치·무캡·중복으로 부풀려 계산되던
+//    버그가 있었음. 지난 달 시작이 RULE_START_TS 이전일 때만 옛 규칙 → 6월부터는 새 규칙 그대로.
+function _lmIsOldRules(){ return CUR_RANGE === 'lastmonth' && rangeStart() < RULE_START_TS; }
 
 // ============== Auth helper for REST ==============
 // 🔐 2026-06-15 FIX — "일부 지점을 불러오지 못했습니다" 근본 원인:
@@ -855,7 +860,7 @@ async function fetchExpiry(agg, since, until){
       if (!r) return;
       const d = await r.json();
       if (!d) return;
-      const _isLM = (CUR_RANGE === 'lastmonth');   // 지난달(정산 완료)은 옛 방식 보존
+      const _isLM = _lmIsOldRules();   // 옛 규칙 시절(6월 이전) 지난달만 옛 방식 보존 (7월+ 는 새 규칙)
       Object.values(d).forEach(p => {
         if (!p || typeof p !== 'object') return;
         const addOK = (p.addedAt || 0) >= since && (p.addedAt || 0) < until && p.addedBy && p.photo;
@@ -1327,9 +1332,9 @@ function computeScores(agg){
   const chatCap = CHAT_DAILY_CAP * days;
   // 2026-06-08 전무님: 유통기한 가중치 인하(등록 0.2·체크 0.1·폐기 0.1). 지난달(지급완료)은
   //   옛 가중치(0.3/0.2/0.2) 유지 — 정산 끝난 순위 소급 변경 방지 (RULE_START_TS 정신과 동일).
-  const _eAdd = (CUR_RANGE === 'lastmonth') ? 0.3 : SCORE.expiryAdd;
-  const _eChk = (CUR_RANGE === 'lastmonth') ? 0.2 : SCORE.expiryCheck;
-  const _eDis = (CUR_RANGE === 'lastmonth') ? 0.2 : SCORE.expiryDiscard;
+  const _eAdd = _lmIsOldRules() ? 0.3 : SCORE.expiryAdd;
+  const _eChk = _lmIsOldRules() ? 0.2 : SCORE.expiryCheck;
+  const _eDis = _lmIsOldRules() ? 0.2 : SCORE.expiryDiscard;
   Object.values(agg).forEach(r => {
     // 채팅 관련 점수 (메시지·사진·댓글) → cap 적용
     // 2026-05-27 전무님 지시: reaction (받은 좋아요) 은 캡에서 제외 — 받는 사람이
@@ -1654,7 +1659,7 @@ function buildAndRender(rows, updating, warn){
   document.getElementById('subText').textContent =
     `${rangeLbl} · ${t('statsActive', rows.length)} · ${t('statsTotal', totalPts)}` + (updating ? '  · 🔄' : '');
   // 📌 지난 달은 지급 당시 옛 기준(소급 변경 없음) — 명확히 안내 배너 표시.
-  const frozenNote = (CUR_RANGE === 'lastmonth')
+  const frozenNote = _lmIsOldRules()
     ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 12px;margin-bottom:12px;color:#3730a3;font-weight:700;font-size:.82em;line-height:1.45">${escHtml(t('lastMonthFrozen'))}</div>`
     : '';
   const warnBanner = warn ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px 12px;margin-bottom:10px;color:#b91c1c;font-weight:800;font-size:.84em;line-height:1.4">${escHtml(warn)}</div>` : '';
