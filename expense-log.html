@@ -1061,7 +1061,7 @@ window.openDetail = function(eid, branchId){
   document.getElementById('detailTitle').innerHTML = typeIcon(e.type) + ' ' + escHtml(displayVendor(e)) + ' <span class="badge s-' + (e.status||'pending') + '" style="margin-left:6px">' + statusLabel(e.status||'pending') + '</span>';
   document.getElementById('detailBody').innerHTML = `
     <div style="font-size:.95em;line-height:1.7">
-      <div><b>${({ko:'금액',en:'Amount',es:'Monto'}[LANG])}:</b> <span style="color:#1a5c3a;font-weight:800;font-size:1.1em">${fmt$(e.amount)}</span></div>
+      <div><b>${({ko:'금액',en:'Amount',es:'Monto'}[LANG])}:</b> <span style="color:#1a5c3a;font-weight:800;font-size:1.1em">${fmt$(e.amount)}</span>${hasAccess(ME) ? ` <button onclick="editDetailAmount()" style="margin-left:8px;background:#fff;border:1px solid #1a5c3a;color:#1a5c3a;border-radius:6px;padding:2px 9px;font-size:.8em;cursor:pointer;font-family:inherit">✏️ ${({ko:'금액 수정',en:'Edit',es:'Editar'}[LANG])}</button>` : ''}${e.amountWas ? ` <span style="font-size:.72em;color:#9ca3af">(${({ko:'수정됨',en:'edited',es:'editado'}[LANG])} ${fmt$(e.amountWas)}→)</span>` : ''}</div>
       <div><b>${({ko:'날짜',en:'Date',es:'Fecha'}[LANG])}:</b> ${escHtml(e.date)}</div>
       <div><b>${({ko:'지점',en:'Branch',es:'Sucursal'}[LANG])}:</b> ${escHtml(branchName)}</div>
       <div><b>${({ko:'종류',en:'Type',es:'Tipo'}[LANG])}:</b> ${typeLabel(e.type)}</div>
@@ -1301,6 +1301,34 @@ window.deleteDetail = async function(){
     renderList();
     renderHome();
   } catch(e){ toast('⚠ ' + (e.message||''), 'err'); }
+};
+
+// ✏️ 금액 수정 — 소수점 실수(5,000 → 50,000 등) 정정. 매니저 권한. 원래 금액은 amountWas 로 보존.
+window.editDetailAmount = async function(){
+  if (!CUR_DETAIL) return;
+  if (!hasAccess(ME)) { toast(({ko:'매니저 권한 필요',en:'Manager only',es:'Solo gerente'}[LANG]), 'err'); return; }
+  const cur = Number(CUR_DETAIL.amount) || 0;
+  const raw = prompt(
+    ({ko:'현재 금액: ',en:'Current: ',es:'Actual: '}[LANG]) + fmt$(cur) + '\n\n' +
+    ({ko:'올바른 금액을 입력하세요 (숫자만):',en:'Enter the correct amount (number only):',es:'Ingrese el monto correcto (solo número):'}[LANG]),
+    String(cur)
+  );
+  if (raw === null) return;
+  const val = Math.round((parseFloat(String(raw).replace(/[^0-9.]/g,'')) || 0) * 100) / 100;
+  if (!(val > 0)) { toast(({ko:'금액이 올바르지 않아요',en:'Invalid amount',es:'Monto inválido'}[LANG]), 'err'); return; }
+  if (val === cur) { toast(({ko:'변경 없음',en:'No change',es:'Sin cambios'}[LANG]), 'err'); return; }
+  if (!confirm(({ko:'금액을 이렇게 바꿀까요?\n\n',en:'Change amount?\n\n',es:'¿Cambiar el monto?\n\n'}[LANG]) + fmt$(cur) + '  →  ' + fmt$(val))) return;
+  try {
+    await patchExpense(CUR_DETAIL.branch, CUR_DETAIL.id, { amount: val, amountWas: cur, amountEditedBy: (ME&&ME.name)||'', amountEditedAt: Date.now() });
+    CUR_DETAIL.amount = val; CUR_DETAIL.amountWas = cur;
+    const idx = EXPENSES.findIndex(e => e.id === CUR_DETAIL.id && e.branch === CUR_DETAIL.branch);
+    if (idx >= 0) { EXPENSES[idx].amount = val; EXPENSES[idx].amountWas = cur; }
+    toast('✅ ' + ({ko:'금액 수정됨',en:'Amount updated',es:'Monto actualizado'}[LANG]), 'ok');
+    try{ renderList(); }catch(_){}
+    try{ renderReport(); }catch(_){}
+    try{ renderHome(); }catch(_){}
+    openDetail(CUR_DETAIL.id, CUR_DETAIL.branch);   // 모달 새로고침
+  } catch(e){ toast('⚠ ' + (e.message||({ko:'저장 실패',en:'Save failed',es:'Error'}[LANG])), 'err'); }
 };
 
 window.exportListExcel = function(){
