@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>김치마트 주문 - RHEE BROS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="vela_stock.js"></script>
+<style>
+  :root{
+    --red:#2E7D32; --red-dk:#1B5E20; --red-lt:#43A047;
+    --bg:#F5F5F7; --card:#fff; --text:#1a1a1a; --mute:#888; --border:#E0E0E0;
+    --green:#2E7D32; --yellow:#F57F17; --blue:#1565C0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:80px}
+
+  /* HEADER */
+  .hdr{background:linear-gradient(135deg,var(--red) 0%,var(--red-dk) 100%);color:#fff;padding:12px 14px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2);display:flex;align-items:center;gap:10px}
+  .back-btn{background:rgba(255,255,255,.18);border:none;color:#fff;width:34px;height:34px;border-radius:8px;font-size:18px;cursor:pointer;flex-shrink:0}
+  .hdr-title{flex:1;text-align:center}
+  .hdr-title h1{font-size:20px;font-weight:800;letter-spacing:-0.3px}
+  .hdr-title p{font-size:11px;opacity:.8;margin-top:1px}
+  .hdr-acts{display:flex;align-items:center;gap:6px;flex-shrink:0}
+  .lang-sel{display:flex;background:rgba(255,255,255,.15);border-radius:8px;overflow:hidden}
+  .lang-sel button{background:none;border:none;color:#fff;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;opacity:.6;font-family:inherit}
+  .lang-sel button.on{background:rgba(255,255,255,.35);opacity:1}
+  .cart-btn{position:relative;background:rgba(255,255,255,.2);border:none;color:#fff;width:36px;height:36px;border-radius:8px;font-size:18px;cursor:pointer}
+  .cart-badge{position:absolute;top:-6px;right:-6px;background:#fff;color:var(--red);border-radius:12px;font-size:10px;font-weight:800;min-width:18px;height:18px;line-height:18px;padding:0 5px;border:2px solid var(--red)}
+
+  .groups{display:flex;gap:6px;padding:8px 14px;overflow-x:auto;background:#fff;border-bottom:1px solid #eee;white-space:nowrap;position:sticky;top:58px;z-index:91}
+  .groups::-webkit-scrollbar{display:none}
+  .gtab{background:#fff;border:1.5px solid #ddd;color:#444;border-radius:20px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit;flex-shrink:0;transition:all .15s}
+  .gtab.on{background:var(--red);color:#fff;border-color:var(--red)}
+  .gtab.new-tab{background:#fff8e1;border-color:#ffb300;color:#e65100}
+  .gtab.new-tab.on{background:#ff9800;color:#fff;border-color:#ff9800}
+
+  .cbar{padding:8px 14px;background:#fafafa;border-bottom:1px solid #eee;display:flex;gap:8px;align-items:center;position:sticky;top:104px;z-index:90}
+  .cbar select{flex:1;min-width:0;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:12px;background:#fff;font-family:inherit;outline:none}
+  .cbar select:focus{border-color:var(--red)}
+
+  .sbar{padding:8px 14px;background:#fafafa;border-bottom:1px solid #eee;position:sticky;top:149px;z-index:89}
+  .sbox{width:100%;padding:10px 14px;border:1px solid #ddd;border-radius:22px;font-size:14px;outline:none;font-family:inherit;background:#fff}
+  .sbox:focus{border-color:var(--red)}
+
+  .stats{padding:6px 14px;font-size:11px;color:var(--mute);background:#f0f0f2;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}
+  .stats .clear-flt{background:none;border:none;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;font-family:inherit}
+
+  /* PRODUCT GRID */
+  .grid{padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .card{background:var(--card);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;position:relative;transition:all .15s;cursor:pointer}
+  .card:active{transform:scale(0.98)}
+  .card.has-qty{box-shadow:0 0 0 2px var(--red),0 1px 3px rgba(0,0,0,.08)}
+  .card .new-badge{position:absolute;top:6px;left:6px;background:#ff9800;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;z-index:2;letter-spacing:.3px}
+  .pimg{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;padding:6px}
+  .pbody{padding:7px 9px 8px;display:flex;flex-direction:column;flex:1}
+  .pname{font-size:11.5px;font-weight:700;line-height:1.3;color:#222;margin-bottom:3px;min-height:30px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .pmeta{font-size:10px;color:#888;margin-bottom:3px;line-height:1.3}
+  .pmeta .code{color:var(--red);font-weight:700}
+  .pbrand{font-size:9.5px;color:#aaa;margin-bottom:6px;text-transform:uppercase}
+  .qrow{display:flex;align-items:center;justify-content:space-between;margin-top:auto;background:#f5f5f5;border-radius:7px;padding:2px}
+  .qbtn{flex-shrink:0;width:30px;height:28px;border:none;border-radius:5px;background:#fff;cursor:pointer;font-size:15px;font-weight:700;font-family:inherit;display:flex;align-items:center;justify-content:center}
+  .qbtn.minus{color:#E53935}
+  .qbtn.plus{color:var(--green)}
+  .qbtn:disabled{opacity:.3;cursor:not-allowed}
+  .qbtn:active{background:#ddd}
+  .qnum{flex:1;text-align:center;font-size:13px;font-weight:800;color:#222;min-width:30px;background:#fff;border:none;border-radius:5px;cursor:pointer;padding:4px 0;font-family:inherit;transition:background .12s}
+  .qnum:hover{background:#fffde7;box-shadow:0 0 0 1.5px #C8352A inset}
+  .qnum:active{background:#ffe0e0}
+
+  /* CART BAR */
+  .cart-bar{position:fixed;bottom:0;left:0;right:0;background:var(--red);color:#fff;padding:11px 16px;display:none;justify-content:space-between;align-items:center;box-shadow:0 -2px 12px rgba(0,0,0,.2);cursor:pointer;z-index:95}
+  .cart-bar.show{display:flex}
+  .cart-bar .info{font-size:13px;font-weight:600}
+  .cart-bar .cta{font-size:13px;font-weight:700;background:#fff;color:var(--red);border:none;border-radius:8px;padding:8px 14px;font-family:inherit;cursor:pointer}
+
+  /* MODAL BASE */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:flex-end;justify-content:center}
+  .modal.show{display:flex}
+  .modal-box{background:#fff;width:100%;max-width:520px;max-height:92vh;border-radius:18px 18px 0 0;display:flex;flex-direction:column;animation:slideUp .25s ease}
+  @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+  .modal-hdr{padding:14px 16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}
+  .modal-hdr h2{font-size:16px;color:var(--red);font-weight:800}
+  .modal-hdr .close{background:none;border:none;font-size:22px;color:#888;cursor:pointer;padding:0 4px}
+  .modal-body{flex:1;overflow-y:auto}
+
+  /* CART MODAL */
+  .cart-body-inner{padding:6px 14px}
+  .ci{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0}
+  .ci:last-child{border-bottom:none}
+  .ci img{width:46px;height:46px;object-fit:contain;background:#fafafa;border-radius:6px;flex-shrink:0}
+  .ci-info{flex:1;min-width:0}
+  .ci-name{font-size:11.5px;font-weight:700;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:2px}
+  .ci-meta{font-size:9.5px;color:#888}
+  .ci-qrow{display:flex;align-items:center;gap:3px;flex-shrink:0}
+  .ci-qrow button{width:26px;height:26px;border:1px solid #ddd;background:#fff;border-radius:5px;cursor:pointer;font-size:13px;font-weight:700;font-family:inherit}
+  .ci-qrow input{width:42px;height:26px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:12px;font-weight:700;font-family:inherit;outline:none}
+  .modal-foot{padding:12px 14px;border-top:1px solid #eee;background:#fafafa}
+  .summary{display:flex;justify-content:space-between;font-size:12px;margin-bottom:9px;color:#444}
+  .summary b{color:var(--red);font-size:14px}
+  .btns{display:flex;gap:6px;flex-wrap:wrap}
+  .btns button{flex:1 1 calc(50% - 3px);min-width:0;border:none;border-radius:8px;padding:10px 6px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .btns .primary{background:var(--red);color:#fff}
+  .btns .outline{background:#fff;color:var(--red);border:1.5px solid var(--red)}
+  .btns .gray{background:#eee;color:#555}
+
+  /* PRODUCT DETAIL MODAL */
+  .pd-img-wrap{width:100%;padding:16px;background:#fafafa;text-align:center}
+  .pd-img{max-width:100%;max-height:240px;object-fit:contain}
+  .pd-info{padding:14px 16px}
+  .pd-name{font-size:17px;font-weight:800;color:#222;line-height:1.3;margin-bottom:6px}
+  .pd-new{display:inline-block;background:#ff9800;color:#fff;font-size:10px;font-weight:800;padding:3px 10px;border-radius:12px;margin-left:8px;vertical-align:middle;letter-spacing:.3px}
+  .pd-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  .pd-table td{padding:9px 10px;border:1px solid #e5e5e5;vertical-align:top}
+  .pd-table td.label{background:#f7f7f7;color:#555;font-weight:600;width:38%;white-space:nowrap}
+  .pd-table td.value{background:#fff;color:#222;word-break:break-word}
+  .pd-table td.value.code{color:var(--red);font-weight:700;font-family:monospace}
+  .pd-table td.value.barcode{font-family:monospace;font-size:13px;letter-spacing:.5px}
+  .pd-qty-section{padding:14px 16px;background:#f9f9f9;border-top:1px solid #eee}
+  .pd-qty-label{font-size:12px;color:#666;margin-bottom:8px;font-weight:600}
+  .pd-qty-row{display:flex;align-items:center;gap:8px}
+  .pd-qty-row button{flex-shrink:0;width:42px;height:42px;border:1.5px solid var(--red);background:#fff;color:var(--red);border-radius:8px;font-size:20px;font-weight:700;cursor:pointer;font-family:inherit}
+  .pd-qty-row button:active{background:#fee}
+  .pd-qty-row input{flex:1;height:42px;border:1.5px solid #ddd;border-radius:8px;text-align:center;font-size:18px;font-weight:800;font-family:inherit;outline:none;color:#222}
+  .pd-qty-row input:focus{border-color:var(--red)}
+  .pd-foot{padding:12px 14px;background:#fafafa;border-top:1px solid #eee;display:flex;gap:8px}
+  .pd-foot button{flex:1;border:none;border-radius:10px;padding:13px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+  .pd-foot .primary{background:var(--red);color:#fff}
+  .pd-foot .outline{background:#fff;color:#666;border:1.5px solid #ddd}
+
+  .empty{padding:60px 20px;text-align:center;color:#aaa;font-size:14px;grid-column:1/-1}
+  .empty .big{font-size:40px;margin-bottom:8px}
+
+  .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:10px 18px;border-radius:22px;font-size:13px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;text-align:center}
+  .toast.show{opacity:1}
+
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <button class="back-btn" onclick="onBack()">←</button>
+  <div class="hdr-title">
+    <h1>RHEE BROS</h1>
+    <p>리브라더스 · 2025 Catalog</p>
+  </div>
+  <div class="hdr-acts">
+    <button id="branch-btn" onclick="openBranchModal()" style="background:rgba(255,255,255,0.22);border:1.5px solid rgba(255,255,255,0.5);color:#fff;border-radius:14px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700">📍 <span id="branch-btn-label">지점</span></button>
+    <div class="lang-sel">
+      <button class="on" data-lang="ko" onclick="setLang('ko')">KO</button>
+      <button data-lang="en" onclick="setLang('en')">EN</button>
+    </div>
+    <button class="cart-btn" onclick="openCart()">
+      🛒
+      <span class="cart-badge" id="cart-badge">0</span>
+    </button>
+  </div>
+</div>
+
+<!-- BRANCH SELECTOR MODAL -->
+<div id="branch-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:14px;max-width:420px;width:100%;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.3)">
+    <div style="background:linear-gradient(135deg,#C8352A,#A02820);color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:16px;font-weight:800">📍 지점 선택</div>
+        <div style="font-size:11px;opacity:.85;margin-top:2px">장바구니는 지점별로 실시간 공유됩니다</div>
+      </div>
+      <button onclick="closeBranchModal()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px">✕</button>
+    </div>
+    <div style="padding:12px;display:grid;grid-template-columns:repeat(2,1fr);gap:8px" id="branch-grid"></div>
+  </div>
+</div>
+
+<!-- Top click-bar: scrollable TOC tabs (전체 + each catalog section).
+     Clicking a tab filters the grid and keeps the dropdown below in sync. -->
+<div class="groups" id="groups"></div>
+<div class="cbar"><select id="cat-select" onchange="render()"></select></div>
+<div class="sbar"><input class="sbox" id="search" placeholder="제품명·코드·바코드 검색..." oncompositionstart="imeComposing=true;clearTimeout(_sTimer)" oncompositionend="imeComposing=false;debouncedSearch()" oninput="debouncedSearch(event)"></div>
+<div class="stats" id="stats"></div>
+<div class="grid" id="grid"></div>
+
+<div class="cart-bar" id="cart-bar" onclick="openCart()">
+  <div class="info"><span id="cart-summary">0 종 · 0 개</span></div>
+  <button class="cta">주문 확인 →</button>
+</div>
+
+<!-- PRODUCT DETAIL MODAL -->
+<div class="modal" id="pd-modal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <h2 id="pd-header">제품 상세</h2>
+      <button class="close" onclick="closePd()">✕</button>
+    </div>
+    <div class="modal-body" id="pd-body"></div>
+  </div>
+</div>
+
+<!-- CART MODAL -->
+<div class="modal" id="cart-modal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <h2>🛒 주문 내역</h2>
+      <button class="close" onclick="closeCart()">✕</button>
+    </div>
+    <div class="modal-body"><div class="cart-body-inner" id="cart-body"></div></div>
+    <div class="modal-foot">
+      <div class="summary"><span id="cart-counts-text">-</span></div>
+      <div class="btns">
+        <button class="gray" onclick="clearCart()">🗑 비우기</button>
+        <button class="outline" onclick="exportOrder()">📥 엑셀</button>
+        <button class="outline" onclick="emailOrder()">📧 이메일</button>
+        <button class="primary" onclick="copyOrderText()">📋 복사</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="rheebros_products.js?v=20260802new57"></script>
+<script src="recommend.js?v=20260727a"></script>
+<script src="product-images.js?v=20260726a"></script>
+<script>
+// Recommended-products filter state — toggled from a chip above the grid.
+let REC_FILTER_ON = false;
+window.addEventListener('km-rec-filter', (e) => {
+  if (e?.detail?.id === 'rec-filter-rhee'){ REC_FILTER_ON = !!e.detail.on; render(); }
+});
+/* URL ?branch=<ID> override — set by vendor-order-center.html so this app
+   loads the right per-branch cart regardless of whatever km_branch the device
+   was left on by the previous user. */
+(function applyUrlBranch(){
+  try {
+    const u = new URLSearchParams(location.search);
+    const b = (u.get('branch') || '').toUpperCase();
+    const VALID = ['MIAMI','PEMBROKE_PINES','HOLLYWOOD','CORAL_SPRINGS','LASOLAS','WEST_PALM','ALL'];
+    if (b && VALID.indexOf(b) >= 0) localStorage.setItem('km_branch', b);
+  } catch(e){}
+})();
+/* RHEE BROS catalog — products loaded from hanmi_products.js (generated from PDF). */
+const _HANMI_RAW = (window.RHEE_PRODUCTS || []);
+const PRODUCTS = _HANMI_RAW.map(p => {
+  // Map the 47 fine-grained categories down to 4 broad groups for the tab bar.
+  const catU = String(p.category || '').toUpperCase();
+  let group = 'FOOD';
+  if (/BEVERAGE|\bTEA\b/.test(catU))                                  group = 'BEVERAGE';
+  else if (/SAUCE|SEASON|SESAME|SALT|OIL|POWDER|VINEGAR|SYRUP|MALT/.test(catU)) group = 'SEASONING';
+  else if (/CONFECTION|SNACK|BAKERY|ICE CREAM|GINSENG/.test(catU))      group = 'SNACK';
+  return {
+    id: p.id,
+    detailId: p.id,
+    name: (p.name || p.nameKr || p.id).trim(),
+    nameKr: (p.nameKr || '').trim(),
+    brand: '',
+    category: p.category || '',
+    packSize: p.size || '',
+    barcode: p.barcode || '',
+    barcodeDisplay: p.barcodeDisplay || '',
+    pageRange: p.pageRange || '',
+    catalogPage: p.catalogPage || null,
+    minOrder: '',
+    image: p.image || '',
+    group,
+    isNew: p.isNew ? 1 : 0
+  };
+});
+const BY_ID = {};
+PRODUCTS.forEach(p => BY_ID[p.detailId] = p);
+
+const CART = {};
+let CUR_GROUP = '';
+let CUR_CAT = '';
+let LANG = 'ko';
+let CURRENT_PD_ID = '';
+
+// CART is stored per-branch × per-user (rhee-cart-v1-<BRANCH>-<USER>) so
+// each person's in-progress order stays isolated. No handoff between
+// people — one person owns their order start to finish.
+function _branchForCartKey(){
+  try { return localStorage.getItem('km_branch') || 'UNASSIGNED'; } catch(e){ return 'UNASSIGNED'; }
+}
+function _userForCartKey(){
+  try {
+    const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+    const raw = (me && me.name || '').trim();
+    if (!raw) return 'UNASSIGNED';
+    return raw.replace(/[.#$\[\]\/\s]/g, '_').slice(0, 40);
+  } catch(e){ return 'UNASSIGNED'; }
+}
+function _cartKey(){ return 'rhee-cart-v1-' + _branchForCartKey() + '-' + _userForCartKey(); }
+
+try {
+  const saved = localStorage.getItem(_cartKey());
+  if (saved) Object.assign(CART, JSON.parse(saved));
+} catch(e){}
+try {
+  const lang = localStorage.getItem('rhee-lang');
+  if (lang) LANG = lang;
+} catch(e){}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const saveCart = () => {
+  try { localStorage.setItem(_cartKey(), JSON.stringify(CART)); } catch(e){}
+  // Cross-device sync — push current cart to Firebase under the selected branch.
+  try { if (typeof window.cloudPushCart === 'function') window.cloudPushCart(CART); } catch(e){}
+};
+
+// Expose CART + render for the Firebase module so it can apply remote updates.
+window.KM_W = {
+  get CART(){ return CART; },
+  applyRemote(obj){
+    // Replace CART contents in-place so the `const` ref keeps pointing at it.
+    for (const k of Object.keys(CART)) delete CART[k];
+    if (obj && typeof obj === 'object') Object.assign(CART, obj);
+    try { localStorage.setItem(_cartKey(), JSON.stringify(CART)); } catch(e){}
+    render();
+    if ($('cart-modal').classList.contains('show')) renderCart();
+    updateCartBar();
+  }
+};
+
+// ===== BRANCH SELECTOR =====
+const BRANCHES = [
+  { id:'MIAMI',          ko:'마이애미',        en:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines' },
+  { id:'HOLLYWOOD',      ko:'할리우드',        en:'Hollywood' },
+  { id:'CORAL_SPRINGS',  ko:'코럴 스프링스',   en:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스올라스',      en:'LASOLAS' },
+  { id:'WEST_PALM',      ko:'웨스트 팜 비치',  en:'West Palm Beach' }
+];
+const BRANCH_BY_ID = Object.fromEntries(BRANCHES.map(b => [b.id, b]));
+function getBranchId(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } }
+function updateBranchLabel(){
+  const b = getBranchId();
+  const el = $('branch-btn-label');
+  if (el) el.textContent = (BRANCH_BY_ID[b] && BRANCH_BY_ID[b].ko) || '지점 선택';
+}
+function setBranch(id){
+  if (!BRANCH_BY_ID[id]) return;
+  const oldBranch = _branchForCartKey();
+  const user = _userForCartKey();
+  // Persist current CART under old branch×user slot before switching.
+  if (oldBranch && oldBranch !== 'UNASSIGNED'){
+    try { localStorage.setItem('rhee-cart-v1-' + oldBranch + '-' + user, JSON.stringify(CART)); } catch(e){}
+  }
+  try { localStorage.setItem('km_branch', id); } catch(e){}
+  // Swap CART contents in-place — clear, then load the new branch×user slot.
+  for (const k of Object.keys(CART)) delete CART[k];
+  try {
+    const saved = localStorage.getItem('rhee-cart-v1-' + id + '-' + user);
+    if (saved) Object.assign(CART, JSON.parse(saved));
+  } catch(e){}
+  updateBranchLabel();
+  closeBranchModal();
+  render();
+  updateCartBar();
+  if ($('cart-modal').classList.contains('show')) renderCart();
+  // Re-subscribe cart sync to the new branch
+  if (typeof window.__wismRefreshSub === 'function') window.__wismRefreshSub();
+  // Resubscribe recommend.js to the branch-scoped recs path.
+  if (window.kmRecs) window.kmRecs.setBranch(id);
+}
+function openBranchModal(){
+  const grid = $('branch-grid');
+  const cur = getBranchId();
+  if (grid){
+    grid.innerHTML = BRANCHES.map(b => (
+      '<button onclick="setBranch(\''+b.id+'\')" style="background:'+(b.id===cur?'#FFEBEE':'#fff')+';border:1.5px solid '+(b.id===cur?'#C8352A':'#ddd')+';border-radius:10px;padding:14px 10px;font-size:13px;font-weight:700;color:'+(b.id===cur?'#C8352A':'#333')+';cursor:pointer;font-family:inherit;text-align:center">'
+      + '<div>'+b.ko+'</div>'
+      + '<div style="font-size:10px;color:#888;font-weight:500;margin-top:2px">'+b.en+'</div>'
+      + '</button>'
+    )).join('');
+  }
+  const m = $('branch-modal'); if (m) m.style.display = 'flex';
+}
+function closeBranchModal(){
+  const m = $('branch-modal'); if (m) m.style.display = 'none';
+}
+window.addEventListener('DOMContentLoaded', () => {
+  updateBranchLabel();
+  // Force selection on first visit so cart sync has a scope.
+  if (!getBranchId()) openBranchModal();
+});
+
+function toast(msg, ms=1800){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms);
+}
+
+const I18N = {
+  ko: { search:'제품명·코드·바코드 검색...', all:'전체', new:'⭐ 신제품', items:'{n}개', cart:'🛒 주문 내역', empty:'장바구니가 비어있습니다', clear:'🗑 비우기', excel:'📥 엑셀', copy:'📋 복사', summary:'<b>{types}</b>종 · 총 <b>{units}</b>개', noResults:'검색 결과가 없습니다', confirmClear:'주문 전체를 비울까요?', copied:'📋 주문 내용 복사 완료', noCart:'주문할 상품이 없습니다', allCats:'모든 세부 카테고리', clearFlt:'필터 초기화', brand:'브랜드', category:'카테고리', itemNo:'상품 번호', packSize:'팩 사이즈', minOrder:'최소 주문 수량', barcode:'바코드', orderQty:'주문 수량', addCart:'장바구니 담기', updateCart:'수량 저장', removeCart:'주문에서 제거', added:'✓ 장바구니에 추가됨', updated:'✓ 수량 업데이트됨', removed:'✓ 주문에서 제거됨' },
+  en: { search:'Search name, code, barcode...', all:'All', new:'⭐ New', items:'{n} items', cart:'🛒 Order Summary', empty:'Cart is empty', clear:'🗑 Clear', excel:'📥 Excel', copy:'📋 Copy', summary:'<b>{types}</b> items · <b>{units}</b> units', noResults:'No results found', confirmClear:'Clear all items?', copied:'📋 Order copied', noCart:'Cart is empty', allCats:'All sub-categories', clearFlt:'Clear filters', brand:'Brand', category:'Category', itemNo:'Item number', packSize:'Pack Size', minOrder:'Min Order Qty', barcode:'Barcode', orderQty:'Order Qty', addCart:'Add to Cart', updateCart:'Update Qty', removeCart:'Remove from Cart', added:'✓ Added to cart', updated:'✓ Qty updated', removed:'✓ Removed from cart' }
+};
+const t = (key, vars={}) => {
+  let s = (I18N[LANG] && I18N[LANG][key]) || key;
+  for (const k in vars) s = s.replace('{'+k+'}', vars[k]);
+  return s;
+};
+function setLang(l){
+  LANG = l;
+  try { localStorage.setItem('rhee-lang', l); } catch(e){}
+  document.querySelectorAll('.lang-sel button').forEach(b => b.classList.toggle('on', b.dataset.lang === l));
+  $('search').placeholder = t('search');
+  buildGroups();
+  buildCategorySelect();
+  render();
+  if ($('cart-modal').classList.contains('show')) renderCart();
+  if ($('pd-modal').classList.contains('show')) openPd(CURRENT_PD_ID);
+}
+
+function onBack(){
+  if ($('pd-modal').classList.contains('show')) { closePd(); return; }
+  if ($('cart-modal').classList.contains('show')) { closeCart(); return; }
+  // Always send the user back to wherever they came from. If there's
+  // no real history (direct URL / new tab), fall back to the hub.
+  if (document.referrer && history.length > 1) { history.back(); return; }
+  location.href = 'https://specialmasterdj-sketch.github.io/kfood-guide/vendor-order-center.html';
+}
+
+/* -------- GROUPS (top click-bar: catalog TOC sections) -------- */
+// Renders the TOC sections as scrollable horizontal tabs. CUR_CAT drives
+// the filter — clicking a tab sets it; the dropdown below stays synced.
+function buildGroups(){
+  const cats = window.RHEE_CATEGORIES || [];
+  const tabs = [
+    '<button class="gtab ' + (!CUR_CAT ? 'on' : '') + '" onclick="selCat(\'\')">' + t('all') + ' (' + PRODUCTS.length + ')</button>'
+  ];
+  for (const c of cats){
+    const n = PRODUCTS.filter(p => p.category === c.name).length;
+    if (!n) continue;
+    const label = (c.nameKr || c.name) + ' (' + n + ')';
+    const safeName = c.name.replace(/'/g, "\\'");
+    tabs.push('<button class="gtab ' + (CUR_CAT === c.name ? 'on' : '') + '" onclick="selCat(\'' + safeName + '\')" title="' + esc((c.pageRange ? (c.pageRange + ' · ') : '') + c.name) + '">' + esc(label) + '</button>');
+  }
+  $('groups').innerHTML = tabs.join('');
+}
+function selCat(name){
+  CUR_CAT = name;
+  CUR_GROUP = '';
+  const sel = $('cat-select'); if (sel) sel.value = name;
+  buildGroups();
+  render();
+}
+// Legacy API kept so older calls don't break
+function selGroup(g){ CUR_GROUP = g; CUR_CAT = ''; buildGroups(); buildCategorySelect(); render(); }
+
+/* -------- CATEGORIES -------- */
+// Options render in catalog TOC order (the order HANMI_CATEGORIES is defined
+// by the extractor). Each option shows PAGE X-Y · English / Korean · (count)
+// so the dropdown reads like a mini table-of-contents.
+function buildCategorySelect(){
+  const totalShown = PRODUCTS.length;
+  const opts = ['<option value="">전체 (' + totalShown + ')</option>'];
+  const cats = window.RHEE_CATEGORIES || [];
+  for (const c of cats){
+    const count = PRODUCTS.filter(p => p.category === c.name).length;
+    if (!count) continue;
+    const label = (c.pageRange ? (c.pageRange + ' · ') : '')
+      + c.name
+      + (c.nameKr ? ' (' + c.nameKr + ')' : '')
+      + ' — ' + count;
+    opts.push('<option value="' + esc(c.name) + '" ' + (c.name === CUR_CAT ? 'selected' : '') + '>' + esc(label) + '</option>');
+  }
+  $('cat-select').innerHTML = opts.join('');
+}
+function matchesGroup(p){
+  if (!CUR_GROUP) return true;
+  if (CUR_GROUP === 'NEW') return p.isNew === 1;
+  return p.group === CUR_GROUP;
+}
+
+/* -------- RENDER -------- */
+// Decompose Hangul syllables so IME mid-composition jamo ("ㅇ") still matches "오".
+const _CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const _JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+const _JONG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+function hangulDecompose(s){
+  if (!s) return '';
+  let out = '';
+  for (let i = 0; i < s.length; i++){
+    const c = s.charCodeAt(i);
+    if (c >= 0xAC00 && c <= 0xD7A3){
+      const n = c - 0xAC00;
+      out += _CHO[Math.floor(n / 588)] + _JUNG[Math.floor((n % 588) / 28)] + _JONG[n % 28];
+    } else { out += s[i]; }
+  }
+  return out;
+}
+
+// Debounced search render that actively waits for Korean IME composition.
+window.imeComposing = false;
+let _sTimer = null;
+function debouncedSearch(event){
+  if (window.imeComposing || (event && event.isComposing)) return;
+  clearTimeout(_sTimer);
+  const doRender = () => {
+    if (window.imeComposing){
+      _sTimer = setTimeout(doRender, 120);
+      return;
+    }
+    const inp = $('search');
+    const hadFocus = inp && document.activeElement === inp;
+    const selStart = inp?.selectionStart;
+    const selEnd   = inp?.selectionEnd;
+    render();
+    if (hadFocus){
+      const next = $('search');
+      if (next){
+        next.focus();
+        if (selStart != null && typeof next.setSelectionRange === 'function'){
+          try { next.setSelectionRange(selStart, selEnd ?? selStart); } catch(e){}
+        }
+      }
+    }
+  };
+  _sTimer = setTimeout(doRender, 180);
+}
+
+function render(){
+  CUR_CAT = $('cat-select').value;
+  const raw = ($('search').value || '').trim().toLowerCase();
+  const q = hangulDecompose(raw);
+
+  const filtered = PRODUCTS.filter(p => {
+    if (REC_FILTER_ON && window.kmRecs && !window.kmRecs.isRecommended(p.id)) return false;
+    // When actively searching, bypass category/tab filters so a query
+    // across the whole catalog is never silently hidden by a tab pick.
+    if (q){
+      const hay = hangulDecompose((p.name + ' ' + (p.nameKr||'') + ' ' + p.id + ' ' + (p.barcode||'') + ' ' + (p.brand||'')).toLowerCase());
+      return hay.includes(q);
+    }
+    if (!matchesGroup(p)) return false;
+    if (CUR_CAT && p.category !== CUR_CAT) return false;
+    return true;
+  });
+
+  const hasFilter = CUR_GROUP || CUR_CAT || q;
+  const recChip = (window.kmRecs ? window.kmRecs.filterChipHTML('rec-filter-rhee', window.kmRecs.filterLabel(LANG), REC_FILTER_ON) : '');
+  $('stats').innerHTML =
+    '<span>' + t('items', {n: filtered.length}) + '</span>' +
+    recChip +
+    (hasFilter ? '<button class="clear-flt" onclick="clearFilters()">' + t('clearFlt') + '</button>' : '');
+  if (REC_FILTER_ON){
+    const cb = document.getElementById('rec-filter-rhee');
+    if (cb){ cb.checked = true; cb.parentElement.classList.add('active'); }
+  }
+
+  if (!filtered.length){
+    $('grid').innerHTML = '<div class="empty"><div class="big">🔍</div>' + t('noResults') + '</div>';
+    updateCartBar();
+    return;
+  }
+
+  // 🏗 파레트 + 낱개 활성 상품 — 분리 적용 (2026-06-07 사장님 지시).
+  //   • 🥬 낱개 (EA): packSize 가 multi-tier (예: "BX 3X25X1 OZ", "CS 8X5 LB",
+  //     "6/14.11 OZ", "12/15/1.76 OZ") 인 모든 상품에 자동 노출. 사장님이
+  //     case 통째 말고 낱개만 주문할 때 필요.
+  //   • 🏗 파레트 (PL): 기존 NAPA 같은 대량 발주 상품 화이트리스트 유지.
+  const PL_ENABLED_NAMES = ['NAPA'];
+  // 2026-06-09 사장님 지시 (BX-only 복원): BX 로 시작하는 상품만 낱개(pc) 노출.
+  //   CS(케이스)는 케이스 단위 발주만 — 낱개 X. 직전 NxN 확장이 "CS 6X4.23 OZ"
+  //   같은 거의 모든 CS 에 낱개를 붙여 매장 매니저 혼란 → 원래 BX-only 규칙으로 되돌림.
+  const MULTI_TIER_RE = /^\s*BX\b/i;
+  $('grid').innerHTML = filtered.map(p => {
+    const qty = CART[p.detailId] || 0;
+    const eaKey = p.detailId + '__EA';
+    const plKey = p.detailId + '__PL';
+    const pName = String(p.name || p.nameKr || '').toUpperCase();
+    const showEA = MULTI_TIER_RE.test(String(p.packSize || ''));
+    const showPL = PL_ENABLED_NAMES.some(k => pName.includes(k));
+    const eaQty = showEA ? (CART[eaKey] || 0) : 0;
+    const plQty = showPL ? (CART[plKey] || 0) : 0;
+    const anyQty = qty > 0 || eaQty > 0 || plQty > 0;
+    const eaRow = showEA ? (
+      '<div class="qrow" onclick="event.stopPropagation()" style="margin-top:6px;background:#fff4e0;border:1px solid #fbbf24;border-radius:8px;padding:4px">' +
+        '<button class="qbtn minus" onclick="bumpQty(\''+eaKey+'\',-1)"' + (eaQty<=0?' disabled':'') + '>−</button>' +
+        '<button class="qnum" onclick="event.stopPropagation();openQtyInput(\''+eaKey+'\','+eaQty+')" style="color:#b87500">' + eaQty + '</button>' +
+        '<button class="qbtn plus" onclick="bumpQty(\''+eaKey+'\',1)">+</button>' +
+      '</div>' +
+      '<div style="font-size:9.5px;color:#b87500;text-align:center;margin-top:2px;font-weight:700">🥬 낱개 / pc</div>'
+    ) : '';
+    const plRow = showPL ? (
+      '<div class="qrow" onclick="event.stopPropagation()" style="margin-top:6px;background:#e0f2fe;border:1px solid #0284c7;border-radius:8px;padding:4px">' +
+        '<button class="qbtn minus" onclick="bumpQty(\''+plKey+'\',-1)"' + (plQty<=0?' disabled':'') + '>−</button>' +
+        '<button class="qnum" onclick="event.stopPropagation();openQtyInput(\''+plKey+'\','+plQty+')" style="color:#0369a1">' + plQty + '</button>' +
+        '<button class="qbtn plus" onclick="bumpQty(\''+plKey+'\',1)">+</button>' +
+      '</div>' +
+      '<div style="font-size:9.5px;color:#0369a1;text-align:center;margin-top:2px;font-weight:700">🏗 파레트 / Pallet</div>'
+    ) : '';
+    const recTools  = window.kmRecs ? window.kmRecs.toggleHTML(p.id)  : '';
+    const recUnit   = window.kmRecs ? window.kmRecs.defaultUnit(p) : 'cs';
+    const recBadges = window.kmRecs ? (window.kmRecs.badgeHTML(p.id) + window.kmRecs.noteHTML(p.id, recUnit)) : '';
+    const recRing   = window.kmRecs ? window.kmRecs.cardClass(p.id) : '';
+    // 🎯 발주 가이드 배너 — 케이스 입력란 바로 위. 매니저가 사장님 OVER 갯수를
+    //   명확히 보고 탭하면 그 수량이 케이스 입력란에 자동 입력 (setQty).
+    const overGuide = window.kmRecs ? window.kmRecs.orderGuideHTML(p.id, recUnit, "setQty('"+p.detailId+"',{q})") : '';
+    const _vimg = (window.kmImg ? (window.kmImg.get('rhee_full', p.id) || '') : '') || p.image;
+    const _ibtn = window.kmImg ? window.kmImg.btnHtml('rhee_full', p.id, !!_vimg) : '';
+    return (
+      '<div class="card ' + (anyQty?'has-qty':'') + recRing + '" onclick="openPd(\''+p.detailId+'\')">' +
+        (p.isNew ? '<span class="new-badge">NEW</span>' : '') +
+        '<img class="pimg" src="' + esc(_vimg) + '" loading="lazy" onerror="this.style.visibility=\'hidden\';this.style.background=\'#f0f0f0\'">' + _ibtn +
+        '<div class="pbody">' +
+          '<div class="pname" title="' + esc(p.name) + '">' + esc(p.name) + recBadges + '</div>' +
+          recTools +
+          '<div class="pmeta"><span class="code">#' + esc(p.id) + '</span> · ' + esc(p.packSize||'-') + '</div>' +
+          (p.barcodeDisplay ? '<div class="pmeta" style="font-family:monospace;font-size:9.5px;color:#666">' + esc(p.barcodeDisplay) + '</div>' : '') +
+          (p.brand ? '<div class="pbrand">' + esc(p.brand) + '</div>' : '') +
+          ((typeof VelaStock !== 'undefined' && VelaStock.badgeHtml(p)) ? '<div style="margin:2px 0 4px">' + VelaStock.badgeHtml(p) + '</div>' : '') +
+          overGuide +
+          '<div class="qrow" onclick="event.stopPropagation()">' +
+            '<button class="qbtn minus" onclick="bumpQty(\''+p.detailId+'\',-1)"' + (qty<=0?' disabled':'') + '>−</button>' +
+            '<button class="qnum" onclick="event.stopPropagation();openQtyInput(\''+p.detailId+'\','+qty+')">' + qty + '</button>' +
+            '<button class="qbtn plus" onclick="bumpQty(\''+p.detailId+'\',1)">+</button>' +
+          '</div>' +
+          '<div style="font-size:9.5px;color:#1a5c3a;text-align:center;margin-top:2px;font-weight:700">📦 케이스 / CS</div>' +
+          eaRow +
+          plRow +
+        '</div>' +
+      '</div>'
+    );
+  }).join('');
+  updateCartBar();
+}
+
+function clearFilters(){
+  CUR_GROUP = ''; CUR_CAT = '';
+  $('search').value = '';
+  buildGroups(); buildCategorySelect(); render();
+}
+
+function openQtyInput(id, current){
+  const v = prompt('수량 입력 (숫자):', current);
+  if (v === null) return;
+  const n = parseInt(v, 10);
+  if (!isNaN(n) && n >= 0) setQty(id, n);
+}
+function bumpQty(id, delta){
+  const cur = CART[id] || 0;
+  const next = Math.max(0, Math.min(999, cur + delta));
+  if (next === 0) delete CART[id];
+  else CART[id] = next;
+  saveCart();
+  render();
+  if ($('cart-modal').classList.contains('show')) renderCart();
+  if ($('pd-modal').classList.contains('show') && CURRENT_PD_ID === id) {
+    const input = $('pd-qty-input');
+    if (input) input.value = next;
+  }
+}
+function setQty(id, n){
+  const v = Math.max(0, Math.min(999, parseInt(n,10) || 0));
+  if (v === 0) delete CART[id];
+  else CART[id] = v;
+  saveCart();
+  render();
+  if ($('cart-modal').classList.contains('show')) renderCart();
+}
+
+// 3-tier pack sizes like "12/ 15/ 1.76 OZ" support per-ea ordering too.
+function parsePackSize(s){
+  const m = String(s||'').match(/^\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(.+)$/i);
+  if (!m) return null;
+  const outer = +m[1], pack = +m[2];
+  if (!(outer > 0 && pack > 1)) return null;
+  return { outer, pack, unit: m[3].trim() };
+}
+function eaIdOf(id){ return id + '__EA'; }
+function plIdOf(id){ return id + '__PL'; }
+function isEaId(id){ return String(id).endsWith('__EA'); }
+function isPlId(id){ return String(id).endsWith('__PL'); }
+function baseIdOf(id){ return String(id).replace(/__(EA|PL)$/, ''); }
+
+function updateCartBar(){
+  const types = Object.keys(CART).length;
+  const units = Object.values(CART).reduce((s,n)=>s+n, 0);
+  $('cart-badge').textContent = units;
+  const bar = $('cart-bar');
+  if (types > 0){
+    bar.classList.add('show');
+    $('cart-summary').innerHTML = t('summary', {types, units});
+  } else {
+    bar.classList.remove('show');
+  }
+}
+
+/* -------- PRODUCT DETAIL MODAL -------- */
+function openPd(detailId){
+  const p = BY_ID[detailId];
+  if (!p) return;
+  CURRENT_PD_ID = detailId;
+  const curQty = CART[detailId] || 0;
+
+  const body = $('pd-body');
+  body.innerHTML =
+    '<div class="pd-img-wrap">' +
+      '<img class="pd-img" src="' + esc(p.image) + '" onerror="this.style.visibility=\'hidden\'">' +
+    '</div>' +
+    '<div class="pd-info">' +
+      '<div class="pd-name">' + esc(p.name) + (p.isNew ? '<span class="pd-new">NEW</span>' : '') + '</div>' +
+      '<table class="pd-table">' +
+        (p.brand ? '<tr><td class="label">' + t('brand') + '</td><td class="value">' + esc(p.brand) + '</td></tr>' : '') +
+        (p.category ? '<tr><td class="label">' + t('category') + '</td><td class="value">' + esc(p.category) + '</td></tr>' : '') +
+        '<tr><td class="label">' + t('itemNo') + '</td><td class="value code">#' + esc(p.id) + '</td></tr>' +
+        (p.packSize ? '<tr><td class="label">' + t('packSize') + '</td><td class="value">' + esc(p.packSize) + '</td></tr>' : '') +
+        (p.minOrder ? '<tr><td class="label">' + t('minOrder') + '</td><td class="value">' + esc(p.minOrder) + '</td></tr>' : '') +
+        (p.barcode ? '<tr><td class="label">' + t('barcode') + '</td><td class="value barcode">' + esc(p.barcode) + '</td></tr>' : '') +
+      '</table>' +
+    '</div>' +
+    '<div class="pd-qty-section">' +
+      '<div class="pd-qty-label">' + t('orderQty') + '</div>' +
+      '<div class="pd-qty-row">' +
+        '<button onclick="pdBump(-1)">−</button>' +
+        '<input type="number" min="0" max="999" id="pd-qty-input" value="' + curQty + '" onchange="pdSetQty(this.value)">' +
+        '<button onclick="pdBump(1)">+</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="pd-foot">' +
+      '<button class="outline" onclick="closePd()">' + (LANG==='ko'?'닫기':'Close') + '</button>' +
+      (curQty > 0
+        ? '<button class="primary" onclick="pdRemove()">' + t('removeCart') + '</button>'
+        : '<button class="primary" onclick="pdAddToCart()">+ ' + t('addCart') + '</button>'
+      ) +
+    '</div>';
+
+  $('pd-header').textContent = '#' + p.id;
+  $('pd-modal').classList.add('show');
+}
+
+function closePd(){
+  $('pd-modal').classList.remove('show');
+  CURRENT_PD_ID = '';
+}
+
+function pdBump(delta){
+  if (!CURRENT_PD_ID) return;
+  const input = $('pd-qty-input');
+  const cur = parseInt(input.value, 10) || 0;
+  const next = Math.max(0, Math.min(999, cur + delta));
+  input.value = next;
+}
+function pdSetQty(v){
+  const input = $('pd-qty-input');
+  const n = Math.max(0, Math.min(999, parseInt(v, 10) || 0));
+  input.value = n;
+}
+function pdAddToCart(){
+  const input = $('pd-qty-input');
+  let n = parseInt(input.value, 10) || 0;
+  if (n <= 0) n = 1;
+  CART[CURRENT_PD_ID] = n;
+  saveCart();
+  render();
+  toast(t('added'));
+  // Refresh modal footer (to show "remove" button now that item is in cart)
+  openPd(CURRENT_PD_ID);
+}
+function pdRemove(){
+  if (!CURRENT_PD_ID) return;
+  delete CART[CURRENT_PD_ID];
+  saveCart();
+  render();
+  toast(t('removed'));
+  closePd();
+}
+
+/* -------- CART MODAL -------- */
+function openCart(){ renderCart(); $('cart-modal').classList.add('show'); }
+function closeCart(){ $('cart-modal').classList.remove('show'); }
+function renderCart(){
+  const entries = Object.entries(CART);
+  const body = $('cart-body');
+  if (!entries.length){
+    body.innerHTML = '<div class="empty" style="padding:40px 10px"><div class="big">🛒</div>' + t('empty') + '</div>';
+    $('cart-counts-text').innerHTML = '';
+    return;
+  }
+  body.innerHTML = entries.map(([id, qty]) => {
+    const ea = isEaId(id);
+    const pl = isPlId(id);
+    const lookupId = (ea || pl) ? baseIdOf(id) : id;
+    const p = BY_ID[lookupId];
+    if (!p) return '';
+    const pack = ea ? parsePackSize(p.packSize) : null;
+    const sizeLabel = ea && pack ? ('1 pc (' + pack.unit + ')') : (pl ? '1 pallet' : (p.packSize||'-'));
+    const unitChip = ea
+      ? '<span style="display:inline-block;background:#ff9800;color:#fff;font-weight:800;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:6px">🥬 ea</span>'
+      : pl
+      ? '<span style="display:inline-block;background:#0284c7;color:#fff;font-weight:800;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:6px">🏗 PL</span>'
+      : '<span style="display:inline-block;background:#1976d2;color:#fff;font-weight:800;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:6px">CS</span>';
+    const tailColor = ea ? '#ff9800' : pl ? '#0284c7' : '#1976d2';
+    const tailLbl   = ea ? '🥬 ea'  : pl ? '🏗 PL'  : 'cs';
+    return (
+      '<div class="ci" onclick="closeCart();openPd(\''+p.detailId+'\');">' +
+        '<img src="' + esc(p.image) + '" onerror="this.style.visibility=\'hidden\'">' +
+        '<div class="ci-info">' +
+          '<div class="ci-name">' + esc(p.name) + unitChip + '</div>' +
+          '<div class="ci-meta">#' + esc(p.id) + ' · ' + esc(sizeLabel) + (p.brand?' · ' + esc(p.brand):'') + '</div>' +
+        '</div>' +
+        '<div class="ci-qrow" onclick="event.stopPropagation()">' +
+          '<button onclick="bumpQty(\''+id+'\',-1)">−</button>' +
+          '<input type="number" min="0" max="999" value="'+qty+'" onchange="setQty(\''+id+'\', this.value)">' +
+          '<button onclick="bumpQty(\''+id+'\',1)">+</button>' +
+          '<span style="font-size:12px;font-weight:800;margin-left:6px;color:' + tailColor + '">' + tailLbl + '</span>' +
+        '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  const types = entries.length;
+  const units = entries.reduce((s, [,q]) => s + q, 0);
+  $('cart-counts-text').innerHTML = t('summary', {types, units});
+}
+
+/* -------- EXPORT -------- */
+function clearCart(){
+  const types = Object.keys(CART).length;
+  if (!types) return;
+  // 🛡️ 2026-06-08: 공유 카트 보호 — 강화된 confirm + 자동 백업.
+  //   다른 매니저들이 추가한 주문이 한 번에 사라지는 사고 방지.
+  const units = Object.values(CART).reduce((s,n)=>s+(+n||0),0);
+  const b = getBranchId();
+  const u = (function(){ try { return JSON.parse(localStorage.getItem('chat.me')||'null')?.name || ''; } catch(_){ return ''; } })();
+  const branchLbl = b || '?';
+  const warn = `⚠️ 공유 주문 카트입니다.\n\n[${branchLbl}] 지점의 다른 매니저·직원이 추가한 모든 주문이 사라집니다:\n  · ${types}종 / ${units}개 품목\n\n정말 전체를 비우시겠어요?\n(비우기 전 자동 백업되어 24시간 내 복구 가능)`;
+  if (!confirm(warn)) return;
+  // 🗂 자동 백업 — Firebase RTDB 의 history 경로에 timestamp 별 저장
+  try {
+    if (b && typeof set === 'function' && typeof ref === 'function' && typeof db !== 'undefined'){
+      const ts = String(Date.now());
+      const snapshot = {};
+      for (const k of Object.keys(CART)) snapshot[k] = CART[k];
+      set(ref(db, 'carts/rheebros/' + b + '/_shared_history/' + ts), {
+        ts: +ts, by: u || 'unknown', types, units, cart: snapshot
+      }).catch(e => console.warn('clear backup failed', e));
+    }
+  } catch(e){ console.warn('clear backup error', e); }
+  for (const k in CART) delete CART[k];
+  saveCart();
+  render();
+  renderCart();
+  toast('✓ 비웠음 (백업 보관 중)');
+}
+
+function buildOrderText(){
+  const entries = Object.entries(CART);
+  if (!entries.length) return '';
+  const today = new Date().toISOString().slice(0,10);
+  const lines = ['[김치마트 주문 - RHEE BROS / ' + today + ']', ''];
+  entries.forEach(([id, qty]) => {
+    const ea = isEaId(id);
+    const pl = isPlId(id);
+    const lookupId = (ea || pl) ? baseIdOf(id) : id;
+    const p = BY_ID[lookupId];
+    if (!p) return;
+    const unit = ea ? '🥬 pc' : pl ? '🏗 PL' : 'CS';
+    lines.push('[' + unit + '] #' + p.id + '  ×' + qty + '  ' + p.name + '  (' + (p.packSize||'-') + ')');
+  });
+  const units = entries.reduce((s, [,q]) => s + q, 0);
+  lines.push('', '합계: ' + entries.length + '종 / ' + units + '개');
+  return lines.join('\n');
+}
+
+function copyOrderText(){
+  const txt = buildOrderText();
+  if (!txt){ toast(t('noCart')); return; }
+  if (navigator.clipboard){
+    navigator.clipboard.writeText(txt).then(
+      () => toast(t('copied')),
+      () => fallbackCopy(txt)
+    );
+  } else fallbackCopy(txt);
+}
+function fallbackCopy(txt){
+  const ta = document.createElement('textarea');
+  ta.value = txt;
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); toast(t('copied')); }
+  catch(e){ toast('복사 실패'); }
+  document.body.removeChild(ta);
+}
+
+function exportOrder(){
+  const entries = Object.entries(CART);
+  if (!entries.length){ toast(t('noCart')); return; }
+  const header = ['Unit', 'ItemCode', 'Product Name', 'Brand', 'Group', 'Category', 'Pack Size', 'Min Order', 'Barcode', 'Order Qty'];
+  const rows = entries.map(([id, qty]) => {
+    const ea = isEaId(id);
+    const pl = isPlId(id);
+    const lookupId = (ea || pl) ? baseIdOf(id) : id;
+    const p = BY_ID[lookupId] || {};
+    const unit = ea ? 'PC' : pl ? 'PL' : 'CS';
+    return [unit, p.id||'', p.name||'', p.brand||'', p.group||'', p.category||'', p.packSize||'', p.minOrder||'', p.barcode||'', qty];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  ws['!cols'] = [{wch:6},{wch:10},{wch:44},{wch:16},{wch:10},{wch:24},{wch:14},{wch:10},{wch:14},{wch:10}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '주문');
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, 'RheeBros_Order_' + today + '.xlsx');
+  toast('✓ 엑셀 저장 완료');
+}
+
+// Download the xlsx and open the mail client with the order pre-filled so the
+// user just has to attach the file that was just saved. mailto: has no
+// attachment mechanism — this gives the next-best one-click flow.
+function emailOrder(){
+  const txt = buildOrderText();
+  if (!txt){ toast(t('noCart')); return; }
+  exportOrder();
+  const branch = (localStorage.getItem('km_branch') || '').toUpperCase();
+  const today = new Date().toISOString().slice(0,10);
+  const subject = 'RheeBros Order' + (branch ? ' - ' + branch : '') + ' - ' + today;
+  const body = txt + '\n\n(엑셀 파일이 다운로드 폴더에 저장되었습니다. 첨부해 주세요.)';
+  const href = 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  window.location.href = href;
+  toast('✉ 메일 앱 열림');
+}
+
+/* -------- INIT -------- */
+setLang(LANG);
+$('cart-modal').addEventListener('click', (e) => { if (e.target.id === 'cart-modal') closeCart(); });
+$('pd-modal').addEventListener('click', (e) => { if (e.target.id === 'pd-modal') closePd(); });
+</script>
+
+<!-- Real-time cart sync per branch (mirrors the main order app) -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getDatabase, ref, set, onValue, remove, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+  authDomain: "kimchi-mart-order.firebaseapp.com",
+  databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+  projectId: "kimchi-mart-order",
+  storageBucket: "kimchi-mart-order.firebasestorage.app",
+  messagingSenderId: "640942647201",
+  appId: "1:640942647201:web:1e3421fb55c89155230de0"
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const auth = getAuth(app);
+// If Firebase auth is restored from shared IndexedDB, unlock. Otherwise
+// bounce to the Manager Apps login (single shared password for the whole
+// suite). Small grace window so a slow IndexedDB cold-start doesn't kick
+// the user out when they're actually authenticated.
+let _authBouncedR = false;
+function _bounceToManagerLogin(){
+  if (_authBouncedR) return;
+  _authBouncedR = true;
+  const ret = encodeURIComponent(location.pathname + location.search);
+  location.replace('https://specialmasterdj-sketch.github.io/kfood-guide/auth.html?return=' + ret);
+}
+// Wait for the authoritative onAuthStateChanged signal instead of a short
+// timer — Firebase fires it only AFTER restoring the session from IndexedDB,
+// so a slow cold-start no longer triggers a premature bounce → login loop.
+// The timer is just a 10s safety net in case Firebase never initialises.
+// 🛑 2026-07-27 no-kick: 이름 등록된 기기(chat.me)는 세션이 만료돼도 강제
+// 이동하지 않고 상단 배너로만 재로그인 안내 (작업 화면 유지).
+function _softKickR(){
+  if (window.kmSoftGate && window.kmSoftGate.hasLocalMe()){
+    const ret = encodeURIComponent(location.pathname + location.search);
+    window.kmSoftGate.showReloginBanner('https://specialmasterdj-sketch.github.io/kfood-guide/auth.html?return=' + ret);
+    return;
+  }
+  _bounceToManagerLogin();
+}
+let _authGraceTimer = setTimeout(() => {
+  if (!auth.currentUser) _softKickR();
+}, 10000);
+onAuthStateChanged(auth, (user) => {
+  clearTimeout(_authGraceTimer);
+  if (user) {
+    if (window.kmSoftGate) window.kmSoftGate.hideReloginBanner();
+    if (window.kmRecs) window.kmRecs.refresh();
+    return;
+  }
+  // Genuinely signed out (not a race) — 등록된 기기는 배너만.
+  _softKickR();
+});
+
+// Wire recommend.js to this page's Firebase handle.
+if (window.kmRecs){
+  window.kmRecs.init({
+    db, ref, set, onValue, remove,
+    vendor: 'rhee_full',
+    branch: (function(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } })()
+  });
+  window.kmRecs.subscribe(() => { try { if (typeof render === 'function') render(); } catch(e){} });
+}
+
+// 상품 사진 모듈(window.kmImg) — 빈 상품에 사진 추가 → 공유.
+if (window.kmImg){
+  const storage = getStorage(app);
+  window.kmImg.init({ db, ref, set, get, onValue, remove, storage, sRef, uploadBytes, getDownloadURL });
+  window.kmImg.subscribe(() => { try { if (typeof render === 'function') render(); } catch(e){} });
+}
+
+let applyingRemote = false;
+let unsub = null;
+function getBranch(){ try { return localStorage.getItem('km_branch') || ''; } catch(e){ return ''; } }
+function getUser(){
+  try {
+    const me = JSON.parse(localStorage.getItem('chat.me') || 'null');
+    const raw = (me && me.name || '').trim();
+    if (!raw) return '';
+    return raw.replace(/[.#$\[\]\/\s]/g, '_').slice(0, 40);
+  } catch(e){ return ''; }
+}
+// Hollywood = ONE shared branch cart so its managers build a single RHEE
+// BROS order together. It starts EMPTY; each manager merges their own saved
+// order in with the "내 기존 주문 합치기" button. Per-user carts are NEVER
+// written or deleted in shared mode, so nothing is ever lost. Other branches
+// stay per-user isolated.
+// 🆕 2026-06-08 사장님 지시: 모든 지점 공유 카트 모드. 매니저/직원이 한 지점
+//   카트에 같이 RHEE BROS 주문을 빌드. 사장님 owner 도 같이 합류 (예외 X).
+//   지점별 독립 — Miami 카트와 Hollywood 카트는 서로 안 보임.
+function isSharedBranch(b){
+  return !!String(b || '').trim();   // 지점 ID 가 있으면 항상 공유
+}
+function path(b, u){
+  // 공유 카트는 carts/rheebros/<branch>/_shared 한 곳에서 협업.
+  // u 파라미터는 history 백업 시 actor 식별용으로만 사용.
+  return 'carts/rheebros/' + b + '/_shared';
+}
+
+window.cloudPushCart = function(cart){
+  if (applyingRemote) return;
+  const b = getBranch(), u = getUser();
+  if (!b || (!isSharedBranch(b) && !u)) return;
+  const clean = {};
+  for (const k in cart){ if (cart[k] > 0) clean[k] = cart[k]; }
+  set(ref(db, path(b, u)), clean).catch(e => console.warn('cart push failed', e));
+};
+
+function subscribe(){
+  if (unsub){ try { unsub(); } catch(e){} unsub = null; }
+  const b = getBranch(), u = getUser();
+  if (!b || (!isSharedBranch(b) && !u)) return;
+  if (window.__rheeSharedBanner) window.__rheeSharedBanner();
+  console.info('[Firebase] RheeBros subscribing to ' + path(b, u));
+  unsub = onValue(ref(db, path(b, u)), (snap) => {
+    // Mirror remote authoritatively (Hollywood shares one cart; others are
+    // per-user). Latest save wins so co-editors always see the same order.
+    const remote = snap.val() || {};
+    applyingRemote = true;
+    try { if (window.KM_W) window.KM_W.applyRemote(remote); }
+    finally { applyingRemote = false; }
+  }, (err) => console.warn('cart read failed', err));
+}
+
+// --- Hollywood shared cart: explicit, per-manager merge of their own saved
+// order into the shared cart. Reads the user's per-user cart ONCE and adds
+// (sums) it into _shared. Never deletes the per-user cart. ---
+window.mergeMyOrderToShared = async function(){
+  const b = getBranch();
+  if (!isSharedBranch(b)) return;
+  const u = getUser();
+  if (!u){ try { toast('먼저 본인 이름을 확인하세요'); } catch(_){} return; }
+  try {
+    const mineSnap = await get(ref(db, 'carts/rheebros/' + b + '/' + u));
+    const mine = mineSnap.val() || {};
+    const items = Object.keys(mine).filter(k => mine[k] > 0);
+    if (!items.length){ try { toast('합칠 내 주문이 없습니다'); } catch(_){} return; }
+    if (!window.confirm('내 기존 주문 ' + items.length + '개 품목을 공유 주문에 더합니다.\n(같은 품목은 수량이 합산됩니다) 계속할까요?')) return;
+    const sref = ref(db, 'carts/rheebros/' + b + '/_shared');
+    const curSnap = await get(sref);
+    const merged = Object.assign({}, curSnap.val() || {});
+    for (const pid of items){ merged[pid] = (merged[pid] || 0) + mine[pid]; }
+    await set(sref, merged);
+    try { toast('✅ 공유 주문에 추가했습니다 (' + items.length + '개 품목)'); } catch(_){}
+  } catch(e){ console.warn('merge to shared failed', e); try { toast('합치기 실패: ' + (e.message || e)); } catch(_){} }
+};
+
+// Hollywood-only banner with the merge button (added above the product grid).
+window.__rheeSharedBanner = function(){
+  const existing = document.getElementById('rhee-shared-bar');
+  if (!isSharedBranch(getBranch())){ if (existing) existing.remove(); return; }
+  if (existing) return;
+  const grid = document.getElementById('grid');
+  if (!grid || !grid.parentNode) return;
+  const bar = document.createElement('div');
+  bar.id = 'rhee-shared-bar';
+  bar.style.cssText = 'margin:8px 10px;padding:10px 12px;background:#eef7ee;border:1.5px solid #2E7D32;border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  bar.innerHTML = '<span style="font-size:12.5px;font-weight:800;color:#1B5E20;flex:1;min-width:150px">🤝 헐리우드 공유 주문 — 직원이 함께 담는 하나의 주문</span>' +
+    '<button onclick="window.mergeMyOrderToShared()" style="background:#2E7D32;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit">➕ 내 기존 주문 합치기</button>';
+  grid.parentNode.insertBefore(bar, grid);
+};
+
+subscribe();
+// Exposed hook so the branch selector can re-subscribe after picking a branch.
+window.__wismRefreshSub = subscribe;
+// Re-subscribe if the user changes branch OR identity in another tab.
+window.addEventListener('storage', (e) => {
+  if (e.key === 'km_branch' || e.key === 'chat.me') subscribe();
+});
+console.info('[Firebase] RheeBros cart sync active (per branch × per user)');
+</script>
+</body>
+</html>
