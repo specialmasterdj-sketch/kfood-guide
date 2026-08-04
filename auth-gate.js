@@ -252,6 +252,34 @@ async function _restGet(path, user){
   return undefined;   // 실패 (null 데이터와 구분)
 }
 
+// 🩹 사전승인(phoneRoster/부트스트랩)된 사용자가 pending 으로 잡히면 즉시 approved 로 복구.
+//   프로필 읽기 타이밍/다중 uid 등으로 정상 매니저가 대기화면에 갇히는 것을 자동 해소.
+async function _rescuePendingIfPreapproved(user, profile){
+  try {
+    const boot = bootstrapForUser(user);
+    let roster = null;
+    if (!boot && user && user.phoneNumber) {
+      const rk = String(user.phoneNumber).replace(/\D/g, '');
+      try { const v = await _restGet('phoneRoster/' + rk, user); if (v) roster = v; } catch(_){}
+    }
+    // 복구 조건: ① 부트스트랩 관리자 · ② 전화 사전명단(phoneRoster) · ③ 이전에 이미 승인된 적 있는
+    //   기록(approvedAt 존재)이 어떤 이유로 pending 으로 뒤바뀐 경우. 셋 다 아니면 진짜 대기 유지.
+    const wasApproved = !!(profile && profile.approvedAt);
+    const eff = boot || roster;
+    if (!eff && !wasApproved) return;   // 명단에도 없고 승인 이력도 없음 → 대기(승인 필요) 유지
+    const upgraded = Object.assign({}, profile, {
+      status: 'approved',
+      role:   boot?.role   || roster?.role   || profile.role   || null,
+      branch: boot?.branch || roster?.branch || profile.branch || null,
+      name:   boot?.name   || roster?.name   || profile.name,
+      approvedAt: profile.approvedAt || Date.now(),
+      approvedBy: profile.approvedBy || (boot ? 'bootstrap-selfheal' : (roster ? 'roster-selfheal' : 'reapprove-selfheal')),
+    });
+    const put = await _restPutProfile(user, upgraded);
+    if (put.ok) { gateTrace('gate:pending-selfheal', (upgraded.role||'') + '/' + (upgraded.branch||'')); applyStatus(user, upgraded); }
+  } catch(_){}
+}
+
 // Core gate — v5: 프로필 확인은 REST(재시도)로 즉시 결정, onValue 는 라이브 승인
 // 갱신용 best-effort. 매니저 승인 반영은 pending 상태에서 15초 REST 폴링이 백업.
 let __unsubProfile = null;
@@ -269,6 +297,10 @@ function applyStatus(user, profile){
     if (__pendingPoll) { clearInterval(__pendingPoll); __pendingPoll = null; }
     syncToChatMe(profile);
   } else if (profile.status === 'pending') {
+    // 🩹 2026-08-04 자가치유: phoneRoster/부트스트랩에 사전등록된(=이미 승인된) 매니저가
+    //   어떤 이유로든 pending 으로 잡히면 자동 승인 복구. "매일 잘되다 가끔 승인 대기중"으로
+    //   막히던 정상 매니저 로그인 문제 해결 (모르는 사람은 명단에 없으니 그대로 대기).
+    _rescuePendingIfPreapproved(user, profile);
     showOverlay({ kind:'pending', user, profile });
     // onValue 가 죽어있어도 매니저 승인이 반영되도록 REST 폴링 백업
     if (!__pendingPoll) {
