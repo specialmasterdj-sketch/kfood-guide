@@ -224,10 +224,12 @@ const I18N = {
  secDesk:{ko:'③-2 데스크 업무 점수 — 인상·승진 2순위 지표',en:'③-2 Desk Work Score — #2 factor for raises',es:'③-2 Puntaje de trabajo — factor #2'},
  secDeskB:{ko:'업무지시 앱 자동 합산',en:'auto from Task app',es:'auto desde app de tareas'},
  dh:{ko:['월','완료 건수','업무 점수'],en:['Month','Tasks done','Work pts'],es:['Mes','Tareas','Puntos']},
- deskLoading:{ko:'업무 점수 불러오는 중…',en:'Loading work score…',es:'Cargando puntaje…'},
- deskEmpty:{ko:'최근 6개월 완료한 업무 기록이 없습니다',en:'No completed tasks in the last 6 months',es:'Sin tareas completadas en 6 meses'},
- deskTotal:{ko:'합계 (최근 6개월)',en:'Total (last 6 months)',es:'Total (6 meses)'},
- chipDesk:{ko:(n)=>'📋 업무 점수 '+n+'pt (6개월)',en:(n)=>'📋 Work '+n+'pt (6mo)',es:(n)=>'📋 Trabajo '+n+'pt (6m)'},
+ deskLoading:{ko:'업무 점수 불러오는 중… (첫 로딩만 잠깐 걸려요)',en:'Loading work score… (first load only)',es:'Cargando puntaje… (solo la 1ra vez)'},
+ deskEmpty:{ko:'최근 4개월 완료한 업무 기록이 없습니다',en:'No completed tasks in the last 4 months',es:'Sin tareas completadas en 4 meses'},
+ deskSlow:{ko:'⏱ 데이터가 많아 시간이 걸려요.',en:'⏱ Lots of data — taking a while.',es:'⏱ Muchos datos — tarda un poco.'},
+ deskRetry:{ko:'다시 시도',en:'Retry',es:'Reintentar'},
+ deskTotal:{ko:'합계 (최근 4개월)',en:'Total (last 4 months)',es:'Total (4 meses)'},
+ chipDesk:{ko:(n)=>'📋 업무 점수 '+n+'pt (4개월)',en:(n)=>'📋 Work '+n+'pt (4mo)',es:(n)=>'📋 Trabajo '+n+'pt (4m)'},
  loadingRoster:{ko:'직원 명단 불러오는 중…',en:'Loading staff list…',es:'Cargando lista…'},
  hire:{ko:'입사일',en:'Hire date',es:'Fecha de ingreso'}, dept:{ko:'부서',en:'Department',es:'Departamento'},
  emp_type:{ko:'고용 형태',en:'Employment type',es:'Tipo de empleo'}, phone:{ko:'전화',en:'Phone',es:'Teléfono'},
@@ -373,6 +375,8 @@ async function loadRoster(){
     const ini = String(e.name).trim().charAt(0).toUpperCase();
     return `<div class="emp-chip" onclick="openCard('${esc(e.name)}','${esc(e.role||'')}')"><div class="av">${ini}</div><div>${esc(e.name)}<small>${esc(e.role||'')}</small></div></div>`;
   }).join('');
+  // 🔥 데스크 업무 점수용 tasks 트리를 미리 백그라운드 로드 — 직원 클릭 시 즉시 표시
+  try { if (typeof hrFetchBranchTasks==='function') hrFetchBranchTasks().catch(()=>{}); } catch(_){}
 }
 
 // ================= 카드 =================
@@ -1010,32 +1014,45 @@ function hrTaskScore(tk){
   if (tk && /invoice.*comp|인보이스.*컴퓨터|컴퓨터.*인보이스/i.test(String(tk.name||''))) return 2;
   return (typeof (tk&&tk.points)==='number' && tk.points>=1 && tk.points<=5) ? tk.points : 1;
 }
-// 최근 6개월 시작 날짜키 (YYYY-MM-01) — orderByKey startAt 용
+// 최근 N개월 시작 날짜키 (YYYY-MM-01) — orderByKey startAt 용. 데스크 점수는
+//   6월 캡 시작 이후가 핵심이라 4개월이면 충분(전체 트리 다운로드 부담 ↓).
+const HR_DESK_MONTHS = 4;
 function hrDeskStartKey(){
-  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-5);
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-(HR_DESK_MONTHS-1));
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01';
+}
+// 오래 걸리면 멈춘 것처럼 보이지 않게 타임아웃 처리 (기본 14초)
+function hrWithTimeout(promise, ms){
+  return new Promise((resolve,reject)=>{
+    const to = setTimeout(()=>reject(new Error('__hr_timeout__')), ms||14000);
+    promise.then(v=>{ clearTimeout(to); resolve(v); }, e=>{ clearTimeout(to); reject(e); });
+  });
 }
 let DESK_TREE = null;   // { branch, tree } — 지점별 task 트리 캐시 (직원 클릭마다 재요청 방지)
 async function hrFetchBranchTasks(){
   if (DESK_TREE && DESK_TREE.branch===BRANCH) return DESK_TREE.tree;
-  const fb = window.__fb; let tree = {};
-  try {
-    const q = fb.query(fb.ref(fb.db,'tasks/'+BRANCH), fb.orderByKey(), fb.startAt(hrDeskStartKey()));
-    const s = await fb.get(q); tree = s.exists()? s.val() : {};
-  } catch(e){
-    try { const s2 = await fb.get(fb.ref(fb.db,'tasks/'+BRANCH)); tree = s2.exists()? s2.val() : {}; }
-    catch(_){ tree = {}; }
-  }
+  const fb = window.__fb;
+  // ⏱️ startAt 으로 최근 몇 달치만 — 전체 히스토리 다운로드 방지(무한 대기의 주 원인).
+  const q = fb.query(fb.ref(fb.db,'tasks/'+BRANCH), fb.orderByKey(), fb.startAt(hrDeskStartKey()));
+  const s = await hrWithTimeout(fb.get(q), 14000);
+  const tree = s.exists()? s.val() : {};
   DESK_TREE = { branch:BRANCH, tree };
   return tree;
 }
+window.reloadDeskScore = function(){ DESK_TREE=null; if(EMP) loadDeskScore(EMP.name); };
 async function loadDeskScore(name){
   const el = document.getElementById('deskTbl'); if(!el) return;
   el.innerHTML = '<tr><td class="muted">'+t('deskLoading')+'</td></tr>';
   SUM.deskPts = null;
   let tree;
   try { tree = await hrFetchBranchTasks(); }
-  catch(e){ el.innerHTML = '<tr><td class="muted">'+esc(e.message||e)+'</td></tr>'; return; }
+  catch(e){
+    if (!EMP || hrAggKey(EMP.name)!==hrAggKey(name)) return;
+    const slow = String(e&&e.message).indexOf('__hr_timeout__')>=0;
+    el.innerHTML = '<tr><td class="muted">'+(slow?t('deskSlow'):esc(e.message||e))+
+      ' <button class="btn small" style="margin-left:8px" onclick="reloadDeskScore()">↻ '+t('deskRetry')+'</button></td></tr>';
+    return;
+  }
   // 최신 직원이 바뀌었으면(빠른 연속 클릭) 이 결과는 버림
   if (!EMP || hrAggKey(EMP.name)!==hrAggKey(name)) return;
   const target = hrAggKey(name);
