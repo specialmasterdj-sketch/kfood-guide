@@ -1779,6 +1779,36 @@ async function saveMe(){
     }
   }
 
+  // 📱 2026-08-08 사장님 지시: 어떤 계정(이름)이든 처음 로그인(SMS 문자 인증)과 같은 본인 확인.
+  //   각 이름은 처음 선택될 때 현재 문자 인증된 전화번호(또는 로그인 계정)에 귀속되고,
+  //   이후 다른 번호로 로그인한 사람은 그 이름을 쓸 수 없음. 해제 = chat/identityBind 노드 삭제(오너).
+  try {
+    const fbU = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
+    if (fbU) {
+      const claimKey = fbU.phoneNumber || ('uid:' + fbU.uid);
+      const bindPath = `chat/identityBind/${branchId}/${nameSlug(name)}`;
+      let bind = null;
+      try { const br = await fetch(`${FB_DB_URL}/${bindPath}.json?t=` + Date.now(), {cache:'no-store'}); if (br.ok) bind = await br.json(); } catch(_){}
+      if (bind && bind.key && bind.key !== claimKey) {
+        const tail = String(bind.phone || bind.key || '').slice(-4);
+        const bm = {ko:`🔒 "${name}" 이름은 이미 다른 전화번호(끝 ${tail})의 문자 인증에 등록되어 있습니다.\n본인 이름이 맞으면 오너에게 초기화를 요청하세요.`,
+                    en:`🔒 "${name}" is already registered to a different verified phone (ending ${tail}).\nIf this is really your name, ask the owner to reset it.`,
+                    es:`🔒 "${name}" ya está registrado con otro teléfono verificado (termina en ${tail}).\nSi es tu nombre, pide al dueño restablecerlo.`};
+        alert(bm[LANG] || bm.ko); return;
+      }
+      if (!bind || !bind.key) {
+        const cm = {ko:`📱 "${name}" 이름을 지금 문자 인증된 전화번호에 등록합니다.\n앞으로 이 번호로 로그인한 기기에서만 이 이름을 쓸 수 있습니다.\n진행할까요?`,
+                    en:`📱 "${name}" will be linked to your SMS-verified phone.\nOnly logins from this phone number can use this name from now on.\nContinue?`,
+                    es:`📱 "${name}" se vinculará a tu teléfono verificado por SMS.\nSolo los inicios de sesión con este número podrán usar este nombre.\n¿Continuar?`};
+        if (!confirm(cm[LANG] || cm.ko)) return;
+        try {
+          await fetch(`${FB_DB_URL}/${bindPath}.json`, { method:'PUT', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ key: claimKey, phone: fbU.phoneNumber || '', at: Date.now(), by: name }) });
+        } catch(_){}
+      }
+    }
+  } catch(_){}
+
   me = { name, branch: branchId, color: colorFor(name), role, isManager: isManagerRole(role) };
   localStorage.setItem('chat.me', JSON.stringify(me));
   // Sidebar manager-only links and other gates listen for this event —
