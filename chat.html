@@ -3037,9 +3037,14 @@ function pinnedNoticeHTML(){
 // 📦 자동 보고 묶음 — 같은 직원·같은 날·연속 3건 이상의 발송/Task complete 보고를 한 카드로
 const __rptOpen = {};
 function _isAutoReportMsg(m){
-  const t = String((m && m.text) || '');
+  const t = String((m && m.text) || '').trim();
   // 발송 보고는 🚚 로 시작 (예: '🚚 [Enviado] 🥩 ...') — 선두 이모지는 무엇이든 허용
-  return /^[^\n]{0,4}\[(Enviado|발송|Sent)\]/.test(t) || /^✅ Task complete/.test(t);
+  if (/^[^\n]{0,4}\[(Enviado|발송|Sent)\]/.test(t) || /^✅ Task complete/.test(t)) return true;
+  // 📷 사진 보고 — 사진이 있고 텍스트가 거의 없는 메시지 (2026-08-08 사장님: 이것도 묶어야)
+  if (m && m.photos && m.photos.length && t.length <= 30) return true;
+  // ✅ 같은 이모지·체크 단독 메시지
+  if ((!m || !m.photos || !m.photos.length) && t && t.length <= 3) return true;
+  return false;
 }
 function _computeReportGroups(list){
   const map = {};
@@ -3137,9 +3142,11 @@ function renderMessages(){
     if (_g && _g.head && !__rptOpen[_g.key]) {
       const items = _g.ids.map(id => _renderList.find(x => x.id === id)).filter(Boolean);
       const lines = items.map(x => {
-        const first = String(x.text || '').split('\n')[0].slice(0, 80);
+        const first = String(x.text || '').split('\n')[0].slice(0, 80)
+          || ({ko:'사진 보고',en:'Photo report',es:'Informe de fotos'}[LANG] || '사진 보고');
         const ph = (x.photos && x.photos.length) ? ' 📷' + x.photos.length : '';
-        return '<div class="rpt-line">' + escapeHtml(first) + ph + '</div>';
+        const tm = fmtMsgTime(new Date(x.ts || 0));
+        return '<div class="rpt-line">' + escapeHtml(first) + ph + (tm ? ' · ' + tm : '') + '</div>';
       });
       const shown = lines.slice(0, 12).join('');
       const moreN = lines.length > 12 ? lines.length - 12 : 0;
