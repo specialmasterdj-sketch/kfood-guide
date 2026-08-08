@@ -306,6 +306,7 @@ a{color:inherit;text-decoration:none}
 .composer .attach{background:#f4f6f9;border:0;border-radius:50%;width:38px;height:38px;font-size:1.15em;cursor:pointer;flex-shrink:0;padding:0}
 .composer .persona-pill{border:0;border-radius:18px;height:38px;padding:0 12px;font-size:.82em;font-weight:700;cursor:pointer;flex-shrink:0;white-space:nowrap;background:#f4f6f9;color:#333}
 .composer .persona-pill.hr-on{background:#7c3aed;color:#fff}
+.msg .fwd-badge{font-size:.72em;color:#6b7280;background:#f3f4f6;border-radius:8px;padding:2px 8px;display:inline-block;margin:2px 0 4px;cursor:pointer}
 .composer .field{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
 .composer textarea{border:1px solid #e5e7eb;border-radius:14px;padding:8px 12px;font-size:16px;resize:none;width:100%;min-width:0;max-width:100%;outline:none;font-family:inherit;line-height:1.4;box-sizing:border-box}
 .composer textarea:focus{border-color:#1a5c3a}
@@ -3122,7 +3123,11 @@ function renderMessages(){
       : '';
     const rxnHtml = renderReactions(m);
     const refCard = m.reference ? renderRef(m.reference) : '';
-    const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'공유',en:'Share',es:'Compartir'}[LANG]||'공유')}</button>` : '';
+    // ↗ 원본 그대로 옮겨진(풀카피) 메시지 — 누가 옮겼는지 + 원 작성일 작은 배지 (클릭 시 원본으로)
+    const fwdBadge = m.fwdBy
+      ? `<div class="fwd-badge" onclick="goToRef('${m.fwdFrom||''}','${m.fwdFromMsgId||''}')">↗ ${escapeHtml(({ko:'옮긴 글',en:'Moved',es:'Movido'}[LANG]||'옮긴 글'))} · ${escapeHtml(m.fwdBy)}${m.origTs ? ' · ' + (new Date(m.origTs).getMonth()+1) + '/' + new Date(m.origTs).getDate() : ''}</div>`
+      : '';
+    const fwdBtn = me ? `<button class="fwd-btn" onclick="openForward('${m.id}')">↗ ${({ko:'이동',en:'Forward',es:'Mover'}[LANG]||'이동')}</button>` : '';
     const dateBadge = fmtMsgDateBadge(d);
     const dateBadgeHtml = dateBadge ? ` <span class="date-badge">${escapeHtml(dateBadge)}</span>` : '';
     // payroll 룸 메시지 — viewer 언어로 동적 재포맷 (옛 메시지의 한국어 텍스트도 localize)
@@ -3148,6 +3153,7 @@ function renderMessages(){
         ${delBtn}
         ${editBtn}
         <div class="who">${m.isManager ? '👔 ' : ''}${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)}${dateBadgeHtml}</div>
+        ${fwdBadge}
         ${refCard}
         ${localizedText ? `<div class="text" data-original="${escapeHtml(localizedText)}">${linkifyText(localizedText)}${editedBadge}</div>` : ''}
         ${photoHtml}
@@ -4172,8 +4178,8 @@ function openForward(msgId){
   // 🌐 2026-08-08 사장님 신고: EN/ES 설정인데 공유 모달이 한국어로 나옴 — 라벨 다국어화
   try {
     const _ft = {
-      title:  {ko:'메시지 공유', en:'Share message', es:'Compartir mensaje'},
-      hint:   {ko:'참조 카드만 보내져요. 받는 사람이 클릭하면 원본으로 이동.', en:'Only a reference card is sent. Tapping it jumps to the original message.', es:'Solo se envía una tarjeta de referencia. Al tocarla va al mensaje original.'},
+      title:  {ko:'메시지 이동 (Forward)', en:'Forward message', es:'Mover mensaje'},
+      hint:   {ko:'원본 그대로 선택한 방으로 이동합니다. 이 방에서는 사라집니다.', en:'The original post moves to the selected room and disappears from this room.', es:'El mensaje original se mueve a la sala seleccionada y desaparece de esta.'},
       comment:{ko:'댓글 (선택)', en:'Comment (optional)', es:'Comentario (opcional)'},
       ph:     {ko:'예: 이거 확인 부탁드려요', en:'e.g. Please check this', es:'ej. Por favor revisa esto'},
       cancel: {ko:'취소', en:'Cancel', es:'Cancelar'},
@@ -4225,41 +4231,92 @@ async function forwardTo(targetRoomId){
   const newMsgId = 'm' + ts + Math.floor(Math.random()*900);
   const note = (document.getElementById('fwdComment')?.value || '').trim();
   const photoCount = (src.photos || []).length;
-  const _hr3 = hrSender();
-  const fwd = {
-    sender: _hr3 ? _hr3.name : me.name,
-    senderBranch: _hr3 ? _hr3.branch : me.branch,
-    senderRole: _hr3 ? '' : (me.role || ''),
-    isManager: _hr3 ? false : !!me.isManager,
-    color: _hr3 ? _hr3.color : (me.color || colorFor(me.name)),
-    text: note,
-    photos: [],
-    ts,
-    reference: {
-      room: ACTIVE_ROOM,
-      msgId: src.id,
-      sender: src.sender || '',
+  // ↗ 2026-08-08 사장님 지시: 참조카드가 아니라 '원본 보고 그대로'(올린 직원 이름 + 사진 전체)가
+  //   대상 방에 떠야 함 — 신규 직원이 잘못된 방에 올린 보고를 제자리로 옮겨주는 용도.
+  //   Storage URL 사진은 그대로 재사용(데이터 복사 아님). 옛 base64 사진만 총 300KB 초과 시
+  //   DB 중복 방지를 위해 기존 참조카드 방식으로 폴백.
+  const _b64Total = (src.photos || []).reduce((s,p) => s + ((p && p.length > 5000) ? p.length : 0), 0);
+  const fullCopy = _b64Total <= 300000;
+  let fwd;
+  if (fullCopy) {
+    fwd = {
+      sender: src.sender || '?',
       senderBranch: src.senderBranch || '',
-      ts: src.ts || 0,
-      snippet: (src.text || '').slice(0, 120),
-      photoCount,
-      // 🔧 2026-07-18 — base64 원본을 썸네일로 통째 복사하면 DB 중복 + 렌더 폭발.
-      //   정상 URL 만 썸네일로, base64 는 📷 개수 표시로 대체.
-      photoThumb: (src.photos && src.photos[0] && src.photos[0].length < 5000) ? src.photos[0] : ''
-    }
-  };
+      senderRole: src.senderRole || '',
+      isManager: !!src.isManager,
+      color: src.color || colorFor(src.sender || '?'),
+      text: src.text || '',
+      photos: src.photos || [],
+      files: src.files || [],
+      ts,
+      origTs: src.ts || 0,
+      fwdBy: me.name,
+      fwdFrom: ACTIVE_ROOM,
+      fwdFromMsgId: src.id,
+      // 댓글·반응도 함께 이동 (원본 삭제 시 유실 방지)
+      ...(src.replies ? { replies: src.replies } : {}),
+      ...(src.reactions ? { reactions: src.reactions } : {})
+    };
+  } else {
+    const _hr3 = hrSender();
+    fwd = {
+      sender: _hr3 ? _hr3.name : me.name,
+      senderBranch: _hr3 ? _hr3.branch : me.branch,
+      senderRole: _hr3 ? '' : (me.role || ''),
+      isManager: _hr3 ? false : !!me.isManager,
+      color: _hr3 ? _hr3.color : (me.color || colorFor(me.name)),
+      text: note,
+      photos: [],
+      ts,
+      reference: {
+        room: ACTIVE_ROOM,
+        msgId: src.id,
+        sender: src.sender || '',
+        senderBranch: src.senderBranch || '',
+        ts: src.ts || 0,
+        snippet: (src.text || '').slice(0, 120),
+        photoCount,
+        photoThumb: (src.photos && src.photos[0] && src.photos[0].length < 5000) ? src.photos[0] : ''
+      }
+    };
+  }
   try {
     await fetch(`${FB_DB_URL}/chat/messages/${targetRoomId}/${newMsgId}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(fwd)
     });
-    const lastBits = '↗ ' + (note ? note : (src.text ? src.text.slice(0,40) : (photoCount?'📷 '+photoCount:'공유')));
+    // 풀카피에서 코멘트를 썼으면 옮긴 사람 명의의 별도 메시지로 뒤이어 발송
+    if (fullCopy && note) {
+      const _hr4 = hrSender();
+      const noteMsg = {
+        sender: _hr4 ? _hr4.name : me.name,
+        senderBranch: _hr4 ? _hr4.branch : me.branch,
+        senderRole: _hr4 ? '' : (me.role || ''),
+        isManager: _hr4 ? false : !!me.isManager,
+        color: _hr4 ? _hr4.color : (me.color || colorFor(me.name)),
+        text: note, photos: [], ts: ts + 1
+      };
+      await fetch(`${FB_DB_URL}/chat/messages/${targetRoomId}/m${ts+1}${Math.floor(Math.random()*900)}.json`, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(noteMsg)
+      });
+    }
+    const lastBits = fullCopy
+      ? (src.text ? src.text.slice(0,40) : (photoCount ? '📷 ' + photoCount : '↗'))
+      : '↗ ' + (note ? note : (src.text ? src.text.slice(0,40) : (photoCount?'📷 '+photoCount:'공유')));
     await fetch(`${FB_DB_URL}/chat/rooms/${targetRoomId}.json`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ lastMsg: lastBits.slice(0, 80), lastTs: ts, lastSender: me.name })
+      body: JSON.stringify({ lastMsg: lastBits.slice(0, 80), lastTs: ts, lastSender: fullCopy ? (src.sender || me.name) : me.name })
     });
+    // ↗ 2026-08-08 사장님 지시: forward 는 완전 이동 — 원본을 이 방에서 삭제.
+    //   단, 삭제 권한 범위(오너/임원 또는 본인 글)일 때만. 참조카드 폴백(base64 대용량)은 원본 유지.
+    const canRemoveSrc = fullCopy && ((typeof isStrictOwner === 'function' && isStrictOwner()) || (src.sender === me.name));
+    if (canRemoveSrc) {
+      try {
+        await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${src.id}.json`, { method:'DELETE' });
+      } catch(_){}
+    }
     closeOverlay('fwdOv');
-    const targetName = (ROOMS[targetRoomId]?.name) || targetRoomId;
-    alert('↗ ' + ({ko:'공유 완료',en:'Shared',es:'Compartido'}[LANG]||'공유 완료') + ': ' + targetName);
+    const targetName = roomLocalName(targetRoomId, ROOMS[targetRoomId] || {}) || targetRoomId;
+    alert('↗ ' + ({ko:'원본 그대로 이동 완료',en:'Moved to',es:'Movido a'}[LANG]||'이동 완료') + ': ' + targetName);
   } catch(e){
     alert(({ko:'공유 실패',en:'Share failed',es:'Error'}[LANG]||'공유 실패') + ': ' + (e.message||''));
   }
