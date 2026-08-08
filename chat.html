@@ -307,6 +307,9 @@ a{color:inherit;text-decoration:none}
 .composer .persona-pill{border:0;border-radius:18px;height:38px;padding:0 12px;font-size:.82em;font-weight:700;cursor:pointer;flex-shrink:0;white-space:nowrap;background:#f4f6f9;color:#333}
 .composer .persona-pill.hr-on{background:#7c3aed;color:#fff}
 .msg .fwd-badge{font-size:.72em;color:#6b7280;background:#f3f4f6;border-radius:8px;padding:2px 8px;display:inline-block;margin:2px 0 4px;cursor:pointer}
+.msg.rpt-group .body{background:#f8fafc;border:1px dashed #cbd5e1}
+.rpt-line{font-size:.8em;color:#374151;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rpt-toggle{color:#15803d;font-weight:700;font-size:.8em;cursor:pointer;margin-top:5px}
 .composer .field{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
 .composer textarea{border:1px solid #e5e7eb;border-radius:14px;padding:8px 12px;font-size:16px;resize:none;width:100%;min-width:0;max-width:100%;outline:none;font-family:inherit;line-height:1.4;box-sizing:border-box}
 .composer textarea:focus{border-color:#1a5c3a}
@@ -3031,6 +3034,36 @@ function pinnedNoticeHTML(){
     </div>
   </div>`;
 }
+// 📦 자동 보고 묶음 — 같은 직원·같은 날·연속 3건 이상의 발송/Task complete 보고를 한 카드로
+const __rptOpen = {};
+function _isAutoReportMsg(m){
+  const t = String((m && m.text) || '');
+  return /^📦 \[(Enviado|발송|Sent)\]/.test(t) || /^✅ Task complete/.test(t);
+}
+function _computeReportGroups(list){
+  const map = {};
+  let i = 0;
+  while (i < list.length) {
+    const m = list[i];
+    if (!_isAutoReportMsg(m)) { i++; continue; }
+    const day = new Date(m.ts || 0).toLocaleDateString();
+    let j = i;
+    while (j + 1 < list.length) {
+      const n = list[j + 1];
+      if (!_isAutoReportMsg(n) || n.sender !== m.sender) break;
+      if (new Date(n.ts || 0).toLocaleDateString() !== day) break;
+      j++;
+    }
+    if (j - i + 1 >= 3) {
+      map[m.id] = { head: true, key: m.id, ids: list.slice(i, j + 1).map(x => x.id), count: j - i + 1 };
+      for (let k = i + 1; k <= j; k++) map[list[k].id] = { head: false, key: m.id };
+    }
+    i = j + 1;
+  }
+  return map;
+}
+function toggleRptGroup(key){ __rptOpen[key] = !__rptOpen[key]; renderMessages(); }
+window.toggleRptGroup = toggleRptGroup;
 function renderMessages(){
   const cont = document.getElementById('msgs');
   var wasNearBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight < 120;
@@ -3084,6 +3117,9 @@ function renderMessages(){
     html += `<div class="day-divider">${olderMsg[LANG] || olderMsg.ko}</div>`;
   }
   let lastDay = '';
+  // 📦 2026-08-08 사장님 지시: 한 직원이 같은 날 올린 자동 보고(발송/Task complete) 3건 이상은
+  //   한 장의 묶음 카드로 접어 표시 — 화면 도배 방지. 전 방 공통.
+  const _rptGroups = _computeReportGroups(_renderList);
   for (const m of _renderList) {
     const d = new Date(m.ts || 0);
     const dayKey = d.toLocaleDateString();
@@ -3095,6 +3131,32 @@ function renderMessages(){
     const branch = BRANCH_BY_ID[m.senderBranch];
     const branchTxt = branch ? ' · ' + (branch[LANG] || branch.ko) : '';
     const time = fmtMsgTime(d);
+    const _g = _rptGroups[m.id];
+    if (_g && !_g.head && !__rptOpen[_g.key]) continue;   // 접힌 묶음의 멤버 — 생략
+    if (_g && _g.head && !__rptOpen[_g.key]) {
+      const items = _g.ids.map(id => _renderList.find(x => x.id === id)).filter(Boolean);
+      const lines = items.map(x => {
+        const first = String(x.text || '').split('\n')[0].slice(0, 80);
+        const ph = (x.photos && x.photos.length) ? ' 📷' + x.photos.length : '';
+        return '<div class="rpt-line">' + escapeHtml(first) + ph + '</div>';
+      });
+      const shown = lines.slice(0, 12).join('');
+      const moreN = lines.length > 12 ? lines.length - 12 : 0;
+      html += `<div class="msg rpt-group" data-msg-id="${m.id}">
+        <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
+        <div class="body">
+          <div class="who">${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)} <span class="date-badge">📦 ${_g.count}${({ko:'건 보고',en:' reports',es:' informes'}[LANG]||'건 보고')}</span></div>
+          ${shown}
+          ${moreN ? `<div class="rpt-line" style="color:#9ca3af">… +${moreN}</div>` : ''}
+          <div class="rpt-toggle" onclick="toggleRptGroup('${_g.key}')">▾ ${({ko:'펼쳐서 자세히 보기',en:'Expand details',es:'Ver detalles'}[LANG]||'펼치기')}</div>
+          <div class="time">${time}</div>
+        </div>
+      </div>`;
+      continue;
+    }
+    if (_g && _g.head && __rptOpen[_g.key]) {
+      html += `<div class="rpt-toggle" style="text-align:center;margin:6px 0" onclick="toggleRptGroup('${_g.key}')">▴ ${({ko:'보고 묶어서 접기',en:'Collapse reports',es:'Plegar informes'}[LANG]||'접기')}</div>`;
+    }
     const photoHtml = (m.photos && m.photos.length)
       ? (function(){
           const n = m.photos.length;
