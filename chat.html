@@ -304,6 +304,8 @@ a{color:inherit;text-decoration:none}
 }
 .msgs{padding-bottom:100px}        /* leave room for fixed composer on mobile */
 .composer .attach{background:#f4f6f9;border:0;border-radius:50%;width:38px;height:38px;font-size:1.15em;cursor:pointer;flex-shrink:0;padding:0}
+.composer .persona-pill{border:0;border-radius:18px;height:38px;padding:0 12px;font-size:.82em;font-weight:700;cursor:pointer;flex-shrink:0;white-space:nowrap;background:#f4f6f9;color:#333}
+.composer .persona-pill.hr-on{background:#7c3aed;color:#fff}
 .composer .field{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
 .composer textarea{border:1px solid #e5e7eb;border-radius:14px;padding:8px 12px;font-size:16px;resize:none;width:100%;min-width:0;max-width:100%;outline:none;font-family:inherit;line-height:1.4;box-sizing:border-box}
 .composer textarea:focus{border-color:#1a5c3a}
@@ -641,7 +643,7 @@ a{color:inherit;text-decoration:none}
       </div>
     </div>
     <div class="composer" id="composer">
-      <button class="attach" id="hrPersonaChatBtn" style="display:none" onclick="toggleHrPersonaChat()" title="켜면 메시지가 'HR Manager' 명의로 발송됩니다">🎭</button>
+      <button class="persona-pill" id="hrPersonaChatBtn" style="display:none" onclick="toggleHrPersonaChat()" title="누르면 발송 명의가 전환됩니다"><span id="hrPersonaLabel">🎭</span></button>
       <button class="attach" onclick="document.getElementById('cameraInput').click()" title="카메라로 찍기">📷</button>
       <button class="attach" onclick="document.getElementById('fileInput').click()" title="갤러리에서 선택">📎</button>
       <input type="file" id="cameraInput" accept="image/*" capture="environment" onchange="handleFiles(event)">
@@ -2141,6 +2143,7 @@ function openRoom(id){
   }
   ACTIVE_ROOM = id;
   localStorage.setItem('chat.activeRoom', id);
+  try { updateHrPersonaChatBtn(); } catch(e){}   // 🎭 방마다 기본 명의가 달라 방 확정 후 다시 갱신
   // 이 방을 마지막으로 본 시각 기록 — 안 읽은 메시지 카운트의 기준
   setLastVisit(id);
   if (ROOMS[id]) ROOMS[id].unread = 0;
@@ -2222,6 +2225,7 @@ function openRoom(id){
     }
   } catch(_){}
   document.querySelector('.rooms').classList.remove('show');
+  window.__kmPinBottom = true;   // 📌 방을 새로 열면 항상 최신(맨 아래)부터
   subscribeMessages(id);
   renderRooms();
 }
@@ -3171,7 +3175,7 @@ function renderMessages(){
       if (t) { try { t.focus({preventScroll:true}); } catch(_) { t.focus(); } try { t.setSelectionRange(_dSelS, _dSelE); } catch(_){} }
     }
   } catch(_){}
-  if (wasNearBottom) cont.scrollTop = cont.scrollHeight;
+  if (window.__kmPinBottom || wasNearBottom) cont.scrollTop = cont.scrollHeight;
   else cont.scrollTop = prevScrollTop;
   _kmTryResumeScroll(cont);   // 📍 버전 업데이트 리로드 후 보던 자리 복귀 (1회)
   // 자동 번역 토글바 — 채팅방에 진입했고 viewer LANG 이 ko 외이거나 메시지가 있는 경우
@@ -3183,6 +3187,21 @@ function renderMessages(){
   // 자동 번역 적용 (비동기)
   applyAutoTranslate().catch(e => console.warn('[autoTranslate]', e));
 }
+// 📌 2026-08-08 사장님 신고: 방을 열면 최신글이 아니라 3개월 전 글이 먼저 보임.
+//   원인 = 렌더 직후 맨 아래로 내려도 사진이 늦게 로드되며 높이가 늘어나 화면이
+//   옛 글 위치로 밀려남 → 이후 렌더는 '아래 근처 아님' 판정으로 그 자리에 고정.
+//   수정 = '맨 아래 고정' 플래그: 방을 열면 ON, 사용자가 위로 스크롤하면 OFF,
+//   고정 중에는 사진이 로드될 때마다 다시 맨 아래로.
+(function(){
+  const c = document.getElementById('msgs');
+  if (!c) return;
+  c.addEventListener('scroll', function(){
+    window.__kmPinBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 120;
+  }, {passive:true});
+  c.addEventListener('load', function(e){
+    if (window.__kmPinBottom && e.target && e.target.tagName === 'IMG') c.scrollTop = c.scrollHeight;
+  }, true);
+})();
 // 시간만 (HH:MM) — 시간은 항상 메시지 하단에 단독 표시
 function fmtMsgTime(d){
   if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
@@ -3661,9 +3680,17 @@ function isHRRoom(){ return ACTIVE_ROOM === 'hr_inquiries'; }
 //   자격 = canAccessHRRoom (오너·임원·DJ·DANIEL BANOS). 토글 키 km.hrPersona 는
 //   tasks.html 의 "🎭 HR 모드"와 공유 — 한쪽에서 켜면 양쪽 모두 적용.
 //   HR 건의방 안에서는 토글과 무관하게 기존대로 항상 HR Manager 명의.
-function hrPersonaOnChat(){ try { return canAccessHRRoom() && localStorage.getItem('km.hrPersona')==='1'; } catch(_){ return false; } }
+// 🎭 2026-08-08 사장님 요청: 로그아웃 없이 [본인(오너) ↔ HR Manager] 명의를 클릭 한 번으로 전환.
+//   HR 건의방: 기본 HR Manager 명의(km.hrPersonaHR, 기본 ON) — 끄면 본인 명의로도 발송 가능.
+//   일반 방:  기본 본인 명의(km.hrPersona, 기본 OFF) — tasks.html "🎭 HR 모드"와 키 공유.
+function hrPersonaOnChat(){
+  try {
+    if (!canAccessHRRoom()) return false;
+    if (isHRRoom()) return localStorage.getItem('km.hrPersonaHR') !== '0';
+    return localStorage.getItem('km.hrPersona') === '1';
+  } catch(_){ return false; }
+}
 function hrSender(){
-  if (isHRRoom() && canAccessHRRoom()) return {name:'HR Manager', branch:'', color:'#7c3aed', mgr:false};
   if (hrPersonaOnChat()) return {name:'HR Manager', branch:'', color:'#7c3aed', mgr:false};
   return null;
 }
@@ -3673,16 +3700,19 @@ function updateHrPersonaChatBtn(){
   if (!me || !canAccessHRRoom()) { b.style.display = 'none'; return; }
   b.style.display = '';
   const on = hrPersonaOnChat();
-  b.style.opacity = on ? '1' : '.45';
-  b.style.background = on ? '#7c3aed' : '';
-  b.title = on ? "🎭 HR Manager 명의로 발송 중 — 누르면 본인 이름으로" : "누르면 메시지가 'HR Manager' 명의로 발송됩니다";
+  b.classList.toggle('hr-on', on);
+  const label = document.getElementById('hrPersonaLabel');
+  if (label) label.textContent = on ? '🎭 HR Manager' : '👤 ' + ((me && me.name) || '본인');
+  b.title = on ? "지금 'HR Manager' 명의로 발송 중 — 누르면 본인 이름으로 전환"
+              : "지금 본인 이름으로 발송 중 — 누르면 'HR Manager' 명의로 전환";
 }
 function toggleHrPersonaChat(){
   if (!me || !canAccessHRRoom()) return;
+  const key = isHRRoom() ? 'km.hrPersonaHR' : 'km.hrPersona';
   const next = hrPersonaOnChat() ? '0' : '1';
-  try { localStorage.setItem('km.hrPersona', next); } catch(_){}
+  try { localStorage.setItem(key, next); } catch(_){}
   updateHrPersonaChatBtn();
-  showStatus(next==='1' ? '🎭 HR Manager 명의로 발송됩니다' : '본인 이름으로 발송됩니다');
+  showStatus(next==='1' ? '🎭 HR Manager 명의로 발송됩니다' : '👤 ' + ((me && me.name) || '본인') + ' 이름으로 발송됩니다');
   setTimeout(hideStatus, 2500);
 }
 window.toggleHrPersonaChat = toggleHrPersonaChat;
@@ -3825,6 +3855,10 @@ async function sendMessage(){
   // 모든 방(managers/produce/closing/...)에서 동일한 chat/{roomId}/{msgId}/{idx}.jpg 경로.
   const sendBtn = document.getElementById('sendBtn');
   sendBtn.disabled = true;
+  // ⚡ 2026-08-08 — 입력창은 누르는 즉시 비움 (업로드 대기 중 글이 남아 멈춘 느낌 제거). 실패 시 복구.
+  const _mi = document.getElementById('msgInput');
+  _mi.value = '';
+  _mi.style.height = 'auto';
 
   const ts = Date.now();
   const msgId = 'm' + ts + Math.floor(Math.random()*900);
@@ -3892,8 +3926,6 @@ async function sendMessage(){
     if (ACTIVE_ROOM===REVIEW_ROOM_ID && msg.photos.length>0){
       try{ const _imgs=ATTACH.filter(a=>a.type!=='file'&&a.dataUrl).map(a=>a.dataUrl); awardReviewPoint(_imgs, ts); }catch(_){}
     }
-    document.getElementById('msgInput').value = '';
-    document.getElementById('msgInput').style.height = 'auto';
     ATTACH = [];
     renderPreviews();
     // 본인 보낸 메시지는 안 읽음에 포함 안 되도록 lastVisit 갱신
@@ -3908,6 +3940,7 @@ async function sendMessage(){
     showStatus('❌ 전송 실패 (' + stage + '): ' + detail.slice(0, 80));
     setTimeout(hideStatus, 6000);
     // ATTACH 보존 — 사용자가 다시 시도 가능 (success path 만 ATTACH 비움)
+    if (_mi && !_mi.value) _mi.value = text;   // 실패 시 쓰던 글 복구
     alert('전송 실패\n\n단계: ' + stage + '\n방: ' + room + '\n사용자: ' + sender + '\n오류: ' + detail + '\n\n사진은 보존됩니다. 다시 시도하거나 캐시 새로고침 후 시도하세요.');
   } finally {
     sendBtn.disabled = false;
@@ -4063,6 +4096,11 @@ async function sendReply(parentMsgId){
   const attached = REPLY_ATTACH[parentMsgId] || [];
   if (!text && attached.length === 0) return;
   inp.disabled = true;
+  // 🧹 2026-08-08 사장님 신고: 보낸 댓글이 입력창에 그대로 남음(+글이 넘쳐 스크롤 화살표 표시).
+  //   원인 = 전송 대기 중 서버 에코가 _patchMsgReplies 로 입력창을 재생성하며 옛 값(보낸 글)을
+  //   복원 → 이후의 inp.value='' 는 이미 교체된 옛 엘리먼트만 비움. 캡처 즉시 비우고 실패 시 복구.
+  inp.value = '';
+  inp.style.height = 'auto';
   const ts = Date.now();
   const replyId = 'r' + ts + Math.floor(Math.random()*900);
   const _hr2 = hrSender();
@@ -4087,13 +4125,14 @@ async function sendReply(parentMsgId){
     await fetch(`${FB_DB_URL}/chat/messages/${ACTIVE_ROOM}/${parentMsgId}/replies/${replyId}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reply)
     });
-    inp.value = '';
+    const inpNow = document.getElementById('reply-' + parentMsgId);
+    if (inpNow) { inpNow.value = ''; inpNow.style.height = 'auto'; }
     delete REPLY_ATTACH[parentMsgId];
     const pv = document.getElementById('reply-previews-' + parentMsgId);
     if (pv) pv.innerHTML = '';
-    // 답글 보낸 후엔 펼친 상태 유지 (collapsed 플래그 제거)
+    // 답글 보낸 후엔 스레드는 펼친 채, 입력창은 닫아 깔끔하게 (2026-08-08 사장님: 입력창이 남아 혼잡)
     sessionStorage.removeItem('thread.collapsed.' + parentMsgId);
-    sessionStorage.setItem('thread.openInput.' + parentMsgId, '1');
+    sessionStorage.removeItem('thread.openInput.' + parentMsgId);
     // ⚡ 2026-07-18 — 서버 에코를 기다리지 않고 이 스레드만 즉시 갱신
     //   (전체 재렌더 없음 → 깜빡임·화면 이동 없이 내 댓글이 바로 보임)
     try {
@@ -4107,9 +4146,13 @@ async function sendReply(parentMsgId){
     } catch(_){}
   } catch(e){
     hideStatus();
+    const inpFail = document.getElementById('reply-' + parentMsgId);
+    if (inpFail && !inpFail.value) inpFail.value = text;   // 실패 시 쓰던 글 복구
     alert('답글 전송 실패: ' + (e.message||''));
   }
   inp.disabled = false;
+  const inpEnd = document.getElementById('reply-' + parentMsgId);
+  if (inpEnd && inpEnd !== inp) inpEnd.disabled = false;   // 에코로 교체된 새 입력창도 잠금 해제
 }
 window.sendReply = sendReply;
 async function deleteReply(parentMsgId, replyId){
@@ -4126,6 +4169,22 @@ function openForward(msgId){
   const m = MSGS.find(x => x.id === msgId);
   if (!m) return;
   __fwdSourceMsg = m;
+  // 🌐 2026-08-08 사장님 신고: EN/ES 설정인데 공유 모달이 한국어로 나옴 — 라벨 다국어화
+  try {
+    const _ft = {
+      title:  {ko:'메시지 공유', en:'Share message', es:'Compartir mensaje'},
+      hint:   {ko:'참조 카드만 보내져요. 받는 사람이 클릭하면 원본으로 이동.', en:'Only a reference card is sent. Tapping it jumps to the original message.', es:'Solo se envía una tarjeta de referencia. Al tocarla va al mensaje original.'},
+      comment:{ko:'댓글 (선택)', en:'Comment (optional)', es:'Comentario (opcional)'},
+      ph:     {ko:'예: 이거 확인 부탁드려요', en:'e.g. Please check this', es:'ej. Por favor revisa esto'},
+      cancel: {ko:'취소', en:'Cancel', es:'Cancelar'},
+    };
+    const _fl = k => (_ft[k][LANG] || _ft[k].ko);
+    document.getElementById('lblFwdTitle').textContent = _fl('title');
+    document.getElementById('lblFwdHint').textContent = _fl('hint');
+    document.getElementById('lblFwdComment').textContent = _fl('comment');
+    document.getElementById('fwdComment').placeholder = _fl('ph');
+    document.getElementById('lblFwdCancel').textContent = _fl('cancel');
+  } catch(_){}
   // 미리보기
   const preview = document.getElementById('fwdPreview');
   let prev = '';
@@ -4136,16 +4195,22 @@ function openForward(msgId){
   // 방 목록
   const wrap = document.getElementById('fwdRoomList');
   const ids = Object.keys(ROOMS).filter(id => id !== ACTIVE_ROOM);
-  if (!ids.length) {
+  // 🌐 방 이름도 사이드바와 같은 언어 변환 사용 + 이름 없는 잔재 데이터(예: 'error') 숨김
+  const items = [];
+  for (const id of ids) {
+    const r = ROOMS[id] || {};
+    const nm = roomLocalName(id, r);
+    if (!nm) continue;
+    const ds = roomLocalDesc(id, r);
+    items.push('<div class="fwd-room-item" onclick="forwardTo(\'' + id + '\')">'
+      + '<div class="nm">' + escapeHtml(nm) + '</div>'
+      + (ds ? '<div class="ds">' + escapeHtml(ds) + '</div>' : '')
+      + '</div>');
+  }
+  if (!items.length) {
     wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#9ca3af">' + ({ko:'다른 방 없음',en:'No other rooms',es:'Sin otras salas'}[LANG]||'') + '</div>';
   } else {
-    wrap.innerHTML = ids.map(id => {
-      const r = ROOMS[id] || {};
-      return '<div class="fwd-room-item" onclick="forwardTo(\'' + id + '\')">'
-        + '<div class="nm">' + escapeHtml(r.name||id) + '</div>'
-        + (r.desc ? '<div class="ds">' + escapeHtml(r.desc) + '</div>' : '')
-        + '</div>';
-    }).join('');
+    wrap.innerHTML = items.join('');
   }
   document.getElementById('fwdOv').classList.add('show');
 }
