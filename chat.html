@@ -2616,6 +2616,7 @@ async function applyAutoTranslate(){
   //   일일 한도 소진 원인.) 옛 메시지는 🌐 번역 버튼으로 개별 번역.
   const els = Array.from(document.querySelectorAll('.msg .text[data-original]')).slice(-40);
   for (const el of els){
+    if (window.__trQuotaHit) break;   // 🕐 일일 한도 소진 — 공유 캐시 외 추가 호출 중단
     if (el.dataset.translatedText) continue;   // 이미 번역됨
     const text = el.dataset.original || '';
     const from = detectMsgLang(text);
@@ -2671,13 +2672,20 @@ async function _translateChunk(text, from, to){
             + '&langpair=' + from + '|' + to
             + '&de=' + encodeURIComponent(TRANSLATE_API_EMAIL);
   const r = await fetch(url);
-  if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (!r.ok) { if (r.status === 429) window.__trQuotaHit = true; throw new Error('HTTP ' + r.status); }
   const d = await r.json();
+  // 🕐 일일 무료 한도 소진 감지 — 이후 API 호출 전면 중단 (2026-08-08 사장님 신고 '번역 실패' 원인)
+  const raw = (d && d.responseData && d.responseData.translatedText) || '';
+  if (String(d?.responseStatus) === '429' || /YOU USED ALL AVAILABLE FREE TRANSLATIONS/i.test(raw) || /YOU USED ALL AVAILABLE FREE TRANSLATIONS/i.test(String(d?.responseDetails||''))) {
+    window.__trQuotaHit = true;
+    return '';
+  }
   if (d?.responseStatus && String(d.responseStatus) !== '200') return '';
-  const out = (d && d.responseData && d.responseData.translatedText) || '';
-  if (!out || /LIMIT EXCEEDED|MAX ALLOWED|INVALID|NOT VALID|MYMEMORY WARNING/i.test(out)) return '';
-  return out;
+  if (!raw || /LIMIT EXCEEDED|MAX ALLOWED|INVALID|NOT VALID|MYMEMORY WARNING/i.test(raw)) return '';
+  return raw;
 }
+// 🌍 공유 번역 캐시 (Firebase) — 한 명이 번역하면 전 직원·전 방에서 재사용 → 무료 한도 절약
+function _trHash(s){ let h = 5381; for (let i = 0; i < s.length; i++){ h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; } return h.toString(36) + '_' + s.length; }
 
 async function fetchTranslation(text, from, to){
   // 🌐 2026-05-28: 길이 제한 사실상 제거 + 병렬 청크 번역.
@@ -2688,11 +2696,22 @@ async function fetchTranslation(text, from, to){
   if (text.length > 10000) return '';
   const k = from + '|' + to + '|' + text;
   if (__TRANSLATE_CACHE.has(k)) return __TRANSLATE_CACHE.get(k);
+  // 🌍 1차 — 공유 캐시 조회: 다른 직원이 이미 번역한 문장이면 API 호출 없이 즉시
+  const h = _trHash(text);
+  try {
+    const cr = await fetch(`${FB_DB_URL}/chat/trCache/${to}/${h}.json`);
+    if (cr.ok) { const cv = await cr.json(); if (cv && typeof cv === 'string') { __TRANSLATE_CACHE.set(k, cv); return cv; } }
+  } catch(_){}
+  if (window.__trQuotaHit) return '';   // 오늘 한도 소진 — 헛호출 안 함
+  const _save = out => {
+    __TRANSLATE_CACHE.set(k, out);
+    try { fetch(`${FB_DB_URL}/chat/trCache/${to}/${h}.json`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(out) }).catch(()=>{}); } catch(_){}
+  };
   try {
     // 480자 이하 — 단일 호출
     if (text.length <= 480) {
       const out = await _translateChunk(text, from, to);
-      if (out) __TRANSLATE_CACHE.set(k, out);
+      if (out) _save(out);
       return out;
     }
     // 긴 메시지 — 청크 분할 후 병렬 번역. 모두 완료 시 한 번에 합쳐 화면 표시.
@@ -2701,7 +2720,7 @@ async function fetchTranslation(text, from, to){
     // 청크 하나라도 실패하면 전체 skip — 어색한 부분 번역 방지
     if (results.some(t => !t)) return '';
     const out = results.join('\n');
-    if (out) __TRANSLATE_CACHE.set(k, out);
+    if (out) _save(out);
     return out;
   } catch (e) {
     console.warn('[translate] failed', e);
@@ -2731,7 +2750,9 @@ window.translateMessage = async function(msgId, btn){
   const translated = await fetchTranslation(text, from, LANG);
   btn.disabled = false;
   if (!translated){
-    btn.textContent = '⚠️ ' + ({ko:'번역 실패',en:'Translation failed',es:'Error de traducción'}[LANG]||'failed');
+    btn.textContent = window.__trQuotaHit
+      ? '🕐 ' + ({ko:'오늘 무료 번역 한도 초과 — 몇 시간 후 자동 복구', en:'Daily free translation limit reached — retry in a few hours', es:'Límite diario de traducción alcanzado — reintente en unas horas'}[LANG]||'limit reached')
+      : '⚠️ ' + ({ko:'번역 실패',en:'Translation failed',es:'Error de traducción'}[LANG]||'failed');
     return;
   }
   txtEl.innerHTML = linkifyText(translated) + ' <span style="font-size:.72em;color:#9ca3af">· ' + ({ko:'번역됨',en:'translated',es:'traducido'}[LANG]||'translated') + '</span>';
@@ -4367,9 +4388,12 @@ async function forwardTo(targetRoomId){
     }
     closeOverlay('fwdOv');
     const targetName = roomLocalName(targetRoomId, ROOMS[targetRoomId] || {}) || targetRoomId;
-    alert('↗ ' + ({ko:'원본 그대로 이동 완료',en:'Moved to',es:'Movido a'}[LANG]||'이동 완료') + ': ' + targetName);
+    // OK 확인창 없이 조용한 토스트만 (2026-08-08 사장님: 파란색 클릭하게 하지 마)
+    showStatus('↗ ' + ({ko:'이동 완료',en:'Moved to',es:'Movido a'}[LANG]||'이동 완료') + ': ' + targetName);
+    setTimeout(hideStatus, 2500);
   } catch(e){
-    alert(({ko:'공유 실패',en:'Share failed',es:'Error'}[LANG]||'공유 실패') + ': ' + (e.message||''));
+    showStatus('❌ ' + ({ko:'이동 실패',en:'Forward failed',es:'Error al mover'}[LANG]||'이동 실패') + ': ' + (e.message||''));
+    setTimeout(hideStatus, 5000);
   }
   __fwdSourceMsg = null;
 }
