@@ -2360,8 +2360,8 @@ function subscribeMessages(roomId){
   msgCacheGet(roomId).then(cached => {
     if (!cached || !cached.length) return;
     if (ACTIVE_ROOM !== roomId || __fullArrived || MSGS.length) return;
-    // 🧷 캐시 메시지의 순서 키(활동시각 고정값) 등록 — 네트워크 도착 시 재정렬로 튀지 않게
-    for (const m of cached) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = m._latestActivity || m.ts || 0;
+    // 🧷 캐시 메시지의 순서 키(원글 작성시각) 등록 — 네트워크 도착 시 재정렬로 튀지 않게
+    for (const m of cached) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = m.ts || 0;
     cached.sort((a,b) => (__roomOrderMap[a.id] - __roomOrderMap[b.id]) || ((a.ts||0) - (b.ts||0)));
     MSGS = cached;
     renderMessages();
@@ -2460,7 +2460,10 @@ function msgsFromObj(d){
     obj._latestActivity = latest;
     return obj;
   });
-  for (const m of arr) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = m._latestActivity || 0;
+  // 📌 2026-08-08 사장님 지시: 답글은 그냥 답글 — 글 순서는 항상 원글 작성 시간.
+  //   (기존 활동순: 옛 글에 댓글 달면 그 글이 최신처럼 맨 아래로 올라와 혼란)
+  //   답글 알림은 replyAlerts 배너로 글쓴이에게 별도 전달.
+  for (const m of arr) if (!(m.id in __roomOrderMap)) __roomOrderMap[m.id] = m.ts || 0;
   arr.sort((a,b) => (__roomOrderMap[a.id] - __roomOrderMap[b.id]) || ((a.ts||0) - (b.ts||0)));
   return arr;
 }
@@ -4149,6 +4152,8 @@ async function sendReply(parentMsgId){
         _patchMsgReplies(mm);
         __lastRenderSig = _msgListSig(MSGS);   // 에코가 '변경 없음'으로 인식되게
       }
+      // 🔔 글쓴이에게 답글 알림 (글 순서는 안 건드림 — 2026-08-08 사장님 지시)
+      _notifyReplyToAuthor(mm, text, reply.sender);
     } catch(_){}
   } catch(e){
     hideStatus();
@@ -4161,6 +4166,52 @@ async function sendReply(parentMsgId){
   if (inpEnd && inpEnd !== inp) inpEnd.disabled = false;   // 에코로 교체된 새 입력창도 잠금 해제
 }
 window.sendReply = sendReply;
+// 🔔 2026-08-08 사장님 지시: 답글은 글을 안 끌어올리는 대신, 글쓴이에게 알림.
+//   chat/replyAlerts/{글쓴이 정규화 이름}/ 에 기록 → 글쓴이 접속 시 상단 배너로 표시.
+async function _notifyReplyToAuthor(parentMsg, replyText, fromName){
+  try {
+    const author = parentMsg && parentMsg.sender;
+    if (!author || !me) return;
+    const a = normName(author), b = normName(me.name);
+    if (!a || a === b || a === 'HRMANAGER') return;   // 본인 글·HR 명의 글은 알림 생략
+    const rec = { room: ACTIVE_ROOM, msgId: parentMsg.id, from: fromName || me.name,
+                  ts: Date.now(), snippet: String(replyText || '📷').slice(0, 80) };
+    await fetch(`${FB_DB_URL}/chat/replyAlerts/${a}/a${rec.ts}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rec) });
+  } catch(_){}
+}
+async function checkReplyAlerts(){
+  try {
+    if (typeof me === 'undefined' || !me || !me.name) return;
+    const key = normName(me.name);
+    if (!key) return;
+    const r = await fetch(`${FB_DB_URL}/chat/replyAlerts/${key}.json?t=` + Date.now(), {cache:'no-store'});
+    if (!r.ok) return;
+    const d = await r.json();
+    const ids = d ? Object.keys(d).sort() : [];
+    let bar = document.getElementById('replyAlertBar');
+    if (!ids.length) { if (bar) bar.remove(); return; }
+    const latest = d[ids[ids.length - 1]] || {};
+    const t = ({ko:'💬 내 글에 새 답글', en:'💬 New reply to your post', es:'💬 Nueva respuesta a tu publicación'})[LANG] || '💬 내 글에 새 답글';
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'replyAlertBar';
+      bar.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:#1a5c3a;color:#fff;border-radius:999px;padding:9px 18px;font-weight:800;font-size:.9em;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:92vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      document.body.appendChild(bar);
+    }
+    bar.textContent = t + ' ' + ids.length + ' — ' + (latest.from || '') + ': ' + (latest.snippet || '');
+    bar.onclick = async () => {
+      bar.remove();
+      try { await fetch(`${FB_DB_URL}/chat/replyAlerts/${key}.json`, {method:'DELETE'}); } catch(_){}
+      if (latest.room) goToRef(latest.room, latest.msgId);
+    };
+  } catch(_){}
+}
+(function _raInit(){
+  if (typeof me === 'undefined' || !me || !me.name) { setTimeout(_raInit, 2000); return; }
+  checkReplyAlerts();
+  setInterval(checkReplyAlerts, 60000);   // 1분마다 확인 (가벼운 단일 노드 fetch)
+})();
 async function deleteReply(parentMsgId, replyId){
   if (!confirm({ko:'이 댓글을 삭제할까요?',en:'Delete this reply?',es:'¿Borrar esta respuesta?'}[LANG] || '이 댓글을 삭제할까요?')) return;
   try {
