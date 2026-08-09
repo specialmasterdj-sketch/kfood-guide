@@ -107,6 +107,11 @@
     { ic: '🛒', lbl: { ko:'쇼핑',          en:'Shopping',  es:'Compras' },   href: 'https://specialmasterdj-sketch.github.io/kimchi-shop/', target: '_blank' },
     { ic: '📋', lbl: { ko:'플래노그램',    en:'Planogram', es:'Planograma' }, href: './planogram.html' },
     { ic: '🏪', lbl: { ko:'Floor Plan',    en:'Floor Plan', es:'Plano de Tienda' }, href: './floorplan/' },
+
+    // 🚪 2026-08-09 사장님 지시: 로그아웃은 언제든 가능해야 함 — 전 페이지 사이드바 고정.
+    //   auth.html?fresh=1 = 완전 로그아웃(세션·저장소·IndexedDB 삭제) 후 전화 인증 재로그인.
+    { sec: { ko:'계정', en:'Account', es:'Cuenta' } },
+    { ic: '🚪', lbl: { ko:'로그아웃 / 계정 전환', en:'Sign out / Switch account', es:'Cerrar sesión / Cambiar cuenta' }, href: './auth.html?fresh=1', logout: true },
   ];
 
   const W = 200;
@@ -273,9 +278,20 @@
       if (it.primary) cls.push('primary');
       const clsAttr = cls.length ? ` class="${cls.join(' ')}"` : '';
       const badgeAttr = it.badge ? ` data-badge-key="${it.badge}"` : '';
-      html += `<a href="${it.href}"${tgt}${hl}${clsAttr}${badgeAttr}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
+      const logoutAttr = it.logout ? ' data-km-logout="1" style="color:#dc2626;font-weight:800"' : '';
+      html += `<a href="${it.href}"${tgt}${hl}${clsAttr}${badgeAttr}${logoutAttr}><span class="ic">${it.ic}</span><span class="lbl">${pickLbl(it.lbl)}</span></a>`;
     }
     aside.innerHTML = html;
+    // 🚪 로그아웃 — 확인 후 기기 신원까지 삭제하고 완전 로그아웃으로 이동
+    aside.querySelectorAll('a[data-km-logout]').forEach(a => {
+      a.addEventListener('click', (e) => {
+        const msg = ({ko:'로그아웃할까요?\n다시 들어오려면 본인 전화번호 문자 인증이 필요합니다.',
+                      en:'Sign out?\nYou will need SMS verification with your phone to sign back in.',
+                      es:'¿Cerrar sesión?\nNecesitará verificación SMS con su teléfono para volver a entrar.'})[currentLang()];
+        if (!confirm(msg)) { e.preventDefault(); return; }
+        try { localStorage.removeItem('chat.me'); } catch(_){}
+      });
+    });
     // Click pre-clears unread badges so users don't see stale counts even
     // when the destination page fails to mark-as-seen (network glitch,
     // localStorage quota, etc). The destination page's own logic still
