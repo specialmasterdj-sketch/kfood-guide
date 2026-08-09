@@ -454,8 +454,8 @@
       let me = null;
       try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
       const isMgr = !!(me && me.isManager);
-      let count = 0;
-      Object.values(d).forEach(u => {
+      const unread = [];
+      Object.entries(d).forEach(([id, u]) => {
         if (!u || !u.ts || u.ts <= lastSeenTs) return;
         // 본인이 작성한 글은 제외 (이미 본 거니까)
         if (me && u.author === me.name && u.authorBranch === me.branch) return;
@@ -465,9 +465,123 @@
           // 다른 지점 전용 글 — 매니저 외엔 카운트하지 않음
           if (!isMgr) return;
         }
-        count++;
+        unread.push(Object.assign({ __id: id }, u));
       });
-      setBadge('updates', count);
+      setBadge('updates', unread.length);
+      maybeShowAnnouncePopup(unread);
+      updateAnnounceBanner(unread);
+      maybeNotifyAnnounce(unread);
+    } catch(e){}
+  }
+  // 📢 메인 페이지 상단 플래시 배너 — 헤더 아래·타일 위 "#ANNOUNCEMENT# 반드시 읽을 것"
+  //   (2026-08-08 사장님 결재 레이아웃: 데스크탑 한 줄, 모바일 두 줄. 클릭 → 공지.
+  //    본인이 읽으면 사라짐 → 전 직원이 읽으면 자연히 아무 화면에도 안 남음)
+  function updateAnnounceBanner(unread){
+    try {
+      let bar = document.getElementById('kmAnnBanner');
+      const qs = document.querySelector('.quick-stats');   // 메인(apps.html)에서만 존재
+      const on = unread && unread.length > 0 && !!qs;
+      if (!on) { if (bar) bar.remove(); return; }
+      const L = currentLang();
+      const top = unread.slice().sort((a,b) => (b.ts||0) - (a.ts||0))[0];
+      const must = ({ko:'#ANNOUNCEMENT# 반드시 읽을 것', en:'#ANNOUNCEMENT# MUST READ', es:'#ANUNCIO# LECTURA OBLIGATORIA'})[L];
+      const go = ({ko:'읽으러 가기 →', en:'Read now →', es:'Leer ahora →'})[L];
+      if (!bar) {
+        bar = document.createElement('a');
+        bar.id = 'kmAnnBanner';
+        bar.href = './updates.html';
+        if (!document.getElementById('kmAnnBannerCss')) {
+          const st = document.createElement('style');
+          st.id = 'kmAnnBannerCss';
+          st.textContent = '@keyframes kmAnnFlash{0%,100%{background:#dc2626}50%{background:#7f1d1d}}'
+            + '#kmAnnBanner{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:14px 20px;border-radius:14px;color:#fff;background:#dc2626;font-weight:900;font-size:1.05em;line-height:1.4;text-decoration:none;box-shadow:0 6px 18px rgba(220,38,38,.4);animation:kmAnnFlash 1.1s infinite}'
+            + '#kmAnnBanner .t{flex:1;min-width:0}'
+            + '#kmAnnBanner .go{background:#fff;color:#dc2626;border-radius:999px;padding:5px 14px;font-size:.85em;white-space:nowrap}'
+            + '@media(max-width:760px){#kmAnnBanner{font-size:.95em;padding:12px 14px;gap:8px}#kmAnnBanner .t b{display:block}}';
+          document.head.appendChild(st);
+        }
+        qs.parentNode.insertBefore(bar, qs);
+      }
+      const esc2 = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      bar.innerHTML = '<span style="font-size:1.35em">🚨</span>'
+        + '<span class="t"><b>' + must + '</b> <u>' + esc2(String(top.title || top.body || '').slice(0, 60)) + '</u></span>'
+        + '<span class="go">' + go + '</span>';
+    } catch(e){}
+  }
+  // 🔔 안 읽은 공지 → 기기 알림 (앱이 열려있는 기기 — 채팅 알림과 같은 방식)
+  function maybeNotifyAnnounce(unread){
+    try {
+      if (!unread || !unread.length) return;
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+      const maxTs = unread.reduce((m,u) => Math.max(m, u.ts||0), 0);
+      const last = parseInt(localStorage.getItem('updates.lastNotifTs') || '0', 10) || 0;
+      if (maxTs <= last) return;
+      localStorage.setItem('updates.lastNotifTs', String(maxTs));
+      const L = currentLang();
+      const top = unread.slice().sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
+      const title = ({ko:'📢 새 공지 — 반드시 확인', en:'📢 New announcement — must read', es:'📢 Nuevo anuncio — lectura obligatoria'})[L];
+      const n = new Notification(title, { body: (top.title || top.body || '').slice(0, 80), tag:'km-announce', icon:'pwa-assets/icon-192.png' });
+      n.onclick = () => { try { window.focus(); location.href = './updates.html'; } catch(e){} };
+    } catch(e){}
+  }
+  // 📢 2026-08-08 사장님 지시: 공지는 모든 직원에게 최대 노출 — 안 읽은 공지가 있으면
+  //   어느 페이지에서든 전면 팝업으로 표시. [확인했습니다] 를 눌러야 닫히며 읽음 처리
+  //   (updates.lastSeenTs 갱신) + 누가 읽었는지 updates/{id}/reads/{이름} 에 기록.
+  let __annShownMaxTs = 0;
+  function maybeShowAnnouncePopup(unread){
+    try {
+      if (!unread || !unread.length) return;
+      if (here === 'updates.html' || here === 'auth.html') return;
+      if (document.getElementById('kmAnnOverlay')) return;
+      const items = unread.slice().sort((a,b) => (b.ts||0) - (a.ts||0));
+      const maxTs = items[0].ts || 0;
+      if (maxTs <= __annShownMaxTs) return;   // 이번 세션에서 이미 보여준 공지
+      __annShownMaxTs = maxTs;
+      const L = currentLang();
+      const T = {
+        title: {ko:'📢 새 공지', en:'📢 New Announcement', es:'📢 Nuevo anuncio'},
+        more:  {ko:'개의 공지가 더 있습니다 — 전체 공지에서 확인하세요', en:' more — see all announcements', es:' más — ver todos los anuncios'},
+        btn:   {ko:'✅ 확인했습니다', en:'✅ Got it', es:'✅ Entendido'},
+        open:  {ko:'전체 공지 보기', en:'View all', es:'Ver todos'},
+      };
+      const t = k => T[k][L] || T[k].ko;
+      const top = items[0];
+      const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const dstr = top.ts ? new Date(top.ts).toLocaleDateString() : '';
+      const ov = document.createElement('div');
+      ov.id = 'kmAnnOverlay';
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.62);z-index:99998;display:flex;align-items:center;justify-content:center;padding:18px';
+      ov.innerHTML = '<div style="background:#fff;border-radius:18px;max-width:520px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35);overflow:hidden">'
+        + '<div style="background:#1a5c3a;color:#fff;padding:14px 18px;font-weight:900;font-size:1.05em">' + t('title') + (dstr ? ' <span style="font-weight:600;font-size:.8em;opacity:.8">· ' + dstr + '</span>' : '') + '</div>'
+        + '<div style="padding:16px 18px;overflow:auto">'
+        +   (top.title ? '<div style="font-weight:900;font-size:1.1em;margin-bottom:8px">' + esc(top.title) + '</div>' : '')
+        +   '<div style="white-space:pre-wrap;line-height:1.6;color:#1f2937">' + esc(top.body||'') + '</div>'
+        +   (top.author ? '<div style="margin-top:10px;font-size:.8em;color:#6b7280">— ' + esc(top.author) + '</div>' : '')
+        +   (items.length > 1 ? '<div style="margin-top:12px;font-size:.85em;color:#b45309;font-weight:700">+' + (items.length-1) + t('more') + '</div>' : '')
+        + '</div>'
+        + '<div style="padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;align-items:center">'
+        +   '<a href="./updates.html" style="font-size:.85em;color:#1a5c3a;font-weight:700;text-decoration:none">' + t('open') + ' →</a>'
+        +   '<button id="kmAnnOkBtn" style="margin-left:auto;background:#1a5c3a;color:#fff;border:0;border-radius:12px;padding:11px 22px;font-weight:900;font-size:1em;cursor:pointer">' + t('btn') + '</button>'
+        + '</div></div>';
+      document.body.appendChild(ov);
+      document.getElementById('kmAnnOkBtn').onclick = () => {
+        try { localStorage.setItem('updates.lastSeenTs', String(maxTs)); } catch(e){}
+        try {
+          const me2 = JSON.parse(localStorage.getItem('chat.me') || 'null');
+          if (me2 && me2.name) {
+            const slug = String(me2.name).toUpperCase().replace(/[^A-Z0-9가-힣]/g, '_');
+            items.forEach(u => {
+              if (!u.__id) return;
+              fetch(FB_DB + '/updates/' + u.__id + '/reads/' + slug + '.json', {
+                method:'PUT', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ ts: Date.now(), branch: me2.branch || '' })
+              }).catch(() => {});
+            });
+          }
+        } catch(e){}
+        ov.remove();
+        setBadge('updates', 0);
+      };
     } catch(e){}
   }
   function startUpdatesPolling(){
