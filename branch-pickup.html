@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>📦 지점 반출 기록</title>
+<script>
+/* cache-bust poll (다른 앱과 동일 패턴) */
+(function(){try{var KEY='bpickup.bust',BUST='v1';if(localStorage.getItem(KEY)!==BUST){localStorage.setItem(KEY,BUST);}}catch(e){}})();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, set, update, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  const db = getDatabase(app);
+  window.__fb = { db, ref, onValue, set, update, remove };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+<script src="./lang-sync.js?v=1"></script>
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=5"></script>
+<script src="./me-persist.js?v=1"></script>
+<style>
+:root{
+  --green:#1a5c3a; --green2:#15803d; --lgreen:#e8f5ee; --bg:#f4f7f5; --card:#fff;
+  --line:#e2e8e5; --text:#1f2937; --mute:#6b7280; --amber:#b45309; --red:#dc2626;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;font-size:15px;-webkit-text-size-adjust:100%}
+button,input,select{font-family:inherit;font-size:1em}
+button{cursor:pointer}
+.wrap{max-width:720px;margin:0 auto;padding-bottom:60px}
+.hd{background:var(--green);color:#fff;padding:16px 18px;position:sticky;top:0;z-index:20}
+.hd .t{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.hd h1{font-size:1.15em;font-weight:800;letter-spacing:-.01em}
+.hd .me{font-size:.78em;opacity:.92;font-weight:600;text-align:right;line-height:1.3}
+.langs{display:flex;gap:4px;margin-top:8px}
+.langs button{background:rgba(255,255,255,.18);border:0;color:#fff;border-radius:6px;padding:3px 10px;font-size:.76em;font-weight:700}
+.langs button.on{background:#fff;color:var(--green)}
+.tabs{display:flex;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+.tabs button{flex:1;background:none;border:0;padding:13px 8px;font-weight:800;color:var(--mute);font-size:.98em;border-bottom:3px solid transparent}
+.tabs button.on{color:var(--green);border-bottom-color:var(--green)}
+.page{display:none;padding:16px}
+.page.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+label.lbl{display:block;font-weight:700;font-size:.86em;color:var(--mute);margin:2px 0 6px}
+input,select{width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--text)}
+input:focus,select:focus{outline:0;border-color:var(--green)}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+.btn{background:var(--green);color:#fff;border:0;border-radius:10px;padding:12px 16px;font-weight:800}
+.btn.sec{background:#fff;color:var(--green);border:1.5px solid var(--green)}
+.btn.grey{background:#eef2f0;color:#374151;border:1px solid var(--line)}
+.btn.block{width:100%}
+.btn:disabled{opacity:.5}
+#reader{width:100%;border-radius:12px;overflow:hidden;margin-top:10px}
+#reader.live{min-height:230px;background:#000}
+#reader:not(.live){display:none}
+.banner{margin-top:10px;border-radius:10px;padding:11px 13px;font-weight:700;display:none}
+.banner.show{display:block}
+.banner.ok{background:#dcfce7;color:#166534}
+.banner.nf{background:#fef3c7;color:#92400e}
+.cart{margin-top:6px}
+.citem{display:flex;align-items:center;gap:8px;padding:10px 4px;border-bottom:1px solid var(--line)}
+.citem:last-child{border-bottom:0}
+.citem .nm{flex:1;min-width:0}
+.citem .nm .n1{font-weight:700;font-size:.95em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.citem .nm .n2{font-size:.75em;color:var(--mute);font-variant-numeric:tabular-nums}
+.qtybox{display:flex;align-items:center;gap:0;border:1.5px solid var(--line);border-radius:9px;overflow:hidden}
+.qtybox button{width:34px;height:34px;background:#f3f5f4;border:0;font-size:1.1em;font-weight:800;color:var(--green)}
+.qtybox input{width:44px;text-align:center;border:0;border-left:1px solid var(--line);border-right:1px solid var(--line);border-radius:0;padding:8px 2px}
+.citem .del{background:none;border:0;color:var(--red);font-size:1.1em;padding:4px 6px}
+.muted{color:var(--mute);font-size:.88em;text-align:center;padding:16px 4px}
+.sumrow{display:flex;gap:10px;margin-bottom:12px}
+.stat{flex:1;background:var(--lgreen);border-radius:12px;padding:10px 12px;text-align:center}
+.stat b{display:block;font-size:1.35em;font-weight:900;color:var(--green)}
+.stat span{font-size:.72em;color:var(--green2);font-weight:700}
+.datenav{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.datenav input{flex:1}
+.datenav button{width:44px;padding:11px 0;background:#fff;border:1.5px solid var(--line);border-radius:10px;font-weight:800;color:var(--green)}
+table{width:100%;border-collapse:collapse;font-size:.86em}
+th{background:var(--lgreen);color:var(--green);font-weight:800;padding:8px 6px;text-align:left;font-size:.8em}
+td{padding:9px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+td .p{font-weight:700}
+td .b{font-size:.82em;color:var(--mute);font-variant-numeric:tabular-nums}
+.tag{display:inline-block;background:#eef2f0;border-radius:6px;padding:2px 7px;font-size:.8em;font-weight:700;color:#374151}
+.tools{display:flex;gap:8px;margin:6px 0 12px;flex-wrap:wrap}
+.tools .btn{flex:1;padding:10px;font-size:.9em}
+.qp-tabs{display:flex;gap:6px;margin-bottom:10px}
+.qp-tabs button{flex:1;background:#f3f5f4;border:1.5px solid var(--line);border-radius:9px;padding:8px;font-weight:800;color:var(--mute);font-size:.9em}
+.qp-tabs button.on{background:var(--lgreen);border-color:var(--green);color:var(--green)}
+.qpchips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid var(--line);border-radius:20px;padding:8px 14px;font-weight:700;font-size:.92em;color:var(--text)}
+.chip:active{background:var(--lgreen)}
+.chip.add{border-style:dashed;color:var(--green);border-color:var(--green)}
+.chip .x{color:var(--red);font-weight:900;font-size:1.05em;line-height:1;margin-left:2px;padding:0 2px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--green);color:#fff;padding:11px 20px;border-radius:12px;font-weight:800;z-index:99;box-shadow:0 8px 20px rgba(0,0,0,.25);display:none}
+.delrow{background:none;border:0;color:var(--red);font-weight:700;font-size:.82em;padding:2px 4px}
+@media print{
+  .hd,.tabs,.tools,.datenav,.langs,.delrow{display:none!important}
+  .page:not(.on){display:none}
+  body{background:#fff}
+  .card{box-shadow:none;border:0}
+  th{background:#eee!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <div class="t">
+      <h1 id="L_title">📦 지점 반출 기록</h1>
+      <div class="me" id="mePill">—</div>
+    </div>
+    <div class="langs" id="langBtns">
+      <button data-l="ko" onclick="setLang('ko')">한국어</button>
+      <button data-l="en" onclick="setLang('en')">EN</button>
+      <button data-l="es" onclick="setLang('es')">ES</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button id="tabNewBtn" class="on" onclick="showTab('new')">📝 <span id="L_tabNew">기록하기</span></button>
+    <button id="tabLogBtn" onclick="showTab('log')">📋 <span id="L_tabLog">내역</span></button>
+  </div>
+
+  <!-- 기록하기 -->
+  <div id="page-new" class="page on">
+    <div class="card">
+      <label class="lbl" id="L_takingBranch">가져가는 지점</label>
+      <select id="fBranch" onchange="onBranchPick()"></select>
+      <div style="height:12px"></div>
+      <label class="lbl" id="L_person">가져간 사람</label>
+      <select id="fPersonSel" onchange="onPersonSelChange()"></select>
+      <input id="fPersonCustom" style="display:none;margin-top:8px" autocomplete="off">
+    </div>
+
+    <div class="card">
+      <button class="btn block" id="scanBtn" onclick="toggleScan()">📷 <span id="L_scanBtn">스캔 시작</span></button>
+      <div id="reader"></div>
+      <div class="banner" id="banner"></div>
+      <div class="row" style="margin-top:12px">
+        <input id="mName" placeholder="제품명" style="flex:2">
+        <input id="mBc" placeholder="바코드" inputmode="numeric" style="flex:1.3">
+        <input id="mQty" type="number" min="1" value="1" style="flex:.7">
+      </div>
+      <button class="btn sec block" style="margin-top:8px" onclick="manualAdd()">＋ <span id="L_addItem">추가</span></button>
+
+      <div class="cart" id="cart"></div>
+    </div>
+
+    <div class="card">
+      <label class="lbl" id="L_qpTitle">🥬 바코드 없는 품목 (탭해서 담기)</label>
+      <div class="qp-tabs">
+        <button class="on" data-cat="veg" onclick="qpTab('veg')" id="L_qpVeg">🥬 야채</button>
+        <button data-cat="supply" onclick="qpTab('supply')" id="L_qpSupply">📦 비품</button>
+      </div>
+      <div class="qpchips" id="qpChips"></div>
+    </div>
+
+    <div class="card">
+      <label class="lbl" id="L_note">메모/비고</label>
+      <input id="fNote" placeholder="메모 (선택)">
+    </div>
+
+    <button class="btn block" style="padding:15px;font-size:1.05em" onclick="saveAll()">💾 <span id="L_save">저장</span></button>
+  </div>
+
+  <!-- 내역 -->
+  <div id="page-log" class="page">
+    <div class="card">
+      <div class="datenav">
+        <button onclick="shiftDay(-1)">‹</button>
+        <input type="date" id="logDate" onchange="subscribeLog()">
+        <button onclick="shiftDay(1)">›</button>
+      </div>
+      <select id="logBranch" onchange="renderLog()"></select>
+      <div class="sumrow" style="margin-top:12px">
+        <div class="stat"><b id="statCount">0</b><span id="L_count">건</span></div>
+        <div class="stat"><b id="statQty">0</b><span id="L_totalQty">총 수량</span></div>
+        <div class="stat"><b id="statBranch">0</b><span id="L_branches">지점</span></div>
+      </div>
+      <div class="tools">
+        <button class="btn grey" onclick="exportDay()">📊 <span id="L_excel">엑셀</span></button>
+        <button class="btn grey" onclick="exportMonth()">📊 <span id="L_monthExcel">월 전체</span></button>
+        <button class="btn grey" onclick="window.print()">🖨 <span id="L_print">인쇄</span></button>
+      </div>
+      <div id="logList"></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ 다국어 ============ */
+var I18N={
+ title:{ko:'📦 지점 반출 기록',en:'📦 Branch Pickup Log',es:'📦 Registro de Retiros'},
+ tabNew:{ko:'기록하기',en:'New',es:'Registrar'},
+ tabLog:{ko:'내역',en:'History',es:'Historial'},
+ takingBranch:{ko:'가져가는 지점',en:'Taking branch',es:'Sucursal que retira'},
+ person:{ko:'가져간 사람',en:'Person who took',es:'Persona que retira'},
+ personPh:{ko:'이름 직접 입력',en:'Type name',es:'Escribir nombre'},
+ pickPerson:{ko:'— 이름 선택 —',en:'— Select name —',es:'— Seleccionar —'},
+ customName:{ko:'✏️ 직접 입력',en:'✏️ Type manually',es:'✏️ Escribir'},
+ scanBtn:{ko:'스캔 시작',en:'Start scan',es:'Escanear'},
+ scanStop:{ko:'스캔 정지',en:'Stop scan',es:'Detener'},
+ mNamePh:{ko:'제품명',en:'Product name',es:'Producto'},
+ mBcPh:{ko:'바코드',en:'Barcode',es:'Código'},
+ addItem:{ko:'추가',en:'Add',es:'Agregar'},
+ cartEmpty:{ko:'아직 담긴 품목이 없어요 — 스캔하거나 직접 추가하세요',en:'No items yet — scan or add manually',es:'Sin artículos — escanea o agrega'},
+ note:{ko:'메모/비고',en:'Note',es:'Nota'},
+ notePh:{ko:'메모 (선택)',en:'Note (optional)',es:'Nota (opcional)'},
+ save:{ko:'저장',en:'Save',es:'Guardar'},
+ needBranch:{ko:'가져가는 지점을 선택하세요',en:'Please select the taking branch',es:'Selecciona la sucursal'},
+ needItems:{ko:'품목을 하나 이상 추가하세요',en:'Add at least one item',es:'Agrega al menos un artículo'},
+ saved:{ko:'저장됨 ✓',en:'Saved ✓',es:'Guardado ✓'},
+ pickBranch:{ko:'— 지점 선택 —',en:'— Select branch —',es:'— Seleccionar —'},
+ all:{ko:'전체 지점',en:'All branches',es:'Todas'},
+ count:{ko:'건',en:'records',es:'registros'},
+ totalQty:{ko:'총 수량',en:'Total qty',es:'Cant. total'},
+ branches:{ko:'지점 수',en:'branches',es:'sucursales'},
+ excel:{ko:'엑셀',en:'Excel',es:'Excel'},
+ monthExcel:{ko:'월 전체',en:'Month',es:'Mes'},
+ print:{ko:'인쇄',en:'Print',es:'Imprimir'},
+ logEmpty:{ko:'이 날짜에 반출 기록이 없어요',en:'No pickups on this date',es:'Sin retiros en esta fecha'},
+ del:{ko:'삭제',en:'Delete',es:'Borrar'},
+ confirmDel:{ko:'이 기록을 삭제할까요?',en:'Delete this record?',es:'¿Borrar este registro?'},
+ notInCat:{ko:'(목록에 없음)',en:'(not in catalog)',es:'(no está en lista)'},
+ qpTitle:{ko:'🥬 바코드 없는 품목 (탭해서 담기)',en:'🥬 No-barcode items (tap to add)',es:'🥬 Sin código (toca para agregar)'},
+ qpVeg:{ko:'🥬 야채',en:'🥬 Produce',es:'🥬 Verduras'},
+ qpSupply:{ko:'📦 비품',en:'📦 Supplies',es:'📦 Insumos'},
+ qpAdd:{ko:'＋ 품목 추가',en:'＋ Add item',es:'＋ Agregar'},
+ qpPrompt:{ko:'추가할 품목 이름 (예: 대파, 비닐봉투)',en:'New item name',es:'Nombre del artículo'},
+ qpDelC:{ko:'이 품목을 목록에서 뺄까요?',en:'Remove this item from the list?',es:'¿Quitar de la lista?'},
+ colTime:{ko:'시간',en:'Time',es:'Hora'},
+ colBranch:{ko:'지점',en:'Branch',es:'Sucursal'},
+ colPerson:{ko:'사람',en:'Person',es:'Persona'},
+ colItem:{ko:'제품',en:'Item',es:'Artículo'},
+ colQty:{ko:'수량',en:'Qty',es:'Cant.'},
+ colNote:{ko:'메모',en:'Note',es:'Nota'},
+ colBy:{ko:'기록자',en:'By',es:'Por'},
+ catLoading:{ko:'제품 목록 불러오는 중…',en:'Loading catalog…',es:'Cargando…'},
+ catReady:{ko:function(n){return '✓ 제품 '+n+'개 연결됨 (스캔 시 이름 자동)';},en:function(n){return '✓ '+n+' products linked';},es:function(n){return '✓ '+n+' productos';}},
+};
+var LANG=(function(){try{return localStorage.getItem('kimchi_lang')||localStorage.getItem('tasks.lang')||'ko';}catch(e){return 'ko';}})();
+function t(k){var v=I18N[k];if(!v)return k;return (v[LANG]!==undefined?v[LANG]:v.ko);}
+function setLang(l){LANG=l;try{localStorage.setItem('kimchi_lang',l);localStorage.setItem('tasks.lang',l);}catch(e){}applyLang();}
+window.setLang=setLang;
+function applyLang(){
+  document.documentElement.lang=LANG;
+  var map={L_title:'title',L_tabNew:'tabNew',L_tabLog:'tabLog',L_takingBranch:'takingBranch',L_person:'person',
+    L_scanBtn:(window.__scanning?'scanStop':'scanBtn'),L_addItem:'addItem',L_note:'note',L_save:'save',
+    L_count:'count',L_totalQty:'totalQty',L_branches:'branches',L_excel:'excel',L_monthExcel:'monthExcel',L_print:'print',
+    L_qpTitle:'qpTitle',L_qpVeg:'qpVeg',L_qpSupply:'qpSupply'};
+  Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=t(map[id]);});
+  var mn=document.getElementById('mName'); if(mn) mn.placeholder=t('mNamePh');
+  var mb=document.getElementById('mBc'); if(mb) mb.placeholder=t('mBcPh');
+  var fp=document.getElementById('fPersonCustom'); if(fp) fp.placeholder=t('personPh');
+  if(document.getElementById('fPersonSel')) fillPersonSelect(PERSON_NAMES);
+  var fnote=document.getElementById('fNote'); if(fnote) fnote.placeholder=t('notePh');
+  document.querySelectorAll('#langBtns button').forEach(function(b){b.classList.toggle('on',b.dataset.l===LANG);});
+  fillBranchSelects(); renderCart(); renderLog(); renderQuick();
+}
+
+/* ============ 기본 ============ */
+var DBURL='https://kimchi-mart-order-default-rtdb.firebaseio.com';
+var BRANCHES=[
+  {code:'HOLLYWOOD',ko:'헐리우드',en:'Hollywood',es:'Hollywood'},
+  {code:'MIAMI',ko:'마이애미',en:'Miami',es:'Miami'},
+  {code:'PEMBROKE_PINES',ko:'펨브로크',en:'Pembroke Pines',es:'Pembroke Pines'},
+  {code:'CORAL_SPRINGS',ko:'코럴스프링',en:'Coral Springs',es:'Coral Springs'},
+  {code:'LASOLAS',ko:'라스올라스',en:'Las Olas',es:'Las Olas'}
+];
+function branchName(code){for(var i=0;i<BRANCHES.length;i++)if(BRANCHES[i].code===code)return BRANCHES[i][LANG]||BRANCHES[i].ko;return code||'';}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function meObj(){try{return JSON.parse(localStorage.getItem('chat.me')||'null')||{};}catch(e){return {};}}
+function meName(){return meObj().name||'직원';}
+function meBranch(){return meObj().branch||'';}
+function todayKey(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function newId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+
+/* ============ 체크디지트 / 바코드 ============ */
+function onlyDigits(v){return (v==null?'':''+v).replace(/\D/g,'');}
+function upcaCD(d11){var o=0,e=0;for(var i=0;i<11;i++){var n=+d11[i];if((i+1)%2===1)o+=n;else e+=n;}return (10-((o*3+e)%10))%10;}
+function ean13CD(d12){var o=0,e=0;for(var i=0;i<12;i++){var n=+d12[i];if((i+1)%2===1)o+=n;else e+=n;}return (10-((o+e*3)%10))%10;}
+function ean8CD(d7){var s=0;for(var i=0;i<7;i++){s+=((i%2===0)?3:1)*(+d7[i]);}return (10-(s%10))%10;}
+function fullFromPos(pos){
+  var d=onlyDigits(pos),len=d.length;
+  if(len===7)return d+ean8CD(d);
+  if(len===11)return d+upcaCD(d);
+  if(len===12)return d+ean13CD(d);
+  return d;
+}
+function lstrip0(s){return String(s||'').replace(/^0+/,'')||'0';}
+
+/* ============ 카탈로그(바코드→제품명) ============ */
+var LOOKUP={};   // 정규화 digits -> {name,vendor,pos}
+var CAT_COUNT=0;
+function addLookup(key,val){var k=onlyDigits(key);if(k){if(!LOOKUP[k])LOOKUP[k]=val;var s=lstrip0(k);if(!LOOKUP[s])LOOKUP[s]=val;}}
+function decodeCatVal(val){var nc=false;if(val.charAt(0)==='*'){nc=true;val=val.slice(1);}var vp=val.split('');return {name:vp[0]||'',vendor:vp[1]||''};}
+function buildLookup(items){
+  LOOKUP={};CAT_COUNT=0;
+  Object.keys(items||{}).forEach(function(pos){
+    var dec=decodeCatVal(items[pos]||'');
+    var entry={name:dec.name,vendor:dec.vendor,pos:pos};
+    addLookup(pos,entry);
+    var full=fullFromPos(pos); if(full&&full!==pos) addLookup(full,entry);
+    CAT_COUNT++;
+  });
+}
+function findProduct(code){
+  var d=onlyDigits(code);
+  var tries=[d,lstrip0(d),d.slice(0,-1),lstrip0(d.slice(0,-1)),'0'+d];
+  for(var i=0;i<tries.length;i++){var k=tries[i];if(LOOKUP[k])return LOOKUP[k];var s=lstrip0(k);if(LOOKUP[s])return LOOKUP[s];}
+  return null;
+}
+function loadCatalog(){
+  var cached=null;try{cached=JSON.parse(localStorage.getItem('bccat.HOLLYWOOD')||'null');}catch(e){}
+  if(cached&&cached.items){buildLookup(cached.items);}
+  fetch(DBURL+'/barcodeChecklist/HOLLYWOOD/catalog/meta.json',{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(meta){
+      if(!meta)return;
+      if(cached&&cached.at===meta.at&&cached.items){return;}   // 최신본 캐시됨
+      return fetch(DBURL+'/barcodeChecklist/HOLLYWOOD/catalog/items.json',{cache:'no-store'})
+        .then(function(r){return r.ok?r.json():null;})
+        .then(function(items){
+          if(!items)return;
+          try{localStorage.setItem('bccat.HOLLYWOOD',JSON.stringify({at:meta.at,items:items}));}catch(e){}
+          buildLookup(items);
+        });
+    }).catch(function(){});
+}
+
+/* ============ 탭 ============ */
+function showTab(w){
+  document.getElementById('page-new').classList.toggle('on',w==='new');
+  document.getElementById('page-log').classList.toggle('on',w==='log');
+  document.getElementById('tabNewBtn').classList.toggle('on',w==='new');
+  document.getElementById('tabLogBtn').classList.toggle('on',w==='log');
+  if(w==='log'){ if(!document.getElementById('logDate').value) document.getElementById('logDate').value=todayKey(); subscribeLog(); }
+  if(w==='new' && window.__scanning){ /* keep scanning */ }
+}
+window.showTab=showTab;
+
+/* ============ 지점 select 채우기 ============ */
+function fillBranchSelects(){
+  var fb=document.getElementById('fBranch');
+  if(fb){
+    var cur=fb.value;
+    fb.innerHTML='<option value="">'+t('pickBranch')+'</option>'+BRANCHES.map(function(b){return '<option value="'+b.code+'">🏢 '+esc(b[LANG]||b.ko)+'</option>';}).join('');
+    fb.value=cur;
+  }
+  var lb=document.getElementById('logBranch');
+  if(lb){
+    var lc=lb.value;
+    lb.innerHTML='<option value="">🌐 '+t('all')+'</option>'+BRANCHES.map(function(b){return '<option value="'+b.code+'">🏢 '+esc(b[LANG]||b.ko)+'</option>';}).join('');
+    lb.value=lc;
+  }
+}
+
+/* ============ 가져간 사람 — 지점 직원 명단에서 선택 ============ */
+var PERSON_NAMES=[];
+function fillPersonSelect(names){
+  var sel=document.getElementById('fPersonSel'); if(!sel)return;
+  var cur=sel.value;
+  var opts='<option value="">'+t('pickPerson')+'</option>';
+  opts+=(names||[]).map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>';}).join('');
+  opts+='<option value="__custom__">'+t('customName')+'</option>';
+  sel.innerHTML=opts;
+  if(cur&&(names||[]).indexOf(cur)>=0)sel.value=cur;
+  onPersonSelChange();
+}
+function onPersonSelChange(){
+  var sel=document.getElementById('fPersonSel');
+  var ci=document.getElementById('fPersonCustom');
+  if(!sel||!ci)return;
+  if(sel.value==='__custom__'){ci.style.display='';ci.focus();}
+  else{ci.style.display='none';}
+}
+window.onPersonSelChange=onPersonSelChange;
+function getPerson(){
+  var sel=document.getElementById('fPersonSel');
+  if(sel&&sel.value==='__custom__')return document.getElementById('fPersonCustom').value.trim();
+  return sel?sel.value:'';
+}
+function onBranchPick(){
+  var code=document.getElementById('fBranch').value;
+  PERSON_NAMES=[]; fillPersonSelect([]);   // 초기화 (선택 안내 + 직접입력만)
+  if(!code)return;
+  fetch(DBURL+'/schedules/'+code+'/employees.json',{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(data){
+      if(!data)return;
+      var arr=Array.isArray(data)?data:Object.values(data);
+      var names=arr.filter(function(e){return e&&e.name;}).map(function(e){return e.name;});
+      names.sort(function(a,b){return String(a).localeCompare(String(b));});
+      PERSON_NAMES=names;
+      fillPersonSelect(names);
+    }).catch(function(){});
+}
+window.onBranchPick=onBranchPick;
+
+/* ============ 스캐너 ============ */
+var SCANNER=null, LAST={code:'',t:0};
+function toggleScan(){ if(window.__scanning) stopScan(); else startScan(); }
+window.toggleScan=toggleScan;
+function startScan(){
+  if(typeof Html5Qrcode==='undefined'){alert('스캐너 로딩 실패 — 인터넷 확인 후 새로고침');return;}
+  var reader=document.getElementById('reader'); reader.classList.add('live');
+  SCANNER=new Html5Qrcode('reader');
+  var fmts;
+  try{fmts=[Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,Html5QrcodeSupportedFormats.ITF];}catch(e){fmts=undefined;}
+  function qb(vw){var w=Math.max(160,Math.min((vw||300)-30,320));return {width:w,height:Math.round(w*0.6)};}
+  var config={fps:10,qrbox:qb,formatsToSupport:fmts};
+  function onOk(){window.__scanning=true;var sb=document.getElementById('scanBtn');sb.innerHTML='⏹ <span id="L_scanBtn">'+t('scanStop')+'</span>';}
+  function onFail(err){
+    Html5Qrcode.getCameras().then(function(cams){
+      if(!cams||!cams.length)throw new Error('카메라 없음');
+      var back=cams.find(function(c){return /back|rear|environment|후면/i.test(c.label||'');})||cams[cams.length-1];
+      return SCANNER.start(back.id,config,function(x){handleScan(x);},function(){});
+    }).then(onOk).catch(function(e2){
+      reader.classList.remove('live');SCANNER=null;
+      alert('카메라를 열 수 없습니다.\n\n확인:\n· 카메라 권한 "허용"\n· 아이폰은 Safari 브라우저에서 열기\n· 다른 앱이 카메라 사용 중인지');
+    });
+  }
+  SCANNER.start({facingMode:'environment'},config,function(x){handleScan(x);},function(){}).then(onOk).catch(onFail);
+}
+function stopScan(){
+  window.__scanning=false;
+  var sb=document.getElementById('scanBtn');sb.innerHTML='📷 <span id="L_scanBtn">'+t('scanBtn')+'</span>';
+  if(SCANNER){try{SCANNER.stop().then(function(){try{SCANNER.clear();}catch(e){}SCANNER=null;}).catch(function(){SCANNER=null;});}catch(e){SCANNER=null;}}
+  var reader=document.getElementById('reader');reader.innerHTML='';reader.classList.remove('live');
+}
+function beep(ok){try{var c=new (window.AudioContext||window.webkitAudioContext)();var o=c.createOscillator();var g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=ok?880:300;g.gain.value=.12;o.start();setTimeout(function(){o.stop();c.close();},120);}catch(e){}}
+function handleScan(raw){
+  var code=onlyDigits(raw);
+  if(code.length<6)return;
+  var now=Date.now();
+  if(code===LAST.code&&now-LAST.t<2200)return;
+  LAST={code:code,t:now};
+  var p=findProduct(code);
+  var name=p?p.name:'';
+  addToCart(code,name);
+  beep(true);
+  var b=document.getElementById('banner');
+  b.className='banner show '+(p?'ok':'nf');
+  b.innerHTML=(p?'✅ ':'➕ ')+esc(name||t('notInCat'))+' <span style="opacity:.7;font-size:.85em">'+esc(code)+'</span>';
+}
+
+/* ============ 바코드 없는 품목 빠른선택 ============ */
+var QP_BUILTIN={
+  veg:['대파','쪽파','양파','마늘','생강','배추','무','오이','애호박','당근','감자','고구마','청양고추','풋고추','부추','상추','깻잎','콩나물','숙주','미나리','시금치','알타리무','열무'],
+  supply:['비닐봉투','장갑','랩','은박지','종이타월','세제','행주','수세미','영수증용지','가격표','테이프','마커','쓰레기봉투','앞치마']
+};
+var QP_CUSTOM={veg:{},supply:{}};
+var QP_CAT='veg';
+function qpTab(cat){QP_CAT=cat;document.querySelectorAll('.qp-tabs button').forEach(function(b){b.classList.toggle('on',b.dataset.cat===cat);});renderQuick();}
+window.qpTab=qpTab;
+function subscribeQuick(){
+  var fb=window.__fb;if(!fb)return;
+  fb.onValue(fb.ref(fb.db,'receiving/quickItems'),function(snap){QP_CUSTOM=snap.val()||{veg:{},supply:{}};renderQuick();});
+}
+var QP_LIST=[];   // 렌더된 칩의 raw 이름 (인덱스로 참조 — 이스케이프 문제 방지)
+function renderQuick(){
+  var el=document.getElementById('qpChips');if(!el)return;
+  var builtin=QP_BUILTIN[QP_CAT]||[];
+  var custom=QP_CUSTOM[QP_CAT]||{};
+  var canDel=isMgr();
+  QP_LIST=[];
+  var html=builtin.map(function(n){
+    var i=QP_LIST.push(n)-1;
+    return '<button class="chip" onclick="qpPick('+i+')">'+esc(n)+'</button>';
+  }).join('');
+  html+=Object.keys(custom).map(function(id){
+    var n=custom[id];var i=QP_LIST.push(n)-1;
+    return '<span class="chip"><span onclick="qpPick('+i+')">'+esc(n)+'</span>'+(canDel?'<span class="x" onclick="qpDel(\''+id+'\')">×</span>':'')+'</span>';
+  }).join('');
+  html+='<button class="chip add" onclick="qpNew()">'+t('qpAdd')+'</button>';
+  el.innerHTML=html;
+}
+function qpPick(i){var n=QP_LIST[i];if(n==null)return;qpAdd(n);}
+window.qpPick=qpPick;
+function qpAdd(name){addToCart('',name);beep(true);var b=document.getElementById('banner');b.className='banner show ok';b.innerHTML='➕ '+esc(name);}
+window.qpAdd=qpAdd;
+function qpNew(){
+  var name=prompt(t('qpPrompt'));if(!name)return;name=name.trim();if(!name)return;
+  var fb=window.__fb;if(!fb){alert('연결 대기중');return;}
+  var id=newId();
+  fb.set(fb.ref(fb.db,'receiving/quickItems/'+QP_CAT+'/'+id),name).catch(function(e){alert('추가 실패: '+(e.message||e));});
+}
+window.qpNew=qpNew;
+function qpDel(id){
+  if(!confirm(t('qpDelC')))return;
+  var fb=window.__fb;fb.remove(fb.ref(fb.db,'receiving/quickItems/'+QP_CAT+'/'+id)).catch(function(e){alert('삭제 실패: '+(e.message||e));});
+}
+window.qpDel=qpDel;
+
+/* ============ 카트 ============ */
+var CART=[];  // {barcode, name, qty}
+function addToCart(barcode,name){
+  var key=onlyDigits(barcode);
+  var found=null;
+  for(var i=0;i<CART.length;i++){ if(key && CART[i].barcode===key){found=CART[i];break;} }
+  if(found){found.qty+=1;}
+  else{CART.push({barcode:key,name:name||'',qty:1});}
+  renderCart();
+}
+function manualAdd(){
+  var name=document.getElementById('mName').value.trim();
+  var bc=onlyDigits(document.getElementById('mBc').value);
+  var qty=parseInt(document.getElementById('mQty').value,10)||1;
+  if(!name&&!bc){document.getElementById('mName').focus();return;}
+  if(!name&&bc){var p=findProduct(bc);if(p)name=p.name;}
+  // 같은 바코드 있으면 합치기
+  var merged=false;
+  if(bc){for(var i=0;i<CART.length;i++){if(CART[i].barcode===bc){CART[i].qty+=qty;merged=true;break;}}}
+  if(!merged)CART.push({barcode:bc,name:name||'',qty:qty});
+  document.getElementById('mName').value='';document.getElementById('mBc').value='';document.getElementById('mQty').value='1';
+  renderCart();
+  document.getElementById('mName').focus();
+}
+window.manualAdd=manualAdd;
+function cartQty(i,delta){CART[i].qty=Math.max(1,(CART[i].qty||1)+delta);renderCart();}
+function cartSetQty(i,v){var n=parseInt(v,10);CART[i].qty=(isNaN(n)||n<1)?1:n;}
+function cartDel(i){CART.splice(i,1);renderCart();}
+function cartRename(i,v){CART[i].name=v;}
+window.cartQty=cartQty;window.cartSetQty=cartSetQty;window.cartDel=cartDel;window.cartRename=cartRename;
+function renderCart(){
+  var el=document.getElementById('cart');if(!el)return;
+  if(!CART.length){el.innerHTML='<div class="muted">'+t('cartEmpty')+'</div>';return;}
+  el.innerHTML=CART.map(function(c,i){
+    return '<div class="citem">'+
+      '<div class="nm"><input class="n1" style="border:0;padding:2px 0;width:100%" value="'+esc(c.name)+'" placeholder="'+t('mNamePh')+'" onchange="cartRename('+i+',this.value)">'+
+      (c.barcode?'<div class="n2">'+esc(c.barcode)+'</div>':'')+'</div>'+
+      '<div class="qtybox"><button onclick="cartQty('+i+',-1)">−</button>'+
+      '<input type="number" min="1" value="'+c.qty+'" onchange="cartSetQty('+i+',this.value)"><button onclick="cartQty('+i+',1)">＋</button></div>'+
+      '<button class="del" onclick="cartDel('+i+')">🗑</button></div>';
+  }).join('');
+}
+
+/* ============ 저장 ============ */
+function toast(msg){var el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(el.__t);el.__t=setTimeout(function(){el.style.display='none';},1800);}
+function saveAll(){
+  var branch=document.getElementById('fBranch').value;
+  if(!branch){alert(t('needBranch'));return;}
+  if(!CART.length){alert(t('needItems'));return;}
+  var person=getPerson();
+  var note=document.getElementById('fNote').value.trim();
+  var fb=window.__fb; if(!fb){alert('연결 대기중 — 잠시 후 다시');return;}
+  var at=Date.now(); var dk=todayKey(); var sid=newId();
+  var writes=CART.map(function(c){
+    var id=newId();
+    var rec={branch:branch,person:person,barcode:c.barcode||'',name:c.name||'',qty:c.qty||1,note:note,
+             by:meName(),byBranch:meBranch(),at:at,session:sid};
+    return fb.set(fb.ref(fb.db,'receiving/branchPickups/'+dk+'/'+id),rec);
+  });
+  Promise.all(writes).then(function(){
+    CART=[];renderCart();
+    document.getElementById('fNote').value='';
+    var b=document.getElementById('banner');b.className='banner';
+    toast(t('saved'));
+  }).catch(function(e){alert('저장 실패: '+(e.message||e)+'\n로그인/인터넷 확인');});
+}
+window.saveAll=saveAll;
+
+/* ============ 내역 ============ */
+var LOG_DATA={}, LOG_UNSUB=null;
+function shiftDay(delta){
+  var inp=document.getElementById('logDate');
+  var d=inp.value?new Date(inp.value+'T00:00:00'):new Date();
+  d.setDate(d.getDate()+delta);
+  inp.value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  subscribeLog();
+}
+window.shiftDay=shiftDay;
+function subscribeLog(){
+  var fb=window.__fb;if(!fb)return;
+  var dk=document.getElementById('logDate').value||todayKey();
+  document.getElementById('logDate').value=dk;
+  if(LOG_UNSUB){try{LOG_UNSUB();}catch(e){}LOG_UNSUB=null;}
+  var r=fb.ref(fb.db,'receiving/branchPickups/'+dk);
+  LOG_UNSUB=fb.onValue(r,function(snap){LOG_DATA=snap.val()||{};renderLog();});
+}
+window.subscribeLog=subscribeLog;
+function currentLogRows(){
+  var bf=document.getElementById('logBranch').value;
+  var rows=Object.keys(LOG_DATA).map(function(id){return Object.assign({id:id},LOG_DATA[id]);});
+  if(bf)rows=rows.filter(function(r){return r.branch===bf;});
+  rows.sort(function(a,b){return (b.at||0)-(a.at||0);});
+  return rows;
+}
+function renderLog(){
+  var el=document.getElementById('logList');if(!el)return;
+  var rows=currentLogRows();
+  var totQ=0,brset={};rows.forEach(function(r){totQ+=(+r.qty||0);brset[r.branch]=1;});
+  document.getElementById('statCount').textContent=rows.length;
+  document.getElementById('statQty').textContent=totQ;
+  document.getElementById('statBranch').textContent=Object.keys(brset).length;
+  if(!rows.length){el.innerHTML='<div class="muted">'+t('logEmpty')+'</div>';return;}
+  var canDel=isMgr();
+  var html='<table><thead><tr><th>'+t('colTime')+'</th><th>'+t('colBranch')+'</th><th>'+t('colItem')+'</th><th style="text-align:center">'+t('colQty')+'</th><th>'+t('colPerson')+'</th>'+(canDel?'<th></th>':'')+'</tr></thead><tbody>';
+  html+=rows.map(function(r){
+    var tm=new Date(r.at||0);var hh=String(tm.getHours()).padStart(2,'0')+':'+String(tm.getMinutes()).padStart(2,'0');
+    return '<tr><td class="b">'+hh+'</td>'+
+      '<td><span class="tag">'+esc(branchName(r.branch))+'</span></td>'+
+      '<td><div class="p">'+esc(r.name||'-')+'</div>'+(r.barcode?'<div class="b">'+esc(r.barcode)+'</div>':'')+(r.note?'<div class="b">📝 '+esc(r.note)+'</div>':'')+'</td>'+
+      '<td style="text-align:center;font-weight:800">'+esc(r.qty||1)+'</td>'+
+      '<td class="b">'+esc(r.person||'')+'<br><span style="opacity:.7">'+esc(r.by||'')+'</span></td>'+
+      (canDel?'<td><button class="delrow" onclick="delRec(\''+r.id+'\')">'+t('del')+'</button></td>':'')+
+      '</tr>';
+  }).join('');
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+window.renderLog=renderLog;
+function isMgr(){
+  var m=meObj();var role=String(m.role||'').toUpperCase();
+  var em=String(m.email||'').toLowerCase();
+  if(em==='specialmasterdj@gmail.com'||em==='byhoki64@gmail.com')return true;
+  return /OWNER|EXECUTIVE|MANAGER|ASSISTANT|SUPERVISOR|사장|전무|매니저/.test(role);
+}
+function delRec(id){
+  if(!confirm(t('confirmDel')))return;
+  var fb=window.__fb;var dk=document.getElementById('logDate').value||todayKey();
+  fb.remove(fb.ref(fb.db,'receiving/branchPickups/'+dk+'/'+id)).catch(function(e){alert('삭제 실패: '+(e.message||e));});
+}
+window.delRec=delRec;
+
+/* ============ 엑셀 / 내보내기 ============ */
+function rowsToSheet(rows){
+  return rows.map(function(r){
+    var tm=new Date(r.at||0);
+    var o={};
+    o[t('colTime')]=tm.toLocaleString();
+    o[t('colBranch')]=branchName(r.branch);
+    o[t('colItem')]=r.name||'';
+    o['바코드/Barcode']=r.barcode||'';
+    o[t('colQty')]=r.qty||1;
+    o[t('colPerson')]=r.person||'';
+    o[t('colNote')]=r.note||'';
+    o[t('colBy')]=r.by||'';
+    return o;
+  });
+}
+function exportDay(){
+  var rows=currentLogRows();
+  if(!rows.length){alert(t('logEmpty'));return;}
+  var dk=document.getElementById('logDate').value;
+  var ws=XLSX.utils.json_to_sheet(rowsToSheet(rows));
+  var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,dk);
+  XLSX.writeFile(wb,'반출기록_'+dk+'.xlsx');
+}
+window.exportDay=exportDay;
+function exportMonth(){
+  var dk=document.getElementById('logDate').value||todayKey();
+  var ym=dk.slice(0,7);
+  fetch(DBURL+'/receiving/branchPickups.json',{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(all){
+      if(!all){alert('데이터 없음');return;}
+      var rows=[];
+      Object.keys(all).forEach(function(day){
+        if(day.slice(0,7)!==ym)return;
+        var bucket=all[day]||{};
+        Object.keys(bucket).forEach(function(id){rows.push(Object.assign({id:id},bucket[id]));});
+      });
+      var bf=document.getElementById('logBranch').value;
+      if(bf)rows=rows.filter(function(r){return r.branch===bf;});
+      if(!rows.length){alert(ym+' 기록 없음');return;}
+      rows.sort(function(a,b){return (a.at||0)-(b.at||0);});
+      var ws=XLSX.utils.json_to_sheet(rowsToSheet(rows));
+      var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,ym);
+      XLSX.writeFile(wb,'반출기록_'+ym+'.xlsx');
+    }).catch(function(e){alert('불러오기 실패: '+(e.message||e));});
+}
+window.exportMonth=exportMonth;
+
+/* ============ 부팅 ============ */
+function updateMe(){var m=meObj();document.getElementById('mePill').innerHTML=esc(m.name||'—')+'<br>'+esc(branchName(m.branch));}
+var __booted=false;
+function boot(){
+  if(__booted)return;__booted=true;
+  fillBranchSelects();
+  applyLang();
+  updateMe();
+  renderCart();
+  document.getElementById('logDate').value=todayKey();
+  loadCatalog();
+  subscribeQuick();
+  renderQuick();
+  // me 기본 지점이 헐리우드가 아니면(다른 지점에서 열어도) 그대로 — 기록은 '가져가는 지점' 기준
+}
+window.addEventListener('fb-ready',boot);
+if(window.__fb)boot();
+window.addEventListener('storage',function(e){if(e.key==='chat.me'){updateMe();}});
+setTimeout(function(){updateMe();},1500);
+</script>
+</body>
+</html>
