@@ -10,6 +10,7 @@
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="./pickup-catalog.js?v=1"></script>
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getDatabase, ref, onValue, set, update, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
@@ -348,18 +349,25 @@ function setCatStatus(kind){
   else if(kind==='ok'){el.textContent=t('catReady')(CAT_COUNT);el.style.color='var(--green2)';}
   else{el.textContent='⚠ '+t('catNone');el.style.color='var(--amber)';}
 }
+function buildFromCatalog(){
+  barcodeIndex={};CAT_COUNT=0;
+  var cat=window.PICKUP_CATALOG||{};
+  Object.keys(cat).forEach(function(code){
+    var name=cat[code];if(!name)return;
+    barcodeKeys(code).forEach(function(k){if(!barcodeIndex[k])barcodeIndex[k]=name;});
+    CAT_COUNT++;
+  });
+}
 function loadCatalog(){
   setCatStatus('loading');
-  var cached=null;try{cached=JSON.parse(localStorage.getItem('bpickup.prod.HOLLYWOOD')||'null');}catch(e){}
-  if(cached){buildProductIndex(cached);if(CAT_COUNT)setCatStatus('ok');}
-  fetch(DBURL+'/products/HOLLYWOOD.json?cache='+Date.now(),{cache:'no-store'})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(function(data){
-      if(!data){if(!CAT_COUNT)setCatStatus('none');return;}
-      buildProductIndex(data);
-      if(CAT_COUNT){try{localStorage.setItem('bpickup.prod.HOLLYWOOD',JSON.stringify(data));}catch(e){}}
-      setCatStatus(CAT_COUNT?'ok':'none');
-    }).catch(function(){if(!CAT_COUNT)setCatStatus('none');});
+  if(window.PICKUP_CATALOG){buildFromCatalog();setCatStatus(CAT_COUNT?'ok':'none');return;}
+  // 카탈로그 파일이 아직 로딩 안됐으면 잠깐 기다렸다 재시도
+  var tries=0;
+  var iv=setInterval(function(){
+    tries++;
+    if(window.PICKUP_CATALOG){clearInterval(iv);buildFromCatalog();setCatStatus(CAT_COUNT?'ok':'none');}
+    else if(tries>25){clearInterval(iv);setCatStatus('none');}
+  },200);
 }
 
 /* ============ 탭 ============ */
