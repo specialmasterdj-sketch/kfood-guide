@@ -299,25 +299,40 @@ function fullFromPos(pos){
 }
 function lstrip0(s){return String(s||'').replace(/^0+/,'')||'0';}
 
-/* ============ 카탈로그(바코드→제품명) ============ */
-var LOOKUP={};   // 정규화 digits -> {name,vendor,pos}
+/* ============ 제품명 조회 — products/{지점} (상품조회 앱과 동일 소스) ============ */
+var barcodeIndex={};   // 바코드 변형키 -> 제품명
 var CAT_COUNT=0;
-function addLookup(key,val){var k=onlyDigits(key);if(k){if(!LOOKUP[k])LOOKUP[k]=val;var s=lstrip0(k);if(!LOOKUP[s])LOOKUP[s]=val;}}
-function decodeCatVal(val){var nc=false;if(val.charAt(0)==='*'){nc=true;val=val.slice(1);}var vp=val.split('');return {name:vp[0]||'',vendor:vp[1]||''};}
-function buildLookup(items){
-  LOOKUP={};CAT_COUNT=0;
-  Object.keys(items||{}).forEach(function(pos){
-    var dec=decodeCatVal(items[pos]||'');
-    var entry={name:dec.name,vendor:dec.vendor,pos:pos};
-    addLookup(pos,entry);
-    var full=fullFromPos(pos); if(full&&full!==pos) addLookup(full,entry);
+function eanCheckDigit(d12){var s=0;for(var i=0;i<12;i++){s+=(+d12[i])*((i%2)?3:1);}return String((10-(s%10))%10);}
+function barcodeKeys(raw){
+  var keys=[];var s=String(raw||'').trim();if(!s)return keys;keys.push(s);
+  var d=s.replace(/\D/g,'');if(!d)return keys;keys.push(d);
+  [8,11,12,13].forEach(function(len){if(d.length<=len)keys.push(d.padStart(len,'0'));});
+  var st=d.replace(/^0+/,'');if(st)keys.push(st);
+  if(d.length===12)keys.push(d+eanCheckDigit(d));
+  else if(d.length===13)keys.push(d.slice(0,12));
+  return keys;
+}
+function rowsArr(payload){
+  if(!payload)return[];
+  if(Array.isArray(payload))return payload;
+  if(payload.rows)return Array.isArray(payload.rows)?payload.rows:Object.values(payload.rows);
+  if(typeof payload==='object')return Object.values(payload);
+  return[];
+}
+function buildProductIndex(payload){
+  barcodeIndex={};CAT_COUNT=0;
+  rowsArr(payload).forEach(function(r){
+    if(!r||typeof r!=='object')return;
+    var name=r.NAME||r.name||r.Name||'';
+    var bc=r.FULL_BARCODE||r.fullbarcode||r.barcode||r.Barcode||'';
+    if(!name||!bc)return;
+    barcodeKeys(bc).forEach(function(k){if(!barcodeIndex[k])barcodeIndex[k]=name;});
     CAT_COUNT++;
   });
 }
 function findProduct(code){
-  var d=onlyDigits(code);
-  var tries=[d,lstrip0(d),d.slice(0,-1),lstrip0(d.slice(0,-1)),'0'+d];
-  for(var i=0;i<tries.length;i++){var k=tries[i];if(LOOKUP[k])return LOOKUP[k];var s=lstrip0(k);if(LOOKUP[s])return LOOKUP[s];}
+  var ks=barcodeKeys(code);
+  for(var i=0;i<ks.length;i++){if(barcodeIndex[ks[i]])return {name:barcodeIndex[ks[i]]};}
   return null;
 }
 function setCatStatus(kind){
@@ -328,20 +343,15 @@ function setCatStatus(kind){
 }
 function loadCatalog(){
   setCatStatus('loading');
-  var cached=null;try{cached=JSON.parse(localStorage.getItem('bccat.HOLLYWOOD')||'null');}catch(e){}
-  if(cached&&cached.items){buildLookup(cached.items);if(CAT_COUNT)setCatStatus('ok');}
-  fetch(DBURL+'/barcodeChecklist/HOLLYWOOD/catalog/meta.json',{cache:'no-store'})
+  var cached=null;try{cached=JSON.parse(localStorage.getItem('bpickup.prod.HOLLYWOOD')||'null');}catch(e){}
+  if(cached){buildProductIndex(cached);if(CAT_COUNT)setCatStatus('ok');}
+  fetch(DBURL+'/products/HOLLYWOOD.json?cache='+Date.now(),{cache:'no-store'})
     .then(function(r){return r.ok?r.json():null;})
-    .then(function(meta){
-      if(!meta){if(!CAT_COUNT)setCatStatus('none');return;}
-      if(cached&&cached.at===meta.at&&cached.items&&CAT_COUNT){setCatStatus('ok');return;}   // 최신본 캐시됨
-      return fetch(DBURL+'/barcodeChecklist/HOLLYWOOD/catalog/items.json',{cache:'no-store'})
-        .then(function(r){return r.ok?r.json():null;})
-        .then(function(items){
-          if(!items){if(!CAT_COUNT)setCatStatus('none');return;}
-          try{localStorage.setItem('bccat.HOLLYWOOD',JSON.stringify({at:meta.at,items:items}));}catch(e){}
-          buildLookup(items);setCatStatus(CAT_COUNT?'ok':'none');
-        });
+    .then(function(data){
+      if(!data){if(!CAT_COUNT)setCatStatus('none');return;}
+      buildProductIndex(data);
+      if(CAT_COUNT){try{localStorage.setItem('bpickup.prod.HOLLYWOOD',JSON.stringify(data));}catch(e){}}
+      setCatStatus(CAT_COUNT?'ok':'none');
     }).catch(function(){if(!CAT_COUNT)setCatStatus('none');});
 }
 
@@ -420,6 +430,7 @@ function toggleScan(){ if(window.__scanning) stopScan(); else startScan(); }
 window.toggleScan=toggleScan;
 function startScan(){
   if(typeof Html5Qrcode==='undefined'){alert('스캐너 로딩 실패 — 인터넷 확인 후 새로고침');return;}
+  ensureAudio();   // 사용자 터치 시점에 오디오 활성화 (iOS 소리 보장)
   var reader=document.getElementById('reader'); reader.classList.add('live');
   SCANNER=new Html5Qrcode('reader');
   var fmts;
@@ -445,7 +456,27 @@ function stopScan(){
   if(SCANNER){try{SCANNER.stop().then(function(){try{SCANNER.clear();}catch(e){}SCANNER=null;}).catch(function(){SCANNER=null;});}catch(e){SCANNER=null;}}
   var reader=document.getElementById('reader');reader.innerHTML='';reader.classList.remove('live');
 }
-function beep(ok){try{var c=new (window.AudioContext||window.webkitAudioContext)();var o=c.createOscillator();var g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=ok?880:300;g.gain.value=.12;o.start();setTimeout(function(){o.stop();c.close();},120);}catch(e){}}
+/* iOS 대응 — 사용자 터치(스캔 시작) 때 오디오 컨텍스트를 만들어 두고 재사용 */
+var AUDIO=null;
+function ensureAudio(){
+  try{ if(!AUDIO){AUDIO=new (window.AudioContext||window.webkitAudioContext)();} if(AUDIO.state==='suspended'){AUDIO.resume();} }catch(e){}
+}
+function beep(ok){
+  ensureAudio();
+  try{
+    if(AUDIO){
+      var o=AUDIO.createOscillator(),g=AUDIO.createGain();
+      o.connect(g);g.connect(AUDIO.destination);
+      o.type='square'; o.frequency.value=ok?1050:280;
+      var tnow=AUDIO.currentTime, dur=ok?0.16:0.34;
+      g.gain.setValueAtTime(0.0001,tnow);
+      g.gain.exponentialRampToValueAtTime(0.4,tnow+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001,tnow+dur);
+      o.start(tnow); o.stop(tnow+dur+0.02);
+    }
+  }catch(e){}
+  try{ if(navigator.vibrate){ navigator.vibrate(ok?70:[90,60,90]); } }catch(e){}
+}
 function handleScan(raw){
   var code=onlyDigits(raw);
   if(code.length<6)return;
