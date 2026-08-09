@@ -141,6 +141,7 @@ td .b{font-size:.82em;color:var(--mute);font-variant-numeric:tabular-nums}
 
     <div class="card">
       <button class="btn block" id="scanBtn" onclick="toggleScan()">📷 <span id="L_scanBtn">스캔 시작</span></button>
+      <div id="catStatus" style="font-size:.8em;font-weight:600;margin-top:8px;color:var(--mute)"></div>
       <div id="reader"></div>
       <div class="banner" id="banner"></div>
       <div class="row" style="margin-top:12px">
@@ -245,6 +246,7 @@ var I18N={
  colBy:{ko:'기록자',en:'By',es:'Por'},
  catLoading:{ko:'제품 목록 불러오는 중…',en:'Loading catalog…',es:'Cargando…'},
  catReady:{ko:function(n){return '✓ 제품 '+n+'개 연결됨 (스캔 시 이름 자동)';},en:function(n){return '✓ '+n+' products linked';},es:function(n){return '✓ '+n+' productos';}},
+ catNone:{ko:'공유 제품목록 없음 — 이름은 직접 입력 (바코드는 저장됨)',en:'No shared catalog — type names manually',es:'Sin catálogo — escribe los nombres'},
 };
 var LANG=(function(){try{return localStorage.getItem('kimchi_lang')||localStorage.getItem('tasks.lang')||'ko';}catch(e){return 'ko';}})();
 function t(k){var v=I18N[k];if(!v)return k;return (v[LANG]!==undefined?v[LANG]:v.ko);}
@@ -318,22 +320,29 @@ function findProduct(code){
   for(var i=0;i<tries.length;i++){var k=tries[i];if(LOOKUP[k])return LOOKUP[k];var s=lstrip0(k);if(LOOKUP[s])return LOOKUP[s];}
   return null;
 }
+function setCatStatus(kind){
+  var el=document.getElementById('catStatus');if(!el)return;
+  if(kind==='loading'){el.textContent='⏳ '+t('catLoading');el.style.color='var(--mute)';}
+  else if(kind==='ok'){el.textContent=t('catReady')(CAT_COUNT);el.style.color='var(--green2)';}
+  else{el.textContent='⚠ '+t('catNone');el.style.color='var(--amber)';}
+}
 function loadCatalog(){
+  setCatStatus('loading');
   var cached=null;try{cached=JSON.parse(localStorage.getItem('bccat.HOLLYWOOD')||'null');}catch(e){}
-  if(cached&&cached.items){buildLookup(cached.items);}
+  if(cached&&cached.items){buildLookup(cached.items);if(CAT_COUNT)setCatStatus('ok');}
   fetch(DBURL+'/barcodeChecklist/HOLLYWOOD/catalog/meta.json',{cache:'no-store'})
     .then(function(r){return r.ok?r.json():null;})
     .then(function(meta){
-      if(!meta)return;
-      if(cached&&cached.at===meta.at&&cached.items){return;}   // 최신본 캐시됨
+      if(!meta){if(!CAT_COUNT)setCatStatus('none');return;}
+      if(cached&&cached.at===meta.at&&cached.items&&CAT_COUNT){setCatStatus('ok');return;}   // 최신본 캐시됨
       return fetch(DBURL+'/barcodeChecklist/HOLLYWOOD/catalog/items.json',{cache:'no-store'})
         .then(function(r){return r.ok?r.json():null;})
         .then(function(items){
-          if(!items)return;
+          if(!items){if(!CAT_COUNT)setCatStatus('none');return;}
           try{localStorage.setItem('bccat.HOLLYWOOD',JSON.stringify({at:meta.at,items:items}));}catch(e){}
-          buildLookup(items);
+          buildLookup(items);setCatStatus(CAT_COUNT?'ok':'none');
         });
-    }).catch(function(){});
+    }).catch(function(){if(!CAT_COUNT)setCatStatus('none');});
 }
 
 /* ============ 탭 ============ */
