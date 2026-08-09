@@ -302,7 +302,7 @@ input[type=file]{display:none}
 <div class="overlay" id="meOverlay">
   <div class="modal">
     <h3>본인 이름 선택</h3>
-    <div style="font-size:.85em;color:#6b7280;margin-bottom:12px">매니저는 공지를 작성할 수 있습니다.</div>
+    <div style="font-size:.85em;color:#6b7280;margin-bottom:12px">공지 작성은 오너만 가능합니다. 직원은 읽기 전용입니다.</div>
     <div class="field">
       <label>지점</label>
       <select id="meBranch" onchange="renderMeNames()"></select>
@@ -486,11 +486,22 @@ function renderMeNames(){
     if (data && data.employees) employees = data.employees;
   } catch(e){}
   if (employees.length === 0) {
-    fetch(`${FB_DB_URL}/schedules/${branchId}.json`).then(r => r.json()).then(d => {
-      if (d?.employees) renderMeNamesList(d.employees);
-    });
+    // ⛔ schedules/{branch}.json 통째 fetch 금지 패턴 → employees 노드만
+    fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`).then(r => r.json()).then(d => {
+      if (Array.isArray(d) && d.length) renderMeNamesList(_withOwners(d));
+    }).catch(() => {});
   }
-  renderMeNamesList(employees);
+  renderMeNamesList(_withOwners(employees));
+}
+// 👑 2026-08-08 사장님: 오너 이름이 목록에 안 보임 — 지점 스케줄에 없어도 항상 최상단에 표시
+function _withOwners(employees){
+  const list = (employees || []).slice();
+  const owners = [{ name:'DJ', role:'OWNER' }, { name:'SUN KIM', role:'EXECUTIVE' }, { name:'B.H.K', role:'EXECUTIVE' }];
+  for (let i = owners.length - 1; i >= 0; i--) {
+    const o = owners[i];
+    if (!list.some(e => String(e.name||'').replace(/\s+/g,'').toUpperCase() === o.name.replace(/\s+/g,'').toUpperCase())) list.unshift(o);
+  }
+  return list;
 }
 function renderMeNamesList(employees){
   const sel = document.getElementById('meName_select');
