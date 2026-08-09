@@ -174,6 +174,68 @@
 })();
 
 // =============================================================
+// 🔐 계정-신원 동기화 (2026-08-09 사장님 지시: "계정 접속의 정확성이 최우선")
+// 이름은 이제 기기 설정이 아니라 로그인 계정 소속이다.
+// 문자 인증으로 로그인한 계정(users/{uid})에 등록된 이름·지점·역할이
+// 이 기기의 chat.me 와 다르면 계정 기록으로 강제 교체한다.
+//  - 대상: 전화 인증 계정 + 승인됨 + 실명 등록된 계정 (83/122)
+//  - 제외: 이름이 아직 전화번호 그대로인 계정(명부 등록 대기), 이메일 공유 계정
+//    (여러 매니저가 같이 쓰는 manager@ 등 — 이후 단계에서 개인 계정 전환)
+//  - 오너/전무(branch='*')는 지점 강제 없음 (보던 지점 유지)
+// 실행: 페이지 로드 후 fb-auth-ready 시 + 4초 후 1회 + 10분마다 재확인.
+// =============================================================
+(function(){
+  'use strict';
+  var FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  var syncing = false;
+  function isMgrRole(role){ return /(OWNER|EXECUTIVE|MANAGER|SUPERVISOR)/i.test(String(role || '')); }
+  async function syncIdentity(){
+    if (syncing) return;
+    syncing = true;
+    try {
+      if (typeof window.__getAuthToken !== 'function') return;   // 인증 래퍼 없는 페이지
+      var tok = await window.__getAuthToken();
+      if (!tok) return;
+      var uid = null, tokPhone = null;
+      try { var pl = JSON.parse(atob(tok.split('.')[1])); uid = pl.user_id; tokPhone = pl.phone_number || null; } catch(e){}
+      if (!uid) return;
+      var r = await fetch(FB + '/users/' + uid + '.json?t=' + Date.now(), { cache:'no-store' });
+      if (!r.ok) return;
+      var u = await r.json();
+      if (!u || u.status !== 'approved' || !u.name) return;
+      var nm = String(u.name).trim();
+      var digits = String(u.phone || tokPhone || '').replace(/\D/g, '');
+      // 실명 미등록(이름=전화번호) 계정은 강제하지 않음 — 명부(Staff Phone Registration) 등록 후 자동 적용
+      if (!nm || /^\+?\d+$/.test(nm) || (digits && nm.replace(/\D/g,'') === digits)) return;
+      // 이메일 공유 계정(전화 미연결)은 아직 강제하지 않음
+      if (!u.phone && !tokPhone) return;
+      var cur = null;
+      try { cur = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+      var wantBranch = (u.branch && u.branch !== '*') ? u.branch : ((cur && cur.branch) || 'MIAMI');
+      var wantRole = u.role || (cur && cur.role) || '';
+      if (cur && cur.name === nm && cur.branch === wantBranch && String(cur.role || '') === String(wantRole)) return;   // 이미 일치
+      var next = {
+        name: nm,
+        branch: wantBranch,
+        color: (cur && cur.color) || undefined,
+        role: wantRole,
+        isManager: isMgrRole(wantRole),
+        _acctSync: Date.now(),   // 계정 동기화 표식
+      };
+      if (next.color === undefined) delete next.color;
+      localStorage.setItem('chat.me', JSON.stringify(next));
+      try { window.dispatchEvent(new Event('km-identity-changed')); } catch(e){}
+      try { window.dispatchEvent(new StorageEvent('storage', { key:'chat.me', newValue: JSON.stringify(next) })); } catch(e){}
+      try { console.log('[identity-sync] 계정 기록으로 신원 적용:', nm, wantBranch, wantRole); } catch(e){}
+    } catch(e){} finally { syncing = false; }
+  }
+  window.addEventListener('fb-auth-ready', function(){ syncIdentity(); });
+  setTimeout(syncIdentity, 4000);
+  setInterval(syncIdentity, 10 * 60 * 1000);
+  window.__kmSyncIdentity = syncIdentity;
+})();
+
+// =============================================================
 // PWA SW auto-reload (2026-05-17)
 // sw.js가 새 버전 activate → 페이지 자동 리로드. 매니저가 코드/설정
 // 업데이트하면 직원 핸드폰에서 핸드폰 재부팅 없이도 즉시 반영.
