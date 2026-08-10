@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🛒 온라인 주문 접수</title>
+<script>
+(function(){try{var K='shoporders.bust',B='v1';if(localStorage.getItem(K)!==B)localStorage.setItem(K,B);}catch(e){}})();
+</script>
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, onValue, update, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  window.__fb = { db:getDatabase(app), ref, onValue, update, get };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+<script src="./lang-sync.js?v=1"></script>
+<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./auth-gate.js?v=5"></script>
+<script src="./me-persist.js?v=1"></script>
+<style>
+:root{--green:#1a5c3a;--green2:#15803d;--lgreen:#e8f5ee;--bg:#f4f7f5;--card:#fff;--line:#e2e8e5;
+ --text:#1f2937;--mute:#6b7280;--amber:#b45309;--red:#dc2626;--blue:#1d4ed8;
+ --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:15px;-webkit-text-size-adjust:100%}
+button,input,select{font-family:inherit;font-size:1em}button{cursor:pointer}
+.wrap{max-width:1100px;margin:0 auto;padding-bottom:50px}
+.hd{background:var(--green);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:20}
+.hd .t{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hd h1{font-size:1.12em;font-weight:800;flex:1;min-width:150px}
+.hd .btn{background:rgba(255,255,255,.16);border:0;color:#fff;border-radius:8px;padding:7px 12px;font-weight:700;font-size:.82em}
+.hd .btn.on{background:#fff;color:var(--green)}
+.datenav{display:flex;align-items:center;gap:6px}
+.datenav input{border:0;border-radius:8px;padding:6px 8px;font-weight:700}
+.datenav button{background:rgba(255,255,255,.16);border:0;color:#fff;border-radius:8px;width:32px;height:32px;font-weight:800;font-size:1.1em}
+.bar{background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;position:sticky;top:52px;z-index:10;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:#f1f5f4;border:1.5px solid var(--line);border-radius:20px;padding:6px 13px;font-weight:700;font-size:.85em;color:var(--mute)}
+.chip.on{background:var(--green);border-color:var(--green);color:#fff}
+.chip .n{background:rgba(255,255,255,.35);border-radius:10px;padding:0 6px;margin-left:5px;font-size:.9em}
+.bar select{border:1.5px solid var(--line);border-radius:8px;padding:7px 10px;font-weight:700;background:#fff}
+.stats{display:flex;gap:10px;padding:12px 16px;flex-wrap:wrap}
+.stat{flex:1;min-width:110px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;text-align:center}
+.stat b{display:block;font-size:1.5em;font-weight:900;color:var(--green)}
+.stat.new b{color:var(--red)}
+.stat span{font-size:.74em;color:var(--mute);font-weight:700}
+.list{padding:6px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);border-left:5px solid var(--mute)}
+.card.new{border-left-color:var(--red)}
+.card.preparing{border-left-color:var(--amber)}
+.card.done{border-left-color:var(--green2);opacity:.72}
+.card.cancelled{border-left-color:#9ca3af;opacity:.6}
+@keyframes flash{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.0)}50%{box-shadow:0 0 0 5px rgba(220,38,38,.35)}}
+.card.flash{animation:flash 1s ease-in-out 4}
+.crow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.onum{font-weight:900;font-size:.95em}
+.ago{color:var(--mute);font-size:.78em;margin-left:auto}
+.badge{display:inline-block;border-radius:7px;padding:2px 8px;font-size:.74em;font-weight:800}
+.b-del{background:#dbeafe;color:var(--blue)}
+.b-pick{background:#dcfce7;color:var(--green2)}
+.pill{border-radius:20px;padding:3px 10px;font-size:.74em;font-weight:800}
+.pill.new{background:#fee2e2;color:var(--red)}
+.pill.preparing{background:#fef3c7;color:var(--amber)}
+.pill.done{background:#dcfce7;color:var(--green2)}
+.pill.cancelled{background:#f3f4f6;color:#6b7280}
+.cust{font-weight:700;font-size:.95em;margin-bottom:2px}
+.cust a{color:var(--blue);text-decoration:none}
+.meta{font-size:.83em;color:var(--mute);line-height:1.5;margin-bottom:8px}
+.items{background:#f8faf9;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:.88em}
+.items .it{display:flex;justify-content:space-between;padding:2px 0}
+.items .it b{font-weight:700}
+.tot{display:flex;justify-content:space-between;font-weight:900;border-top:1px solid var(--line);margin-top:5px;padding-top:5px}
+.note{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 9px;font-size:.83em;color:#92400e;margin-bottom:8px}
+.pay{font-size:.83em;font-weight:700;color:var(--text);margin-bottom:10px}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+.acts button{flex:1;min-width:74px;border:0;border-radius:9px;padding:9px;font-weight:800;font-size:.85em;color:#fff}
+.act-prep{background:var(--amber)}.act-done{background:var(--green2)}.act-cancel{background:#fff;color:var(--red);border:1.5px solid var(--red)}
+.act-reopen{background:#fff;color:var(--green);border:1.5px solid var(--green)}
+.empty{padding:50px 16px;text-align:center;color:var(--mute)}
+.gate{display:none;padding:60px 20px;text-align:center;color:var(--mute)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <div class="t">
+      <h1>🛒 온라인 주문 접수</h1>
+      <div class="datenav">
+        <button onclick="shiftDay(-1)">‹</button>
+        <input type="date" id="oDate" onchange="subscribe()">
+        <button onclick="shiftDay(1)">›</button>
+      </div>
+      <button class="btn" id="soundBtn" onclick="toggleSound()">🔔 소리 켜기</button>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="chips" id="statusChips">
+      <button class="chip on" data-s="active" onclick="setStatusFilter('active')">진행중</button>
+      <button class="chip" data-s="new" onclick="setStatusFilter('new')">신규 <span class="n" id="cNew">0</span></button>
+      <button class="chip" data-s="preparing" onclick="setStatusFilter('preparing')">준비중 <span class="n" id="cPrep">0</span></button>
+      <button class="chip" data-s="done" onclick="setStatusFilter('done')">완료</button>
+      <button class="chip" data-s="all" onclick="setStatusFilter('all')">전체</button>
+    </div>
+    <select id="typeFilter" onchange="render()">
+      <option value="">🚗🏪 배달+픽업</option>
+      <option value="delivery">🚗 배달만</option>
+      <option value="pickup">🏪 픽업만</option>
+    </select>
+    <select id="storeFilter" onchange="render()"><option value="">🏢 전 지점</option></select>
+  </div>
+
+  <div class="stats">
+    <div class="stat new"><b id="stNew">0</b><span>신규 대기</span></div>
+    <div class="stat"><b id="stCount">0</b><span>오늘 주문</span></div>
+    <div class="stat"><b id="stRevenue">$0</b><span>오늘 매출</span></div>
+  </div>
+
+  <div class="list" id="list"></div>
+  <div class="gate" id="gate">로그인이 필요합니다. 승인된 직원만 볼 수 있어요.</div>
+</div>
+
+<audio id="ding" preload="auto"></audio>
+
+<script>
+/* ===== 기본 ===== */
+var STORES=['Miami (Palmetto Bay)','Pembroke Pines','Hollywood','Coral Springs','Fort Lauderdale (Las Olas)','New Location · Coming Soon'];
+var ORDERS={};           // {id: order}
+var KNOWN=new Set();     // 이미 본 주문 id (신규 알림용)
+var FIRST_LOAD=true;
+var STATUS_FILTER='active';
+var SOUND_ON=false;
+var UNSUB=null;
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function todayKey(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function money(n){return '$'+(Math.round((+n||0)*100)/100).toFixed(2);}
+function ago(ts){if(!ts)return '';var s=Math.floor((Date.now()-ts)/1000);if(s<60)return '방금';if(s<3600)return Math.floor(s/60)+'분 전';if(s<86400)return Math.floor(s/3600)+'시간 전';return Math.floor(s/86400)+'일 전';}
+
+/* ===== 소리 알림 ===== */
+var AUDIO=null;
+function ensureAudio(){try{if(!AUDIO)AUDIO=new (window.AudioContext||window.webkitAudioContext)();if(AUDIO.state==='suspended')AUDIO.resume();}catch(e){}}
+function ding(){
+  if(!SOUND_ON)return;
+  ensureAudio();
+  try{
+    if(!AUDIO)return;
+    [0,0.18,0.36].forEach(function(off){
+      var o=AUDIO.createOscillator(),g=AUDIO.createGain();o.connect(g);g.connect(AUDIO.destination);
+      o.type='sine';o.frequency.value=880;
+      var tt=AUDIO.currentTime+off;
+      g.gain.setValueAtTime(0.0001,tt);g.gain.exponentialRampToValueAtTime(0.4,tt+0.01);g.gain.exponentialRampToValueAtTime(0.0001,tt+0.16);
+      o.start(tt);o.stop(tt+0.18);
+    });
+  }catch(e){}
+  try{if(navigator.vibrate)navigator.vibrate([120,60,120]);}catch(e){}
+}
+function toggleSound(){
+  SOUND_ON=!SOUND_ON;
+  var b=document.getElementById('soundBtn');
+  b.classList.toggle('on',SOUND_ON);
+  b.textContent=SOUND_ON?'🔔 소리 켜짐':'🔕 소리 꺼짐';
+  if(SOUND_ON){ensureAudio();ding();}
+}
+window.toggleSound=toggleSound;
+
+/* ===== 날짜/구독 ===== */
+function shiftDay(d){var inp=document.getElementById('oDate');var dt=inp.value?new Date(inp.value+'T00:00:00'):new Date();dt.setDate(dt.getDate()+d);inp.value=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');subscribe();}
+window.shiftDay=shiftDay;
+function subscribe(){
+  var fb=window.__fb;if(!fb)return;
+  var dk=document.getElementById('oDate').value||todayKey();
+  document.getElementById('oDate').value=dk;
+  if(UNSUB){try{UNSUB();}catch(e){}UNSUB=null;}
+  FIRST_LOAD=true;KNOWN=new Set();
+  var r=fb.ref(fb.db,'shopOrders/'+dk);
+  UNSUB=fb.onValue(r,function(snap){
+    ORDERS=snap.val()||{};
+    // 신규 주문 감지 → 소리
+    var newCount=0;
+    Object.keys(ORDERS).forEach(function(id){
+      if(!KNOWN.has(id)){
+        if(!FIRST_LOAD && (ORDERS[id].status==='new'||!ORDERS[id].status)) newCount++;
+        KNOWN.add(id);
+      }
+    });
+    if(newCount>0){ding();}
+    FIRST_LOAD=false;
+    render();
+  });
+}
+window.subscribe=subscribe;
+
+/* ===== 필터 ===== */
+function setStatusFilter(s){STATUS_FILTER=s;document.querySelectorAll('#statusChips .chip').forEach(function(c){c.classList.toggle('on',c.dataset.s===s);});render();}
+window.setStatusFilter=setStatusFilter;
+
+/* ===== 상태 변경 ===== */
+function setStatus(id,st){
+  var fb=window.__fb;var dk=document.getElementById('oDate').value||todayKey();
+  var me=null;try{me=JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){}
+  fb.update(fb.ref(fb.db,'shopOrders/'+dk+'/'+id),{status:st, handledBy:(me&&me.name)||'', handledAt:Date.now()}).catch(function(e){alert('변경 실패: '+(e.message||e));});
+}
+window.setStatus=setStatus;
+function cancelOrder(id){if(confirm('이 주문을 취소 처리할까요?'))setStatus(id,'cancelled');}
+window.cancelOrder=cancelOrder;
+
+/* ===== 렌더 ===== */
+function fillStoreFilter(){
+  var sel=document.getElementById('storeFilter');if(sel.options.length>1)return;
+  sel.innerHTML='<option value="">🏢 전 지점</option>'+STORES.filter(function(s){return s.indexOf('Coming')<0;}).map(function(s){return '<option value="'+esc(s)+'">'+esc(s)+'</option>';}).join('');
+}
+function statusKo(st){return st==='preparing'?'준비중':st==='done'?'완료':st==='cancelled'?'취소':'신규';}
+function render(){
+  var el=document.getElementById('list');if(!el)return;
+  var typeF=document.getElementById('typeFilter').value;
+  var storeF=document.getElementById('storeFilter').value;
+  var rows=Object.keys(ORDERS).map(function(id){return Object.assign({_id:id},ORDERS[id]);});
+  // stats (필터 무관, 그날 전체)
+  var stNew=0,stRev=0;
+  rows.forEach(function(o){var st=o.status||'new';if(st==='new')stNew++;if(st!=='cancelled')stRev+=(+o.total||0);});
+  document.getElementById('stNew').textContent=stNew;
+  document.getElementById('stCount').textContent=rows.length;
+  document.getElementById('stRevenue').textContent=money(stRev);
+  document.getElementById('cNew').textContent=rows.filter(function(o){return (o.status||'new')==='new';}).length;
+  document.getElementById('cPrep').textContent=rows.filter(function(o){return o.status==='preparing';}).length;
+  // 필터
+  rows=rows.filter(function(o){
+    var st=o.status||'new';
+    if(STATUS_FILTER==='active'){if(st==='done'||st==='cancelled')return false;}
+    else if(STATUS_FILTER!=='all'){if(st!==STATUS_FILTER)return false;}
+    if(typeF && o.type!==typeF)return false;
+    if(storeF && o.store!==storeF)return false;
+    return true;
+  });
+  // 정렬: 신규 먼저, 최신순
+  var order={'new':0,'preparing':1,'done':2,'cancelled':3};
+  rows.sort(function(a,b){var d=(order[a.status||'new']-order[b.status||'new']);return d||(b.at||0)-(a.at||0);});
+  if(!rows.length){el.innerHTML='<div class="empty">해당 조건의 주문이 없습니다</div>';return;}
+  el.innerHTML=rows.map(function(o){
+    var st=o.status||'new';
+    var typeBadge=o.type==='delivery'?'<span class="badge b-del">🚗 배달</span>':'<span class="badge b-pick">🏪 픽업</span>';
+    var addr=o.address?('📍 '+esc([o.address.street,o.address.apt,o.address.city,o.address.zip].filter(Boolean).join(', '))):'';
+    var phone=o.customer&&o.customer.phone?esc(o.customer.phone):'';
+    var items=(o.items||[]).map(function(it){return '<div class="it"><span>'+esc(it.name)+(it.nameKr?(' <span style="color:#9ca3af">'+esc(it.nameKr)+'</span>'):'')+' × '+it.qty+'</span><b>'+money(it.lineTotal!=null?it.lineTotal:(it.price*it.qty))+'</b></div>';}).join('');
+    var acts='';
+    if(st==='new')acts='<button class="act-prep" onclick="setStatus(\''+o._id+'\',\'preparing\')">준비 시작</button><button class="act-done" onclick="setStatus(\''+o._id+'\',\'done\')">완료</button><button class="act-cancel" onclick="cancelOrder(\''+o._id+'\')">취소</button>';
+    else if(st==='preparing')acts='<button class="act-done" onclick="setStatus(\''+o._id+'\',\'done\')">완료 처리</button><button class="act-cancel" onclick="cancelOrder(\''+o._id+'\')">취소</button>';
+    else acts='<button class="act-reopen" onclick="setStatus(\''+o._id+'\',\'new\')">다시 열기</button>';
+    var flash=(st==='new' && (Date.now()-(o.at||0)<120000))?' flash':'';
+    return '<div class="card '+st+flash+'">'+
+      '<div class="crow"><span class="onum">#'+esc(o.id||o._id)+'</span>'+typeBadge+
+        '<span class="pill '+st+'">'+statusKo(st)+'</span><span class="ago">'+ago(o.at)+'</span></div>'+
+      '<div class="cust">👤 '+esc((o.customer&&o.customer.name)||'-')+(phone?' · <a href="tel:'+phone.replace(/[^0-9+]/g,'')+'">📞 '+phone+'</a>':'')+'</div>'+
+      '<div class="meta">'+
+        (o.store?('🏢 '+esc(o.store)+'<br>'):'')+
+        (addr?(addr+'<br>'):'')+
+        '🕐 '+esc(o.time||'ASAP')+
+      '</div>'+
+      '<div class="items">'+items+
+        '<div class="tot"><span>합계'+(o.itemCount?(' ('+o.itemCount+'개)'):'')+'</span><span>'+money(o.total)+'</span></div>'+
+      '</div>'+
+      '<div class="pay">💰 '+esc(o.paymentLabel||o.payment||'')+(o.deliveryFee?(' · 배달비 '+money(o.deliveryFee)):'')+'</div>'+
+      (o.notes?('<div class="note">📝 '+esc(o.notes)+'</div>'):'')+
+      '<div class="acts">'+acts+'</div>'+
+    '</div>';
+  }).join('');
+}
+window.render=render;
+
+/* ===== 부팅 ===== */
+function isAdmin(){try{var m=JSON.parse(localStorage.getItem('chat.me')||'null');if(!m)return false;var em=String(m.email||'').toLowerCase();if(em)return true;return !!m.name;}catch(e){return false;}}
+var booted=false;
+function boot(){
+  if(booted)return;if(!window.__fb)return;booted=true;
+  fillStoreFilter();
+  document.getElementById('oDate').value=todayKey();
+  subscribe();
+}
+window.addEventListener('fb-ready',boot);
+if(window.__fb)boot();
+</script>
+</body>
+</html>
