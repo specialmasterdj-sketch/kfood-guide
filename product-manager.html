@@ -114,6 +114,12 @@ button{cursor:pointer}
 <div class="ov" id="ov">
   <div class="modal">
     <h2 id="mTitle">상품 수정</h2>
+    <div class="fld" style="background:#eff6ff;border:1px solid #dbeafe;border-radius:10px;padding:10px">
+      <label style="color:#1d4ed8">🔎 POS에서 찾기 (이름·바코드 검색 → 자동 채움)</label>
+      <input id="posQ" type="search" placeholder="예: 신라면 / 08180K" oninput="posSearch()" autocomplete="off">
+      <div id="posResults" style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:9px;margin-top:6px;background:#fff;display:none"></div>
+      <div class="hint" style="margin-top:4px">POS 상품 2만개에서 검색해 이름·가격·바코드를 자동으로 채워요. (처음 검색 시 목록 불러오는 데 몇 초)</div>
+    </div>
     <div class="fld">
       <label>상품명 (영어)</label>
       <input id="f_name" type="text" placeholder="예: SHIN RAMEN (4P)">
@@ -129,6 +135,10 @@ button{cursor:pointer}
     <div class="frow">
       <div class="fld"><label>가격 ($)</label><input id="f_price" type="number" step="0.01" min="0" placeholder="5.99"></div>
       <div class="fld"><label>카테고리</label><select id="f_cat"></select></div>
+    </div>
+    <div class="fld">
+      <label>바코드 (선택)</label>
+      <input id="f_barcode" type="text" placeholder="예: 8801043...">
     </div>
     <div class="fld" id="f_codeWrap" style="display:none">
       <label>상품 코드 (선택)</label>
@@ -229,11 +239,11 @@ function merged(){
     var m=Object.assign({},p);
     m._id=p.id;m._custom=false;m._mod=false;m._hidden=false;
     if(o){
-      ['name','nameKr','brand','size','category'].forEach(function(k){if(o[k]!==undefined&&o[k]!=='')m[k]=o[k];});
+      ['name','nameKr','brand','size','category','barcode'].forEach(function(k){if(o[k]!==undefined&&o[k]!=='')m[k]=o[k];});
       if(o.price!==undefined&&o.price!==''&&o.price!==null)m.price=+o.price;
       if(o.image!==undefined)m.image=o.image;
       m._hidden=!!o.hidden;
-      m._mod=Object.keys(o).some(function(k){return ['name','nameKr','brand','size','category','price','image'].indexOf(k)>=0;});
+      m._mod=Object.keys(o).some(function(k){return ['name','nameKr','brand','size','category','price','image','barcode'].indexOf(k)>=0;});
     }
     out.push(m);
   });
@@ -336,7 +346,9 @@ function openEdit(id){
   document.getElementById('f_size').value=m.size||'';
   document.getElementById('f_price').value=(m.price!=null?m.price:'');
   document.getElementById('f_cat').value=m.category||Object.keys(CATS)[0]||'';
+  document.getElementById('f_barcode').value=m.barcode||'';
   setPhoto(m.image||'');
+  resetPOS();
   document.getElementById('ov').classList.add('on');
 }
 window.openEdit=openEdit;
@@ -350,8 +362,10 @@ function openAdd(){
   document.getElementById('f_size').value='';
   document.getElementById('f_price').value='';
   document.getElementById('f_code').value='';
+  document.getElementById('f_barcode').value='';
   document.getElementById('f_cat').value=Object.keys(CATS)[0]||'';
   setPhoto('');
+  resetPOS();
   document.getElementById('ov').classList.add('on');
 }
 window.openAdd=openAdd;
@@ -370,7 +384,7 @@ function saveModal(){
   var who=meName(),now=Date.now();
   if(EDIT_ID){
     // override existing (or edit custom)
-    var payload={name:name,nameKr:document.getElementById('f_nameKr').value.trim(),brand:document.getElementById('f_brand').value.trim(),size:document.getElementById('f_size').value.trim(),category:cat,price:+price,updatedAt:now,updatedBy:who};
+    var payload={name:name,nameKr:document.getElementById('f_nameKr').value.trim(),brand:document.getElementById('f_brand').value.trim(),size:document.getElementById('f_size').value.trim(),category:cat,price:+price,barcode:document.getElementById('f_barcode').value.trim(),updatedAt:now,updatedBy:who};
     payload.image=(PHOTO!=null?PHOTO:'');
     if(EDIT_CUSTOM){payload._custom=true;if(OV[EDIT_ID]&&OV[EDIT_ID].hidden)payload.hidden=OV[EDIT_ID].hidden;if(OV[EDIT_ID]&&OV[EDIT_ID].createdAt)payload.createdAt=OV[EDIT_ID].createdAt;}
     else{if(OV[EDIT_ID]&&OV[EDIT_ID].hidden)payload.hidden=true;}
@@ -380,11 +394,94 @@ function saveModal(){
     var code=document.getElementById('f_code').value.trim();
     var id=code||('C'+now.toString(36).toUpperCase());
     if(STATIC_BY[id]){alert('그 코드는 이미 있는 상품과 겹칩니다. 다른 코드를 쓰거나 비워두세요.');btn.disabled=false;btn.textContent='저장';return;}
-    var payload={_custom:true,name:name,nameKr:document.getElementById('f_nameKr').value.trim(),brand:document.getElementById('f_brand').value.trim(),size:document.getElementById('f_size').value.trim(),category:cat,price:+price,image:(PHOTO||''),createdAt:now,createdBy:who};
+    var payload={_custom:true,name:name,nameKr:document.getElementById('f_nameKr').value.trim(),brand:document.getElementById('f_brand').value.trim(),size:document.getElementById('f_size').value.trim(),category:cat,price:+price,barcode:document.getElementById('f_barcode').value.trim(),image:(PHOTO||''),createdAt:now,createdBy:who};
     fb.set(fb.ref(fb.db,'shopCatalog/items/'+id),payload).then(function(){closeModal();}).catch(function(e){alert('추가 실패: '+(e.message||e));}).then(function(){btn.disabled=false;btn.textContent='저장';});
   }
 }
 window.saveModal=saveModal;
+
+// ---- POS lookup (name/barcode search → auto-fill price) ----
+var POS_DATA=null, POS_LOADING=false, POS_HITS=[];
+function resetPOS(){var q=document.getElementById('posQ');if(q)q.value='';var r=document.getElementById('posResults');if(r){r.style.display='none';r.innerHTML='';}}
+window.resetPOS=resetPOS;
+function extractPOS(txt){
+  var i=txt.indexOf('PRODUCTS_DATA');
+  while(i>=0){
+    var eq=txt.indexOf('=',i), br=txt.indexOf('[',eq);
+    if(eq>=0&&br>=0&&br-eq<12){
+      var depth=0,inStr=false,esc=false,qc='',j=br;
+      for(;j<txt.length;j++){var c=txt[j];
+        if(inStr){if(esc)esc=false;else if(c==='\\')esc=true;else if(c===qc)inStr=false;}
+        else{if(c==='"'||c==="'"){inStr=true;qc=c;}else if(c==='[')depth++;else if(c===']'){depth--;if(depth===0){j++;break;}}}}
+      try{var arr=JSON.parse(txt.slice(br,j));if(Array.isArray(arr)&&arr.length>10)return arr;}catch(e){}
+    }
+    i=txt.indexOf('PRODUCTS_DATA',i+1);
+  }
+  return [];
+}
+function loadPOS(cb){
+  if(POS_DATA){cb();return;}
+  if(POS_LOADING){setTimeout(function(){loadPOS(cb);},400);return;}
+  POS_LOADING=true;
+  var box=document.getElementById('posResults');if(box){box.style.display='block';box.innerHTML='<div style="padding:10px;color:var(--mute);font-size:.85em">⏳ POS 상품 목록 불러오는 중…</div>';}
+  fetch('lookup.html',{cache:'force-cache'}).then(function(r){return r.text();}).then(function(t){
+    POS_DATA=extractPOS(t)||[];POS_LOADING=false;cb();
+  }).catch(function(){POS_LOADING=false;POS_DATA=[];if(box)box.innerHTML='<div style="padding:10px;color:var(--red);font-size:.85em">POS 목록을 불러오지 못했어요.</div>';});
+}
+function catFromPOS(catStr){
+  var s=(catStr||'').toUpperCase();
+  if(/RAMEN|NOODLE|MYUN/.test(s))return 'ramyun';
+  if(/SNACK|CHIP|COOKIE|CANDY|BISCUIT|CRACKER/.test(s))return 'snacks';
+  if(/BEVERAGE|DRINK|JUICE|SODA|WATER|COFFEE/.test(s))return 'beverages';
+  if(/\bTEA\b/.test(s))return 'tea';
+  if(/KIMCHI|BANCHAN|SIDE\s*DISH/.test(s))return 'kimchi';
+  if(/FROZEN|\(FZ\)|\(FF\)/.test(s))return 'frozen';
+  if(/RICE|GRAIN|FLOUR/.test(s))return 'rice';
+  if(/MEAT|PORK|BEEF|CHICKEN|POULTRY/.test(s))return 'meat';
+  if(/SEAWEED|LAVER|\bGIM\b|NORI|KELP/.test(s))return 'seaweed';
+  if(/SAUCE|PASTE|MARINADE|SEASON|\bOIL\b|VINEGAR|\bSOY\b/.test(s))return 'seasonings';
+  if(/MILK|DAIRY|CHEESE|YOGURT/.test(s))return 'dairy';
+  if(/PRODUCE|VEGET|FRUIT/.test(s))return 'produce';
+  if(/BREAD|BAKERY|CAKE|PASTRY/.test(s))return 'bakery';
+  if(/HOUSE|KITCHEN|\bBOWL\b|UTENSIL|WARE/.test(s))return 'houseware';
+  return null;
+}
+function posSearch(){
+  var q=(document.getElementById('posQ').value||'').trim().toLowerCase();
+  var box=document.getElementById('posResults');if(!box)return;
+  if(!q){box.style.display='none';box.innerHTML='';return;}
+  box.style.display='block';
+  loadPOS(function(){
+    var qq=q.replace(/\s+/g,'');
+    POS_HITS=POS_DATA.filter(function(p){
+      var nm=(p.NAME||'').toLowerCase();
+      var code=(p.CODE||'')+'';var fb=(p.FULL_BARCODE||'')+'';
+      return nm.indexOf(q)>=0 || code.indexOf(qq)>=0 || fb.indexOf(qq)>=0;
+    }).slice(0,25);
+    if(!POS_HITS.length){box.innerHTML='<div style="padding:10px;color:var(--mute);font-size:.85em">검색 결과 없음</div>';return;}
+    box.innerHTML=POS_HITS.map(function(p,i){
+      return '<div onclick="posPick('+i+')" style="cursor:pointer;border-bottom:1px solid var(--line);padding:8px 10px;font-size:.85em" onmouseover="this.style.background=\'#f1f5f9\'" onmouseout="this.style.background=\'#fff\'">'
+        +'<div style="font-weight:700">'+esc(p.NAME||'')+'</div>'
+        +'<div style="color:var(--mute);font-size:.9em">💲'+Number(p.PRICE||0).toFixed(2)+' · 코드 '+esc(p.CODE||'')+(p.VENDOR?(' · '+esc(p.VENDOR)):'')+'</div>'
+      +'</div>';
+    }).join('');
+  });
+}
+window.posSearch=posSearch;
+function posPick(i){
+  var p=POS_HITS[i];if(!p)return;
+  document.getElementById('f_name').value=p.NAME||'';
+  if(p.PRICE!=null&&!isNaN(+p.PRICE))document.getElementById('f_price').value=+p.PRICE;
+  var bc=(p.FULL_BARCODE&&(''+p.FULL_BARCODE).length>=8)?p.FULL_BARCODE:(p.CODE||'');
+  document.getElementById('f_barcode').value=bc||'';
+  // fill product code (add mode only, if empty)
+  var codeEl=document.getElementById('f_code');
+  if(codeEl&&document.getElementById('f_codeWrap').style.display!=='none'&&!codeEl.value.trim())codeEl.value=(p.CODE||'');
+  var ck=catFromPOS(p.CATEGORY);
+  if(ck&&CATS[ck])document.getElementById('f_cat').value=ck;
+  resetPOS();
+}
+window.posPick=posPick;
 
 // ---- quick actions ----
 function toggleHide(id,hide){
