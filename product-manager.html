@@ -92,6 +92,7 @@ button{cursor:pointer}
   <div class="hd">
     <h1>🛠️ 상품 관리</h1>
     <button class="add" id="csToggle" onclick="toggleComingSoon()" style="background:#fff3cd;color:#92400e;">🚧 준비중: …</button>
+    <button class="add" onclick="evOpen()" style="background:#e0edff;color:#1d4ed8;">🎪 이벤트 관리</button>
     <button class="add" onclick="openAdd()">＋ 새 상품 추가</button>
   </div>
   <div class="tools">
@@ -149,6 +150,20 @@ button{cursor:pointer}
     <div class="mact">
       <button class="m-cancel" onclick="closeModal()">취소</button>
       <button class="m-save" id="mSave" onclick="saveModal()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- EVENTS MANAGER MODAL -->
+<div class="ov" id="evOv">
+  <div class="modal" style="max-width:600px">
+    <h2>🎪 이벤트 관리 <span style="font-size:.6em;font-weight:600;color:var(--mute)">(홈 왼쪽 사이드바)</span></h2>
+    <div style="font-size:.82em;color:var(--mute);margin-bottom:10px;line-height:1.5">아이콘·이름·배지·연결할 곳을 정하세요. ↑↓로 순서 변경. 저장하면 쇼핑몰에 바로 반영돼요.</div>
+    <div id="evList"></div>
+    <button type="button" onclick="evAdd()" style="width:100%;border:1.5px dashed var(--line);background:#fafafa;border-radius:10px;padding:11px;font-weight:800;color:var(--green);margin-top:6px">＋ 이벤트 추가</button>
+    <div class="mact">
+      <button class="m-cancel" onclick="evClose()">닫기</button>
+      <button class="m-save" id="evSaveBtn" onclick="evSave()">저장</button>
     </div>
   </div>
 </div>
@@ -401,6 +416,72 @@ function toggleComingSoon(){
     .catch(function(e){alert('실패: '+(e.message||e));});
 }
 window.toggleComingSoon=toggleComingSoon;
+
+// ---- Events manager (홈 사이드바 이벤트) ----
+var EV=[];
+var EV_ACTIONS=[['best','베스트셀러'],['sale','세일'],['new','신상품'],['weekly','주간특가·최저가'],['deals','특별딜'],['all','전체상품'],['pickup','픽업/EBT'],['category','카테고리 지정']];
+function defaultEvents(){return [
+  {icon:'🏆',label:'베스트셀러',badge:'HOT',action:'best',category:''},
+  {icon:'🌸',label:'봄맞이 세일',badge:'SALE',action:'sale',category:''},
+  {icon:'✨',label:'신상품',badge:'NEW',action:'new',category:''},
+  {icon:'🍜',label:'라면 페스티벌',badge:'NEW',action:'category',category:'ramyun'},
+  {icon:'💰',label:'매일 최저가',badge:'',action:'weekly',category:''},
+  {icon:'🥬',label:'EBT/SNAP',badge:'',action:'pickup',category:''}
+];}
+function evOpen(){
+  var fb=window.__fb;if(!fb){alert('연결 대기중입니다.');return;}
+  fb.get(fb.ref(fb.db,'shopCatalog/events')).then(function(snap){
+    var ev=snap.val();
+    if(Array.isArray(ev))EV=ev.filter(Boolean);
+    else if(ev&&typeof ev==='object')EV=Object.keys(ev).map(function(k){return ev[k];}).filter(Boolean);
+    else EV=defaultEvents();
+    EV.sort(function(a,b){return (a.order||0)-(b.order||0);});
+    renderEvList();document.getElementById('evOv').classList.add('on');
+  }).catch(function(){EV=defaultEvents();renderEvList();document.getElementById('evOv').classList.add('on');});
+}
+function evClose(){document.getElementById('evOv').classList.remove('on');}
+function evAdd(){EV.push({icon:'⭐',label:'새 이벤트',badge:'',action:'best',category:''});renderEvList();}
+function evDel(i){EV.splice(i,1);renderEvList();}
+function evMove(i,d){var j=i+d;if(j<0||j>=EV.length)return;var t=EV[i];EV[i]=EV[j];EV[j]=t;renderEvList();}
+function evSet(i,f,v){if(!EV[i])return;EV[i][f]=v;if(f==='action')renderEvList();}
+window.evOpen=evOpen;window.evClose=evClose;window.evAdd=evAdd;window.evDel=evDel;window.evMove=evMove;window.evSet=evSet;
+function renderEvList(){
+  var el=document.getElementById('evList');if(!el)return;
+  var badges=['','HOT','SALE','NEW'];
+  var S='border:1.5px solid var(--line);border-radius:8px;padding:7px';
+  el.innerHTML=EV.map(function(e,i){
+    var actSel=EV_ACTIONS.map(function(a){return '<option value="'+a[0]+'"'+(e.action===a[0]?' selected':'')+'>'+a[1]+'</option>';}).join('');
+    var badgeSel=badges.map(function(b){return '<option value="'+b+'"'+((e.badge||'')===b?' selected':'')+'>'+(b||'배지없음')+'</option>';}).join('');
+    var catRow=e.action==='category'?('<select onchange="evSet('+i+',\'category\',this.value)" style="flex:1;'+S+'">'+Object.keys(CATS||{}).map(function(k){return '<option value="'+k+'"'+(e.category===k?' selected':'')+'>'+esc(catName(k))+'</option>';}).join('')+'</select>'):'';
+    return '<div style="border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:8px;background:#fff">'
+      +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
+        +'<input value="'+esc(e.icon||'')+'" onchange="evSet('+i+',\'icon\',this.value)" maxlength="4" style="width:52px;text-align:center;font-size:1.15em;'+S+'">'
+        +'<input value="'+esc(e.label||'')+'" onchange="evSet('+i+',\'label\',this.value)" placeholder="이벤트 이름" style="flex:1;'+S+'">'
+      +'</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+        +'<select onchange="evSet('+i+',\'badge\',this.value)" style="width:110px;'+S+'">'+badgeSel+'</select>'
+        +'<select onchange="evSet('+i+',\'action\',this.value)" style="flex:1;min-width:120px;'+S+'">'+actSel+'</select>'
+        +catRow
+      +'</div>'
+      +'<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">'
+        +'<button type="button" onclick="evMove('+i+',-1)" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 11px;font-weight:700">↑</button>'
+        +'<button type="button" onclick="evMove('+i+',1)" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 11px;font-weight:700">↓</button>'
+        +'<button type="button" onclick="evDel('+i+')" style="border:1.5px solid #fecaca;background:#fff;color:var(--red);border-radius:7px;padding:6px 11px;font-weight:800">🗑</button>'
+      +'</div>'
+    +'</div>';
+  }).join('')||'<div style="color:var(--mute);text-align:center;padding:20px">이벤트가 없어요. 아래 "＋ 이벤트 추가"를 누르세요.</div>';
+}
+function evSave(){
+  var fb=window.__fb;if(!fb)return;
+  var btn=document.getElementById('evSaveBtn');btn.disabled=true;btn.textContent='저장중…';
+  var payload=EV.map(function(e,i){return {icon:e.icon||'⭐',label:e.label||'',badge:e.badge||'',action:e.action||'best',category:e.action==='category'?(e.category||''):'',order:i};});
+  fb.set(fb.ref(fb.db,'shopCatalog/events'),payload)
+    .then(function(){evClose();})
+    .catch(function(e){alert('저장 실패: '+(e.message||e));})
+    .then(function(){btn.disabled=false;btn.textContent='저장';});
+}
+window.evSave=evSave;
+document.getElementById('evOv').addEventListener('click',function(e){if(e.target===this)evClose();});
 
 function boot(){
   if(booted)return;if(!window.__fb)return;booted=true;
