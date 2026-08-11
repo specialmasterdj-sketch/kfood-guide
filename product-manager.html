@@ -168,6 +168,22 @@ button{cursor:pointer}
   </div>
 </div>
 
+<!-- PER-EVENT PRODUCT PICKER MODAL -->
+<div class="ov" id="pkOv">
+  <div class="modal" style="max-width:560px">
+    <h2 id="pkTitle">🛒 상품 편집</h2>
+    <div style="font-size:.82em;color:var(--mute);margin-bottom:8px">이 이벤트에 넣을 상품을 골라요. <b id="pkCount">0개 선택됨</b> · ↑↓로 순서, ✕로 제거. 비워두면 자동(인기순)으로 채워져요.</div>
+    <div id="pkSelected" style="max-height:220px;overflow:auto;margin-bottom:12px;padding:2px"></div>
+    <div style="font-size:.8em;font-weight:800;color:var(--mute);margin-bottom:6px">상품 검색해서 추가</div>
+    <input id="pkSearch" type="search" placeholder="🔍 이름·브랜드·코드" oninput="pkSearch()" style="width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px">
+    <div id="pkResults" style="max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:10px"></div>
+    <div class="mact">
+      <button class="m-cancel" onclick="pkClose()">닫기</button>
+      <button class="m-save" id="pkSaveBtn" onclick="pkSave()">저장</button>
+    </div>
+  </div>
+</div>
+
 <script>
 var SHOP_BASE='https://specialmasterdj-sketch.github.io/kimchi-shop/';
 var PRODUCTS_URL=SHOP_BASE+'products.js';
@@ -463,10 +479,13 @@ function renderEvList(){
         +'<select onchange="evSet('+i+',\'action\',this.value)" style="flex:1;min-width:120px;'+S+'">'+actSel+'</select>'
         +catRow
       +'</div>'
-      +'<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">'
-        +'<button type="button" onclick="evMove('+i+',-1)" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 11px;font-weight:700">↑</button>'
-        +'<button type="button" onclick="evMove('+i+',1)" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 11px;font-weight:700">↓</button>'
-        +'<button type="button" onclick="evDel('+i+')" style="border:1.5px solid #fecaca;background:#fff;color:var(--red);border-radius:7px;padding:6px 11px;font-weight:800">🗑</button>'
+      +'<div style="display:flex;gap:6px;margin-top:8px;justify-content:space-between;align-items:center">'
+        + (evColKey(e) ? '<button type="button" onclick="pkOpen(\''+evColKey(e)+'\',\''+esc(e.label||'').replace(/\'/g,"")+'\')" style="border:1.5px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:7px;padding:6px 12px;font-weight:800">🛒 상품 편집</button>' : '<span style="font-size:.76em;color:var(--mute)">상품 자동 표시</span>')
+        +'<span style="display:flex;gap:6px">'
+          +'<button type="button" onclick="evMove('+i+',-1)" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 11px;font-weight:700">↑</button>'
+          +'<button type="button" onclick="evMove('+i+',1)" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 11px;font-weight:700">↓</button>'
+          +'<button type="button" onclick="evDel('+i+')" style="border:1.5px solid #fecaca;background:#fff;color:var(--red);border-radius:7px;padding:6px 11px;font-weight:800">🗑</button>'
+        +'</span>'
       +'</div>'
     +'</div>';
   }).join('')||'<div style="color:var(--mute);text-align:center;padding:20px">이벤트가 없어요. 아래 "＋ 이벤트 추가"를 누르세요.</div>';
@@ -482,6 +501,84 @@ function evSave(){
 }
 window.evSave=evSave;
 document.getElementById('evOv').addEventListener('click',function(e){if(e.target===this)evClose();});
+
+// ---- Per-event product picker (curated collections) ----
+function evColKey(e){
+  if(!e)return null;
+  if(e.action==='category')return e.category?('cat_'+e.category):null;
+  if(['best','new','sale','weekly','deals'].indexOf(e.action)>=0)return e.action;
+  return null; // all/pickup: shop fills automatically
+}
+window.evColKey=evColKey;
+var PK={key:null,title:'',ids:[]};
+function pkProd(id){var p=STATIC_BY[id];if(!p&&OV[id])p=Object.assign({id:id},OV[id]);return p;}
+function pkName(id){var p=pkProd(id);return p?esc(p.nameKr&&p.nameKr!==''?p.nameKr:(p.name||id)):esc(id);}
+function pkImg(id){var p=pkProd(id);return p?imgSrc(p.image):'';}
+function pkOpen(key,title){
+  if(!key){alert('이 이벤트는 상품이 자동으로 채워져요.');return;}
+  var fb=window.__fb;if(!fb){alert('연결 대기중');return;}
+  PK={key:key,title:title||key,ids:[]};
+  fb.get(fb.ref(fb.db,'shopCatalog/curated/'+key)).then(function(snap){
+    var v=snap.val();
+    if(Array.isArray(v))PK.ids=v.filter(Boolean);
+    else if(v&&typeof v==='object')PK.ids=Object.keys(v).map(function(k){return v[k];}).filter(Boolean);
+    else PK.ids=[];
+    document.getElementById('pkTitle').textContent='🛒 '+PK.title+' — 상품 편집';
+    document.getElementById('pkSearch').value='';document.getElementById('pkResults').innerHTML='';
+    renderPk();document.getElementById('pkOv').classList.add('on');
+  }).catch(function(){PK.ids=[];renderPk();document.getElementById('pkOv').classList.add('on');});
+}
+function pkClose(){document.getElementById('pkOv').classList.remove('on');}
+window.pkOpen=pkOpen;window.pkClose=pkClose;
+function pkAdd(id){if(PK.ids.indexOf(id)<0){PK.ids.push(id);renderPk();pkSearch();}}
+function pkRemove(id){var i=PK.ids.indexOf(id);if(i>=0){PK.ids.splice(i,1);renderPk();pkSearch();}}
+function pkMove(id,d){var i=PK.ids.indexOf(id);var j=i+d;if(i<0||j<0||j>=PK.ids.length)return;var t=PK.ids[i];PK.ids[i]=PK.ids[j];PK.ids[j]=t;renderPk();}
+window.pkAdd=pkAdd;window.pkRemove=pkRemove;window.pkMove=pkMove;
+function renderPk(){
+  var el=document.getElementById('pkSelected');if(!el)return;
+  document.getElementById('pkCount').textContent=PK.ids.length+'개 선택됨';
+  if(!PK.ids.length){el.innerHTML='<div style="color:var(--mute);text-align:center;padding:16px;font-size:.85em">아직 선택한 상품이 없어요. 아래에서 검색해 추가하세요.</div>';return;}
+  el.innerHTML=PK.ids.map(function(id){
+    var im=pkImg(id);
+    return '<div style="display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:6px 8px;margin-bottom:6px;background:#fff">'
+      +'<div style="width:38px;height:38px;flex:0 0 38px;border-radius:7px;overflow:hidden;background:#f3f4f6;display:flex;align-items:center;justify-content:center">'+(im?'<img src="'+esc(im)+'" style="width:100%;height:100%;object-fit:contain" onerror="this.style.display=\'none\'">':'')+'</div>'
+      +'<div style="flex:1;min-width:0;font-size:.85em;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+pkName(id)+' <span style="color:var(--mute);font-weight:500">· '+esc(id)+'</span></div>'
+      +'<button type="button" onclick="pkMove(\''+esc(id)+'\',-1)" style="border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 8px">↑</button>'
+      +'<button type="button" onclick="pkMove(\''+esc(id)+'\',1)" style="border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 8px">↓</button>'
+      +'<button type="button" onclick="pkRemove(\''+esc(id)+'\')" style="border:1.5px solid #fecaca;background:#fff;color:var(--red);border-radius:6px;padding:4px 8px;font-weight:800">✕</button>'
+    +'</div>';
+  }).join('');
+}
+function pkSearch(){
+  var q=(document.getElementById('pkSearch').value||'').trim().toLowerCase();
+  var box=document.getElementById('pkResults');if(!box)return;
+  if(!q){box.innerHTML='';return;}
+  var hits=STATIC.filter(function(p){
+    if(PK.ids.indexOf(p.id)>=0)return false;
+    var hay=((p.name||'')+' '+(p.nameKr||'')+' '+(p.brand||'')+' '+(p.id||'')).toLowerCase();
+    return hay.indexOf(q)>=0;
+  }).slice(0,25);
+  if(!hits.length){box.innerHTML='<div style="color:var(--mute);padding:10px;font-size:.85em">검색 결과 없음</div>';return;}
+  box.innerHTML=hits.map(function(p){
+    var im=imgSrc(p.image);
+    return '<div style="display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line);padding:7px 4px">'
+      +'<div style="width:36px;height:36px;flex:0 0 36px;border-radius:7px;overflow:hidden;background:#f3f4f6;display:flex;align-items:center;justify-content:center">'+(im?'<img src="'+esc(im)+'" style="width:100%;height:100%;object-fit:contain" onerror="this.style.display=\'none\'">':'')+'</div>'
+      +'<div style="flex:1;min-width:0;font-size:.84em;overflow:hidden"><div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.nameKr&&p.nameKr!==""?p.nameKr:p.name)+'</div><div style="color:var(--mute);font-size:.9em">'+esc(p.brand||'')+' · '+esc(p.id)+' · $'+Number(p.price||0).toFixed(2)+'</div></div>'
+      +'<button type="button" onclick="pkAdd(\''+esc(p.id)+'\')" style="border:0;background:var(--green);color:#fff;border-radius:7px;padding:7px 12px;font-weight:800">＋ 추가</button>'
+    +'</div>';
+  }).join('');
+}
+window.pkSearch=pkSearch;
+function pkSave(){
+  var fb=window.__fb;if(!fb||!PK.key)return;
+  var btn=document.getElementById('pkSaveBtn');btn.disabled=true;btn.textContent='저장중…';
+  fb.set(fb.ref(fb.db,'shopCatalog/curated/'+PK.key),PK.ids)
+    .then(function(){pkClose();})
+    .catch(function(e){alert('저장 실패: '+(e.message||e));})
+    .then(function(){btn.disabled=false;btn.textContent='저장';});
+}
+window.pkSave=pkSave;
+document.getElementById('pkOv').addEventListener('click',function(e){if(e.target===this)pkClose();});
 
 function boot(){
   if(booted)return;if(!window.__fb)return;booted=true;
