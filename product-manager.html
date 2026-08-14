@@ -203,7 +203,7 @@ button{cursor:pointer}
 </div>
 
 <script>
-var SHOP_BASE='https://specialmasterdj-sketch.github.io/kimchi-shop/';
+var SHOP_BASE='https://kimchimartshop.com/';
 
 // ==================== i18n (KO / EN) ====================
 var LANG='ko'; try{LANG=localStorage.getItem('pm.lang')||'ko';}catch(e){}
@@ -321,7 +321,12 @@ function applyStatic(){
 }
 function setLang(l){ LANG=l; try{localStorage.setItem('pm.lang',l);}catch(e){} applyStatic(); try{fillCatSelects();}catch(e){} try{paintCS();}catch(e){} try{render();}catch(e){} }
 window.setLang=setLang;
-var PRODUCTS_URL=SHOP_BASE+'products.js';
+// Try several sources so it loads on any computer/network (raw = no redirect, CORS-friendly)
+var PRODUCTS_SOURCES=[
+  'https://raw.githubusercontent.com/specialmasterdj-sketch/kimchi-shop/main/products.js',
+  'https://kimchimartshop.com/products.js',
+  'https://specialmasterdj-sketch.github.io/kimchi-shop/products.js'
+];
 var STATIC=[], STATIC_BY={}, CATS={}, OV={}, F='all', UNSUB=null, EDIT_ID=null, EDIT_CUSTOM=false, PHOTO=null;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -338,17 +343,21 @@ function imgSrc(im){if(!im)return'';if(/^data:|^https?:\/\//.test(im))return im;
 function showErr(m){document.getElementById('errbox').innerHTML=m?('<div class="err">'+esc(m)+'</div>'):'';}
 
 // ---- load static catalog from shop products.js ----
-function loadStatic(){
-  return fetch(PRODUCTS_URL,{cache:'no-store'}).then(function(r){
-    if(!r.ok)throw new Error('상품 목록 로드 실패 ('+r.status+')');return r.text();
+function loadStatic(){ return fetchProducts(0); }
+function fetchProducts(i){
+  if(i>=PRODUCTS_SOURCES.length) return Promise.reject(new Error('상품 목록 로드 실패 (모든 주소 실패 / Failed to fetch)'));
+  return fetch(PRODUCTS_SOURCES[i],{cache:'no-store'}).then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.text();
   }).then(function(txt){
     var fn=new Function(txt+'\n; return {P:(typeof PRODUCTS!=="undefined"?PRODUCTS:[]),C:(typeof CATEGORIES!=="undefined"?CATEGORIES:{})};');
-    var r=fn();
-    STATIC=(r.P||[]).map(function(p){return p;});
-    CATS=r.C||{};
+    var res=fn();
+    if(!res.P||!res.P.length) throw new Error('empty');
+    STATIC=(res.P||[]).map(function(p){return p;});
+    CATS=res.C||{};
     STATIC_BY={};STATIC.forEach(function(p){STATIC_BY[p.id]=p;});
     fillCatSelects();
-  });
+  }).catch(function(){ return fetchProducts(i+1); });
 }
 
 // ---- subscribe overrides ----
