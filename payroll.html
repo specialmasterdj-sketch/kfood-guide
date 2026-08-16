@@ -1281,15 +1281,25 @@ function saveReport(){
   }).then(r => {
     if (r.ok){
       document.getElementById('syncDot').textContent = '🟢';
+      try { showLoginWarn(false); } catch(_){}
       renderRows();
       // 2026-05-27 전무님 지시: 채팅방 전송 중단 (방 숨김 → 의미 없음).
       // Firebase 저장만 — 전무님·사장님 같은 URL 들어가면 동일 데이터.
       // 이메일은 별도 '📧 이메일 발송' 버튼 사용.
       showStatus('✓ 저장됨 · ' + BRANCH + ' / ' + WEEK, false);
+    } else if (r.status === 401 || r.status === 403){
+      // 🔒 안전장치: 로그인이 안 됐거나 승인 안 된 계정 — 조용히 실패하지 않고 크게 경고
+      try { document.getElementById('syncDot').textContent = '🔴'; } catch(_){}
+      try { showLoginWarn(true); } catch(_){}
+      showStatus('⚠ 로그인 필요 — 저장 안 됨!', true);
+      if (confirm('⚠ 저장이 안 됐습니다! (로그인 필요)\n\n승인된 관리자 계정으로 로그인이 안 되어 있습니다.\n(예: specialmasterdj@gmail.com)\n\n[확인] = 새 탭에서 로그인 화면 열기\n로그인 후 이 화면으로 돌아와 다시 저장하세요.\n(입력하신 내용은 이 화면에 그대로 남아있습니다)')){
+        try { window.open('./auth.html', '_blank'); } catch(_){}
+      }
     } else {
-      showStatus('저장 실패', true);
+      try { document.getElementById('syncDot').textContent = '🔴'; } catch(_){}
+      showStatus('저장 실패 (' + r.status + ') — 다시 시도해 주세요', true);
     }
-  }).catch(() => showStatus('저장 실패 (오프라인)', true));
+  }).catch(() => { try { document.getElementById('syncDot').textContent = '🔴'; } catch(_){} showStatus('저장 실패 (인터넷 연결 확인)', true); });
 }
 
 // 매니저 전용 채팅방('payroll')에 급여 리포트 — 표 그대로 이미지로 전송
@@ -1626,11 +1636,38 @@ function shiftWeek(delta){
 }
 window.shiftWeek = shiftWeek;
 
+// ================== 로그인 경고 배너 (안전장치) ==================
+function showLoginWarn(show){
+  var el = document.getElementById('payLoginWarn');
+  if (show){
+    if (!el){
+      el = document.createElement('div');
+      el.id = 'payLoginWarn';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;padding:11px 14px;font-size:.92em;font-weight:800;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3);line-height:1.5';
+      el.innerHTML = '⚠ 저장하려면 <u>로그인</u>이 필요합니다 (승인된 관리자 계정) ' +
+        '<button onclick="window.open(\'./auth.html\',\'_blank\')" style="background:#fff;color:#dc2626;border:0;border-radius:7px;padding:5px 14px;font-weight:800;cursor:pointer;margin-left:10px;font-family:inherit">🔑 로그인</button>';
+      document.body.appendChild(el);
+    }
+    el.style.display = 'block';
+  } else if (el){ el.style.display = 'none'; }
+}
+// 시작 시 로그인 상태 점검 — 토큰 없으면 미리 경고 (값 입력 전에 알림)
+function checkLoginState(){
+  setTimeout(function(){
+    try {
+      if (typeof window.__getAuthToken === 'function'){
+        window.__getAuthToken().then(function(tok){ showLoginWarn(!tok); }).catch(function(){ showLoginWarn(true); });
+      }
+    } catch(_){}
+  }, 2500);
+}
+
 // ================== INIT ==================
 window.addEventListener('storage', e => {
   if (e.key === 'chat.me') applyReadonlyMode();
 });
 loadReport();
+checkLoginState();
 </script>
 </body>
 </html>
