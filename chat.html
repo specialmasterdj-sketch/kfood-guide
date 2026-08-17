@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_07_28_closure_warn';   // 📌 구글리뷰방 상단 고정 공지 (자연스럽게·꾸준히·본인폰) + 이전 유지
+    var BUST = 'chat_2026_08_16_dm_open_senior';   // 🐛 1:1 방 클릭 무반응(composer 가림) + 디렉토리 진입 확실히 열기 + 시니어 수퍼바이저 1:1 개방
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -523,10 +523,16 @@ a{color:inherit;text-decoration:none}
      with explicit safe-area padding makes the full list reachable. */
   .rooms{
     display:none;position:fixed;top:0;left:0;right:0;bottom:0;
-    background:#fff;z-index:30;
+    background:#fff;z-index:70;
     padding-bottom:env(safe-area-inset-bottom,0px);
   }
   .rooms.show{display:flex}
+  /* 🐛 2026-08-14 전무님 신고: 방 목록 맨 아래 '💬 1:1 비공개' 방들이 클릭 무반응.
+     원인 = .composer 가 position:fixed; bottom:0; z-index:60 으로 항상 떠 있어
+     방 목록(z-index:30)의 하단 밴드를 덮고 탭을 가로챔. 1:1 섹션이 목록의
+     맨 마지막이라 정확히 그 자리에 깔림. 목록을 composer 위로 올리고(z-index:70),
+     목록이 열려 있는 동안엔 composer 자체를 숨겨 이중으로 차단. */
+  .rooms.show ~ .chat .composer{display:none !important}
   /* Extra scroll buffer so the last item (Sushi Evaluation) isn't hidden
      behind the iOS home indicator bar even when the URL bar is collapsed */
   .rooms-list{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 24px)}
@@ -1363,8 +1369,9 @@ const DM_OWNER_WHITELIST = ['DJ','BHK','HKIM','STEVEHONG','KWANGHONOH','SUNKIM']
 function _canDmOwner(senderName){ return DM_OWNER_WHITELIST.includes(_normName(senderName)); }
 // 🆕 2026-08-13 사장님 지시 — 전 지점 MANAGER / ASSISTANT MANAGER 는 '오너(DJ)에게만'
 //   1:1 발신 허용. 다른 오너/임원(BHK 등)에게는 여전히 화이트리스트만 가능.
-//   SUPERVISOR(시니어·바이스 포함)·일반 직원은 계속 전면 차단.
 //   role 은 직원명부 선택 + 매니저급 PIN + SMS 번호 바인딩으로 보호됨 (사칭 불가).
+// 🆕 2026-08-16 사장님 지시 — 각 지점 SENIOR SUPERVISOR 까지 1:1 허용 범위 확대.
+//   VICE SUPERVISOR / 일반 SUPERVISOR / 스태프는 계속 전면 차단 (HR 문의로 유도).
 const OWNER_DM_TARGET_NAMES = ['DJ'];   // '나에게만' — 오너 본인 한정
 function _isOwnerDmTarget(name){ return OWNER_DM_TARGET_NAMES.includes(_normName(name)); }
 function _isMgrLevelSender(){
@@ -1375,8 +1382,23 @@ function _isMgrLevelSender(){
     return MGR_ACCESS_TOKENS.some(t => r.includes(t.toUpperCase())); // MANAGER / ASSISTANT MANAGER / 임원
   } catch(_){ return false; }
 }
+// 시니어 수퍼바이저 판정 — 'SENIOR SUPERVISOR' 계열만 인정. 'VICE SUPERVISOR' 는 제외.
+// role 표기 흔들림(SENIOR_SUPERVISOR / SR. SUPERVISOR / SUPERVISOR SENIOR / 한글)까지 흡수.
+const SENIOR_SUP_TOKENS = ['SENIORSUPERVISOR','SRSUPERVISOR','SUPERVISORSENIOR','시니어수퍼바이저','시니어슈퍼바이저','선임수퍼바이저'];
+function _isSeniorSupSender(){
+  try {
+    const r = String(me?.role || '').toUpperCase().replace(/[._\-]+/g, ' ');
+    if (!r.trim()) return false;
+    if (/\bVICE\b|바이스|부수퍼|부슈퍼/.test(r)) return false;   // 바이스 수퍼바이저는 계속 차단
+    const flat = r.replace(/\s+/g, '');
+    return SENIOR_SUP_TOKENS.some(t => flat.includes(t));
+  } catch(_){ return false; }
+}
 // 매니저급 발신자가 이 상대에게 보낼 수 있는가 — 오너(DJ) 한정 개방
-function _mgrCanDmTarget(targetName){ return _isMgrLevelSender() && _isOwnerDmTarget(targetName); }
+// 2026-08-16: 시니어 수퍼바이저까지 포함 (사장님 지시).
+function _mgrCanDmTarget(targetName){
+  return (_isMgrLevelSender() || _isSeniorSupSender()) && _isOwnerDmTarget(targetName);
+}
 // 임원 보호 명단(EXECUTIVE_NAMES / STRICT_OWNER_NAMES) 안에 있어도
 // 전 직원이 DM 보낼 수 있게 개방된 예외 인원. 회계/총무 직접 문의 가능.
 // 임원 권한(삭제 버튼, 페이롤, PIN 등)은 그대로 유지됨.
@@ -5473,17 +5495,25 @@ document.addEventListener('DOMContentLoaded', () => {
           alert(({ko:'지정된 인원만 이 분에게 메시지를 보낼 수 있습니다.',en:'Only authorized personnel can send DMs to this person.',es:'Solo personal autorizado puede enviar mensajes a esta persona.'})[LANG]||'Restricted');
         }, 800);
       } else {
-        setTimeout(() => {
+        // 🐛 2026-08-16 사장님 신고: 디렉토리에서 눌러도 "그냥 전체 채팅 페이지"로 떨어짐.
+        //   원인 = 1.5초 뒤 딱 한 번만 열어봐서, 그 사이 방 목록 로드가 끝나면
+        //   렌더가 다시 돌면서 1:1 방이 안 열린 상태로 남음(빈 화면/전체 목록).
+        //   → 즉시 열고, 열릴 때까지 짧게 재시도해서 확실히 1:1 방으로 들어가게.
+        const _openDmTarget = (tries) => {
           try {
-            const id = mkDmRoomId(me.name, otherName);
+            const id = mkDmRoomId(me && me.name, otherName);
             if (!id) return;
             const meta = { name: otherName, private: true, members: [me.name, otherName], created: Date.now() };
             ROOMS[id] = Object.assign(ROOMS[id]||{}, meta);
-            fetch(FB_DB_URL + '/chat/rooms/' + id + '.json', { method:'PATCH', body: JSON.stringify(meta) }).catch(()=>{});
+            if (tries === 0) {
+              fetch(FB_DB_URL + '/chat/rooms/' + id + '.json', { method:'PATCH', body: JSON.stringify(meta) }).catch(()=>{});
+            }
             renderRooms();
             openRoom(id);
+            if (tries < 8) setTimeout(() => { if (ACTIVE_ROOM !== id) _openDmTarget(tries + 1); }, 400);
           } catch(e){ console.warn('[dm-auto]', e); }
-        }, 1500);
+        };
+        setTimeout(() => _openDmTarget(0), 200);
       }
     }
   }

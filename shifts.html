@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'shifts_2026_07_18_no_kick';   // 🛑 사용 중 강제 리로드 금지 (미저장 시프트 draft 보호)
+    var BUST = 'shifts_2026_08_16_draft_keep';   // 🛑 사용 중 강제 리로드 금지 + 임시(draft) 시프트 보존·오탐 경고 제거
     var KEY = 'kmtools_bust_shifts';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2710,15 +2710,33 @@ function applyRemote(remote){
     // 🛡️ 2026-06-23 동시수정 보호 — 다른 기기가 더 최신본을 보냈는데 그 최신본이 로컬에 있던
     //   시프트를 누락시키면(=동시 편집 충돌로 방금 입력이 사라지는 상황), 덮어쓰기 전에 로컬을
     //   백업하고 경고 + [복구] 버튼 표시. 손실을 막진 못해도 영구 손실은 막고 즉시 되살릴 수 있게.
+    // 🐛 2026-08-16 사장님 신고: 빨강 경고창이 계속 뜸.
+    //   원인 = 임시(_draft) 시프트는 커밋 전까지 일부러 Firebase 에 안 올라가는데,
+    //   그 상태에서 remote 가 한 번만 갱신돼도 "로컬에만 있는 시프트 N개"로 잡혀
+    //   매번 오탐 경고가 뜨고, 게다가 remote 로 통째 덮어써서 작성 중이던 임시 시프트가
+    //   실제로 날아갔음. → 임시 시프트는 (1) 경고 집계에서 제외, (2) 덮어쓴 뒤 되살림.
+    var _drafts = {};
+    try {
+      var _ls0 = (DATA && DATA.shifts) || {};
+      Object.keys(_ls0).forEach(function(k){ if (_ls0[k] && _ls0[k]._draft) _drafts[k] = _ls0[k]; });
+    } catch(_){}
     if (!localEmpty && remoteNewer) {
       try {
         var _ls = (DATA && DATA.shifts) || {};
-        var _lost = Object.keys(_ls).filter(function(k){ return !(remote.shifts && remote.shifts[k]); });
+        var _lost = Object.keys(_ls).filter(function(k){
+          if (_ls[k] && _ls[k]._draft) return false;               // 임시 시프트는 원래 원격에 없음 — 손실 아님
+          return !(remote.shifts && remote.shifts[k]);
+        });
         if (_lost.length) { _schedBackupRing(DATA, 'preremote'); _showConcurrentWarn(_lost.length); }
       } catch(_){}
     }
     __suppressFbWrite = true;
     DATA = Object.assign(emptyData(), remote);
+    // 작성 중이던 임시 시프트 복원 — 원격이 같은 칸을 이미 채웠으면 원격 우선(덮어쓰지 않음)
+    try {
+      if (!DATA.shifts) DATA.shifts = {};
+      Object.keys(_drafts).forEach(function(k){ if (!DATA.shifts[k]) DATA.shifts[k] = _drafts[k]; });
+    } catch(_){}
     try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA)); }
     catch(e){ try { localStorage.removeItem('shifts.bak.' + BRANCH); localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA)); } catch(_){} }
     __suppressFbWrite = false;
