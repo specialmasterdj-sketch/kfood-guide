@@ -42,6 +42,11 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
 .branch-card .ic{font-size:1.2em}
 .branch-card .lbl{font-size:.74em;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
 .branch-card select{border:0;background:transparent;font-size:1em;font-weight:800;color:#1a5c3a;width:100%;padding:2px 0;-webkit-appearance:none}
+/* 🏬 2026-08-29 사장님 지시 — 지점을 드롭다운 대신 한 번에 클릭 (큰 터치 버튼) */
+.branch-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.b-chip{border:2px solid #d1d5db;background:#fff;color:#374151;border-radius:12px;padding:10px 14px;font-size:.92em;font-weight:800;cursor:pointer;transition:all .12s;line-height:1.2}
+.b-chip:active{transform:scale(.96)}
+.b-chip.active{background:linear-gradient(135deg,#1a5c3a,#2e7d32);border-color:#1a5c3a;color:#fff;box-shadow:0 3px 10px rgba(26,92,58,.3)}
 
 .tile-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
 .tile{background:#fff;border-radius:14px;padding:18px 14px;box-shadow:0 1px 3px rgba(0,0,0,.06);text-align:center;cursor:pointer;border:2px solid transparent;transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:6px;color:inherit;text-decoration:none}
@@ -152,10 +157,12 @@ body{font-family:'Inter','Pretendard','Segoe UI','Malgun Gothic',Arial,sans-seri
 <!-- HOME -->
 <div class="page" id="page-home">
   <div class="branch-card">
-    <div class="ic">🏬</div>
+    <div class="ic" style="align-self:flex-start">🏬</div>
     <div style="flex:1;min-width:0">
       <div class="lbl" id="lblBranch">지점</div>
-      <select id="branchSel" onchange="onBranchChange()"></select>
+      <!-- 🏬 2026-08-29 사장님 지시 — 드롭다운 대신 원클릭 지점 버튼. select 는 호환용으로 숨김 유지 -->
+      <select id="branchSel" onchange="onBranchChange()" style="display:none"></select>
+      <div class="branch-chips" id="branchChips"></div>
     </div>
   </div>
 
@@ -653,7 +660,26 @@ function renderBranchSelectors(){
     const s = document.getElementById(id); if (!s) return;
     s.innerHTML = `<option value="all">${({ko:'전체 지점',en:'All branches',es:'Todas'}[LANG])}</option>` + opts;
   });
+  renderBranchChips();   // 🏬 원클릭 지점 버튼 (언어 전환 시에도 함께 갱신)
 }
+// 🏬 2026-08-29 사장님 지시 — 지점을 드롭다운 대신 큰 버튼으로 한 번에 클릭
+function renderBranchChips(){
+  const box = document.getElementById('branchChips');
+  if (!box) return;
+  box.innerHTML = BRANCHES.map(b =>
+    `<button type="button" class="b-chip${b.id === BRANCH ? ' active' : ''}" onclick="selectBranch('${b.id}')">${b[LANG]||b.ko}</button>`
+  ).join('');
+}
+window.selectBranch = function(id){
+  if (!BRANCH_BY_ID[id]) return;
+  BRANCH = id;
+  try { localStorage.setItem('expense.branch', BRANCH); } catch(e){}
+  const s = document.getElementById('branchSel');
+  if (s) s.value = BRANCH;
+  renderBranchChips();
+  renderHome();
+  refreshIssuerDatalist();
+};
 
 //================================================================
 // HOME
@@ -731,6 +757,7 @@ function renderHome(){
 window.onBranchChange = function(){
   BRANCH = document.getElementById('branchSel').value;
   try { localStorage.setItem('expense.branch', BRANCH); } catch(e){}
+  renderBranchChips();   // 🏬 칩 활성 표시 동기화
   renderHome();
   refreshIssuerDatalist(); // 지점별 매니저/오너 발행자 풀 새로고침
 };
