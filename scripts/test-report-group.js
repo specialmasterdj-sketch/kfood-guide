@@ -15,6 +15,8 @@ function extractFn(name){
   return m[0];
 }
 /* eslint-disable no-eval */
+let ACTIVE_ROOM = '';   // 추출 함수가 참조 — 시나리오별로 설정
+const _isTaskNotifyMsg = eval('(' + extractFn('_isTaskNotifyMsg') + ')');
 const _isAutoReportMsg = eval('(' + extractFn('_isAutoReportMsg') + ')');
 const _computeReportGroups = eval('(' + extractFn('_computeReportGroups') + ')');
 
@@ -98,6 +100,29 @@ const list3 = [
 const g3 = _computeReportGroups(list3);
 chk('마이애미 Kim / 할리우드 Kim 각각 묶음',
   g3[list3[0].id] && g3[list3[0].id].count === 2 && g3[list3[1].id] && g3[list3[1].id].count === 2);
+
+console.log('4b) 1:1 방 업무 알림 접기 (2026-08-30 사장님: 대화만 깨끗하게)');
+const NT = (n) => '📨 New task: checklist ' + n + '\n📅 Complete today';
+ACTIVE_ROOM = 'dm__DJ__KENDELL';
+const dmList = [
+  msg('DJ', 'MIAMI', NT(1), 1000),
+  msg('Kendell', 'LASOLAS', 'all done. future any app issue just tell me', 2000),
+  msg('DJ', 'MIAMI', NT(2), 3000),
+  msg('DJ', 'MIAMI', NT(3), 4000),
+  msg('Kendell', 'LASOLAS', 'ok boss 👍', 5000),
+];
+const gDm = _computeReportGroups(dmList);
+const dmNotifyIds = [dmList[0].id, dmList[2].id, dmList[3].id];
+chk('DJ 업무알림 3건 = notify 묶음', gDm[dmNotifyIds[0]] && gDm[dmNotifyIds[0]].count === 3 && gDm[dmNotifyIds[0]].notify === true);
+chk('실제 대화(Kendell 2건)는 묶이지 않음', !gDm[dmList[1].id] && !gDm[dmList[4].id]);
+const dmSingle = [msg('DJ', 'MIAMI', NT(9), 1000), msg('Kendell', 'LASOLAS', 'hi', 2000)];
+const gS = _computeReportGroups(dmSingle);
+chk('1:1 방에선 알림 1건이어도 접힘', gS[dmSingle[0].id] && gS[dmSingle[0].id].count === 1 && gS[dmSingle[0].id].notify === true);
+ACTIVE_ROOM = 'general';
+const gG = _computeReportGroups(dmSingle);
+chk('일반 방에선 1건은 그대로 (2건 기준 유지)', !gG[dmSingle[0].id]);
+chk('얇은 한 줄 렌더 마커 존재', src.includes('업무 알림 ') && src.includes('_g.notify && !__rptOpen'));
+ACTIVE_ROOM = '';
 
 console.log('5) 묶음 카드 리액션 상황판 (2026-08-29)');
 chk('카드에 집계 코드(rxAgg) 존재', src.includes('const rxAgg = {}'));

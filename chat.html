@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_30_fast12';   // 🚀 첫 페인트 12건(오늘 정보 최우선·버퍼링 없이) + preconnect + 이관 프로브
+    var BUST = 'chat_2026_08_30_dm_clean';   // 💬 1:1 방 업무 알림 접기(1건부터, 얇은 줄) — 대화만 깨끗하게
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3120,8 +3120,15 @@ function pinnedNoticeHTML(){
 }
 // 📦 자동 보고 묶음 — 같은 직원·같은 날·연속 3건 이상의 발송/Task complete 보고를 한 카드로
 const __rptOpen = {};
+// 📨 1:1 방을 도배하는 업무 지시 자동 알림 (tasks.html 발송 형식, 3개 언어)
+function _isTaskNotifyMsg(m){
+  const t = String((m && m.text) || '').trim();
+  return /^📨\s*(새 업무 지시|New task|Nueva tarea)/.test(t);
+}
 function _isAutoReportMsg(m){
   const t = String((m && m.text) || '').trim();
+  // 💬 2026-08-30 사장님 지시 — 1:1 은 사람 간 대화만 깨끗하게: 업무 알림도 묶음 대상
+  if (_isTaskNotifyMsg(m)) return true;
   // 발송 보고는 🚚 로 시작 (예: '🚚 [Enviado] 🥩 ...') — 선두 이모지는 무엇이든 허용
   if (/^[^\n]{0,4}\[(Enviado|발송|Sent)\]/.test(t) || /^✅ Task complete/.test(t)) return true;
   // 📷 사진 보고 — 사진이 있고 텍스트가 거의 없는 메시지 (2026-08-08 사장님: 이것도 묶어야)
@@ -3142,13 +3149,19 @@ function _computeReportGroups(list){
     if (!_isAutoReportMsg(m)) continue;
     const day = new Date(m.ts || 0).toLocaleDateString();
     const k = (m.sender || '?') + '|' + (m.senderBranch || '') + '|' + day;
-    (byKey[k] = byKey[k] || []).push(m.id);
+    (byKey[k] = byKey[k] || []).push(m);
   }
+  // 💬 2026-08-30 사장님 지시 — 1:1 방에서 '📨 업무 알림'은 1건이어도 접어서
+  //   대화만 남김 (얇은 한 줄로 표시, 펼치면 원문). 다른 묶음은 2건부터 (8/8 기준).
+  const isDmRoom = String(ACTIVE_ROOM || '').indexOf('dm__') === 0;
   for (const k in byKey) {
-    const ids = byKey[k];
-    if (ids.length < 2) continue;   // 2건부터 묶음 (2026-08-08 기준 유지)
+    const arr = byKey[k];
+    const allNotify = arr.every(_isTaskNotifyMsg);
+    const minN = (isDmRoom && allNotify) ? 1 : 2;
+    if (arr.length < minN) continue;
+    const ids = arr.map(x => x.id);
     const headId = ids[0];
-    map[headId] = { head: true, key: headId, ids: ids, count: ids.length };
+    map[headId] = { head: true, key: headId, ids: ids, count: ids.length, notify: allNotify };
     for (let i = 1; i < ids.length; i++) map[ids[i]] = { head: false, key: headId };
   }
   return map;
@@ -3241,6 +3254,12 @@ function renderMessages(){
     const time = fmtMsgDateTime(d);   // 📅 날짜 항상 병기 (2026-08-29 사장님 지시)
     const _g = _rptGroups[m.id];
     if (_g && !_g.head && !__rptOpen[_g.key]) continue;   // 접힌 묶음의 멤버 — 생략
+    // 💬 2026-08-30 — 1:1 방의 업무 알림 묶음: 카드 대신 얇은 한 줄 (대화만 깨끗하게)
+    if (_g && _g.head && _g.notify && !__rptOpen[_g.key]) {
+      const _nl = ({ko:'📨 업무 알림 ' + _g.count + '건 · 펼치기', en:'📨 ' + _g.count + ' task notification' + (_g.count > 1 ? 's' : '') + ' · expand', es:'📨 ' + _g.count + ' avisos de tarea · ver'}[LANG] || ('📨 업무 알림 ' + _g.count + '건 · 펼치기'));
+      html += `<div class="day-divider" data-msg-id="${m.id}" style="cursor:pointer;background:#fff7ed;color:#c2410c;border:1px solid #fed7aa" onclick="toggleRptGroup('${_g.key}')">${_nl}</div>`;
+      continue;
+    }
     if (_g && _g.head && !__rptOpen[_g.key]) {
       const items = _g.ids.map(id => _renderList.find(x => x.id === id)).filter(Boolean);
       const lines = items.map(x => {
