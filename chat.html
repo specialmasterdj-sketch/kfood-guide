@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_30_dm_clean';   // 💬 1:1 방 업무 알림 접기(1건부터, 얇은 줄) — 대화만 깨끗하게
+    var BUST = 'chat_2026_08_30_owner_alerts';   // 🔔 오너 새메시지 스트립 + 👑 직원측 Owner's Message 표식/알림
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2013,7 +2013,46 @@ function renderRooms(){
       ${unread}
     </div>`;
   }
-  let html = otherItems.map(renderRoomItem).join('');
+  // 👑 보낸 사람이 오너(DJ/SUN KIM)인지 — Owner's Message 표식용
+  function _isOwnerSender(n){
+    try { return STRICT_OWNER_NAMES.map(_normName).includes(_normName(String(n || ''))); } catch(_){ return false; }
+  }
+  window._isOwnerSender = _isOwnerSender;
+  // 🔔 2026-08-30 사장님 지시 — 오너 전용: 1:1·매니저룸에 새 메시지가 오면
+  //   방 목록 맨 위에 고정 스트립으로 표시 (누르면 그 방으로 이동).
+  //   브라우저 알림 권한이 꺼져 있으면 '알림 켜기' 버튼도 함께 노출.
+  let ownerStrip = '';
+  try {
+    if (typeof isStrictOwner === 'function' && isStrictOwner()) {
+      const hot = items.filter(([id, r]) => r && r.unread > 0 && (id === 'managers' || (id.indexOf('dm__') === 0 && isMyDmRoom(id, r))));
+      const needPerm = ('Notification' in window) && Notification.permission === 'default';
+      if (hot.length || needPerm) {
+        const chips = hot.map(([id, r]) =>
+          `<button type="button" onclick="openRoom('${id}')" style="background:#fff;border:1.5px solid #fca5a5;color:#b91c1c;border-radius:14px;padding:4px 12px;font-size:.8em;font-weight:800;cursor:pointer;font-family:inherit">${escapeHtml(roomLocalName(id, r))}</button>`
+        ).join('');
+        const permBtn = needPerm
+          ? `<button type="button" onclick="requestNotifPermission();renderRooms()" style="background:#fff7ed;border:1.5px solid #fdba74;color:#c2410c;border-radius:14px;padding:4px 12px;font-size:.8em;font-weight:800;cursor:pointer;font-family:inherit">🔔 ${({ko:'알림 켜기',en:'Enable alerts',es:'Activar avisos'}[LANG]||'알림 켜기')}</button>`
+          : '';
+        const lbl = hot.length ? `<span style="font-size:.8em;font-weight:800;color:#b91c1c">🔔 ${({ko:'새 메시지',en:'New messages',es:'Nuevos'}[LANG]||'새 메시지')}</span>` : '';
+        ownerStrip = `<div id="ownerAlertStrip" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px;background:#fef2f2;border-bottom:2px solid #fecaca">${lbl}${chips}${permBtn}</div>`;
+      }
+    }
+  } catch(_){}
+  // 👑 2026-08-30 사장님 지시 — 사장님이 보낸 1:1 은 받는 직원/매니저 목록 맨 위에
+  //   "Owner's Message" 금색 스트립으로 강조 (즉시 반응 유도). 읽으면 사라짐.
+  let ownerMsgStrip = '';
+  try {
+    if (!(typeof isStrictOwner === 'function' && isStrictOwner())) {
+      const om = items.filter(([id, r]) => r && r.unread > 0 && id.indexOf('dm__') === 0 && isMyDmRoom(id, r) && _isOwnerSender(r.lastSender));
+      if (om.length) {
+        const chips = om.map(([id, r]) =>
+          `<button type="button" onclick="openRoom('${id}')" style="background:linear-gradient(135deg,#fbbf24,#f59e0b);border:0;color:#fff;border-radius:14px;padding:5px 14px;font-size:.82em;font-weight:800;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(245,158,11,.4)">👑 ${({ko:"사장님 메시지",en:"Owner's Message",es:"Mensaje del Dueño"}[LANG]||"Owner's Message")}</button>`
+        ).join('');
+        ownerMsgStrip = `<div id="ownerMsgStrip" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px;background:#fffbeb;border-bottom:2px solid #fcd34d">${chips}<span style="font-size:.76em;color:#92400e;font-weight:700">${({ko:'확인해 주세요',en:'Please check now',es:'Revisar ahora'}[LANG]||'확인해 주세요')}</span></div>`;
+      }
+    }
+  } catch(_){}
+  let html = ownerStrip + ownerMsgStrip + otherItems.map(renderRoomItem).join('');
   if (hubItems.length > 0) {
     const hubLabel = ({ko:'🏪 지점 Work Hub', en:'🏪 Store Work Hub', es:'🏪 Hub de Tienda'}[LANG] || '🏪 지점 Work Hub');
     html += `<div class="rooms-section-hd" style="background:#f0fdf4;color:#15803d;border-top-color:#16a34a;border-bottom-color:#bbf7d0">${hubLabel}</div>` + hubItems.map(renderRoomItem).join('');
@@ -5709,7 +5748,13 @@ function showChatNotification(roomId, roomName, senderName, msgPreview){
   if (document.visibilityState === 'visible' && ACTIVE_ROOM === roomId) return;
   playNotifSound();
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const title = roomName || roomId;
+  let title = roomName || roomId;
+  // 👑 2026-08-30 — 사장님이 보낸 1:1 은 알림 제목부터 Owner's Message (즉시 반응 유도)
+  try {
+    if (roomId.indexOf('dm__') === 0 && typeof window._isOwnerSender === 'function' && window._isOwnerSender(senderName)) {
+      title = "👑 " + ({ko:'사장님 메시지', en:"Owner's Message", es:'Mensaje del Dueño'}[LANG] || "Owner's Message");
+    }
+  } catch(_){}
   const body = senderName ? (senderName + ': ' + (msgPreview || '')) : (msgPreview || '새 메시지');
   try {
     const n = new Notification(title, { body:body, tag:'chat-'+roomId, icon:'pwa-assets/icon-192.png', silent:true });
