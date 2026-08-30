@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_29_room_param_fix';   // 🐛 사이드바 HR 건의 눌러도 마지막 방에 남던 문제 — ?room= 선점+재시도 (dm= 수정과 동일 패턴)
+    var BUST = 'chat_2026_08_29_date_group';   // 📅 모든 메시지·댓글에 날짜 병기 + 📦 사람별 하루 보고 한 묶음(마지막 보고 위치로 모음)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3116,27 +3116,25 @@ function _isAutoReportMsg(m){
   return false;
 }
 function _computeReportGroups(list){
+  // 📦 2026-08-29 사장님 지시로 재활성 + 강화 (8/8 "전부 펼쳐라" 결정을 뒤집는 새 지시):
+  //   "한 사람이 그날 올리는 모든 보고를 한 곳에 묶어줘 — 사람별로 업무 파악이 쉬워야"
+  //   기존: 연속된 보고만 묶음 → 다른 지점 메시지가 사이에 끼면 못 묶었음.
+  //   변경: 같은 사람(sender+지점)·같은 날짜의 자동 보고를 떨어져 있어도 전부 한 묶음으로.
+  //   (렌더 시 묶음은 그 사람의 마지막 보고 위치로 모아 연속 배치 — renderMessages 참조)
   const map = {};
-  // 🔕 2026-08-08 저녁 사장님 최종 결정: 보고를 가리지 말고 예전처럼 전부 펼쳐 표시.
-  //   (한꺼번에 한 일들이 한눈에 들어와야 함) — 묶음 비활성. 코드는 보존, 아래 return 만 제거하면 재활성.
-  return map;
-  let i = 0;
-  while (i < list.length) {
-    const m = list[i];
-    if (!_isAutoReportMsg(m)) { i++; continue; }
+  const byKey = {};
+  for (const m of list) {
+    if (!_isAutoReportMsg(m)) continue;
     const day = new Date(m.ts || 0).toLocaleDateString();
-    let j = i;
-    while (j + 1 < list.length) {
-      const n = list[j + 1];
-      if (!_isAutoReportMsg(n) || n.sender !== m.sender) break;
-      if (new Date(n.ts || 0).toLocaleDateString() !== day) break;
-      j++;
-    }
-    if (j - i + 1 >= 2) {   // 2026-08-08 사장님: 2건부터 묶음
-      map[m.id] = { head: true, key: m.id, ids: list.slice(i, j + 1).map(x => x.id), count: j - i + 1 };
-      for (let k = i + 1; k <= j; k++) map[list[k].id] = { head: false, key: m.id };
-    }
-    i = j + 1;
+    const k = (m.sender || '?') + '|' + (m.senderBranch || '') + '|' + day;
+    (byKey[k] = byKey[k] || []).push(m.id);
+  }
+  for (const k in byKey) {
+    const ids = byKey[k];
+    if (ids.length < 2) continue;   // 2건부터 묶음 (2026-08-08 기준 유지)
+    const headId = ids[0];
+    map[headId] = { head: true, key: headId, ids: ids, count: ids.length };
+    for (let i = 1; i < ids.length; i++) map[ids[i]] = { head: false, key: headId };
   }
   return map;
 }
@@ -3195,9 +3193,26 @@ function renderMessages(){
     html += `<div class="day-divider">${olderMsg[LANG] || olderMsg.ko}</div>`;
   }
   let lastDay = '';
-  // 📦 2026-08-08 사장님 지시: 한 직원이 같은 날 올린 자동 보고(발송/Task complete) 3건 이상은
-  //   한 장의 묶음 카드로 접어 표시 — 화면 도배 방지. 전 방 공통.
+  // 📦 2026-08-29 사장님 지시: 한 직원이 같은 날 올린 모든 자동 보고를 한 묶음 카드로.
+  //   묶음 멤버들을 '그 사람의 그날 마지막 보고 위치'로 모아 연속 배치 —
+  //   접으면 카드 1장, 펼치면 그 자리에서 시간순 전체 표시. 사람별 업무 파악 용이.
   const _rptGroups = _computeReportGroups(_renderList);
+  if (Object.keys(_rptGroups).length) {
+    const _byId = {};
+    _renderList.forEach(m => { _byId[m.id] = m; });
+    const _lastIdxByKey = {};
+    _renderList.forEach((m, i) => { const g = _rptGroups[m.id]; if (g) _lastIdxByKey[g.key] = i; });
+    const _reordered = [];
+    _renderList.forEach((m, i) => {
+      const g = _rptGroups[m.id];
+      if (!g) { _reordered.push(m); return; }
+      if (i === _lastIdxByKey[g.key]) {
+        const grp = _rptGroups[g.key];
+        grp.ids.forEach(id => { if (_byId[id]) _reordered.push(_byId[id]); });
+      }
+    });
+    _renderList = _reordered;
+  }
   for (const m of _renderList) {
     const d = new Date(m.ts || 0);
     const dayKey = d.toLocaleDateString();
@@ -3208,7 +3223,7 @@ function renderMessages(){
     const mine = me && m.sender === me.name && m.senderBranch === me.branch;
     const branch = BRANCH_BY_ID[m.senderBranch];
     const branchTxt = branch ? ' · ' + (branch[LANG] || branch.ko) : '';
-    const time = fmtMsgTime(d);
+    const time = fmtMsgDateTime(d);   // 📅 날짜 항상 병기 (2026-08-29 사장님 지시)
     const _g = _rptGroups[m.id];
     if (_g && !_g.head && !__rptOpen[_g.key]) continue;   // 접힌 묶음의 멤버 — 생략
     if (_g && _g.head && !__rptOpen[_g.key]) {
@@ -3378,6 +3393,12 @@ function renderMessages(){
 function fmtMsgTime(d){
   if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
   return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+}
+// 📅 2026-08-29 사장님 지시 "구별 쉽도록 날짜를 반드시 기입" — 매일 비슷한 보고가
+// 쌓이는 방에서 '7:34 PM'만으론 언제 것인지 몰라서, 모든 메시지/댓글 시간에 날짜 병기.
+function fmtMsgDateTime(d){
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+  return (d.getMonth()+1) + '/' + d.getDate() + ' · ' + fmtMsgTime(d);
 }
 // 오늘이 아니면 'M/D' 라벨 — 보낸이 옆에 표시 (며칠 전 글인지 즉시 인지)
 function fmtMsgDateBadge(d){
@@ -4146,7 +4167,7 @@ function renderReplies(m){
       const branch = BRANCH_BY_ID[r.senderBranch];
       const branchTxt = branch ? ' · ' + (branch[LANG] || branch.ko) : '';
       const rd = new Date(r.ts||0);
-      const t = fmtMsgTime(rd);
+      const t = fmtMsgDateTime(rd);   // 📅 댓글에도 날짜 병기 (2026-08-29 사장님 지시)
       const replyDateBadge = fmtMsgDateBadge(rd);
       const rdBadge = replyDateBadge ? ` <span class="date-badge">${escapeHtml(replyDateBadge)}</span>` : '';
       const mine = me && r.sender === me.name && r.senderBranch === me.branch;
