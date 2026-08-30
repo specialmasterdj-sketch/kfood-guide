@@ -130,6 +130,19 @@ async function post(args){
     for (const f of files){
       if (f.endsWith('.html')) checkHtml(f); else checkJs(f);
     }
+    // 🔁 자동 업데이트 보증 (2026-08-29 사장님 지시 "직원들은 스스로 업데이트 못한다"):
+    //   앱 파일(html/js) 배포는 반드시 sw.js CACHE 버전 범프와 함께 — sw-updated 신호가
+    //   전 기기 자동 리로드(hidden 시 적용)를 트리거해 설치된 앱 전부가 스스로 최신화됨.
+    const appFiles = files.filter(f => f !== 'sw.js' && !f.startsWith('scripts/') && !f.startsWith('scripts\\'));
+    if (appFiles.length){
+      const localCache = (fs.readFileSync(path.join(REPO, 'sw.js'), 'utf8').match(/const CACHE = '([^']+)'/) || [])[1];
+      let remoteCache = null;
+      try { remoteCache = (execSync('git show origin/master:sw.js', { cwd: REPO, encoding:'utf8' }).match(/const CACHE = '([^']+)'/) || [])[1]; } catch(_){}
+      if (remoteCache && localCache === remoteCache) {
+        die('앱 파일(' + appFiles.join(', ') + ') 배포에는 sw.js CACHE 버전 범프가 필수 (현재 ' + localCache + ' = 원격과 동일).\n   sw.js 의 const CACHE 를 다음 버전으로 올리세요 — 전 기기 자동 업데이트 보증.');
+      }
+      ok('sw.js CACHE 범프 확인: ' + (remoteCache || '(원격없음)') + ' → ' + localCache);
+    }
     runTests();
     console.log('\n🎉 배포 전 게이트 통과 — git fetch → rebase → push 진행 가능');
   } else if (mode === 'post'){

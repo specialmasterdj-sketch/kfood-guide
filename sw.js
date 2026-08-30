@@ -2,7 +2,10 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v913';   // ⏱ 즉시오픈(캐시 0.8초 레이스) + hidden 즉시 업데이트 적용 (2026-08-29)
+const CACHE = 'kmtools-v914';   // 📦 Firebase SDK·CDN 영구 캐시(CDN_CACHE) — 구형폰 콜드 로딩 ~473KB 제거 (2026-08-29)
+// 버전 고정(불변) 크로스오리진 의존성 전용 — 앱 버전 바뀌어도 지우지 않음.
+// firebasejs 10.14.1 / pretendard@v1.3.9 처럼 URL 에 버전이 박힌 파일만 담는다.
+const CDN_CACHE = 'kmtools-cdn-v1';
 
 const CORE = [
   './',
@@ -69,7 +72,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== CDN_CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
       .then(() => self.clients.matchAll({ type: 'window' }))
       .then(clients => {
@@ -122,6 +125,25 @@ self.addEventListener('notificationclick', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+
+  // 📦 2026-08-29 — 버전 고정 크로스오리진 의존성(Firebase SDK ~473KB, 폰트)은
+  // 기기에 영구 캐시. 한 번 받으면 다시는 네트워크 안 탐 → 구형폰·느린망 콜드
+  // 로딩에서 인증/데이터 시작이 즉시 가능. (URL 에 버전 박힌 불변 파일만!)
+  const isPinnedCdn = (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/'))
+                   || url.hostname === 'cdn.jsdelivr.net'
+                   || url.hostname === 'fonts.googleapis.com'
+                   || url.hostname === 'fonts.gstatic.com';
+  if (e.request.method === 'GET' && isPinnedCdn) {
+    e.respondWith(
+      caches.open(CDN_CACHE).then(c => c.match(e.request).then(hit =>
+        hit || fetch(e.request).then(res => {
+          if (res && (res.ok || res.type === 'opaque')) c.put(e.request, res.clone());
+          return res;
+        })
+      ))
+    );
+    return;
+  }
 
   // Only handle same-origin GET requests
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;

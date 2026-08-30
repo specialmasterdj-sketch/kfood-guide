@@ -35,6 +35,18 @@ chk('캐시 有 → 0.8초 레이스', sw.includes('hit ? 800 : 3500'));
 chk('네트워크 응답은 백그라운드 캐시 갱신', sw.includes("network.catch(() => {})"));
 chk('NET_SLOW/NET_FAIL 레이스 구조', sw.includes("'NET_SLOW'") && sw.includes("'NET_FAIL'"));
 
+console.log('2b) CDN 영구 캐시 (2026-08-29 — Firebase SDK ~473KB 재다운로드 제거)');
+chk('CDN_CACHE 정의', sw.includes("const CDN_CACHE = 'kmtools-cdn-"));
+chk('firebasejs 경로 매칭', sw.includes("url.pathname.startsWith('/firebasejs/')"));
+chk('activate 가 CDN_CACHE 를 지우지 않음', sw.includes('k !== CACHE && k !== CDN_CACHE'));
+chk('캐시 우선(불변 파일) 처리', sw.includes('caches.open(CDN_CACHE)'));
+const chatHead = fs.readFileSync(path.join(REPO, 'chat.html'), 'utf8').slice(0, 2000);
+const tasksHead = fs.readFileSync(path.join(REPO, 'tasks.html'), 'utf8').slice(0, 2000);
+chk('chat.html preconnect (gstatic+rtdb)', chatHead.includes('rel="preconnect"') && chatHead.includes('firebaseio.com'));
+chk('tasks.html preconnect', tasksHead.includes('rel="preconnect"'));
+const rel = fs.readFileSync(path.join(REPO, 'scripts', 'release.js'), 'utf8');
+chk('release.js — sw CACHE 범프 강제(자동 업데이트 보증)', rel.includes('origin/master:sw.js'));
+
 console.log('3) 레이스 의미 시뮬레이션 (sw.js 와 동일 알고리즘)');
 async function race(netMs, netOk, hasCache, waitFast, waitSlow){
   const network = new Promise((res, rej) => setTimeout(() => netOk ? res('NET') : rej(new Error('down')), netMs));
