@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_16_dm_open_senior';   // 🐛 1:1 방 클릭 무반응(composer 가림) + 디렉토리 진입 확실히 열기 + 시니어 수퍼바이저 1:1 개방
+    var BUST = 'chat_2026_08_29_room_param_fix';   // 🐛 사이드바 HR 건의 눌러도 마지막 방에 남던 문제 — ?room= 선점+재시도 (dm= 수정과 동일 패턴)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -5476,11 +5476,25 @@ document.addEventListener('DOMContentLoaded', () => {
   if (openHRFromQuery && _me && _me.name) {
     setTimeout(() => { try { openHRInquiryModal(); } catch(e){} }, 700);
   }
-  // 외부 앱(logistics 등)에서 chat.html?room=<id> 로 진입 → 해당 룸 자동 오픈
+  // 외부 앱/사이드바에서 chat.html?room=<id> 로 진입 → 해당 룸 자동 오픈
+  // 🐛 2026-08-29 사장님 신고: 사이드바 'HR 건의' 눌러도 마지막 방(Work Hub)에 그대로 남음.
+  //   원인 = 1.5초 뒤 딱 한 번만 열어봐서, 방 목록 로드/마지막 방 자동복원과 레이스에서 짐
+  //   (?dm= 의 2026-08-16 버그와 동일 패턴). 수정:
+  //   ① ACTIVE_ROOM 을 목표 방으로 즉시 선점 — 자동복원이 오히려 목표 방을 열게 됨
+  //   ② 즉시 열고, 실제로 열릴 때까지 재시도 (dm= 수정과 동일 방식)
   const roomMatch = /(?:^|[?&])room=([A-Za-z0-9_\-]+)(?:&|$)/.exec(location.search);
   if (roomMatch && _me && _me.name) {
     const targetRoom = roomMatch[1];
-    setTimeout(() => { try { openRoom(targetRoom); } catch(e){} }, 1500);
+    ACTIVE_ROOM = targetRoom;
+    try { localStorage.setItem('chat.activeRoom', targetRoom); } catch(e){}
+    const _openRoomTarget = (tries) => {
+      try { openRoom(targetRoom); } catch(e){ console.warn('[room-auto]', e); }
+      if (tries < 10) setTimeout(() => {
+        if (ACTIVE_ROOM !== targetRoom && __unsubMsgs) return;   // 사용자가 직접 다른 방을 연 것 — 존중
+        if (ACTIVE_ROOM !== targetRoom || !__unsubMsgs) _openRoomTarget(tries + 1);
+      }, 400);
+    };
+    setTimeout(() => _openRoomTarget(0), 200);
   }
   // hub.html 디렉토리에서 chat.html?dm=NAME 으로 진입 → DM 자동 생성/오픈
   const dmMatch = /(?:^|[?&])dm=([^&]+)/.exec(location.search);
