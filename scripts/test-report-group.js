@@ -99,5 +99,38 @@ const g3 = _computeReportGroups(list3);
 chk('마이애미 Kim / 할리우드 Kim 각각 묶음',
   g3[list3[0].id] && g3[list3[0].id].count === 2 && g3[list3[1].id] && g3[list3[1].id].count === 2);
 
+console.log('5) 묶음 카드 리액션 상황판 (2026-08-29)');
+chk('카드에 집계 코드(rxAgg) 존재', src.includes('const rxAgg = {}'));
+chk('카드에 상황판 행(rxRow) 삽입', src.includes('${rxRow}'));
+chk('오른쪽 정렬(justify-content:flex-end)', src.includes("justify-content:flex-end;margin-top:4px"));
+// 집계 의미 재현: cnt = 그 이모지가 달린 '보고 수', mine = 내가 단 보고 수
+function agg(items, myKey){
+  const rxAgg = {};
+  items.forEach(x => {
+    const rx = x.reactions || {};
+    Object.keys(rx).forEach(em => {
+      const users = rx[em] || {};
+      if (!Object.keys(users).length) return;
+      const a = rxAgg[em] = rxAgg[em] || { cnt: 0, mine: 0 };
+      a.cnt++;
+      if (myKey && users[myKey]) a.mine++;
+    });
+  });
+  return rxAgg;
+}
+const my = 'MIAMI_DJ';
+const rep = [
+  { reactions: { '👍': { MIAMI_DJ: 'DJ' } } },
+  { reactions: { '👍': { MIAMI_DJ: 'DJ', HOLLYWOOD_ANA: 'Ana' } } },
+  { reactions: {} },
+  { reactions: { '👍': { HOLLYWOOD_ANA: 'Ana' }, '🔥': { MIAMI_DJ: 'DJ' } } },
+  {},
+];
+const a = agg(rep, my);
+chk('👍 달린 보고 3건 집계', a['👍'] && a['👍'].cnt === 3, JSON.stringify(a));
+chk('내가 👍 준 보고 2건 (mine 강조 조건)', a['👍'] && a['👍'].mine === 2);
+chk('🔥 1건 별도 칩', a['🔥'] && a['🔥'].cnt === 1 && a['🔥'].mine === 1);
+chk('리액션 없는 보고는 집계 제외', Object.keys(a).length === 2);
+
 console.log(fail === 0 ? '\n🎉 보고 묶음 전부 통과' : '\n💥 실패 ' + fail + '건');
 process.exit(fail ? 1 : 0);

@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_29_date_group';   // 📅 모든 메시지·댓글에 날짜 병기 + 📦 사람별 하루 보고 한 묶음(마지막 보고 위치로 모음)
+    var BUST = 'chat_2026_08_29_group_rxn';   // 👍 묶음 카드에 리액션 상황판 (엄지척 준 보고 수 / 전체, 오른쪽 칩 패턴)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3237,12 +3237,34 @@ function renderMessages(){
       });
       const shown = lines.slice(0, 12).join('');
       const moreN = lines.length > 12 ? lines.length - 12 : 0;
+      // 👍 2026-08-29 사장님 지시 — 묶음 안 보고들에 준 리액션 상황판.
+      //   펼쳐서 하나씩 엄지척 준 뒤 접어도, 카드 오른쪽에 원래 칩 패턴으로
+      //   "👍 7/13" (리액션 달린 보고 수 / 전체 보고 수) 집계 표시. 내가 준 게 있으면 mine 강조.
+      const rxAgg = {};
+      const _myRxKey = reactionUserKey();
+      items.forEach(x => {
+        const rx = x.reactions || {};
+        Object.keys(rx).forEach(em => {
+          const users = rx[em] || {};
+          if (!Object.keys(users).length) return;
+          const a = rxAgg[em] = rxAgg[em] || { cnt: 0, mine: 0 };
+          a.cnt++;
+          if (_myRxKey && users[_myRxKey]) a.mine++;
+        });
+      });
+      const rxChips = Object.keys(rxAgg).map(em => {
+        const a = rxAgg[em];
+        const tip = ({ko:'이 이모지가 달린 보고 ' + a.cnt + '건 / 전체 ' + _g.count + '건', en:a.cnt + ' of ' + _g.count + ' reports', es:a.cnt + ' de ' + _g.count}[LANG] || (a.cnt + '/' + _g.count));
+        return '<span class="rxn' + (a.mine ? ' mine' : '') + '" title="' + escapeHtml(tip) + '" onclick="toggleRptGroup(\'' + _g.key + '\')">' + escapeHtml(em) + ' ' + a.cnt + '/' + _g.count + '</span>';
+      }).join('');
+      const rxRow = rxChips ? '<div class="reactions" style="justify-content:flex-end;margin-top:4px">' + rxChips + '</div>' : '';
       html += `<div class="msg rpt-group" data-msg-id="${m.id}">
         <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
         <div class="body">
           <div class="who">${escapeHtml(m.sender || '?')}${escapeHtml(branchTxt)} <span class="date-badge">📦 ${_g.count}${({ko:'건 보고',en:' reports',es:' informes'}[LANG]||'건 보고')}</span></div>
           ${shown}
           ${moreN ? `<div class="rpt-line" style="color:#9ca3af">… +${moreN}</div>` : ''}
+          ${rxRow}
           <div class="rpt-toggle" onclick="toggleRptGroup('${_g.key}')">▾ ${({ko:'펼쳐서 자세히 보기',en:'Expand details',es:'Ver detalles'}[LANG]||'펼치기')}</div>
           <div class="time">${time}</div>
         </div>
