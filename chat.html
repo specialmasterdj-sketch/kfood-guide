@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_29_group_rxn';   // 👍 묶음 카드에 리액션 상황판 (엄지척 준 보고 수 / 전체, 오른쪽 칩 패턴)
+    var BUST = 'chat_2026_08_29_mig_probe';   // 🩺 이관 미시작 진단 프로브 + hidden 즉시 업데이트 (v913 세트)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -5347,16 +5347,33 @@ window.resetEmpPin = resetEmpPin;
       migProgress(stats);
     }
   }
-  async function migMaybeStart(){
+  // 🩺 2026-08-29 — 이관이 한 번도 시작 안 됨(progress.json 미생성) 원인 진단 프로브.
+  //   오너 이름(DJ/SUNKIM) 기기에서만, 어느 관문에서 멈췄는지를 Storage 에 기록.
+  async function migProbe(gate){
     try {
-      if (typeof isDjOwner !== 'function' || !isDjOwner()) return;
+      gate.at = new Date().toISOString();
+      try { gate.ver = localStorage.getItem('kmtools_bust_chat') || ''; } catch(_){}
+      const body = new Blob([JSON.stringify(gate)], { type:'application/json' });
+      await fetch(`${FB_STORAGE_URL}?name=${encodeURIComponent('admin/b64migrate/probe.json')}&uploadType=media`, { method:'POST', headers:{'Content-Type':'application/json'}, body });
+    } catch(_){}
+  }
+  async function migMaybeStart(){
+    const gate = {};
+    let ownerName = false;
+    try { const nm = String((me && me.name) || '').toUpperCase().replace(/\s+/g, ''); ownerName = (nm === 'DJ' || nm === 'SUNKIM'); } catch(_){}
+    try {
+      gate.dj = (typeof isDjOwner === 'function') ? !!isDjOwner() : 'no-fn';
+      if (gate.dj !== true) { if (ownerName) { gate.exit = 'isDjOwner=false'; migProbe(gate); } return; }
       const t = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
-      if (!t) return;   // 로그인 세션 없음
+      gate.token = !!t;
+      if (!t) { gate.exit = 'no-token'; migProbe(gate); return; }   // 로그인 세션 없음
       let st = null;
-      try { st = await mGet(MIG_STATE, ''); } catch(_){}
+      try { st = await mGet(MIG_STATE, ''); } catch(e){ gate.stErr = String((e && e.message) || e); }
       const now = Date.now();
-      if (st && st.done && now - (st.doneTs || 0) < 7 * 86400000) return;   // 최근 완료 — 7일 휴식
-      if (st && st.lockTs && now - st.lockTs < 150000) return;              // 다른 기기 실행 중
+      if (st && st.done && now - (st.doneTs || 0) < 7 * 86400000) { gate.exit = 'done-recent'; migProbe(gate); return; }   // 최근 완료 — 7일 휴식
+      if (st && st.lockTs && now - st.lockTs < 150000) { gate.exit = 'locked'; gate.lockBy = st.by || ''; migProbe(gate); return; }   // 다른 기기 실행 중
+      gate.exit = 'START';
+      migProbe(gate);
       await mPut(MIG_STATE, { lockTs: now, by: (me && me.name) || 'OWNER', startedTs: now });
       console.info('[b64mig] 🚚 base64 → Storage 자동 이관 시작 (백그라운드, 앱 사용에 지장 없음)');
       const stats = { phase:'시작', scanned:0, migrated:0, bytes:0, failed:0 };
@@ -5368,6 +5385,7 @@ window.resetEmpPin = resetEmpPin;
       console.info('[b64mig] 완료 — 사진 ' + stats.migrated + '장, ' + (stats.bytes/1048576).toFixed(1) + 'MB 절감, 실패 ' + stats.failed);
     } catch(e){
       console.warn('[b64mig] 중단:', (e && e.message) || e);
+      try { gate.exit = 'error'; gate.err = String((e && e.message) || e); migProbe(gate); } catch(_){}
       try { migProgress({ phase:'중단/오류', error: String((e && e.message) || e) }); } catch(_){}
       try { await mPut(MIG_STATE + '/lockTs', 0); } catch(_){}
     }
