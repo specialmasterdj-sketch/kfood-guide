@@ -179,12 +179,19 @@ if ('serviceWorker' in navigator) {
     } catch (_) {}
     return false;
   }
-  function __swApplyReload(){
+  function __swApplyReload(force){
     if (!__swReloadPending) return;
-    if (__swUserBusy()) { setTimeout(__swApplyReload, 60000); return; }
+    if (!force && __swUserBusy()) { setTimeout(__swApplyReload, 60000); return; }
     try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch (_) {}
     location.reload();
   }
+  // 2026-08-29 — hidden(앱 전환·화면 꺼짐) 시 대기 중 SW 업데이트 즉시 적용
+  //   (계속 쓰는 기기에 구버전 며칠씩 고착 방지). textarea 초안 있으면 보류.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden' || !__swReloadPending) return;
+    try { const tas = document.querySelectorAll('textarea'); for (let i = 0; i < tas.length; i++) if (tas[i].value) return; } catch (_) {}
+    __swApplyReload(true);
+  });
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e && e.data && e.data.type === 'sw-updated') {
       try {

@@ -40,9 +40,9 @@
       } catch(e){}
       return false;
     }
-    function applyBustIfIdle(){
+    function applyBustIfIdle(force){
       if (!pendingBust) return;
-      if (userBusy()) { setTimeout(applyBustIfIdle, 60000); return; }
+      if (!force && userBusy()) { setTimeout(applyBustIfIdle, 60000); return; }
       try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch(e){}
       try { localStorage.setItem(KEY, pendingBust); } catch(e){}
       // 캐시 비우고 한 번에 새 버전 로드 (reload 는 SW 캐시로 옛 버전이 다시 뜰 수 있음)
@@ -50,6 +50,14 @@
         .then(function(){ location.replace(location.pathname + '?bust=' + Date.now() + location.hash); })
         .catch(function(){ location.reload(); });
     }
+    // 2026-08-29 — hidden(앱 전환·화면 꺼짐) 시 대기 중 업데이트 즉시 적용.
+    //   계속 쓰는 기기에 구버전 며칠씩 고착되던 문제 해결. 보던 위치는 저장 후 복귀,
+    //   입력 초안(textarea)이 있으면 보류 — 초안 유실 방지.
+    document.addEventListener('visibilitychange', function(){
+      if (document.visibilityState !== 'hidden' || !pendingBust) return;
+      try { var __tas = document.querySelectorAll('textarea'); for (var __i = 0; __i < __tas.length; __i++) if (__tas[__i].value) return; } catch(e){}
+      applyBustIfIdle(true);
+    });
     function pollBust(){
       fetch(location.pathname.split('?')[0] + '?bustpoll=' + Date.now(), { cache:'no-store' })
         .then(function(r){ return r.text(); })

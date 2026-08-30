@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v912';   // 💸 expense-log 지점 원클릭 버튼 (2026-08-29)
+const CACHE = 'kmtools-v913';   // ⏱ 즉시오픈(캐시 0.8초 레이스) + hidden 즉시 업데이트 적용 (2026-08-29)
 
 const CORE = [
   './',
@@ -150,14 +150,38 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Network-first for HTML/JS so deploys are picked up immediately
-  e.respondWith(
-    fetch(e.request).then(res => {
-      if (res && res.ok && (url.pathname.endsWith('.html') || url.pathname.endsWith('/') || url.pathname.endsWith('.js'))){
+  // Network-first for HTML/JS so deploys are picked up immediately.
+  // ⏱ 2026-08-29 사장님 신고 "며칠 만에 열면 로딩이 엄청 걸림" — 타임아웃 없는
+  // network-first 는 느린 매장 와이파이에서 캐시가 있어도 하염없이 기다렸음.
+  // 변경: 3.5초 안에 네트워크 응답 없으면 캐시로 즉시 열고, 네트워크 응답은
+  // 백그라운드로 마저 받아 캐시 갱신 → 다음 로드는 최신. (버전 따라잡기는
+  // 페이지의 BUST 폴링 + sw-updated 리로드가 담당)
+  e.respondWith((async () => {
+    const cacheable = url.pathname.endsWith('.html') || url.pathname.endsWith('/') || url.pathname.endsWith('.js');
+    const network = fetch(e.request).then(res => {
+      if (res && res.ok && cacheable){
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
       }
       return res;
-    }).catch(() => caches.match(e.request).then(hit => hit || caches.match('./invoice-to-excel.html')))
-  );
+    });
+    // 사장님 원칙 "어떤 상황에서도 무조건 먼저 열려야": 캐시가 있으면 0.8초만
+    // 네트워크에 기회를 주고(빠른 와이파이면 최신이 이김) 아니면 캐시로 즉시 오픈.
+    // 캐시가 없으면(첫 방문) 네트워크를 3.5초까지 기다림.
+    const hit = await caches.match(e.request);
+    const waitMs = hit ? 800 : 3500;
+    const first = await Promise.race([
+      network.catch(() => 'NET_FAIL'),
+      new Promise(r => setTimeout(() => r('NET_SLOW'), waitMs)),
+    ]);
+    if (first !== 'NET_FAIL' && first !== 'NET_SLOW') return first;
+    if (hit) {
+      // 네트워크는 백그라운드에서 계속 → 도착하면 캐시 갱신 (위 then 에서), 실패는 무시
+      network.catch(() => {});
+      return hit;
+    }
+    // 캐시도 없음 — 네트워크를 끝까지 기다리고, 완전 실패 시 기존 폴백 유지
+    try { return await network; }
+    catch(_) { return (await caches.match('./invoice-to-excel.html')) || new Response('', { status: 504, statusText: 'offline' }); }
+  })());
 });

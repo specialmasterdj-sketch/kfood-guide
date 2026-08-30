@@ -261,14 +261,20 @@
     return false;
   }
   var pendingReloadReason = null;
-  function tryPendingReload(){
+  function tryPendingReload(force){
     if (reloaded || !pendingReloadReason) return;
-    if (userBusy()) { setTimeout(tryPendingReload, 60000); return; }
+    if (!force && userBusy()) { setTimeout(tryPendingReload, 60000); return; }
     reloaded = true;
     try { console.log('[sw-autoreload]', pendingReloadReason); } catch(e){}
     try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch(e){}
     setTimeout(function(){ try { location.reload(); } catch(e){} }, 300);
   }
+  // 2026-08-29 — hidden(앱 전환·화면 꺼짐) 시 대기 중 리로드 즉시 적용 (초안 있으면 보류)
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'hidden' || reloaded || !pendingReloadReason) return;
+    try { var tas = document.querySelectorAll('textarea'); for (var i = 0; i < tas.length; i++) if (tas[i].value) return; } catch(e){}
+    tryPendingReload(true);
+  });
   function safeReload(reason){
     if (reloaded) return;
     pendingReloadReason = reason;
