@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v917';   // 🔔👑 오너 알림 스트립 + Owner's Message (2026-08-30)
+const CACHE = 'kmtools-v918';   // 🔔 FCM 웹푸시 클라이언트(다크) + 푸시 페이로드 FCM 호환 (2026-08-30)
 // 버전 고정(불변) 크로스오리진 의존성 전용 — 앱 버전 바뀌어도 지우지 않음.
 // firebasejs 10.14.1 / pretendard@v1.3.9 처럼 URL 에 버전이 박힌 파일만 담는다.
 const CDN_CACHE = 'kmtools-cdn-v1';
@@ -51,6 +51,8 @@ const CORE = [
   './nav-sidebar.js',
   './back-nav.js',
   './me-persist.js',
+  './km-push-config.js',
+  './km-push.js',
   './recv-persist.js',
   './lang-sync.js',
   './km-floor-plan.js',
@@ -94,10 +96,13 @@ self.addEventListener('activate', e => {
 self.addEventListener('push', e => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch(_) { try { data = { title: e.data.text() }; } catch(__){} }
-  const title = data.title || '📨 새 업무 지시';
-  const body  = data.body  || data.message || '확인해 주세요.';
-  const tag   = data.tag   || 'kimchi-push';
-  const url   = data.url   || './tasks.html';
+  // 🔔 2026-08-30 — FCM v1 payload({notification:{title,body},data:{url}}) 형태도 지원
+  const n = data.notification || data;
+  const d = data.data || data;
+  const title = n.title || '📨 새 업무 지시';
+  const body  = n.body  || d.message || '확인해 주세요.';
+  const tag   = d.tag   || 'kimchi-push';
+  const url   = d.url   || './chat.html';
   e.waitUntil(
     self.registration.showNotification(title, {
       body, tag, renotify: true,
