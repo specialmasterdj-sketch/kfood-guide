@@ -103,6 +103,13 @@ h1{font-size:19px; margin:0 0 2px;}
 .photo-row{display:flex; gap:8px; margin:10px 0; align-items:center;}
 .photo-row input{flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
 .photo-preview{max-width:100%; border-radius:8px; margin-top:6px; display:block;}
+.bay-photo{border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:14px; background:var(--aisle);}
+.bay-photo-head{font-size:12.5px; font-weight:700; color:var(--sub); margin-bottom:8px;}
+.bay-photo-img{width:100%; max-height:320px; object-fit:contain; border-radius:8px; background:var(--card); display:block; margin-bottom:8px;}
+.bay-photo-actions{display:flex; gap:8px;}
+.photobtn{font-size:12px; border-radius:8px; border:1px solid var(--line); padding:7px 12px; cursor:pointer; background:var(--card); color:var(--ink); display:inline-block;}
+.photobtn.del{color:var(--bad); border-color:var(--bad);}
+.bay-photo-state{font-size:11px; color:var(--sub); margin-top:6px;}
 .actions{display:flex; gap:8px; margin-top:8px; align-items:center; justify-content:space-between;}
 .checkbtn{font-size:12px; border-radius:20px; border:1px solid var(--line); padding:6px 14px; cursor:pointer; background:var(--card); color:var(--ink);}
 .checkbtn.checked{background:var(--ok); border-color:var(--ok); color:#fff;}
@@ -256,6 +263,117 @@ async function initDb(){
   // db is always ready (localStorage-backed); nothing to await.
 }
 
+// ---- whole-bay photo storage (IndexedDB — photos are too big for localStorage) ----
+var PHOTO_DB_NAME = 'planogram-photos';
+var PHOTO_STORE = 'bayPhotos';
+function openPhotoDB(){
+  return new Promise(function(resolve, reject){
+    if (!('indexedDB' in window)){ reject(new Error('no indexeddb')); return; }
+    var req = indexedDB.open(PHOTO_DB_NAME, 1);
+    req.onupgradeneeded = function(){
+      var d = req.result;
+      if (!d.objectStoreNames.contains(PHOTO_STORE)) d.createObjectStore(PHOTO_STORE);
+    };
+    req.onsuccess = function(){ resolve(req.result); };
+    req.onerror = function(){ reject(req.error); };
+  });
+}
+function savePhotoForBay(bayId, dataURL){
+  return openPhotoDB().then(function(d){
+    return new Promise(function(resolve, reject){
+      var tx = d.transaction(PHOTO_STORE, 'readwrite');
+      tx.objectStore(PHOTO_STORE).put({ dataURL: dataURL, ts: Date.now() }, bayId);
+      tx.oncomplete = function(){ resolve(); };
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  });
+}
+function loadPhotoForBay(bayId){
+  return openPhotoDB().then(function(d){
+    return new Promise(function(resolve, reject){
+      var tx = d.transaction(PHOTO_STORE, 'readonly');
+      var req = tx.objectStore(PHOTO_STORE).get(bayId);
+      req.onsuccess = function(){ resolve(req.result || null); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  });
+}
+function deletePhotoForBay(bayId){
+  return openPhotoDB().then(function(d){
+    return new Promise(function(resolve, reject){
+      var tx = d.transaction(PHOTO_STORE, 'readwrite');
+      tx.objectStore(PHOTO_STORE).delete(bayId);
+      tx.oncomplete = function(){ resolve(); };
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  });
+}
+// Downscale before storing so a 12MP phone photo doesn't bloat IndexedDB.
+function fileToResizedDataURL(file, maxDim, quality){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      var img = new Image();
+      img.onload = function(){
+        var w = img.width, h = img.height;
+        var scale = Math.min(1, maxDim / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * scale));
+        var ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = cw; canvas.height = ch;
+        canvas.getContext('2d').drawImage(img, 0, 0, cw, ch);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = function(){ reject(new Error('image decode failed')); };
+      img.src = e.target.result;
+    };
+    reader.onerror = function(){ reject(reader.error); };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function renderBayPhotoBox(bayId){
+  var box = document.getElementById('bayPhotoBox');
+  if (!box) return;
+  var rec = null;
+  try { rec = await loadPhotoForBay(bayId); } catch(e){}
+
+  box.innerHTML =
+    '<div class="bay-photo-head">📷 베이 전체 사진</div>' +
+    (rec ? '<img class="bay-photo-img" id="bayPhotoImg" src="'+rec.dataURL+'">' : '') +
+    '<div class="bay-photo-actions">' +
+      '<label class="photobtn">' + (rec ? '사진 바꾸기' : '사진 촬영/업로드') +
+        '<input type="file" accept="image/*" capture="environment" id="bayPhotoInput" style="display:none">' +
+      '</label>' +
+      (rec ? '<button class="photobtn del" id="bayPhotoDel">삭제</button>' : '') +
+    '</div>' +
+    '<div class="bay-photo-state" id="bayPhotoState"></div>';
+
+  var input = document.getElementById('bayPhotoInput');
+  input.addEventListener('change', async function(){
+    var file = input.files && input.files[0];
+    if (!file) return;
+    var stateEl = document.getElementById('bayPhotoState');
+    stateEl.textContent = '저장 중…';
+    try {
+      var dataURL = await fileToResizedDataURL(file, 1280, 0.72);
+      await savePhotoForBay(bayId, dataURL);
+      renderBayPhotoBox(bayId);
+      render(); // refresh dots/stats in case this changes "has record" status
+    } catch(e){
+      stateEl.textContent = '저장 실패 (' + (e && e.message || e) + ')';
+    }
+  });
+
+  var delBtn = document.getElementById('bayPhotoDel');
+  if (delBtn){
+    delBtn.addEventListener('click', async function(){
+      try { await deletePhotoForBay(bayId); } catch(e){}
+      renderBayPhotoBox(bayId);
+    });
+  }
+}
+
 function statusFor(bayId){
   var any = false, done = 0, total = 0;
   ['S01','S02','S03','S04','S05'].forEach(function(sc){
@@ -358,9 +476,14 @@ async function openBay(bayId){
   var modal = document.getElementById('modal');
   modal.innerHTML =
     '<div class="modal-head"><h2>'+bayId+'</h2><button class="modal-close" id="closeBtn">&times;</button></div>' +
-    '<div class="modal-body" id="shelvesWrap">불러오는 중…</div>';
+    '<div class="modal-body">' +
+      '<div class="bay-photo" id="bayPhotoBox">사진 불러오는 중…</div>' +
+      '<div id="shelvesWrap">불러오는 중…</div>' +
+    '</div>';
   document.getElementById('overlay').classList.add('show');
   document.getElementById('closeBtn').onclick = closeModal;
+
+  renderBayPhotoBox(bayId);
 
   var wrap = document.getElementById('shelvesWrap');
   wrap.innerHTML = '';
