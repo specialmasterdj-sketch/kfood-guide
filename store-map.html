@@ -142,7 +142,7 @@ h1{font-size:19px; margin:0 0 2px;}
 .shelf-head .meta{font-size:11.5px; color:var(--sub);}
 .shelf-body{padding:12px; display:none;}
 .shelf-body.open{display:block;}
-.prod-row{display:grid; grid-template-columns:44px 1fr 132px 46px 60px 28px; gap:6px; margin-bottom:6px; align-items:center;}
+.prod-row{display:grid; grid-template-columns:44px 1fr 132px 46px 60px 36px 28px; gap:6px; margin-bottom:6px; align-items:center;}
 .prod-row input{width:100%; padding:5px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
 .prod-row button{background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px;}
 .barcode-cell{display:flex; gap:4px; align-items:center;}
@@ -154,8 +154,13 @@ h1{font-size:19px; margin:0 0 2px;}
 .scan-head button{background:none; border:none; font-size:20px; cursor:pointer; color:var(--sub); line-height:1;}
 .scan-video{width:100%; border-radius:8px; background:#000; display:block;}
 .scan-hint{font-size:12px; color:var(--sub); margin-top:8px; text-align:center;}
+.prod-thumb{display:flex; align-items:center; justify-content:center;}
+.prod-thumb-img{width:32px; height:32px; object-fit:cover; border-radius:6px; cursor:pointer; border:1px solid var(--line); display:block;}
+.thumbbtn{background:var(--card)!important; border:1px solid var(--line)!important; border-radius:6px!important; font-size:14px!important; padding:4px 6px!important; color:var(--ink)!important; cursor:pointer;}
+.km-toast{position:fixed; left:50%; bottom:22px; transform:translate(-50%,16px); background:#1a2420; color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .25s, transform .25s; z-index:1200; max-width:88vw; text-align:center; box-shadow:var(--shadow);}
+.km-toast.show{opacity:1; transform:translate(-50%,0);}
 .facing-label{display:inline-block; width:100%; text-align:center; padding:5px 2px; border-radius:6px; background:var(--accent); color:var(--accent-ink); font-size:11px; font-weight:700; font-family:ui-monospace,monospace;}
-.row-labels{display:grid; grid-template-columns:44px 1fr 110px 46px 60px 28px; gap:6px; font-size:10px; color:var(--sub); margin-bottom:4px;}
+.row-labels{display:grid; grid-template-columns:44px 1fr 132px 46px 60px 36px 28px; gap:6px; font-size:10px; color:var(--sub); margin-bottom:4px;}
 .addbtn{font-size:12px; background:none; border:1px dashed var(--line); border-radius:6px; padding:5px 10px; color:var(--sub); cursor:pointer; margin-top:2px;}
 .photo-row{display:flex; gap:8px; margin:10px 0; align-items:center;}
 .photo-row input{flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
@@ -349,19 +354,30 @@ function rebuildProductIndex(){
 // 상품명을 자동으로 채워줌.
 var masterBarcodeMap = {};
 var masterLoadState = 'loading'; // 'loading' | 'ready' | 'error' | 'none'
-async function loadMasterProductMap(){
-  try {
-    var res = await fetch('./product-master.json', { cache: 'force-cache' });
-    if (!res.ok){
-      masterLoadState = res.status === 404 ? 'none' : 'error';
-      return;
+var masterLoadPromise = null;
+function loadMasterProductMap(){
+  masterLoadPromise = (async function(){
+    try {
+      var res = await fetch('./product-master.json', { cache: 'force-cache' });
+      if (!res.ok){
+        masterLoadState = res.status === 404 ? 'none' : 'error';
+        console.error('[product-master] fetch not ok, status', res.status);
+        return;
+      }
+      masterBarcodeMap = await res.json();
+      masterLoadState = 'ready';
+      console.log('[product-master] loaded', Object.keys(masterBarcodeMap).length, 'codes');
+    } catch(e){
+      console.error('[product-master] load failed', e);
+      masterLoadState = 'error';
     }
-    masterBarcodeMap = await res.json();
-    masterLoadState = 'ready';
-  } catch(e){
-    console.error('[product-master] load failed', e);
-    masterLoadState = 'error';
-  }
+  })();
+  return masterLoadPromise;
+}
+// 스캔 시점에 아직 마스터 데이터가 로딩 중이면(특히 첫 방문, 모바일 데이터에서
+// 3.5MB 파일을 받는 데 몇 초 걸릴 수 있음) 다 받을 때까지 잠깐 기다렸다가 찾는다.
+async function ensureMasterLoaded(){
+  if (masterLoadPromise){ try { await masterLoadPromise; } catch(e){} }
 }
 function lookupMasterName(code){
   if (!code) return '';
@@ -373,6 +389,84 @@ function lookupMasterName(code){
 }
 function lookupProductName(code){
   return productIndex.byBarcode[code] || lookupMasterName(code) || '';
+}
+
+// ---- 작은 알림 (스캔 결과 등을 잠깐 화면 아래쪽에 띄움) ----
+function showToast(msg){
+  var t = document.createElement('div');
+  t.className = 'km-toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){ t.classList.add('show'); });
+  setTimeout(function(){
+    t.classList.remove('show');
+    setTimeout(function(){ if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+  }, 3200);
+}
+
+// ---- 상품별(페이싱별) 사진 저장/불러오기 ----
+function productPhotoKey(bayId, shelfCode, productId){ return bayId + '__' + shelfCode + '__' + productId; }
+function genId(){ return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function saveProductPhoto(pkey, dataURL){
+  return fetch(rtdbPath('productPhotos/' + pkey), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataURL: dataURL, ts: Date.now() })
+  }).then(function(r){
+    if (!r.ok) throw new Error('상품 사진 저장 실패 (' + r.status + ')');
+  });
+}
+function loadProductPhoto(pkey){
+  return fetch(rtdbPath('productPhotos/' + pkey)).then(function(r){
+    if (!r.ok) throw new Error('상품 사진 불러오기 실패 (' + r.status + ')');
+    return r.json();
+  }).then(function(data){ return data || null; });
+}
+function deleteProductPhoto(pkey){
+  return fetch(rtdbPath('productPhotos/' + pkey), { method: 'DELETE' }).then(function(r){
+    if (!r.ok) throw new Error('상품 사진 삭제 실패 (' + r.status + ')');
+  });
+}
+function openProductPhotoEditor(pkey, currentRec, onChange){
+  var overlay = document.createElement('div');
+  overlay.className = 'scan-overlay';
+  overlay.innerHTML =
+    '<div class="scan-box">' +
+      '<div class="scan-head"><span>📷 상품 사진</span><button type="button" id="ppCloseBtn">&times;</button></div>' +
+      (currentRec ? '<img src="'+currentRec.dataURL+'" style="width:100%;border-radius:8px;margin-bottom:10px;max-height:260px;object-fit:contain;background:#000">' : '') +
+      '<input type="file" accept="image/*" capture="environment" id="ppFileInput" style="margin-bottom:8px;width:100%;">' +
+      (currentRec ? '<button type="button" class="photobtn del" id="ppDeleteBtn">삭제</button>' : '') +
+      '<div class="scan-hint" id="ppHint"></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  function close(){ if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+  overlay.querySelector('#ppCloseBtn').addEventListener('click', close);
+  overlay.addEventListener('click', function(e){ if (e.target === overlay) close(); });
+  var hint = overlay.querySelector('#ppHint');
+  overlay.querySelector('#ppFileInput').addEventListener('change', async function(e){
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    hint.textContent = '저장 중…';
+    try {
+      var dataURL = await fileToResizedDataURL(file, 900, 0.7);
+      await saveProductPhoto(pkey, dataURL);
+      onChange({ dataURL: dataURL });
+      close();
+    } catch(err){
+      hint.textContent = '저장 실패: ' + (err.message || err);
+    }
+  });
+  var delBtn = overlay.querySelector('#ppDeleteBtn');
+  if (delBtn) delBtn.addEventListener('click', async function(){
+    hint.textContent = '삭제 중…';
+    try {
+      await deleteProductPhoto(pkey);
+      onChange(null);
+      close();
+    } catch(err){
+      hint.textContent = '삭제 실패: ' + (err.message || err);
+    }
+  });
 }
 
 // ---- 바코드 스캔 (카메라) ----
@@ -674,7 +768,7 @@ function renderShelfBody(bayId, shelfCode, data){
 
   var body = document.getElementById('body-'+shelfCode);
   var html = '';
-  html += '<div class="row-labels"><span>위치</span><span>상품명</span><span>바코드</span><span>폭</span><span>최소재고</span><span></span></div>';
+  html += '<div class="row-labels"><span>위치</span><span>상품명</span><span>바코드</span><span>폭</span><span>최소재고</span><span>사진</span><span></span></div>';
   html += '<div id="rows-'+shelfCode+'"></div>';
   html += '<div style="display:flex; gap:8px; margin-top:2px;">' +
             '<button class="addbtn" id="add-'+shelfCode+'">+ 품목 추가</button>' +
@@ -708,6 +802,7 @@ function renderShelfBody(bayId, shelfCode, data){
     rowsEl.innerHTML = '';
     labelEls = [];
     products.forEach(function(p, idx){
+      if (!p.id) p.id = genId(); // 오래된 데이터에 id가 없으면 지금 하나 붙여줌 (사진을 이 상품에 묶어두기 위함)
       var width = (p.facing != null && p.facing > 0) ? p.facing : 1;
 
       var r = document.createElement('div');
@@ -718,6 +813,7 @@ function renderShelfBody(bayId, shelfCode, data){
         '<span class="barcode-cell"><input type="text" value="'+(p.barcode||'').replace(/"/g,'&quot;')+'" data-f="barcode" placeholder="바코드"><button type="button" class="scanbtn" title="바코드 스캔">📷</button></span>' +
         '<input type="number" min="1" value="'+width+'" data-f="facing" title="이 상품이 차지하는 페이싱 폭(칸 수)">' +
         '<input type="number" value="'+(p.minStock!=null?p.minStock:'')+'" data-f="minStock">' +
+        '<span class="prod-thumb"></span>' +
         '<button title="삭제">&times;</button>';
       labelEls[idx] = r.querySelector('.facing-label');
       var nameInput = r.querySelector('input[data-f="name"]');
@@ -729,16 +825,37 @@ function renderShelfBody(bayId, shelfCode, data){
         });
       });
       r.querySelector('.scanbtn').addEventListener('click', function(){
-        openScanner(function(text){
+        openScanner(async function(text){
           barcodeInput.value = text;
           products[idx].barcode = text;
+          await ensureMasterLoaded();
           var knownName = lookupProductName(text);
-          if (knownName && !nameInput.value){
-            nameInput.value = knownName;
-            products[idx].name = knownName;
+          if (knownName){
+            if (!nameInput.value){
+              nameInput.value = knownName;
+              products[idx].name = knownName;
+            }
+          } else {
+            showToast('상품명을 찾지 못했습니다 (바코드 ' + text + '). 직접 입력해주세요.');
           }
         });
       });
+      // 상품 사진: 페이싱마다 따로 저장/불러옴 (바코드/이름과 별개로 product.id 기준)
+      var thumbCell = r.querySelector('.prod-thumb');
+      (function(productId){
+        var photoKey = productPhotoKey(bayId, shelfCode, productId);
+        function paintThumb(rec){
+          thumbCell.innerHTML = rec
+            ? '<img class="prod-thumb-img" src="'+rec.dataURL+'" title="상품 사진 (눌러서 변경/삭제)">'
+            : '<button type="button" class="thumbbtn" title="상품 사진 추가">📷</button>';
+          var el = thumbCell.firstElementChild;
+          el.addEventListener('click', function(){
+            openProductPhotoEditor(photoKey, rec, function(newRec){ rec = newRec; paintThumb(rec); });
+          });
+        }
+        paintThumb(null);
+        loadProductPhoto(photoKey).then(function(rec){ paintThumb(rec); }).catch(function(){ /* 사진 없음/실패 시 그냥 카메라 아이콘 유지 */ });
+      })(p.id);
       r.querySelector('button[title="삭제"]').addEventListener('click', function(){
         products.splice(idx,1);
         renderRows();
@@ -750,14 +867,16 @@ function renderShelfBody(bayId, shelfCode, data){
   renderRows();
 
   document.getElementById('add-'+shelfCode).addEventListener('click', function(){
-    products.push({name:'', barcode:'', facing:1, minStock:null});
+    products.push({name:'', barcode:'', facing:1, minStock:null, id:genId()});
     renderRows();
   });
 
   document.getElementById('scanadd-'+shelfCode).addEventListener('click', function(){
-    openScanner(function(text){
+    openScanner(async function(text){
+      await ensureMasterLoaded();
       var knownName = lookupProductName(text);
-      products.push({name:knownName, barcode:text, facing:1, minStock:null});
+      if (!knownName) showToast('상품명을 찾지 못했습니다 (바코드 ' + text + '). 직접 입력해주세요.');
+      products.push({name:knownName, barcode:text, facing:1, minStock:null, id:genId()});
       renderRows();
     });
   });
