@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>헐리우드 매대 관리</title>
+<!-- fb-auth-fetch 먼저 -- fetch 에 로그인 토큰 자동 부착. auth-gate 가 로그인/승인 여부 확인. -->
+<script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<script src="./auth-gate.js?v=5"></script>
 <style>
 :root{
   --bg:#f7f8f6; --card:#ffffff; --ink:#1a2420; --sub:#5b6b62; --line:#dfe6e0;
@@ -207,25 +210,33 @@ var layout = [
 var SHELVES = ['S05','S04','S03','S02','S01']; // top to bottom for display; S01 is bottom shelf
 
 // ---- storage ----
-// No login, no server: each device/browser keeps its own data in
-// localStorage. Same call shape as before (doc().get()/.set(),
-// collection().limit().get()) so the rest of the app is unchanged.
-var LS_PREFIX = 'planogram:';
-function lsKey(path){ return LS_PREFIX + path; }
+// Shared across every device: reads/writes go to the same Firebase
+// Realtime Database the other manager apps use (kimchi-mart-order).
+// fb-auth-fetch.js (loaded above) patches window.fetch to attach the
+// signed-in employee's ID token automatically on calls to firebaseio.com,
+// so a plain fetch() here is enough — no separate SDK wiring needed.
+// Same call shape as before (doc().get()/.set(), collection().limit().get())
+// so the rest of the app is unchanged.
+var RTDB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+function rtdbPath(path){ return RTDB_URL + '/planogram/' + path + '.json'; }
 var db = {
   doc: function(path){
     return {
       get: function(){
-        return Promise.resolve().then(function(){
-          var raw = null;
-          try { raw = localStorage.getItem(lsKey(path)); } catch(e){}
-          var data = raw ? JSON.parse(raw) : null;
+        return fetch(rtdbPath(path)).then(function(r){
+          if (!r.ok) throw new Error('불러오기 실패 (' + r.status + (r.status === 401 || r.status === 403 ? ' - 권한 없음, Firebase 규칙 확인 필요' : '') + ')');
+          return r.json();
+        }).then(function(data){
           return { exists: !!data, data: function(){ return data; } };
         });
       },
       set: function(value){
-        return Promise.resolve().then(function(){
-          try { localStorage.setItem(lsKey(path), JSON.stringify(value)); } catch(e){}
+        return fetch(rtdbPath(path), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(value)
+        }).then(function(r){
+          if (!r.ok) throw new Error('저장 실패 (' + r.status + (r.status === 401 || r.status === 403 ? ' - 권한 없음, Firebase 규칙 확인 필요' : '') + ')');
         });
       }
     };
@@ -233,20 +244,16 @@ var db = {
   collection: function(name){
     var self = { limit: function(){ return self; },
       get: function(){
-        return Promise.resolve().then(function(){
+        return fetch(rtdbPath(name)).then(function(r){
+          if (!r.ok) throw new Error('불러오기 실패 (' + r.status + ')');
+          return r.json();
+        }).then(function(obj){
           var docs = [];
-          try {
-            var prefix = lsKey(name + '/');
-            for (var i = 0; i < localStorage.length; i++){
-              var k = localStorage.key(i);
-              if (k && k.indexOf(prefix) === 0){
-                var id = k.slice(prefix.length);
-                var raw = localStorage.getItem(k);
-                var data = raw ? JSON.parse(raw) : null;
-                docs.push({ id: id, data: (function(d){ return function(){ return d; }; })(data) });
-              }
-            }
-          } catch(e){}
+          if (obj){
+            Object.keys(obj).forEach(function(id){
+              docs.push({ id: id, data: (function(d){ return function(){ return d; }; })(obj[id]) });
+            });
+          }
           return { docs: docs };
         });
       }
@@ -263,52 +270,31 @@ async function initDb(){
   // db is always ready (localStorage-backed); nothing to await.
 }
 
-// ---- whole-bay photo storage (IndexedDB — photos are too big for localStorage) ----
-var PHOTO_DB_NAME = 'planogram-photos';
-var PHOTO_STORE = 'bayPhotos';
-function openPhotoDB(){
-  return new Promise(function(resolve, reject){
-    if (!('indexedDB' in window)){ reject(new Error('no indexeddb')); return; }
-    var req = indexedDB.open(PHOTO_DB_NAME, 1);
-    req.onupgradeneeded = function(){
-      var d = req.result;
-      if (!d.objectStoreNames.contains(PHOTO_STORE)) d.createObjectStore(PHOTO_STORE);
-    };
-    req.onsuccess = function(){ resolve(req.result); };
-    req.onerror = function(){ reject(req.error); };
-  });
-}
+// ---- whole-bay photo storage ----
+// Shared across devices via the same Firebase RTDB as the rest of the app
+// (not IndexedDB — a device-local store would mean each employee's phone
+// shows a different photo for the same bay).
 function savePhotoForBay(bayId, dataURL){
-  return openPhotoDB().then(function(d){
-    return new Promise(function(resolve, reject){
-      var tx = d.transaction(PHOTO_STORE, 'readwrite');
-      tx.objectStore(PHOTO_STORE).put({ dataURL: dataURL, ts: Date.now() }, bayId);
-      tx.oncomplete = function(){ resolve(); };
-      tx.onerror = function(){ reject(tx.error); };
-    });
+  return fetch(rtdbPath('bayPhotos/' + bayId), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataURL: dataURL, ts: Date.now() })
+  }).then(function(r){
+    if (!r.ok) throw new Error('사진 저장 실패 (' + r.status + (r.status === 401 || r.status === 403 ? ' - 권한 없음, Firebase 규칙 확인 필요' : '') + ')');
   });
 }
 function loadPhotoForBay(bayId){
-  return openPhotoDB().then(function(d){
-    return new Promise(function(resolve, reject){
-      var tx = d.transaction(PHOTO_STORE, 'readonly');
-      var req = tx.objectStore(PHOTO_STORE).get(bayId);
-      req.onsuccess = function(){ resolve(req.result || null); };
-      req.onerror = function(){ reject(req.error); };
-    });
-  });
+  return fetch(rtdbPath('bayPhotos/' + bayId)).then(function(r){
+    if (!r.ok) throw new Error('사진 불러오기 실패 (' + r.status + ')');
+    return r.json();
+  }).then(function(data){ return data || null; });
 }
 function deletePhotoForBay(bayId){
-  return openPhotoDB().then(function(d){
-    return new Promise(function(resolve, reject){
-      var tx = d.transaction(PHOTO_STORE, 'readwrite');
-      tx.objectStore(PHOTO_STORE).delete(bayId);
-      tx.oncomplete = function(){ resolve(); };
-      tx.onerror = function(){ reject(tx.error); };
-    });
+  return fetch(rtdbPath('bayPhotos/' + bayId), { method: 'DELETE' }).then(function(r){
+    if (!r.ok) throw new Error('사진 삭제 실패 (' + r.status + ')');
   });
 }
-// Downscale before storing so a 12MP phone photo doesn't bloat IndexedDB.
+// Downscale before storing so a 12MP phone photo doesn't bloat the database.
 function fileToResizedDataURL(file, maxDim, quality){
   return new Promise(function(resolve, reject){
     var reader = new FileReader();
