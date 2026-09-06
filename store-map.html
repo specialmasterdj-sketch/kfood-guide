@@ -7,6 +7,34 @@
 <!-- fb-auth-fetch 먼저 -- fetch 에 로그인 토큰 자동 부착. auth-gate 가 로그인/승인 여부 확인. -->
 <script type="module" src="./fb-auth-fetch.js?v=2"></script>
 <script src="./auth-gate.js?v=5"></script>
+<!--
+  RTDB 첫 요청이 로그인 토큰 복원(IndexedDB에서 세션 읽어오기)보다 먼저
+  나가면 조용히 401/403 이 나는 문제가 있음(fb-auth-fetch.js 주석 참고).
+  그래서 이 페이지 자체적으로 첫 auth 상태 변화를 기다렸다가 db 호출을
+  시작하도록 별도의 작은 모듈 스크립트로 신호를 만든다.
+-->
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+  const cfg = {
+    apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
+    authDomain: "kimchi-mart-order.firebaseapp.com",
+    databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
+    projectId: "kimchi-mart-order"
+  };
+  try {
+    const app = getApps().length ? getApp() : initializeApp(cfg);
+    const auth = getAuth(app);
+    window.__planogramAuthReady = new Promise(function(resolve){
+      var done = false;
+      onAuthStateChanged(auth, function(){ if (!done){ done = true; resolve(); } });
+      // safety valve: never block the page forever if auth never fires
+      setTimeout(function(){ if (!done){ done = true; resolve(); } }, 6000);
+    });
+  } catch (e) {
+    window.__planogramAuthReady = Promise.resolve();
+  }
+</script>
 <style>
 :root{
   --bg:#f7f8f6; --card:#ffffff; --ink:#1a2420; --sub:#5b6b62; --line:#dfe6e0;
@@ -267,7 +295,10 @@ var unsub = {};
 function keyFor(bayId, shelfCode){ return bayId + '__' + shelfCode; }
 
 async function initDb(){
-  // db is always ready (localStorage-backed); nothing to await.
+  // Wait for Firebase Auth's first state callback so the very first RTDB
+  // request already carries the signed-in employee's token (see the note
+  // above the auth-ready module script at the top of this file).
+  try { await window.__planogramAuthReady; } catch(e){}
 }
 
 // ---- whole-bay photo storage ----
@@ -322,10 +353,12 @@ async function renderBayPhotoBox(bayId){
   var box = document.getElementById('bayPhotoBox');
   if (!box) return;
   var rec = null;
-  try { rec = await loadPhotoForBay(bayId); } catch(e){}
+  var loadErr = null;
+  try { rec = await loadPhotoForBay(bayId); } catch(e){ loadErr = e; console.error('[bay photo] load failed', e); }
 
   box.innerHTML =
     '<div class="bay-photo-head">📷 베이 전체 사진</div>' +
+    (loadErr ? '<div class="bay-photo-state" style="color:var(--bad)">불러오기 실패: ' + (loadErr.message || loadErr) + '</div>' : '') +
     (rec ? '<img class="bay-photo-img" id="bayPhotoImg" src="'+rec.dataURL+'">' : '') +
     '<div class="bay-photo-actions">' +
       '<label class="photobtn">' + (rec ? '사진 바꾸기' : '사진 촬영/업로드') +
@@ -625,7 +658,12 @@ async function boot(){
     try {
       var snap = await db.collection('shelves').limit(1000).get();
       snap.docs.forEach(function(d){ shelfCache[d.id] = d.data(); });
-    } catch(e){}
+    } catch(e){
+      console.error('[planogram] shelf preload failed', e);
+      var statsEl = document.getElementById('stats');
+      if (statsEl) statsEl.insertAdjacentHTML('afterend',
+        '<div style="color:var(--bad); font-size:12px; margin:-8px 0 12px;">동기화 실패: ' + (e.message || e) + ' (새로고침해서 다시 시도해보세요)</div>');
+    }
   }
   render();
   // deep link from a printed QR code: ?bay=A7R-B13 opens that bay directly
