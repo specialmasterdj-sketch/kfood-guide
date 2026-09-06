@@ -35,6 +35,22 @@
     window.__planogramAuthReady = Promise.resolve();
   }
 </script>
+<!--
+  바코드 스캔용 ZXing 라이브러리. 카메라로 바코드를 읽어서 텍스트로
+  돌려주는 역할만 함(어떤 제품인지 조회하는 기능은 아직 없음).
+-->
+<script type="module">
+  import { BrowserMultiFormatReader } from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm';
+  window.__startBarcodeScan = async function(videoEl, onDetected){
+    var reader = new BrowserMultiFormatReader();
+    var controls = await reader.decodeFromConstraints(
+      { video: { facingMode: { ideal: 'environment' } } },
+      videoEl,
+      function(result){ if (result) onDetected(result.getText()); }
+    );
+    return controls;
+  };
+</script>
 <style>
 :root{
   --bg:#f7f8f6; --card:#ffffff; --ink:#1a2420; --sub:#5b6b62; --line:#dfe6e0;
@@ -126,9 +142,18 @@ h1{font-size:19px; margin:0 0 2px;}
 .shelf-head .meta{font-size:11.5px; color:var(--sub);}
 .shelf-body{padding:12px; display:none;}
 .shelf-body.open{display:block;}
-.prod-row{display:grid; grid-template-columns:44px 1fr 110px 46px 60px 28px; gap:6px; margin-bottom:6px; align-items:center;}
+.prod-row{display:grid; grid-template-columns:44px 1fr 132px 46px 60px 28px; gap:6px; margin-bottom:6px; align-items:center;}
 .prod-row input{width:100%; padding:5px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
 .prod-row button{background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px;}
+.barcode-cell{display:flex; gap:4px; align-items:center;}
+.barcode-cell input{min-width:0;}
+.scanbtn{background:var(--card)!important; border:1px solid var(--line)!important; border-radius:6px!important; font-size:14px!important; padding:4px 6px!important; color:var(--ink)!important; cursor:pointer; flex:none;}
+.scan-overlay{position:fixed; inset:0; background:rgba(10,15,12,.88); z-index:999; display:flex; align-items:center; justify-content:center; padding:16px;}
+.scan-box{background:var(--card); border-radius:12px; padding:14px; width:min(94vw,440px); box-shadow:var(--shadow);}
+.scan-head{display:flex; justify-content:space-between; align-items:center; font-weight:700; margin-bottom:8px; color:var(--ink); font-size:14px;}
+.scan-head button{background:none; border:none; font-size:20px; cursor:pointer; color:var(--sub); line-height:1;}
+.scan-video{width:100%; border-radius:8px; background:#000; display:block;}
+.scan-hint{font-size:12px; color:var(--sub); margin-top:8px; text-align:center;}
 .facing-label{display:inline-block; width:100%; text-align:center; padding:5px 2px; border-radius:6px; background:var(--accent); color:var(--accent-ink); font-size:11px; font-weight:700; font-family:ui-monospace,monospace;}
 .row-labels{display:grid; grid-template-columns:44px 1fr 110px 46px 60px 28px; gap:6px; font-size:10px; color:var(--sub); margin-bottom:4px;}
 .addbtn{font-size:12px; background:none; border:1px dashed var(--line); border-radius:6px; padding:5px 10px; color:var(--sub); cursor:pointer; margin-top:2px;}
@@ -178,6 +203,7 @@ h1{font-size:19px; margin:0 0 2px;}
   </div>
 
   <div class="floor" id="floor"></div>
+  <datalist id="productNames"></datalist>
 
   <p class="note">
     베이 이름을 클릭하면 그 베이의 선반(아래 S01 → 위 S05) 목록이 열립니다. 선반을 클릭해 품목·바코드·페이싱·최소재고를 입력하고, 오늘 확인했으면 "체크완료"를 눌러주세요.
@@ -296,6 +322,62 @@ var shelfCache = {}; // bayId -> {shelfCode: data}
 var unsub = {};
 
 function keyFor(bayId, shelfCode){ return bayId + '__' + shelfCode; }
+
+// ---- 상품 이름/바코드 색인 (매장 전체 선반에서 모아서, 이름으로 찾기 + 스캔 시 이름 자동완성용) ----
+var productIndex = { byBarcode: {}, names: [] };
+function rebuildProductIndex(){
+  var namesSet = {};
+  var byBarcode = {};
+  Object.keys(shelfCache).forEach(function(key){
+    var d = shelfCache[key];
+    (d && d.products || []).forEach(function(p){
+      if (p && p.name) namesSet[p.name] = true;
+      if (p && p.barcode && p.name) byBarcode[p.barcode] = p.name;
+    });
+  });
+  productIndex.names = Object.keys(namesSet).sort();
+  productIndex.byBarcode = byBarcode;
+  var dl = document.getElementById('productNames');
+  if (dl) dl.innerHTML = productIndex.names.map(function(n){
+    return '<option value="'+n.replace(/"/g,'&quot;')+'">';
+  }).join('');
+}
+
+// ---- 바코드 스캔 (카메라) ----
+function openScanner(onResult){
+  var overlay = document.createElement('div');
+  overlay.className = 'scan-overlay';
+  overlay.innerHTML =
+    '<div class="scan-box">' +
+      '<div class="scan-head"><span>📷 바코드 스캔</span><button type="button" id="scanCloseBtn">&times;</button></div>' +
+      '<video class="scan-video" id="scanVideoEl" playsinline muted autoplay></video>' +
+      '<div class="scan-hint" id="scanHint">바코드를 화면 안에 맞춰주세요</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  var video = overlay.querySelector('#scanVideoEl');
+  var hint = overlay.querySelector('#scanHint');
+  var controlsRef = null;
+  var done = false;
+  function cleanup(){
+    if (done) return;
+    done = true;
+    if (controlsRef && controlsRef.stop) { try { controlsRef.stop(); } catch(e){} }
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  }
+  overlay.querySelector('#scanCloseBtn').addEventListener('click', cleanup);
+  overlay.addEventListener('click', function(e){ if (e.target === overlay) cleanup(); });
+  if (!window.__startBarcodeScan){
+    hint.textContent = '스캔 기능을 불러오지 못했습니다. 인터넷 연결을 확인해주세요.';
+    return;
+  }
+  window.__startBarcodeScan(video, function(text){
+    if (done) return;
+    onResult(text);
+    cleanup();
+  }).then(function(c){ controlsRef = c; }).catch(function(e){
+    hint.textContent = '카메라를 열 수 없습니다: ' + (e && e.message ? e.message : e);
+  });
+}
 
 async function initDb(){
   // Wait for Firebase Auth's first state callback so the very first RTDB
@@ -562,7 +644,10 @@ function renderShelfBody(bayId, shelfCode, data){
   var html = '';
   html += '<div class="row-labels"><span>위치</span><span>상품명</span><span>바코드</span><span>폭</span><span>최소재고</span><span></span></div>';
   html += '<div id="rows-'+shelfCode+'"></div>';
-  html += '<button class="addbtn" id="add-'+shelfCode+'">+ 품목 추가</button>';
+  html += '<div style="display:flex; gap:8px; margin-top:2px;">' +
+            '<button class="addbtn" id="add-'+shelfCode+'">+ 품목 추가</button>' +
+            '<button class="addbtn" id="scanadd-'+shelfCode+'">📷 바코드 스캔으로 추가</button>' +
+          '</div>';
   html += '<div class="photo-row"><input type="text" id="photo-'+shelfCode+'" placeholder="선반 정답 사진 URL (선택)" value="'+(data.photoUrl||'').replace(/"/g,'&quot;')+'"></div>';
   html += '<img class="photo-preview" id="preview-'+shelfCode+'" style="display:none">';
   html += '<div class="actions">' +
@@ -597,19 +682,32 @@ function renderShelfBody(bayId, shelfCode, data){
       r.className = 'prod-row';
       r.innerHTML =
         '<span class="facing-label"></span>' +
-        '<input type="text" value="'+(p.name||'').replace(/"/g,'&quot;')+'" data-f="name" placeholder="상품명">' +
-        '<input type="text" value="'+(p.barcode||'').replace(/"/g,'&quot;')+'" data-f="barcode" placeholder="바코드">' +
+        '<input type="text" list="productNames" value="'+(p.name||'').replace(/"/g,'&quot;')+'" data-f="name" placeholder="상품명 (이름으로 찾기)">' +
+        '<span class="barcode-cell"><input type="text" value="'+(p.barcode||'').replace(/"/g,'&quot;')+'" data-f="barcode" placeholder="바코드"><button type="button" class="scanbtn" title="바코드 스캔">📷</button></span>' +
         '<input type="number" min="1" value="'+width+'" data-f="facing" title="이 상품이 차지하는 페이싱 폭(칸 수)">' +
         '<input type="number" value="'+(p.minStock!=null?p.minStock:'')+'" data-f="minStock">' +
         '<button title="삭제">&times;</button>';
       labelEls[idx] = r.querySelector('.facing-label');
+      var nameInput = r.querySelector('input[data-f="name"]');
+      var barcodeInput = r.querySelector('input[data-f="barcode"]');
       r.querySelectorAll('input').forEach(function(inp){
         inp.addEventListener('input', function(){
           products[idx][inp.dataset.f] = inp.type==='number' ? (inp.value===''?null:Number(inp.value)) : inp.value;
           if (inp.dataset.f === 'facing') relabel(); // re-number F1/F2/F3… without losing focus
         });
       });
-      r.querySelector('button').addEventListener('click', function(){
+      r.querySelector('.scanbtn').addEventListener('click', function(){
+        openScanner(function(text){
+          barcodeInput.value = text;
+          products[idx].barcode = text;
+          var knownName = productIndex.byBarcode[text];
+          if (knownName && !nameInput.value){
+            nameInput.value = knownName;
+            products[idx].name = knownName;
+          }
+        });
+      });
+      r.querySelector('button[title="삭제"]').addEventListener('click', function(){
         products.splice(idx,1);
         renderRows();
       });
@@ -622,6 +720,14 @@ function renderShelfBody(bayId, shelfCode, data){
   document.getElementById('add-'+shelfCode).addEventListener('click', function(){
     products.push({name:'', barcode:'', facing:1, minStock:null});
     renderRows();
+  });
+
+  document.getElementById('scanadd-'+shelfCode).addEventListener('click', function(){
+    openScanner(function(text){
+      var knownName = productIndex.byBarcode[text] || '';
+      products.push({name:knownName, barcode:text, facing:1, minStock:null});
+      renderRows();
+    });
   });
 
   var photoInput = document.getElementById('photo-'+shelfCode);
@@ -654,6 +760,7 @@ function renderShelfBody(bayId, shelfCode, data){
     try {
       await db.doc('shelves/' + key).set(newData);
       shelfCache[key] = newData;
+      rebuildProductIndex();
       saveEl.textContent = '저장됨 ✓';
       renderShelfBody(bayId, shelfCode, newData);
       render(); // refresh dots on the floor plan
@@ -681,6 +788,7 @@ async function boot(){
     try {
       var snap = await db.collection('shelves').limit(1000).get();
       snap.docs.forEach(function(d){ shelfCache[d.id] = d.data(); });
+      rebuildProductIndex();
     } catch(e){
       console.error('[planogram] shelf preload failed', e);
       var statsEl = document.getElementById('stats');
