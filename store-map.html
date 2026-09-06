@@ -126,10 +126,11 @@ h1{font-size:19px; margin:0 0 2px;}
 .shelf-head .meta{font-size:11.5px; color:var(--sub);}
 .shelf-body{padding:12px; display:none;}
 .shelf-body.open{display:block;}
-.prod-row{display:grid; grid-template-columns:1fr 110px 60px 60px 28px; gap:6px; margin-bottom:6px; align-items:center;}
+.prod-row{display:grid; grid-template-columns:44px 1fr 110px 46px 60px 28px; gap:6px; margin-bottom:6px; align-items:center;}
 .prod-row input{width:100%; padding:5px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
 .prod-row button{background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px;}
-.row-labels{display:grid; grid-template-columns:1fr 110px 60px 60px 28px; gap:6px; font-size:10px; color:var(--sub); margin-bottom:4px;}
+.facing-label{display:inline-block; width:100%; text-align:center; padding:5px 2px; border-radius:6px; background:var(--accent); color:var(--accent-ink); font-size:11px; font-weight:700; font-family:ui-monospace,monospace;}
+.row-labels{display:grid; grid-template-columns:44px 1fr 110px 46px 60px 28px; gap:6px; font-size:10px; color:var(--sub); margin-bottom:4px;}
 .addbtn{font-size:12px; background:none; border:1px dashed var(--line); border-radius:6px; padding:5px 10px; color:var(--sub); cursor:pointer; margin-top:2px;}
 .photo-row{display:flex; gap:8px; margin:10px 0; align-items:center;}
 .photo-row input{flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
@@ -559,7 +560,7 @@ function renderShelfBody(bayId, shelfCode, data){
 
   var body = document.getElementById('body-'+shelfCode);
   var html = '';
-  html += '<div class="row-labels"><span>상품명</span><span>바코드</span><span>페이싱</span><span>최소재고</span><span></span></div>';
+  html += '<div class="row-labels"><span>위치</span><span>상품명</span><span>바코드</span><span>폭</span><span>최소재고</span><span></span></div>';
   html += '<div id="rows-'+shelfCode+'"></div>';
   html += '<button class="addbtn" id="add-'+shelfCode+'">+ 품목 추가</button>';
   html += '<div class="photo-row"><input type="text" id="photo-'+shelfCode+'" placeholder="선반 정답 사진 URL (선택)" value="'+(data.photoUrl||'').replace(/"/g,'&quot;')+'"></div>';
@@ -573,20 +574,39 @@ function renderShelfBody(bayId, shelfCode, data){
   var rowsEl = document.getElementById('rows-'+shelfCode);
   var products = (data.products || []).slice();
 
+  // Facing position (F1, F2, F3…) is computed from row order + each
+  // item's facing width — left-to-right, matching the physical shelf.
+  var labelEls = [];
+  function relabel(){
+    var cursor = 1;
+    products.forEach(function(p, idx){
+      var width = (p.facing != null && p.facing > 0) ? p.facing : 1;
+      var startF = cursor, endF = cursor + width - 1;
+      var label = width > 1 ? ('F'+startF+'-F'+endF) : ('F'+startF);
+      cursor = endF + 1;
+      if (labelEls[idx]) labelEls[idx].textContent = label;
+    });
+  }
   function renderRows(){
     rowsEl.innerHTML = '';
+    labelEls = [];
     products.forEach(function(p, idx){
+      var width = (p.facing != null && p.facing > 0) ? p.facing : 1;
+
       var r = document.createElement('div');
       r.className = 'prod-row';
       r.innerHTML =
-        '<input type="text" value="'+(p.name||'').replace(/"/g,'&quot;')+'" data-f="name">' +
-        '<input type="text" value="'+(p.barcode||'').replace(/"/g,'&quot;')+'" data-f="barcode">' +
-        '<input type="number" value="'+(p.facing!=null?p.facing:'')+'" data-f="facing">' +
+        '<span class="facing-label"></span>' +
+        '<input type="text" value="'+(p.name||'').replace(/"/g,'&quot;')+'" data-f="name" placeholder="상품명">' +
+        '<input type="text" value="'+(p.barcode||'').replace(/"/g,'&quot;')+'" data-f="barcode" placeholder="바코드">' +
+        '<input type="number" min="1" value="'+width+'" data-f="facing" title="이 상품이 차지하는 페이싱 폭(칸 수)">' +
         '<input type="number" value="'+(p.minStock!=null?p.minStock:'')+'" data-f="minStock">' +
         '<button title="삭제">&times;</button>';
+      labelEls[idx] = r.querySelector('.facing-label');
       r.querySelectorAll('input').forEach(function(inp){
         inp.addEventListener('input', function(){
           products[idx][inp.dataset.f] = inp.type==='number' ? (inp.value===''?null:Number(inp.value)) : inp.value;
+          if (inp.dataset.f === 'facing') relabel(); // re-number F1/F2/F3… without losing focus
         });
       });
       r.querySelector('button').addEventListener('click', function(){
@@ -595,11 +615,12 @@ function renderShelfBody(bayId, shelfCode, data){
       });
       rowsEl.appendChild(r);
     });
+    relabel();
   }
   renderRows();
 
   document.getElementById('add-'+shelfCode).addEventListener('click', function(){
-    products.push({name:'', barcode:'', facing:null, minStock:null});
+    products.push({name:'', barcode:'', facing:1, minStock:null});
     renderRows();
   });
 
