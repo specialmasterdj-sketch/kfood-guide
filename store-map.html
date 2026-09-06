@@ -162,6 +162,7 @@ h1{font-size:19px; margin:0 0 2px;}
 .facing-label{display:inline-block; width:100%; text-align:center; padding:5px 2px; border-radius:6px; background:var(--accent); color:var(--accent-ink); font-size:11px; font-weight:700; font-family:ui-monospace,monospace;}
 .row-labels{display:grid; grid-template-columns:44px 1fr 132px 46px 60px 36px 28px; gap:6px; font-size:10px; color:var(--sub); margin-bottom:4px;}
 .addbtn{font-size:12px; background:none; border:1px dashed var(--line); border-radius:6px; padding:5px 10px; color:var(--sub); cursor:pointer; margin-top:2px;}
+.shelf-count-actions{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
 .photo-row{display:flex; gap:8px; margin:10px 0; align-items:center;}
 .photo-row input{flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font-size:12px;}
 .photo-preview{max-width:100%; border-radius:8px; margin-top:6px; display:block;}
@@ -267,7 +268,17 @@ var layout = [
   buildColumn(2, 1, true,  bayRange(11,1), true, true),
 ];
 
-var SHELVES = ['S05','S04','S03','S02','S01']; // top to bottom for display; S01 is bottom shelf
+// 선반 수는 베이마다 다를 수 있음(기본 5개, S01이 맨 아래).
+// "+ 선반 추가"/"- 맨 위 선반 숨기기" 로 베이별로 조절 가능 (아래 shelfCountCache 참고).
+var DEFAULT_SHELF_COUNT = 5;
+var MAX_SHELF_COUNT = 12;
+function shelfCodeAt(n){ return 'S' + String(n).padStart(2,'0'); }
+function shelvesForCount(n){
+  var arr = [];
+  for (var i = n; i >= 1; i--) arr.push(shelfCodeAt(i));
+  return arr; // 맨 위(높은 번호) → 맨 아래(S01) 순서
+}
+var shelfCountCache = {}; // bayId -> 선반 수
 
 // ---- storage ----
 // Shared across every device: reads/writes go to the same Firebase
@@ -536,6 +547,25 @@ function deletePhotoForBay(bayId){
     if (!r.ok) throw new Error('사진 삭제 실패 (' + r.status + ')');
   });
 }
+
+// ---- 베이별 선반 수 (기본 5개, 베이마다 다르게 조절 가능) ----
+function loadShelfCount(bayId){
+  return fetch(rtdbPath('bayShelfCount/' + bayId)).then(function(r){
+    if (!r.ok) throw new Error('선반 수 불러오기 실패 (' + r.status + ')');
+    return r.json();
+  }).then(function(n){
+    return (typeof n === 'number' && n > 0) ? n : DEFAULT_SHELF_COUNT;
+  }).catch(function(){ return DEFAULT_SHELF_COUNT; });
+}
+function saveShelfCount(bayId, n){
+  return fetch(rtdbPath('bayShelfCount/' + bayId), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(n)
+  }).then(function(r){
+    if (!r.ok) throw new Error('선반 수 저장 실패 (' + r.status + ')');
+  });
+}
 // Downscale before storing so a 12MP phone photo doesn't bloat the database.
 function fileToResizedDataURL(file, maxDim, quality){
   return new Promise(function(resolve, reject){
@@ -606,7 +636,8 @@ async function renderBayPhotoBox(bayId){
 
 function statusFor(bayId){
   var any = false, done = 0, total = 0;
-  ['S01','S02','S03','S04','S05'].forEach(function(sc){
+  // 베이마다 선반 수가 다를 수 있어서 최대치까지 다 확인 (실제로 저장된 선반만 집계됨)
+  shelvesForCount(MAX_SHELF_COUNT).forEach(function(sc){
     var d = shelfCache[keyFor(bayId, sc)];
     if (d){ any = true; total++; if (d.checked) done++; }
   });
@@ -709,32 +740,66 @@ async function openBay(bayId){
     '<div class="modal-body">' +
       '<div class="bay-photo" id="bayPhotoBox">사진 불러오는 중…</div>' +
       '<div id="shelvesWrap">불러오는 중…</div>' +
+      '<div class="shelf-count-actions" id="shelfCountActions"></div>' +
     '</div>';
   document.getElementById('overlay').classList.add('show');
   document.getElementById('closeBtn').onclick = closeModal;
 
   renderBayPhotoBox(bayId);
 
+  var count = shelfCountCache[bayId];
+  if (count == null){
+    count = await loadShelfCount(bayId);
+    shelfCountCache[bayId] = count;
+  }
+  await renderShelfList(bayId, count);
+}
+
+// 선반 목록 + "선반 추가/숨기기" 버튼을 그림. 선반 수를 바꾼 뒤에도 다시 호출됨.
+async function renderShelfList(bayId, count){
   var wrap = document.getElementById('shelvesWrap');
+  if (!wrap) return; // 이미 모달이 닫힌 경우
+  var codes = shelvesForCount(count);
   wrap.innerHTML = '';
 
-  for (var i = 0; i < SHELVES.length; i++){
-    (function(shelfCode){
-      var box = document.createElement('div');
-      box.className = 'shelf';
-      var head = document.createElement('div');
-      head.className = 'shelf-head';
-      head.innerHTML = '<span class="code">'+shelfCode+'</span><span class="meta" id="meta-'+shelfCode+'">불러오는 중…</span>';
-      var body = document.createElement('div');
-      body.className = 'shelf-body';
-      body.id = 'body-'+shelfCode;
-      head.addEventListener('click', function(){
-        body.classList.toggle('open');
-      });
-      box.appendChild(head);
-      box.appendChild(body);
-      wrap.appendChild(box);
-    })(SHELVES[i]);
+  codes.forEach(function(shelfCode){
+    var box = document.createElement('div');
+    box.className = 'shelf';
+    var head = document.createElement('div');
+    head.className = 'shelf-head';
+    head.innerHTML = '<span class="code">'+shelfCode+'</span><span class="meta" id="meta-'+shelfCode+'">불러오는 중…</span>';
+    var body = document.createElement('div');
+    body.className = 'shelf-body';
+    body.id = 'body-'+shelfCode;
+    head.addEventListener('click', function(){
+      body.classList.toggle('open');
+    });
+    box.appendChild(head);
+    box.appendChild(body);
+    wrap.appendChild(box);
+  });
+
+  var actions = document.getElementById('shelfCountActions');
+  if (actions){
+    actions.innerHTML =
+      '<button class="addbtn" id="addShelfBtn">+ 선반 추가 (맨 위)</button>' +
+      (count > 1 ? '<button class="addbtn" id="removeShelfBtn" style="color:var(--bad); border-color:var(--bad);">- 맨 위 선반 숨기기</button>' : '');
+    document.getElementById('addShelfBtn').addEventListener('click', async function(){
+      if (count >= MAX_SHELF_COUNT){ showToast('선반은 최대 ' + MAX_SHELF_COUNT + '개까지예요.'); return; }
+      count += 1;
+      shelfCountCache[bayId] = count;
+      try { await saveShelfCount(bayId, count); } catch(e){ showToast('선반 수 저장 실패: ' + (e.message||e)); }
+      await renderShelfList(bayId, count);
+      render(); // 층별 배치도 점 상태 갱신
+    });
+    var removeBtn = document.getElementById('removeShelfBtn');
+    if (removeBtn) removeBtn.addEventListener('click', async function(){
+      count -= 1;
+      shelfCountCache[bayId] = count;
+      try { await saveShelfCount(bayId, count); } catch(e){ showToast('선반 수 저장 실패: ' + (e.message||e)); }
+      await renderShelfList(bayId, count);
+      render();
+    });
   }
 
   if (!db){
@@ -742,8 +807,8 @@ async function openBay(bayId){
     return;
   }
 
-  for (var j = 0; j < SHELVES.length; j++){
-    await loadShelf(bayId, SHELVES[j]);
+  for (var j = 0; j < codes.length; j++){
+    await loadShelf(bayId, codes[j]);
   }
 }
 
