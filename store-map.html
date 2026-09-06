@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>헐리우드 매대 관리</title>
 <style>
 :root{
@@ -105,6 +110,9 @@ h1{font-size:19px; margin:0 0 2px;}
 .savestate{font-size:11px; color:var(--sub);}
 .note{font-size:12px; color:var(--sub); margin-top:16px; line-height:1.6;}
 </style>
+</head>
+<body>
+
 
 <div class="wrap">
   <h1>헐리우드 매장 · 매대(집기) 관리</h1>
@@ -191,15 +199,61 @@ var layout = [
 
 var SHELVES = ['S05','S04','S03','S02','S01']; // top to bottom for display; S01 is bottom shelf
 
-// ---- db ----
-var db = null;
+// ---- storage ----
+// No login, no server: each device/browser keeps its own data in
+// localStorage. Same call shape as before (doc().get()/.set(),
+// collection().limit().get()) so the rest of the app is unchanged.
+var LS_PREFIX = 'planogram:';
+function lsKey(path){ return LS_PREFIX + path; }
+var db = {
+  doc: function(path){
+    return {
+      get: function(){
+        return Promise.resolve().then(function(){
+          var raw = null;
+          try { raw = localStorage.getItem(lsKey(path)); } catch(e){}
+          var data = raw ? JSON.parse(raw) : null;
+          return { exists: !!data, data: function(){ return data; } };
+        });
+      },
+      set: function(value){
+        return Promise.resolve().then(function(){
+          try { localStorage.setItem(lsKey(path), JSON.stringify(value)); } catch(e){}
+        });
+      }
+    };
+  },
+  collection: function(name){
+    var self = { limit: function(){ return self; },
+      get: function(){
+        return Promise.resolve().then(function(){
+          var docs = [];
+          try {
+            var prefix = lsKey(name + '/');
+            for (var i = 0; i < localStorage.length; i++){
+              var k = localStorage.key(i);
+              if (k && k.indexOf(prefix) === 0){
+                var id = k.slice(prefix.length);
+                var raw = localStorage.getItem(k);
+                var data = raw ? JSON.parse(raw) : null;
+                docs.push({ id: id, data: (function(d){ return function(){ return d; }; })(data) });
+              }
+            }
+          } catch(e){}
+          return { docs: docs };
+        });
+      }
+    };
+    return self;
+  }
+};
 var shelfCache = {}; // bayId -> {shelfCode: data}
 var unsub = {};
 
 function keyFor(bayId, shelfCode){ return bayId + '__' + shelfCode; }
 
 async function initDb(){
-  db = await claude.use('db');
+  // db is always ready (localStorage-backed); nothing to await.
 }
 
 function statusFor(bayId){
@@ -465,8 +519,17 @@ async function boot(){
     } catch(e){}
   }
   render();
+  // deep link from a printed QR code: ?bay=A7R-B13 opens that bay directly
+  try {
+    var qp = new URLSearchParams(window.location.search);
+    var bay = qp.get('bay');
+    if (bay) openBay(bay.toUpperCase());
+  } catch(e){}
 }
 boot();
 
 })();
 </script>
+
+</body>
+</html>
