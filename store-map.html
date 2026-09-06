@@ -343,6 +343,38 @@ function rebuildProductIndex(){
   }).join('');
 }
 
+// ---- 벨라(Vela) 전체 상품 마스터 데이터 (바코드 → 상품명) ----
+// product-master.json 은 store-map.html과 같은 폴더(GitHub)에 올려두면
+// 여기서 자동으로 불러와서, 스캔한 바코드가 매장에 처음 등록되는 것이어도
+// 상품명을 자동으로 채워줌.
+var masterBarcodeMap = {};
+var masterLoadState = 'loading'; // 'loading' | 'ready' | 'error' | 'none'
+async function loadMasterProductMap(){
+  try {
+    var res = await fetch('./product-master.json', { cache: 'force-cache' });
+    if (!res.ok){
+      masterLoadState = res.status === 404 ? 'none' : 'error';
+      return;
+    }
+    masterBarcodeMap = await res.json();
+    masterLoadState = 'ready';
+  } catch(e){
+    console.error('[product-master] load failed', e);
+    masterLoadState = 'error';
+  }
+}
+function lookupMasterName(code){
+  if (!code) return '';
+  if (masterBarcodeMap[code]) return masterBarcodeMap[code];
+  var stripped = code.replace(/^0+/, '');
+  if (stripped && masterBarcodeMap[stripped]) return masterBarcodeMap[stripped];
+  if (code.length === 12 && masterBarcodeMap['0'+code]) return masterBarcodeMap['0'+code];
+  return '';
+}
+function lookupProductName(code){
+  return productIndex.byBarcode[code] || lookupMasterName(code) || '';
+}
+
 // ---- 바코드 스캔 (카메라) ----
 function openScanner(onResult){
   var overlay = document.createElement('div');
@@ -700,7 +732,7 @@ function renderShelfBody(bayId, shelfCode, data){
         openScanner(function(text){
           barcodeInput.value = text;
           products[idx].barcode = text;
-          var knownName = productIndex.byBarcode[text];
+          var knownName = lookupProductName(text);
           if (knownName && !nameInput.value){
             nameInput.value = knownName;
             products[idx].name = knownName;
@@ -724,7 +756,7 @@ function renderShelfBody(bayId, shelfCode, data){
 
   document.getElementById('scanadd-'+shelfCode).addEventListener('click', function(){
     openScanner(function(text){
-      var knownName = productIndex.byBarcode[text] || '';
+      var knownName = lookupProductName(text);
       products.push({name:knownName, barcode:text, facing:1, minStock:null});
       renderRows();
     });
@@ -780,6 +812,7 @@ document.getElementById('overlay').addEventListener('click', function(e){
 // ---- boot ----
 async function boot(){
   render();
+  loadMasterProductMap(); // 백그라운드로 불러옴 (기다리지 않고 나머지 진행)
   try {
     await initDb();
   } catch(e){ db = null; }
