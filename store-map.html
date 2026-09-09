@@ -112,7 +112,8 @@ h1{font-size:19px; margin:0 0 2px;}
 .face{flex:1 1 50%; display:flex; align-items:center; justify-content:center; min-height:32px; padding:6px 4px; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; text-align:center; cursor:pointer; border:none; background:var(--bay); color:var(--ink); border-right:1px solid var(--bay-border); transition:filter .1s;}
 .face:last-child{border-right:none;}
 .face:hover{filter:brightness(1.08);}
-.face.endcap{background:var(--endcap); color:#5a3a26; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:600; cursor:default;}
+.face.endcap{background:var(--endcap); color:#5a3a26; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:600; cursor:pointer; border:none;}
+.face.endcap:hover{filter:brightness(1.08);}
 :root[data-theme="dark"] .face.endcap, :root:not([data-theme="light"]) .face.endcap{ @media (prefers-color-scheme:dark){color:#f2d9c6;} }
 .face.empty{background:var(--empty); color:var(--sub); cursor:default; font-size:11px;}
 .face.aisle-1{background:var(--a1); border-right-color:var(--a1b);}
@@ -300,13 +301,16 @@ function bayRange(rTop, rBottom){ // inclusive, descending
 // the column-reverse container (bottom of array = bottom of shelf).
 function buildColumn(rFace, lFace, topEndcap, bays, bottomEndcap, bottomEmpty){
   var cells = [];
-  if (topEndcap) cells.push({kind:'endcap', label:'안쪽 Endcap'});
+  // 엔드캡도 베이처럼 클릭해서 사진 찍고 품목/수량을 적을 수 있어야 해서
+  // 각 엔드캡에 고유 코드를 붙임 (같은 곤돌라 기둥 안에서 위/아래로 구분).
+  var colKey = 'A' + rFace + (lFace ? ('A' + lFace) : '');
+  if (topEndcap) cells.push({kind:'endcap', label:'안쪽 Endcap', code:'EC-'+colKey+'-TOP', sub:'A'+rFace+(lFace?'/A'+lFace:'')});
   bays.forEach(function(n){
     var faces = [{code: faceCode(rFace, 'R', n)}];
     if (lFace) faces.push({code: faceCode(lFace, 'L', n)});
     cells.push({kind:'bay', row:n, faces:faces});
   });
-  if (bottomEndcap) cells.push({kind:'endcap', label:'입구 Endcap'});
+  if (bottomEndcap) cells.push({kind:'endcap', label:'입구 Endcap', code:'EC-'+colKey+'-BOT', sub:'A'+rFace+(lFace?'/A'+lFace:'')});
   if (bottomEmpty) cells.push({kind:'empty', label:'1 Bay 빈 공간'});
   return cells.reverse(); // store bottom-first to match render()'s expectation
 }
@@ -734,9 +738,11 @@ function render(){
       var wrap = document.createElement('div');
       wrap.className = 'cell';
       if (cell.kind === 'endcap'){
-        var b = document.createElement('div');
+        var b = document.createElement('button');
         b.className = 'face endcap';
-        b.textContent = cell.label;
+        var stE = statusFor(cell.code);
+        b.innerHTML = cell.label + '<span class="dot ' + stE + '"></span>';
+        b.addEventListener('click', function(){ openBay(cell.code, cell.label + (cell.sub ? ' · ' + cell.sub : '')); });
         wrap.appendChild(b);
       } else if (cell.kind === 'empty'){
         var b2 = document.createElement('div');
@@ -791,11 +797,13 @@ function todayStr(){
 }
 
 var currentOpenBayId = null;
-async function openBay(bayId){
+var currentOpenBayLabel = null;
+async function openBay(bayId, label){
   currentOpenBayId = bayId;
+  currentOpenBayLabel = label || null;
   var modal = document.getElementById('modal');
   modal.innerHTML =
-    '<div class="modal-head"><h2>'+bayId+'</h2><button class="modal-close" id="closeBtn">&times;</button></div>' +
+    '<div class="modal-head"><h2>'+(label || bayId)+'</h2><button class="modal-close" id="closeBtn">&times;</button></div>' +
     '<div class="modal-body">' +
       '<div class="bay-photo" id="bayPhotoBox">'+t('photoLoading')+'</div>' +
       '<div id="shelvesWrap">'+t('loading')+'</div>' +
@@ -1131,7 +1139,7 @@ document.getElementById('langToggleBtn').addEventListener('click', function(){
   try { localStorage.setItem('kmLang', lang); } catch(e){}
   applyStaticI18n();
   render();
-  if (currentOpenBayId) openBay(currentOpenBayId); // 열려있던 베이가 있으면 새 언어로 다시 그림
+  if (currentOpenBayId) openBay(currentOpenBayId, currentOpenBayLabel); // 열려있던 베이가 있으면 새 언어로 다시 그림
 });
 boot();
 
