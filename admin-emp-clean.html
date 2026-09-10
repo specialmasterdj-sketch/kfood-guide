@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>관리자 — 직원 일괄 정리</title>
+<style>
+:root { --green:#1a5c3a; --orange:#f59e0b; --red:#dc2626; --gray:#6b7280; }
+body { font-family:'Pretendard','Segoe UI','Malgun Gothic',Arial,sans-serif; max-width:1040px; margin:0 auto; padding:18px; color:#1f2937; background:#f8fafc; }
+h1 { font-size:1.4em; margin:0 0 4px; color:var(--green); }
+h2 { font-size:1.05em; margin:18px 0 8px; color:#0f172a; border-bottom:2px solid #e5e7eb; padding-bottom:6px; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+.steps { background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:12px 14px; border-radius:10px; font-size:.9em; line-height:1.55; }
+.steps b { font-weight:800; }
+button { font-family:inherit; font-size:.95em; font-weight:700; padding:11px 18px; border-radius:10px; border:0; cursor:pointer; transition:.15s; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+.btn-primary { background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%); color:#fff; box-shadow:0 3px 10px rgba(245,158,11,.35); }
+.btn-apply { background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%); color:#fff; box-shadow:0 3px 10px rgba(220,38,38,.35); }
+.btn-sm { font-size:.82em; padding:7px 12px; background:#eef2f7; color:#334155; border:1px solid #dbe2ea; font-weight:600; }
+.btn-sm:hover { background:#e2e8f0; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+select { font-family:inherit; font-size:.95em; padding:9px 12px; border-radius:9px; border:1px solid #d1d5db; background:#fff; font-weight:700; }
+.status { font-size:.85em; padding:8px 12px; border-radius:8px; margin-top:10px; }
+.status.ok { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+.status.err { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+.status.info { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; }
+table { width:100%; border-collapse:collapse; font-size:.88em; margin-top:10px; }
+th, td { padding:8px 10px; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:middle; }
+th { background:#f9fafb; font-weight:700; font-size:.78em; color:var(--gray); text-transform:uppercase; position:sticky; top:0; }
+tr.sel td { background:#fef2f2; }
+td.num { text-align:right; font-variant-numeric:tabular-nums; }
+.tag { display:inline-block; padding:2px 7px; border-radius:5px; font-size:.78em; font-weight:700; margin:1px 2px 1px 0; }
+.tag.other { background:#fee2e2; color:#991b1b; }
+.tag.role  { background:#e0e7ff; color:#3730a3; }
+.tag.zero  { background:#f3f4f6; color:#6b7280; }
+.wrap { max-height:56vh; overflow:auto; border:1px solid #e5e7eb; border-radius:10px; }
+#authStatus { font-size:.85em; padding:8px 12px; border-radius:8px; margin-bottom:14px; }
+#authStatus.unauth { background:#fee2e2; color:#991b1b; }
+#authStatus.auth { background:#dcfce7; color:#166534; }
+.muted { color:var(--gray); font-size:.85em; }
+code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:.85em; }
+</style>
+</head>
+<body>
+
+<h1>🧹 직원 일괄 정리 도구</h1>
+<p class="muted">한 지점의 직원 목록에서 여러 명을 한 번에 삭제. 다른 지점 사람이 섞여 들어온 경우용. 오너 전용.</p>
+
+<div id="authStatus" class="unauth">⏳ 인증 확인 중…</div>
+
+<div class="card steps">
+  <b>사용법:</b><br>
+  1️⃣ 지점 선택 → <b>불러오기</b><br>
+  2️⃣ 지울 사람 체크 (아래 빠른 선택 버튼 활용)<br>
+  3️⃣ <b>삭제 적용</b> → 변경 전 자동 백업 후 반영<br>
+  4️⃣ 스케줄 화면에서 <b>배포</b> 눌러야 직원들에게 반영됨
+</div>
+
+<div class="card">
+  <h2>1. 지점 선택</h2>
+  <div class="row">
+    <select id="branchSel"></select>
+    <button class="btn-primary" id="loadBtn" disabled>불러오기</button>
+    <span class="muted" id="loadInfo"></span>
+  </div>
+  <div id="loadStatus"></div>
+</div>
+
+<div class="card" id="listCard" style="display:none">
+  <h2>2. 지울 직원 선택</h2>
+  <div class="row" style="margin-bottom:8px">
+    <button class="btn-sm" onclick="selAll(true)">전체 선택</button>
+    <button class="btn-sm" onclick="selAll(false)">전체 해제</button>
+    <button class="btn-sm" onclick="selZero()">시프트 0인 사람만</button>
+    <button class="btn-sm" onclick="selOther()">다른 지점에도 있는 사람만</button>
+    <button class="btn-sm" onclick="selBoth()">시프트 0 + 다른 지점에도 있음</button>
+  </div>
+  <div class="wrap">
+    <table id="empTable">
+      <thead><tr>
+        <th style="width:34px"></th><th>이름</th><th>역할</th>
+        <th class="num">주간목표</th><th class="num">시프트</th><th>다른 지점에도 있음</th>
+      </tr></thead>
+      <tbody id="empBody"></tbody>
+    </table>
+  </div>
+  <div id="selInfo" class="status info" style="margin-top:12px">선택 0명</div>
+</div>
+
+<div class="card" id="applyCard" style="display:none">
+  <h2>3. 적용</h2>
+  <p class="muted">선택한 직원과 그 직원의 <b>모든 시프트</b>가 함께 삭제됩니다. 적용 전 현재 상태가
+    <code>schedules_backup/&lt;지점&gt;/&lt;시각&gt;</code> 에 자동 백업됩니다.</p>
+  <button class="btn-apply" id="applyBtn" disabled>선택한 직원 삭제</button>
+  <div id="applyStatus"></div>
+</div>
+
+<div class="card" id="roleCard" style="display:none">
+  <h2>4. 역할 그룹 정리</h2>
+  <p class="muted">쓰지 않는 역할 그룹(K-SIDES, YUMSEM 등)을 지웁니다.
+    <b>직원이 있는 역할은 선택할 수 없습니다</b> — 지우면 그 직원들이 화면에서 사라지기 때문입니다.</p>
+  <div class="row" style="margin:10px 0 8px">
+    <button class="btn-sm" onclick="selRoleEmpty()">직원 0인 역할 전체 선택</button>
+    <button class="btn-sm" onclick="selRoleNone()">전체 해제</button>
+  </div>
+  <div class="wrap" style="max-height:38vh">
+    <table><thead><tr>
+      <th style="width:34px"></th><th>역할</th><th class="num">직원</th><th>비고</th>
+    </tr></thead><tbody id="roleBody"></tbody></table>
+  </div>
+  <div id="roleSelInfo" class="status info" style="margin-top:12px">선택 0개</div>
+  <button class="btn-apply" id="roleApplyBtn" disabled>선택한 역할 삭제</button>
+  <div id="roleStatus"></div>
+</div>
+
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, setPersistence, indexedDBLocalPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getDatabase, ref, get, set } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+
+const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+const app = getApps().length ? getApp() : initializeApp(cfg);
+const auth = getAuth(app);
+const db = getDatabase(app);
+setPersistence(auth, indexedDBLocalPersistence).catch(() => setPersistence(auth, browserLocalPersistence)).catch(() => {});
+
+const BRANCHES = [
+  { id:'MIAMI', ko:'마이애미' }, { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈' },
+  { id:'HOLLYWOOD', ko:'할리우드' }, { id:'CORAL_SPRINGS', ko:'코럴 스프링스' },
+  { id:'LASOLAS', ko:'라스올라스' }, { id:'WEST_PALM', ko:'웨스트 팜 비치' },
+];
+const $ = (id) => document.getElementById(id);
+const norm = (s) => String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+$('branchSel').innerHTML = BRANCHES.map(b => `<option value="${b.id}">${b.ko}</option>`).join('');
+$('branchSel').value = 'HOLLYWOOD';
+
+let DATA = null;          // 현재 지점 데이터
+let BRANCH = null;        // 현재 지점 id
+let ROWS = [];            // {emp, shiftCount, others[]}
+let OTHERS = {};          // branchId -> [names]
+
+function say(el, cls, msg){ $(el).innerHTML = `<div class="status ${cls}">${msg}</div>`; }
+
+onAuthStateChanged(auth, async (u) => {
+  if (!u || u.isAnonymous) {
+    $('authStatus').className = 'unauth';
+    $('authStatus').innerHTML = '⚠ 로그인 필요 — <button onclick="window.__doLogin()" style="background:#f59e0b;color:#fff;border:0;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer">Google 로그인</button>';
+    return;
+  }
+  try {
+    const snap = await get(ref(db, 'users/' + u.uid));
+    const role = String((snap.val()||{}).role || '').toUpperCase();
+    if (!['OWNER','EXECUTIVE'].includes(role)) {
+      $('authStatus').className = 'unauth';
+      $('authStatus').textContent = `⚠ 이 도구는 OWNER 또는 EXECUTIVE 만 사용 가능. 현재 role: ${role || '없음'} (${u.email})`;
+      return;
+    }
+    $('authStatus').className = 'auth';
+    $('authStatus').textContent = `✅ 인증됨: ${u.email} (${role})`;
+    $('loadBtn').disabled = false;
+  } catch(e) {
+    $('authStatus').className = 'unauth';
+    $('authStatus').textContent = '⚠ 권한 확인 실패: ' + e.message;
+  }
+});
+
+window.__doLogin = async () => {
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch(e) { alert('로그인 실패: ' + e.message); }
+};
+
+$('loadBtn').onclick = async () => {
+  BRANCH = $('branchSel').value;
+  $('loadBtn').disabled = true;
+  say('loadStatus','info','<span>불러오는 중…</span>');
+  try {
+    const snap = await get(ref(db, 'schedules/' + BRANCH));
+    DATA = snap.val();
+    if (!DATA || !Array.isArray(DATA.employees)) {
+      say('loadStatus','err','이 지점에 직원 자료가 없습니다.');
+      $('loadBtn').disabled = false; return;
+    }
+    // 다른 지점 이름 수집
+    OTHERS = {};
+    for (const b of BRANCHES) {
+      if (b.id === BRANCH) continue;
+      try {
+        const s2 = await get(ref(db, 'schedules/' + b.id + '/employees'));
+        const arr = s2.val();
+        OTHERS[b.id] = Array.isArray(arr) ? arr.map(e => norm(e && e.name)) : [];
+      } catch(_) { OTHERS[b.id] = []; }
+    }
+    buildRows();
+    render();
+    renderRoles();
+    $('listCard').style.display = '';
+    $('applyCard').style.display = '';
+    $('roleCard').style.display = '';
+    const totalShifts = Object.keys(DATA.shifts || {}).length;
+    $('loadInfo').textContent = `직원 ${DATA.employees.length}명 · 시프트 ${totalShifts}건`;
+    say('loadStatus','ok','불러왔습니다.');
+  } catch(e) {
+    say('loadStatus','err','불러오기 실패: ' + e.message);
+  }
+  $('loadBtn').disabled = false;
+};
+
+function shiftCountOf(empId){
+  const sh = DATA.shifts || {};
+  const pre = empId + '@';
+  let n = 0;
+  for (const k in sh) if (k.indexOf(pre) === 0 && sh[k]) n++;
+  return n;
+}
+
+function buildRows(){
+  ROWS = DATA.employees.map((emp, i) => {
+    const others = [];
+    for (const b of BRANCHES) {
+      if (b.id === BRANCH) continue;
+      if ((OTHERS[b.id]||[]).includes(norm(emp.name))) others.push(b.ko);
+    }
+    return { i, emp, shiftCount: shiftCountOf(emp.id), others };
+  });
+  // 지울 가능성 높은 것 위로: 다른 지점에도 있음 → 시프트 0 → 원래 순서
+  ROWS.sort((a,b) =>
+    (b.others.length>0) - (a.others.length>0) ||
+    (a.shiftCount>0) - (b.shiftCount>0) ||
+    a.i - b.i);
+}
+
+function render(){
+  $('empBody').innerHTML = ROWS.map((r,idx) => `
+    <tr data-idx="${idx}">
+      <td><input type="checkbox" class="chk" data-idx="${idx}"></td>
+      <td><b>${esc(r.emp.name)}</b></td>
+      <td><span class="tag role">${esc(r.emp.role||'')}</span></td>
+      <td class="num">${r.emp.target ?? ''}</td>
+      <td class="num">${r.shiftCount === 0 ? '<span class="tag zero">0</span>' : r.shiftCount}</td>
+      <td>${r.others.map(o => `<span class="tag other">${esc(o)}</span>`).join('') || '<span class="muted">—</span>'}</td>
+    </tr>`).join('');
+  document.querySelectorAll('.chk').forEach(c => c.addEventListener('change', onCheck));
+  updateSel();
+}
+
+function onCheck(e){
+  const tr = e.target.closest('tr');
+  tr.classList.toggle('sel', e.target.checked);
+  updateSel();
+}
+function selected(){
+  return [...document.querySelectorAll('.chk')].filter(c => c.checked).map(c => ROWS[+c.dataset.idx]);
+}
+function updateSel(){
+  const s = selected();
+  const shifts = s.reduce((a,r) => a + r.shiftCount, 0);
+  $('selInfo').textContent = `선택 ${s.length}명 · 함께 삭제될 시프트 ${shifts}건`;
+  $('selInfo').className = 'status ' + (shifts > 0 ? 'err' : 'info');
+  $('applyBtn').disabled = s.length === 0;
+}
+function setAll(fn){
+  document.querySelectorAll('.chk').forEach(c => {
+    c.checked = fn(ROWS[+c.dataset.idx]);
+    c.closest('tr').classList.toggle('sel', c.checked);
+  });
+  updateSel();
+}
+window.selAll   = (v) => setAll(() => v);
+window.selZero  = () => setAll(r => r.shiftCount === 0);
+window.selOther = () => setAll(r => r.others.length > 0);
+window.selBoth  = () => setAll(r => r.shiftCount === 0 && r.others.length > 0);
+
+$('applyBtn').onclick = async () => {
+  const s = selected();
+  if (!s.length) return;
+  const names = s.map(r => r.emp.name).join(', ');
+  const shifts = s.reduce((a,r) => a + r.shiftCount, 0);
+  if (!confirm(`${BRANCH} 지점에서 ${s.length}명을 삭제합니다.\n시프트 ${shifts}건도 함께 삭제됩니다.\n\n${names}\n\n진행할까요?`)) return;
+
+  $('applyBtn').disabled = true;
+  say('applyStatus','info','백업 중…');
+  try {
+    const ts = new Date().toISOString().replace(/[:.]/g,'-');
+    await set(ref(db, 'schedules_backup/' + BRANCH + '/' + ts), DATA);
+
+    const delIds = new Set(s.map(r => r.emp.id));
+    const nd = JSON.parse(JSON.stringify(DATA));
+    nd.employees = nd.employees.filter(e => !delIds.has(e.id));
+    const sh = nd.shifts || {};
+    let removed = 0;
+    for (const k of Object.keys(sh)) {
+      const empId = k.split('@')[0];
+      if (delIds.has(empId)) { delete sh[k]; removed++; }
+    }
+    nd.shifts = sh;
+    nd.lastChangedAt = Date.now();
+
+    say('applyStatus','info','저장 중…');
+    await set(ref(db, 'schedules/' + BRANCH), nd);
+    try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(nd)); } catch(_){}
+
+    DATA = nd; buildRows(); render(); renderRoles();
+    $('loadInfo').textContent = `직원 ${nd.employees.length}명 · 시프트 ${Object.keys(nd.shifts).length}건`;
+    say('applyStatus','ok',
+      `✅ ${s.length}명 삭제 완료 (시프트 ${removed}건 정리). 백업: <code>schedules_backup/${BRANCH}/${ts}</code><br>` +
+      `→ 스케줄 화면에서 <b>배포</b>를 눌러야 직원들에게 반영됩니다.`);
+  } catch(e) {
+    say('applyStatus','err','실패: ' + e.message + ' — 백업은 남아 있습니다.');
+  }
+  $('applyBtn').disabled = false;
+};
+
+/* ========== 역할 그룹 정리 ========== */
+let ROLES = [];   // {name, count}
+
+function renderRoles(){
+  const counts = {};
+  (DATA.employees || []).forEach(e => {
+    const r = String(e.role || '');
+    counts[r] = (counts[r] || 0) + 1;
+  });
+  ROLES = (DATA.roles || []).map(r => ({ name: r, count: counts[r] || 0 }));
+  // 안 쓰는 역할 위로
+  ROLES.sort((a,b) => a.count - b.count || a.name.localeCompare(b.name));
+  $('roleBody').innerHTML = ROLES.map((r,idx) => `
+    <tr data-ridx="${idx}">
+      <td><input type="checkbox" class="rchk" data-ridx="${idx}" ${r.count>0?'disabled':''}></td>
+      <td><b>${esc(r.name)}</b></td>
+      <td class="num">${r.count === 0 ? '<span class="tag zero">0</span>' : r.count}</td>
+      <td>${r.count === 0
+            ? '<span class="muted">비어 있음 — 삭제 가능</span>'
+            : '<span class="tag other">직원 있음 — 삭제 불가</span>'}</td>
+    </tr>`).join('');
+  document.querySelectorAll('.rchk').forEach(c => c.addEventListener('change', onRoleCheck));
+  updateRoleSel();
+}
+function onRoleCheck(e){
+  e.target.closest('tr').classList.toggle('sel', e.target.checked);
+  updateRoleSel();
+}
+function roleSelected(){
+  return [...document.querySelectorAll('.rchk')].filter(c => c.checked && !c.disabled)
+    .map(c => ROLES[+c.dataset.ridx]);
+}
+function updateRoleSel(){
+  const s = roleSelected();
+  $('roleSelInfo').textContent = `선택 ${s.length}개` + (s.length ? ' — ' + s.map(r=>r.name).join(', ') : '');
+  $('roleApplyBtn').disabled = s.length === 0;
+}
+function setRoles(fn){
+  document.querySelectorAll('.rchk').forEach(c => {
+    if (c.disabled) { c.checked = false; c.closest('tr').classList.remove('sel'); return; }
+    c.checked = fn(ROLES[+c.dataset.ridx]);
+    c.closest('tr').classList.toggle('sel', c.checked);
+  });
+  updateRoleSel();
+}
+window.selRoleEmpty = () => setRoles(r => r.count === 0);
+window.selRoleNone  = () => setRoles(() => false);
+
+$('roleApplyBtn').onclick = async () => {
+  const s = roleSelected();
+  if (!s.length) return;
+  // 안전장치: 직원이 붙은 역할은 어떤 경우에도 제외
+  const names = s.filter(r => r.count === 0).map(r => r.name);
+  if (!names.length) return;
+  if (!confirm(`${BRANCH} 지점에서 역할 ${names.length}개를 삭제합니다.\n\n${names.join(', ')}\n\n진행할까요?`)) return;
+
+  $('roleApplyBtn').disabled = true;
+  say('roleStatus','info','백업 중…');
+  try {
+    const ts = new Date().toISOString().replace(/[:.]/g,'-');
+    await set(ref(db, 'schedules_backup/' + BRANCH + '/' + ts), DATA);
+
+    const del = new Set(names);
+    const nd = JSON.parse(JSON.stringify(DATA));
+    nd.roles = (nd.roles || []).filter(r => !del.has(r));
+    nd.lastChangedAt = Date.now();
+
+    say('roleStatus','info','저장 중…');
+    await set(ref(db, 'schedules/' + BRANCH), nd);
+    try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(nd)); } catch(_){}
+
+    DATA = nd; renderRoles();
+    say('roleStatus','ok',
+      `✅ 역할 ${names.length}개 삭제 완료. 백업: <code>schedules_backup/${BRANCH}/${ts}</code><br>` +
+      `→ 스케줄 화면에서 <b>배포</b>를 눌러야 반영됩니다.`);
+  } catch(e) {
+    say('roleStatus','err','실패: ' + e.message + ' — 백업은 남아 있습니다.');
+  }
+  $('roleApplyBtn').disabled = false;
+};
+</script>
+</body>
+</html>

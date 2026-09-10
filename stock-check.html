@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>📋 17시 핵심재고 보고 (Top 500) — KIMCHI MART</title>
+<script>
+/* cache-bust poll (다른 앱과 동일 패턴) */
+(function(){try{var KEY='stockcheck.bust',BUST='v1';if(localStorage.getItem(KEY)!==BUST){localStorage.setItem(KEY,BUST);}}catch(e){}})();
+</script>
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+  import { getDatabase, ref, get, set, update, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  const db = getDatabase(app);
+  const auth = getAuth(app);
+  window.__fb = { db, ref, get, set, update, onValue, auth };
+  onAuthStateChanged(auth, u => { if (u) { window.__fbUser = u; window.dispatchEvent(new Event('fb-ready')); } });
+</script>
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script type="module">
+  // 데모(?demo=1)는 로그인 게이트를 건너뜀 — Firebase 는 전혀 안 쓰고 이 기기 localStorage 에만 저장 (사장님 미리보기용)
+  if (!/[?&]demo=1/.test(location.search)) { import("./fb-auth-fetch.js?v=1"); import("./auth-gate.js?v=5"); }
+</script>
+<script src="./km-chat-queue.js?v=1"></script>
+<script src="./back-nav.js?v=1"></script>
+<link rel="stylesheet" href="./km-design.css">
+<style>
+:root{--g:#1B7741;--g2:#0f5c30;--r:#ED2024;--b:#3753A4;--y:#f59e0b;--bg:#f4f6f4;--card:#fff;--ink:#1f2937;--mute:#6b7280;--line:#e5e7eb;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif}
+*{box-sizing:border-box}body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--ink);font-size:14px}
+.top{background:linear-gradient(135deg,var(--g),var(--g2));color:#fff;padding:14px 16px 10px;position:sticky;top:0;z-index:20}
+.top h1{margin:0;font-size:18px;display:flex;align-items:center;gap:8px}.top .sub{opacity:.85;font-size:12px;margin-top:2px}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.bar select,.bar input[type=date]{border:none;border-radius:8px;padding:7px 10px;font-size:14px;font-weight:700;background:#fff;color:var(--g2)}
+.deadline{margin-left:auto;background:rgba(255,255,255,.18);border-radius:999px;padding:5px 12px;font-weight:700;font-size:12px}
+.deadline.late{background:var(--r)}
+.tabs{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:96px;z-index:19;overflow-x:auto}
+.tab{flex:1;min-width:110px;text-align:center;padding:11px 6px;font-weight:700;color:var(--mute);border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap;font-size:13px}
+.tab.on{color:var(--g);border-color:var(--g)}
+.wrap{max-width:980px;margin:0 auto;padding:12px 12px 90px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+.vh{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.vh h3{margin:0;font-size:15px;flex:1}.vh .prog{font-size:12px;color:var(--mute)}.vh .chev{transition:.2s}.vh.open .chev{transform:rotate(90deg)}
+.vbody{display:none;margin-top:8px}.vh.open+.vbody{display:block}
+.cat{font-size:12px;font-weight:800;color:var(--g);margin:10px 0 6px;padding-left:2px;border-left:3px solid var(--g);padding-left:8px}
+.item{display:grid;grid-template-columns:44px 1fr auto;gap:8px;align-items:center;padding:7px 4px;border-bottom:1px dashed var(--line)}
+.item img{width:44px;height:44px;object-fit:contain;background:#fafafa;border-radius:6px;border:1px solid var(--line)}
+.item .nm{font-weight:700;font-size:13px;line-height:1.25}.item .nm small{display:block;color:var(--mute);font-weight:500;font-size:11px}
+.st{display:flex;gap:4px}.st button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 9px;font-weight:800;font-size:12px;cursor:pointer;color:#374151}
+.st button.ok.on{background:#dcfce7;border-color:#16a34a;color:#166534}.st button.low.on{background:#fef3c7;border-color:#d97706;color:#92400e}.st button.out.on{background:#fee2e2;border-color:#dc2626;color:#991b1b}
+.detail{grid-column:1/-1;display:none;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px;font-size:12px}
+.detail.show{display:grid;grid-template-columns:1fr 1fr;gap:6px}.detail label{display:flex;flex-direction:column;gap:3px;font-weight:700;color:#92400e}
+.detail input,.detail select,.detail textarea{border:1px solid #fcd34d;border-radius:6px;padding:6px;font-size:13px;font-family:inherit}
+.detail .full{grid-column:1/-1}
+.filters{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;color:var(--mute)}
+.chip.on{background:var(--g);color:#fff;border-color:var(--g)}
+.sum{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}.sum div{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+.sum b{display:block;font-size:20px}.sum span{font-size:11px;color:var(--mute)}
+.footer{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:8px;z-index:30}
+.btn{flex:1;border:none;border-radius:10px;padding:13px;font-weight:800;font-size:15px;cursor:pointer;background:var(--g);color:#fff}
+.btn.sec{background:#e5e7eb;color:#374151}.btn:disabled{opacity:.5}
+.dept{margin-bottom:10px}.dept h3{margin:0 0 8px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+.row{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin:6px 0;font-size:13px}.row label{font-weight:700;color:#374151}
+.seg{display:flex;gap:4px;flex-wrap:wrap}.seg button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-weight:700;font-size:12px;cursor:pointer}
+.seg button.on.good{background:#dcfce7;border-color:#16a34a}.seg button.on.warn{background:#fef3c7;border-color:#d97706}.seg button.on.bad{background:#fee2e2;border-color:#dc2626}
+.row input,.row textarea{border:1px solid var(--line);border-radius:8px;padding:7px;font-size:13px;font-family:inherit;width:100%}
+.grid{width:100%;border-collapse:collapse;font-size:12px}.grid th,.grid td{border:1px solid var(--line);padding:6px 4px;text-align:center}.grid th{background:#f9fafb}
+.dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle}.dot.g{background:#16a34a}.dot.y{background:#f59e0b}.dot.r{background:#dc2626}.dot.x{background:#d1d5db}
+.pill{display:inline-block;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700}.pill.g{background:#dcfce7;color:#166534}.pill.y{background:#fef3c7;color:#92400e}.pill.r{background:#fee2e2;color:#991b1b}.pill.x{background:#f3f4f6;color:#6b7280}
+.note{font-size:12px;color:var(--mute);margin:6px 0 10px}
+.sup{border-bottom:1px dashed var(--line);padding:8px 2px;font-size:13px}.sup b{display:block}.sup .who{color:var(--mute);font-size:12px}
+.toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:999px;font-weight:700;z-index:50;display:none}
+.empty{text-align:center;color:var(--mute);padding:30px 10px}
+@media(max-width:520px){.sum{grid-template-columns:repeat(2,1fr)}.row{grid-template-columns:1fr}.item{grid-template-columns:40px 1fr}.st{grid-column:1/-1;justify-content:flex-end}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>📋 일일 핵심재고 점검 보고 <span style="font-size:12px;opacity:.8;font-weight:500">Daily Core Stock Check</span></h1>
+  <div class="sub">지점 Top 500(POS 판매순) 보유 여부 + 필요 수량 + 재입고 예정 → 오후 5시 마감 · ⭐TOP PICK 은 보조 (신선 7부문은 🕙 10시 보고 페이지)</div>
+  <div class="bar">
+    <select id="branchSel"></select>
+    <input type="date" id="dateSel">
+    <span id="me" style="font-size:12px;opacity:.9"></span>
+    <span class="deadline" id="deadline">마감 17:00</span>
+  </div>
+</div>
+<div class="tabs">
+  <div class="tab on" data-t="g">🛒 ⭐TOP PICK 보유 체크</div>
+  <div class="tab" data-t="d">📊 대시보드</div>
+  <div class="tab" data-t="s">🚚 지원요청</div>
+</div>
+<div class="wrap">
+  <div id="pane-g">
+    <div class="sum"><div><b id="cAll">0</b><span id="cAllLbl">점검 상품</span></div><div><b id="cOk" style="color:#166534">0</b><span>있음</span></div><div><b id="cLow" style="color:#92400e">0</b><span>부족</span></div><div><b id="cOut" style="color:#991b1b">0</b><span>품절</span></div></div>
+    <div class="filters"><span class="chip on" data-src="top500" style="border-color:#3753A4;color:#3753A4">📊 지점 Top 500 (POS 판매순)</span><span class="chip" data-src="star" style="border-color:#3753A4;color:#3753A4">⭐ 사장님 TOP PICK</span>
+      <select id="topN" style="border:1px solid #e5e7eb;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:700"><option value="10">그룹당 상위 10</option><option value="25">그룹당 상위 25</option><option value="50">그룹당 상위 50</option><option value="999" selected>전체 500</option></select></div>
+    <div class="filters"><span class="chip on" data-f="all">전체</span><span class="chip" data-f="todo">미확인만</span><span class="chip" data-f="issue">부족·품절만</span><span class="chip" id="chipExpand">전체 펼치기</span></div>
+    <div class="note">벤더를 눌러 펼치고, 상품마다 <b>있음 / 부족 / 품절</b>을 누르면 즉시 저장됩니다. 부족·품절은 재입고 예정일과 발주 여부를 적어 주세요.</div>
+    <div id="vendors"><div class="empty">⭐ TOP PICK 목록 불러오는 중…</div></div>
+  </div>
+  <div id="pane-f" style="display:none"></div>
+  <div id="pane-d" style="display:none">
+    <div class="note">5개 지점 × 8개 파트. <span class="dot g"></span> 완료·이상없음 <span class="dot y"></span> 부족/보충필요 <span class="dot r"></span> 품절/비어있음/미제출(17시 이후) <span class="dot x"></span> 미입력</div>
+    <div class="card" style="overflow-x:auto"><table class="grid" id="dash"></table></div>
+    <div id="dashDetail"></div>
+  </div>
+  <div id="pane-s" style="display:none">
+    <div class="note">오늘 부족·품절로 보고된 상품을 다른 지점의 "있음" 보고와 자동 대조합니다. 로지스틱 매니저는 이 화면을 보고 지점 간 지원 배송을 잡습니다.</div>
+    <div id="support"></div>
+  </div>
+</div>
+<div class="footer">
+  <button class="btn sec" id="btnRefresh">🔄 새로고침</button>
+  <button class="btn" id="btnSubmit">✅ 제출 (로지스틱 방에 보고)</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// 일일 핵심재고 점검 보고 — stock-check.html
+// 데이터: recs_global/<vendor>/<fbKey(id)> (사장님 ⭐, 발주 앱 recommend.js 와 동일 키)
+//        stock-check/catalog/<vendor>.json (빌드 스크립트 _build_core_catalog.js 산출)
+// 저장:  stockCheck/{branch}/{YYYY-MM-DD}/g/{vendor}/{fbKey}  = {s:'ok'|'low'|'out', eta, ord, note, by, ts}
+//        stockCheck/{branch}/{YYYY-MM-DD}/f/{dept}            = {disp, short, eng, clean, support, note, by, ts}
+//        stockCheck/{branch}/{YYYY-MM-DD}/meta/{g|f}          = {submittedAt, by, counts}
+// 채팅:  제출 시 need_overstock(재고 부족/과다) 방에 요약 자동 게시
+// ============================================================
+const ORDER_BASE = 'https://specialmasterdj-sketch.github.io/kimchi-mart-order/';
+const BRANCHES = [
+  { id:'MIAMI', ko:'마이애미', en:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines' },
+  { id:'HOLLYWOOD', ko:'할리우드', en:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs' },
+  { id:'LASOLAS', ko:'라스올라스', en:'Las Olas' },
+];
+const DEPTS = [
+  { id:'produce', ko:'야채 · 과일', en:'Produce', icon:'🥬', room:'produce' },
+  { id:'seafood', ko:'해산물 · 생선', en:'Seafood', icon:'🐟', room:'seafood_evalution_room' },
+  { id:'meat', ko:'정육', en:'Meat', icon:'🥩', room:'meat_evalution_room' },
+  { id:'sushi', ko:'스시', en:'Sushi', icon:'🍣', room:'sushi' },
+  { id:'bakery', ko:'베이커리', en:'Bakery', icon:'🥐', room:'bakery_eval' },
+  { id:'bbq', ko:'bb.q Chicken', en:'bb.q Chicken', icon:'🍗', room:'kfood_eval' },
+  { id:'bibib', ko:'BIBIB (반찬 · 핫푸드 · 김치)', en:'BIBIB Deli / Hot food / Kimchi', icon:'🍱', room:'kfood_eval' },
+];
+const ROOM_LOGI = 'need_overstock';
+const DEADLINE_H = 17;
+
+// fbKey — recommend.js 와 동일 (. # $ / [ ] 퍼센트 인코딩)
+function fbKey(id){ return String(id).replace(/[.#$/\[\]]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0')); }
+function unKey(k){ try { return decodeURIComponent(k); } catch(e){ return k; } }
+function meObj(){ try { return JSON.parse(localStorage.getItem('chat.me')||'null')||{}; } catch(e){ return {}; } }
+function todayStr(d){ d = d || new Date(); const p = n => String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.display='none',2200); }
+function imgUrl(p){ if(!p) return ''; return /^https?:/.test(p) ? p : ORDER_BASE + p.replace(/^\.?\//,''); }
+function bLabel(id){ const b = BRANCHES.find(x=>x.id===id); return b ? b.ko : id; }
+
+let ME = meObj();
+let BRANCH = (localStorage.getItem('hub.branch')||'').toUpperCase();
+if (!BRANCHES.some(b=>b.id===BRANCH)) BRANCH = (ME.branch||'').toUpperCase();
+if (!BRANCHES.some(b=>b.id===BRANCH)) BRANCH = 'MIAMI';
+let DATE = todayStr();
+let TAB = 'g';
+let FILTER = 'all';
+let SRC = localStorage.getItem('stockcheck.src') || 'top500';   // 'top500' | 'star'
+let TOPN = 999;
+let T500 = {};              // branch -> { code -> item }  (Top500 POS 판매순)
+const GROUPS = [
+  { id:'sauce',  ko:'① 소스·양념·기름',   cats:['PASTE,MARINADE,SAUCE (F)','OIL,SEASONING,VINGER,SYRUP (F)','CANNED GOODS (F)'] },
+  { id:'snack',  ko:'② 스낵·과자·캔디',   cats:['SNACKS (F)','CANDY (F)'] },
+  { id:'noodle', ko:'③ 면류·라면',        cats:['RAMEN (F)','NOODLE (F)'] },
+  { id:'frozen', ko:'④ 냉동',             cats:['FROZEN MEALS (F)','ICE CREAM & DESSERT (F)','FROZEN SEAFOOD (F)'] },
+  { id:'chill',  ko:'⑤ 냉장 (냉장면·떡·베이커리·기타)', cats:['(F)REFRIGERATED-NOODLES,RICECAKE','REFRIGERATED-OTHERS (F)','BAKERY (F)'] },
+  { id:'alcohol',ko:'⑥ 주류',             cats:['ALCOHOL'] },
+  { id:'drink',  ko:'⑦ 음료·차',          cats:['DRINKS (F)','TEA (F)'] },
+  { id:'rice',   ko:'⑧ 쌀·김·건어물·기타', cats:['RICE & GRAINS (F)','DRIED SEAWEED (F)','OTHER DRY ITEMS (F)','KITCHENWARE','HEALTH & BEAUTY'] },
+];
+function groupOf(cat){ for (const g of GROUPS) if (g.cats.includes(cat)) return g; return GROUPS[GROUPS.length-1]; }
+function normCode(c){ return String(c||'').replace(/^=+/,'').trim(); }
+async function loadTop500(branch){
+  if (T500[branch]) return T500[branch];
+  try { const d = await (await fetch('./top500/' + branch + '.json')).json(); const m = {}; (d.items||[]).forEach(it => { const c = normCode(it.code); if (c && !m[c]) m[c] = { ...it, code:c, g: groupOf(it.cat) }; }); T500[branch] = m; }
+  catch(e){ console.warn('top500', branch, e); T500[branch] = {}; }
+  return T500[branch];
+}
+function t500Name(code){ for (const b in T500){ const it = T500[b][code]; if (it) return it; } return null; }
+let VENDORS = [];            // vendors.json
+let STARS = {};              // vendor -> Set(id)
+let CAT = {};                // vendor -> catalog items
+let DATA = { g:{}, f:{}, meta:{} }; // 현재 지점/날짜 저장분
+let ALLDAY = {};             // branch -> data (대시보드/지원요청)
+let expandedAll = false;
+
+// ---------- 초기화 ----------
+(function initUI(){
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b=>`<option value="${b.id}" ${b.id===BRANCH?'selected':''}>${b.ko} · ${b.en}</option>`).join('');
+  sel.onchange = () => { BRANCH = sel.value; localStorage.setItem('hub.branch', BRANCH); loadDay(); };
+  const d = document.getElementById('dateSel'); d.value = DATE; d.max = DATE;
+  d.onchange = () => { DATE = d.value || todayStr(); loadDay(); };
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => { TAB = t.dataset.t; document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x===t)); ['g','f','d','s'].forEach(k => document.getElementById('pane-'+k).style.display = k===TAB?'':'none'); document.getElementById('btnSubmit').style.display = (TAB==='g')?'':'none'; if (TAB==='d'||TAB==='s') loadAllBranches(); });
+  document.querySelectorAll('.chip[data-f]').forEach(c => c.onclick = () => { FILTER = c.dataset.f; document.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('on', x===c)); renderVendors(); });
+  document.querySelectorAll('.chip[data-src]').forEach(c => { c.classList.toggle('on', c.dataset.src===SRC); c.onclick = () => { SRC = c.dataset.src; localStorage.setItem('stockcheck.src', SRC); document.querySelectorAll('.chip[data-src]').forEach(x=>x.classList.toggle('on', x===c)); renderVendors(); }; });
+  document.getElementById('topN').onchange = (e) => { TOPN = parseInt(e.target.value,10)||999; renderVendors(); };
+  document.getElementById('chipExpand').onclick = () => { expandedAll = !expandedAll; document.querySelectorAll('.vh').forEach(v => v.classList.toggle('open', expandedAll)); document.getElementById('chipExpand').textContent = expandedAll ? '전체 접기' : '전체 펼치기'; };
+  document.getElementById('btnRefresh').onclick = () => { loadStars().then(loadDay); };
+  document.getElementById('btnSubmit').onclick = submit;
+  document.getElementById('me').textContent = ME.name ? ('👤 ' + ME.name + (ME.role?' · '+ME.role:'')) : '';
+  renderDepts();
+  tickDeadline(); setInterval(tickDeadline, 30000);
+})();
+function tickDeadline(){
+  const el = document.getElementById('deadline'); const now = new Date();
+  const late = DATE===todayStr() && (now.getHours() > DEADLINE_H || (now.getHours()===DEADLINE_H && now.getMinutes()>0));
+  const subG = DATA.meta && DATA.meta.g && DATA.meta.g.submittedAt;
+  if (subG) { el.className='deadline'; el.textContent='✅ 제출 완료 ' + new Date(subG).toTimeString().slice(0,5); return; }
+  el.className = 'deadline' + (late ? ' late' : '');
+  el.textContent = late ? '⏰ 17:00 지남 · 미제출' : '마감 17:00 · 미제출';
+}
+
+// ---------- Firebase 준비 후 데이터 ----------
+let FB = null;
+const DEMO = /[?&]demo=1/.test(location.search);
+function demoFb(){
+  const store = JSON.parse(localStorage.getItem('stockcheck.demo')||'{}');
+  const save = () => localStorage.setItem('stockcheck.demo', JSON.stringify(store));
+  const getP = (path) => path.split('/').reduce((o,k)=> (o&&o[k]!==undefined)?o[k]:undefined, store);
+  const setP = (path, val) => { const ks=path.split('/'); let o=store; ks.slice(0,-1).forEach(k=>{ o[k]=o[k]||{}; o=o[k]; }); o[ks[ks.length-1]]=val; save(); };
+  return { db:null, ref:(db,p)=>p, get:async p => ({ val:()=> (p==='recs_global' ? window.__demoStars : (getP(p)===undefined?null:JSON.parse(JSON.stringify(getP(p))))) }), set:async (p,v)=>setP(p,v), update:async (p,v)=>{ for (const k in v) setP(p+'/'+k, v[k]); } };
+}
+function whenFb(){ return new Promise(res => { if (DEMO) return res(); if (window.__fb && window.__fbUser) return res(); window.addEventListener('fb-ready', () => res(), { once:true }); }); }
+whenFb().then(async () => {
+  FB = DEMO ? demoFb() : window.__fb;
+  if (DEMO){ ME = ME.name ? ME : { name:'데모 매니저', role:'MANAGER', branch: BRANCH }; document.getElementById('me').textContent = '🧪 데모 모드 (저장은 이 기기에만)';
+    // 데모 ⭐: 벤더별 카탈로그 앞 12개를 TOP PICK 으로 가정
+    try { const vs = (await (await fetch('./stock-check/catalog/vendors.json')).json()).vendors || []; window.__demoStars = {}; for (const v of vs.slice(0,6)){ const it = (await (await fetch('./stock-check/catalog/'+v.id+'.json')).json()).items||{}; const o={}; Object.keys(it).slice(0,12).forEach(id=>{ o[fbKey(id)]={ts:1}; }); window.__demoStars[v.id]=o; } } catch(e){ window.__demoStars = {}; } }
+  try { VENDORS = (await (await fetch('./stock-check/catalog/vendors.json?v=' + Date.now())).json()).vendors || []; } catch(e){ console.warn('vendors.json', e); }
+  await loadStars();
+  await loadDay();
+});
+
+async function loadStars(){
+  // recs_global 전체 1회 읽기 — 벤더별 ⭐ id 집합
+  try {
+    const snap = await FB.get(FB.ref(FB.db, 'recs_global'));
+    const v = snap.val() || {}; STARS = {};
+    for (const vendor in v){ const ids = new Set(); for (const k in (v[vendor]||{})){ const e=v[vendor][k]; if (e && e.ts) ids.add(unKey(k)); } if (ids.size) STARS[vendor] = ids; }
+  } catch(e){ console.error('recs_global', e); document.getElementById('vendors').innerHTML = '<div class="empty">⭐ 목록을 읽지 못했습니다 (권한/네트워크). 새로고침 해 주세요.<br><small>'+esc(e.message||e)+'</small></div>'; return; }
+  // ⭐ 있는 벤더의 슬림 카탈로그만 로드
+  const need = Object.keys(STARS).filter(v => !CAT[v]);
+  await Promise.all(need.map(async v => { try { CAT[v] = (await (await fetch('./stock-check/catalog/' + v + '.json')).json()).items || {}; } catch(e){ CAT[v] = {}; } }));
+}
+async function loadDay(){
+  DATA = { g:{}, f:{}, meta:{} };
+  await loadTop500(BRANCH);
+  try { const snap = await FB.get(FB.ref(FB.db, `stockCheck/${BRANCH}/${DATE}`)); const v = snap.val() || {}; DATA.g = v.g||{}; DATA.f = v.f||{}; DATA.meta = v.meta||{}; } catch(e){ console.warn('loadDay', e); }
+  renderVendors(); renderDepts(); tickDeadline();
+  if (TAB==='d'||TAB==='s') loadAllBranches();
+}
+
+// ---------- A. 그로서리 렌더 ----------
+function renderTop500(){
+  const host = document.getElementById('vendors'); const m = T500[BRANCH] || {};
+  document.getElementById('cAllLbl').textContent = 'Top 500 점검';
+  const items = Object.values(m).sort((a,b)=>a.rank-b.rank);
+  if (!items.length){ host.innerHTML = '<div class="empty">이 지점의 Top 500 파일(top500/'+esc(BRANCH)+'.json)이 없습니다.</div>'; return; }
+  const byG = {}; GROUPS.forEach(g => byG[g.id] = []);
+  for (const it of items){ byG[it.g.id].push(it); }
+  let tAll=0,tOk=0,tLow=0,tOut=0; const openSet = new Set([...document.querySelectorAll('.vh.open')].map(x=>x.dataset.v)); let html='';
+  for (const g of GROUPS){
+    const list = byG[g.id].slice(0, TOPN); if (!list.length) continue;
+    let n=0,ok=0,low=0,out=0; const rows=[];
+    const byV = {}; for (const it of list){ const vk = it.vendor||'(벤더 미상)'; (byV[vk] = byV[vk] || []).push(it); }
+    for (const it of list){ const st = itemState('top500', it.code); const sv = st && st.s; n++; if(sv==='ok')ok++; else if(sv==='low')low++; else if(sv==='out')out++; }
+    tAll+=n; tOk+=ok; tLow+=low; tOut+=out;
+    for (const v of Object.keys(byV).sort()){
+      const vr = [];
+      for (const it of byV[v]){
+        const st = itemState('top500', it.code); const sv = st && st.s; const key = fbKey(it.code);
+        if (FILTER==='todo' && sv) continue; if (FILTER==='issue' && !(sv==='low'||sv==='out')) continue;
+        vr.push(`<div class="item" data-v="top500" data-id="${esc(it.code)}">
+          <img loading="lazy" src="./top500/photos/${esc(it.code)}.jpg" onerror="this.style.visibility='hidden'">
+          <div class="nm">#${it.rank} ${esc(it.name)}<small>${esc(it.cat)} · <code>${esc(it.code)}</code> · 판매 ${it.qty||0}${st&&st.by?' · '+esc(st.by):''}</small></div>
+          <div class="st"><button class="ok ${sv==='ok'?'on':''}" onclick="setState('top500','${key}','ok',this)">✅ 있음</button><button class="low ${sv==='low'?'on':''}" onclick="setState('top500','${key}','low',this)">⚠️ 부족</button><button class="out ${sv==='out'?'on':''}" onclick="setState('top500','${key}','out',this)">❌ 품절</button></div>
+          <div class="detail ${(sv==='low'||sv==='out')?'show':''}" style="grid-template-columns:1fr 1fr 1fr">
+            <label>재입고 예정 (ETA)<input type="date" value="${esc(st&&st.eta||'')}" onchange="setField('top500','${key}','eta',this.value)"></label>
+            <label>필요 수량 (지원/발주)<input type="text" inputmode="decimal" value="${esc(st&&st.qty||'')}" placeholder="예: 3 케이스 · 12 개" onchange="setField('top500','${key}','qty',this.value)"></label>
+            <label>발주 여부<select onchange="setField('top500','${key}','ord',this.value)"><option value="">— 선택 —</option><option value="ordered" ${st&&st.ord==='ordered'?'selected':''}>발주함</option><option value="not" ${st&&st.ord==='not'?'selected':''}>미발주</option><option value="vendor_out" ${st&&st.ord==='vendor_out'?'selected':''}>벤더 품절</option><option value="disc" ${st&&st.ord==='disc'?'selected':''}>단종/취급중단</option></select></label>
+            <label class="full">메모<input type="text" value="${esc(st&&st.note||'')}" placeholder="예: 2케이스 남음, 금요일 입고" onchange="setField('top500','${key}','note',this.value)"></label>
+          </div></div>`);
+      }
+      if (vr.length) rows.push(`<div class="cat">${esc(v)} <small style="color:#6b7280;font-weight:500">(${byV[v].length})</small></div>` + vr.join(''));
+    }
+    if (!rows.length && FILTER!=='all') continue;
+    const open = expandedAll || openSet.has(g.id) || (low+out>0 && FILTER==='issue');
+    html += `<div class="card"><div class="vh ${open?'open':''}" data-v="${g.id}" onclick="this.classList.toggle('open')"><span class="chev">▶</span><h3>${esc(g.ko)}</h3><span class="prog">${ok+low+out}/${n} 확인 · <span style="color:#92400e">부족 ${low}</span> · <span style="color:#991b1b">품절 ${out}</span></span></div><div class="vbody">${rows.join('')}</div></div>`;
+  }
+  host.innerHTML = html || '<div class="empty">해당 조건의 상품이 없습니다.</div>';
+  document.getElementById('cAll').textContent=tAll; document.getElementById('cOk').textContent=tOk; document.getElementById('cLow').textContent=tLow; document.getElementById('cOut').textContent=tOut;
+}
+function vendorLabel(v){ if (v==='top500') return 'Top 500';  const m = VENDORS.find(x=>x.id===v); return m ? (m.nameKr ? m.nameKr + ' · ' + m.name : m.name) : v; }
+function itemState(v, id){ const g = DATA.g[v]; return g && g[fbKey(id)] ? g[fbKey(id)] : null; }
+function renderVendors(){
+  if (SRC === 'top500') return renderTop500();
+  document.getElementById('cAllLbl').textContent = '⭐ TOP PICK';
+  const host = document.getElementById('vendors');
+  const vendors = Object.keys(STARS).sort((a,b) => STARS[b].size - STARS[a].size);
+  if (!vendors.length){ host.innerHTML = '<div class="empty">⭐ TOP PICK 으로 지정된 상품이 없습니다. 발주 앱(Order Center)에서 사장님이 ⭐ 를 켜면 여기 나타납니다.</div>'; return; }
+  let tAll=0,tOk=0,tLow=0,tOut=0; const openSet = new Set([...document.querySelectorAll('.vh.open')].map(x=>x.dataset.v));
+  let html = '';
+  for (const v of vendors){
+    const cat = CAT[v] || {}; const groups = {}; let n=0,ok=0,low=0,out=0;
+    for (const id of STARS[v]){
+      const p = cat[id] || { n:id, k:'', s:'', c:'(카탈로그 없음)', i:'' };
+      const st = itemState(v,id); const s = st && st.s;
+      n++; if (s==='ok') ok++; else if (s==='low') low++; else if (s==='out') out++;
+      if (FILTER==='todo' && s) continue; if (FILTER==='issue' && !(s==='low'||s==='out')) continue;
+      (groups[p.c||'기타'] = groups[p.c||'기타'] || []).push({ id, p, st });
+    }
+    tAll+=n; tOk+=ok; tLow+=low; tOut+=out;
+    const cats = Object.keys(groups).sort();
+    if (!cats.length && FILTER!=='all') continue;
+    const open = expandedAll || openSet.has(v) || (low+out>0 && FILTER==='issue');
+    html += `<div class="card"><div class="vh ${open?'open':''}" data-v="${esc(v)}" onclick="this.classList.toggle('open')"><span class="chev">▶</span><h3>${esc(vendorLabel(v))}</h3><span class="prog">${ok+low+out}/${n} 확인 · <span style="color:#92400e">부족 ${low}</span> · <span style="color:#991b1b">품절 ${out}</span></span></div><div class="vbody">`;
+    for (const c of cats){
+      html += `<div class="cat">${esc(c)} <small style="color:#6b7280;font-weight:500">(${groups[c].length})</small></div>`;
+      groups[c].sort((a,b)=> (a.p.k||a.p.n).localeCompare(b.p.k||b.p.n,'ko'));
+      for (const {id,p,st} of groups[c]){
+        const s = st && st.s; const key = fbKey(id);
+        html += `<div class="item" data-v="${esc(v)}" data-id="${esc(id)}">
+          ${p.i ? `<img loading="lazy" src="${esc(imgUrl(p.i))}" onerror="this.style.visibility='hidden'">` : '<div></div>'}
+          <div class="nm">${esc(p.k||p.n)}<small>${esc(p.k?p.n:'')} ${p.s?'· '+esc(p.s):''} · <code>${esc(id)}</code>${st&&st.by?' · '+esc(st.by):''}</small></div>
+          <div class="st"><button class="ok ${s==='ok'?'on':''}" onclick="setState('${esc(v)}','${key}','ok',this)">✅ 있음</button><button class="low ${s==='low'?'on':''}" onclick="setState('${esc(v)}','${key}','low',this)">⚠️ 부족</button><button class="out ${s==='out'?'on':''}" onclick="setState('${esc(v)}','${key}','out',this)">❌ 품절</button></div>
+          <div class="detail ${(s==='low'||s==='out')?'show':''}" style="grid-template-columns:1fr 1fr 1fr">
+            <label>재입고 예정 (ETA)<input type="date" value="${esc(st&&st.eta||'')}" onchange="setField('${esc(v)}','${key}','eta',this.value)"></label>
+            <label>필요 수량 (지원/발주)<input type="text" inputmode="decimal" value="${esc(st&&st.qty||'')}" placeholder="예: 3 케이스 · 12 개" onchange="setField('${esc(v)}','${key}','qty',this.value)"></label>
+            <label>발주 여부<select onchange="setField('${esc(v)}','${key}','ord',this.value)"><option value="">— 선택 —</option><option value="ordered" ${st&&st.ord==='ordered'?'selected':''}>발주함</option><option value="not" ${st&&st.ord==='not'?'selected':''}>미발주</option><option value="vendor_out" ${st&&st.ord==='vendor_out'?'selected':''}>벤더 품절</option><option value="disc" ${st&&st.ord==='disc'?'selected':''}>단종/취급중단</option></select></label>
+            <label class="full">메모 (남은 수량 · 대체품 등)<input type="text" value="${esc(st&&st.note||'')}" placeholder="예: 2케이스 남음, 금요일 입고" onchange="setField('${esc(v)}','${key}','note',this.value)"></label>
+          </div></div>`;
+      }
+    }
+    html += '</div></div>';
+  }
+  host.innerHTML = html || '<div class="empty">해당 조건의 상품이 없습니다.</div>';
+  document.getElementById('cAll').textContent=tAll; document.getElementById('cOk').textContent=tOk; document.getElementById('cLow').textContent=tLow; document.getElementById('cOut').textContent=tOut;
+}
+window.setState = async function(v, key, s, btn){
+  const path = `stockCheck/${BRANCH}/${DATE}/g/${v}/${key}`;
+  const prev = (DATA.g[v]||{})[key] || {};
+  const rec = { ...prev, s, by: ME.name||'?', ts: Date.now() };
+  if (s==='ok'){ delete rec.eta; delete rec.ord; }
+  (DATA.g[v] = DATA.g[v] || {})[key] = rec;
+  const row = btn.closest('.item'); row.querySelectorAll('.st button').forEach(b => b.classList.toggle('on', b===btn)); row.querySelector('.detail').classList.toggle('show', s!=='ok');
+  try { await FB.set(FB.ref(FB.db, path), rec); } catch(e){ toast('저장 실패: ' + (e.message||e)); }
+  // 요약 숫자만 갱신 (전체 재렌더 X — 스크롤 유지)
+  recount();
+};
+window.setField = async function(v, key, f, val){
+  const path = `stockCheck/${BRANCH}/${DATE}/g/${v}/${key}`;
+  const rec = (DATA.g[v]||{})[key]; if (!rec) return;
+  rec[f] = val; rec.by = ME.name||'?'; rec.ts = Date.now();
+  try { await FB.update(FB.ref(FB.db, path), { [f]: val, by: rec.by, ts: rec.ts }); } catch(e){ toast('저장 실패'); }
+};
+function recount(){
+  if (SRC==='top500'){ renderTop500(); return; }
+  let a=0,o=0,l=0,x=0;
+  for (const v in STARS) for (const id of STARS[v]){ a++; const st=itemState(v,id); if(!st) continue; if(st.s==='ok')o++; else if(st.s==='low')l++; else if(st.s==='out')x++; }
+  document.getElementById('cAll').textContent=a; document.getElementById('cOk').textContent=o; document.getElementById('cLow').textContent=l; document.getElementById('cOut').textContent=x;
+  document.querySelectorAll('.vh').forEach(h => { const v=h.dataset.v; let n=0,ok=0,low=0,out=0; for (const id of (STARS[v]||[])){ n++; const st=itemState(v,id); if(!st) continue; if(st.s==='ok')ok++; else if(st.s==='low')low++; else if(st.s==='out')out++; } h.querySelector('.prog').innerHTML = `${ok+low+out}/${n} 확인 · <span style="color:#92400e">부족 ${low}</span> · <span style="color:#991b1b">품절 ${out}</span>`; });
+}
+
+// ---------- B. 신선·서비스 7부문 ----------
+var SEG = {
+  disp: [['good','충분 · 진열 양호','good'],['need','보충 필요','warn'],['empty','비어 있음','bad']],
+  eng:  [['done','영어 사인·라벨 완료','good'],['partial','일부만','warn'],['none','없음','bad']],
+  clean:[['ok','청결·기한 OK','good'],['issue','문제 있음','bad']],
+};
+function renderDepts(){
+  const host = document.getElementById('depts'); if (!host) return; let html='';
+  for (const d of DEPTS){
+    const r = DATA.f[d.id] || {};
+    const seg = (f) => `<div class="seg">${SEG[f].map(([val,lab,cls]) => `<button class="${cls} ${r[f]===val?'on':''}" onclick="setDept('${d.id}','${f}','${val}',this)">${lab}</button>`).join('')}</div>`;
+    html += `<div class="card dept"><h3>${d.icon} ${esc(d.ko)} <span style="font-size:11px;color:#6b7280;font-weight:500">${esc(d.en)}${r.by?' · '+esc(r.by)+' '+new Date(r.ts||0).toTimeString().slice(0,5):''}</span></h3>
+      <div class="row"><label>진열 상태</label>${seg('disp')}</div>
+      <div class="row"><label>결품·부족 품목</label><input type="text" value="${esc(r.short||'')}" placeholder="예: 깻잎, 무 / 광어, 새우 / LA갈비" onchange="setDeptField('${d.id}','short',this.value)"></div>
+      <div class="row"><label>영어 준비</label>${seg('eng')}</div>
+      <div class="row"><label>청결·기한</label>${seg('clean')}</div>
+      <div class="row"><label>지원 요청</label><input type="text" value="${esc(r.support||'')}" placeholder="다른 지점에서 받고 싶은 품목 · 수량 (예: 배추김치 5통, 삼겹살 20lb)" onchange="setDeptField('${d.id}','support',this.value)"></div>
+      <div class="row"><label>메모</label><input type="text" value="${esc(r.note||'')}" placeholder="특이사항" onchange="setDeptField('${d.id}','note',this.value)"></div>
+    </div>`;
+  }
+  host.innerHTML = html;
+}
+window.setDept = async function(dept, f, val, btn){
+  const r = (DATA.f[dept] = DATA.f[dept] || {}); r[f]=val; r.by=ME.name||'?'; r.ts=Date.now();
+  btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b===btn));
+  try { await FB.update(FB.ref(FB.db, `stockCheck/${BRANCH}/${DATE}/f/${dept}`), { [f]: val, by:r.by, ts:r.ts }); } catch(e){ toast('저장 실패'); }
+};
+window.setDeptField = async function(dept, f, val){
+  const r = (DATA.f[dept] = DATA.f[dept] || {}); r[f]=val; r.by=ME.name||'?'; r.ts=Date.now();
+  try { await FB.update(FB.ref(FB.db, `stockCheck/${BRANCH}/${DATE}/f/${dept}`), { [f]: val, by:r.by, ts:r.ts }); } catch(e){ toast('저장 실패'); }
+};
+
+// ---------- 제출 + 채팅 보고 ----------
+function pname(v,id){ if (v==='top500'){ const t=t500Name(id); return t ? {n:t.name, k:'', s:t.cat} : {n:id}; } return (CAT[v]||{})[id]||{n:id}; }
+function summarize(){
+  const lines = []; let ok=0, low=[], out=[];
+  const src = SRC==='top500' ? { top500: new Set(Object.keys(T500[BRANCH]||{})) } : STARS;
+  for (const v in src) for (const id of src[v]){ const st=itemState(v,id); if(!st) continue; const p=pname(v,id); const nm=(p.k||p.n||id)+(p.s?' '+p.s:''); const tail=(st.qty?' · 필요 '+st.qty:'')+(st.eta?' · 입고예정 '+st.eta:'')+(st.ord==='ordered'?' · 발주함':st.ord==='not'?' · 미발주':st.ord==='vendor_out'?' · 벤더품절':st.ord==='disc'?' · 단종':'')+(st.note?' · '+st.note:''); if(st.s==='ok') ok++; else if(st.s==='low') low.push('⚠️ '+nm+' ['+vendorLabel(v).split(' · ')[0]+']'+tail); else if(st.s==='out') out.push('❌ '+nm+' ['+vendorLabel(v).split(' · ')[0]+']'+tail); }
+  let total=0; for (const v in src) total += src[v].size;
+  const fresh = DEPTS.map(d => { const r=DATA.f[d.id]; if(!r) return null; const disp = r.disp==='good'?'양호':r.disp==='need'?'보충필요':r.disp==='empty'?'비어있음':'미입력'; const eng = r.eng==='done'?'영어✅':r.eng==='partial'?'영어△':r.eng==='none'?'영어❌':''; return `${d.icon} ${d.ko}: ${disp} ${eng}${r.short?' · 결품: '+r.short:''}${r.support?' · 🚚요청: '+r.support:''}${r.clean==='issue'?' · ⚠️청결/기한':''}`; }).filter(Boolean);
+  return { ok, low, out, total, fresh, checked: ok+low.length+out.length };
+}
+async function submit(){
+  const s = summarize();
+  if (!s.checked && !s.fresh.length){ toast('입력된 내용이 없습니다'); return; }
+  const btn = document.getElementById('btnSubmit'); btn.disabled = true;
+  const ts = Date.now(); const by = ME.name||'?';
+  try {
+    const meta = {};
+    if (TAB==='g' || s.checked) meta.g = { submittedAt: ts, by, total: s.total, checked: s.checked, ok: s.ok, low: s.low.length, out: s.out.length };
+    if (TAB==='f' || s.fresh.length) meta.f = { submittedAt: ts, by, filled: s.fresh.length };
+    await FB.update(FB.ref(FB.db, `stockCheck/${BRANCH}/${DATE}/meta`), meta);
+    DATA.meta = { ...DATA.meta, ...meta };
+    // 채팅 보고
+    const head = `📋 [${bLabel(BRANCH)}] 핵심재고 점검 ${DATE} — ${by}`;
+    const gLine = s.total ? `🛒 그로서리 ⭐${s.total}개 중 ${s.checked} 확인 · 있음 ${s.ok} · 부족 ${s.low.length} · 품절 ${s.out.length}` : '';
+    const issues = [...s.out, ...s.low].slice(0, 40);
+    const text = [head, gLine, ...(issues.length?['— 부족·품절 —', ...issues]:[]), ...(s.fresh.length?['— 신선·서비스 —', ...s.fresh]:[])].filter(Boolean).join('\n');
+    const msgId = `sc_${BRANCH}_${DATE}_${ts}`;
+    const msg = { sender: by, senderBranch: BRANCH, senderRole: ME.role||'STAFF', isManager: !!ME.isManager, color: ME.color||'#1B7741', text, ts, photos: [], meta: { kind:'stock_check', branch: BRANCH, date: DATE, ok:s.ok, low:s.low.length, out:s.out.length } };
+    const roomPatch = { lastMsg: '📋 ' + bLabel(BRANCH) + ' 핵심재고 점검 (부족 ' + s.low.length + ' · 품절 ' + s.out.length + ')', lastTs: ts, lastSender: by };
+    if (DEMO){ /* 데모: 채팅 게시 생략 */ }
+    else if (window.kmChatQueue && typeof window.kmChatQueue.send === 'function'){
+      await window.kmChatQueue.send({ room: ROOM_LOGI, msgId, msg, roomPatch });
+    } else {
+      await FB.set(FB.ref(FB.db, `chat/messages/${ROOM_LOGI}/${msgId}`), msg);
+      await FB.update(FB.ref(FB.db, `chat/rooms/${ROOM_LOGI}`), roomPatch).catch(()=>{});
+    }
+    toast('✅ 제출 완료 — 재고 부족/과다 방에 보고됨'); tickDeadline();
+  } catch(e){ console.error(e); toast('제출 실패: ' + (e.message||e)); }
+  btn.disabled = false;
+}
+
+// ---------- 대시보드 / 지원요청 ----------
+async function loadAllBranches(){
+  ALLDAY = {};
+  await Promise.all(BRANCHES.map(b => loadTop500(b.id)));
+  await Promise.all(BRANCHES.map(async b => { try { const snap = await FB.get(FB.ref(FB.db, `stockCheck/${b.id}/${DATE}`)); ALLDAY[b.id] = snap.val() || {}; } catch(e){ ALLDAY[b.id] = {}; } }));
+  renderDash(); renderSupport();
+}
+function renderDash(){
+  const now = new Date(); const late = DATE < todayStr() || (DATE===todayStr() && now.getHours() >= DEADLINE_H && !(now.getHours()===DEADLINE_H && now.getMinutes()===0));
+  let total = SRC==='top500' ? 500 : 0; if (SRC!=='top500') for (const v in STARS) total += STARS[v].size;
+  let html = '<tr><th>지점</th><th>그로서리<br>제출</th><th>확인/⭐</th><th>부족</th><th>품절</th>' + DEPTS.map(d=>`<th>${d.icon}<br><span style="font-weight:500">${esc(d.ko.split(' ')[0])}</span></th>`).join('') + '<th>신선<br>제출</th></tr>';
+  for (const b of BRANCHES){
+    const d = ALLDAY[b.id] || {}; const m = d.meta||{}; const g = d.g||{};
+    let ok=0,low=0,out=0; for (const v in g) for (const k in g[v]){ const s=g[v][k].s; if(s==='ok')ok++; else if(s==='low')low++; else if(s==='out')out++; }
+    const chk = ok+low+out;
+    const gSub = m.g&&m.g.submittedAt ? `<span class="pill g">${new Date(m.g.submittedAt).toTimeString().slice(0,5)}</span>` : (late ? '<span class="pill r">미제출</span>' : '<span class="pill x">대기</span>');
+    const fSub = m.f&&m.f.submittedAt ? `<span class="pill g">${new Date(m.f.submittedAt).toTimeString().slice(0,5)}</span>` : (late ? '<span class="pill r">미제출</span>' : '<span class="pill x">대기</span>');
+    const depts = DEPTS.map(dp => { const r=(d.f||{})[dp.id]; if(!r||!r.disp) return `<td><span class="dot ${late?'r':'x'}" title="미입력"></span></td>`; const cls = r.disp==='good'?'g':r.disp==='need'?'y':'r'; const eng = r.eng==='none'?' ❌':r.eng==='partial'?' △':''; return `<td><span class="dot ${cls}" title="${esc(r.short||'')}"></span>${eng}</td>`; }).join('');
+    html += `<tr><td style="font-weight:800;text-align:left">${esc(b.ko)}</td><td>${gSub}</td><td>${chk}/${total}</td><td style="color:#92400e;font-weight:800">${low||''}</td><td style="color:#991b1b;font-weight:800">${out||''}</td>${depts}<td>${fSub}</td></tr>`;
+  }
+  document.getElementById('dash').innerHTML = html;
+  // 상세: 지점별 부족·품절 목록
+  let det = '';
+  for (const b of BRANCHES){
+    const d = ALLDAY[b.id]||{}; const g=d.g||{}; const rows=[];
+    for (const v in g) for (const k in g[v]){ const st=g[v][k]; if(st.s==='low'||st.s==='out'){ const id=unKey(k); const p=pname(v,id); rows.push(`<div class="sup"><b>${st.s==='out'?'❌':'⚠️'} ${esc(p.k||p.n||id)} <small style="color:#6b7280">${esc(p.s||'')} · ${esc(vendorLabel(v).split(' · ')[0])}</small></b><span class="who">${st.qty?'필요 '+esc(st.qty)+' · ':''}${st.eta?'입고예정 '+esc(st.eta)+' · ':''}${st.ord==='ordered'?'발주함':st.ord==='not'?'미발주':st.ord==='vendor_out'?'벤더품절':st.ord==='disc'?'단종':''}${st.note?' · '+esc(st.note):''} · ${esc(st.by||'')}</span></div>`); } }
+    const fr = DEPTS.map(dp => { const r=(d.f||{})[dp.id]; if(!r) return ''; return `<div class="sup"><b>${dp.icon} ${esc(dp.ko)} — ${r.disp==='good'?'양호':r.disp==='need'?'보충필요':r.disp==='empty'?'비어있음':'미입력'} · ${r.eng==='done'?'영어✅':r.eng==='partial'?'영어△':r.eng==='none'?'영어❌':'영어?'} · ${r.clean==='issue'?'⚠️청결/기한':'청결OK'}</b><span class="who">${r.short?'결품: '+esc(r.short)+' · ':''}${r.support?'🚚 '+esc(r.support)+' · ':''}${r.note?esc(r.note)+' · ':''}${esc(r.by||'')}</span></div>`; }).join('');
+    if (rows.length || fr) det += `<div class="card"><h3 style="margin:0 0 6px">${esc(b.ko)}</h3>${rows.join('')}${fr}</div>`;
+  }
+  document.getElementById('dashDetail').innerHTML = det;
+}
+function renderSupport(){
+  // 상품별: 부족/품절 지점 vs 있음 지점
+  const byItem = {}; // v|id -> {need:[{b,st}], have:[b]}
+  for (const b of BRANCHES){ const g=(ALLDAY[b.id]||{}).g||{}; for (const v in g) for (const k in g[v]){ const st=g[v][k]; const key=v+'|'+k; const e=(byItem[key]=byItem[key]||{v,k,need:[],have:[]}); if(st.s==='ok') e.have.push(b.id); else if(st.s==='low'||st.s==='out') e.need.push({b:b.id,st}); } }
+  const list = Object.values(byItem).filter(e=>e.need.length).sort((a,b)=> b.need.length - a.need.length);
+  let html = '';
+  if (list.length){
+    html += '<div class="card"><h3 style="margin:0 0 6px">🛒 그로서리 — 지점 간 지원 매칭</h3>';
+    for (const e of list){ const id=unKey(e.k); const p=pname(e.v,id);
+      html += `<div class="sup"><b>${esc(p.k||p.n||id)} <small style="color:#6b7280">${esc(p.s||'')} · ${esc(vendorLabel(e.v).split(' · ')[0])}</small></b><span class="who">필요: ${e.need.map(n=>`<span class="pill ${n.st.s==='out'?'r':'y'}">${esc(bLabel(n.b))}${n.st.qty?' 필요 '+esc(n.st.qty):''}${n.st.eta?' ETA '+esc(n.st.eta):''}</span>`).join(' ')} &nbsp; 보유: ${e.have.length? e.have.map(h=>`<span class="pill g">${esc(bLabel(h))}</span>`).join(' ') : '<span class="pill x">없음 — 벤더 발주</span>'}</span></div>`; }
+    html += '</div>';
+  }
+  const fr = [];
+  for (const b of BRANCHES){ const f=(ALLDAY[b.id]||{}).f||{}; for (const d of DEPTS){ const r=f[d.id]; if(r && (r.support || r.disp==='empty')) fr.push(`<div class="sup"><b>${d.icon} ${esc(d.ko)} · ${esc(b.ko)}</b><span class="who">${r.support?'🚚 '+esc(r.support):''}${r.disp==='empty'?' · 비어있음':''}${r.short?' · 결품: '+esc(r.short):''} · ${esc(r.by||'')}</span></div>`); } }
+  if (fr.length) html += '<div class="card"><h3 style="margin:0 0 6px">🥬 신선·서비스 — 지원 요청</h3>' + fr.join('') + '</div>';
+  html += `<div class="card"><button class="btn" style="width:100%" onclick="postSupport()">🚚 오늘 지원 매칭을 재고 부족/과다 방에 게시</button></div>`;
+  document.getElementById('support').innerHTML = html || '<div class="empty">오늘 보고된 부족·품절이 없습니다.</div>';
+}
+window.postSupport = async function(){
+  const byItem = {};
+  for (const b of BRANCHES){ const g=(ALLDAY[b.id]||{}).g||{}; for (const v in g) for (const k in g[v]){ const st=g[v][k]; const key=v+'|'+k; const e=(byItem[key]=byItem[key]||{v,k,need:[],have:[]}); if(st.s==='ok') e.have.push(bLabel(b.id)); else if(st.s==='low'||st.s==='out') e.need.push((st.s==='out'?'❌':'⚠️')+bLabel(b.id)+(st.qty?' 필요 '+st.qty:'')+(st.eta?'(ETA '+st.eta+')':'')); } }
+  const lines = Object.values(byItem).filter(e=>e.need.length).map(e => { const id=unKey(e.k); const p=pname(e.v,id); return `• ${p.k||p.n||id} [${vendorLabel(e.v).split(' · ')[0]}] 필요: ${e.need.join(', ')} → 보유: ${e.have.length?e.have.join(', '):'없음(벤더 발주)'}`; });
+  const fr = []; for (const b of BRANCHES){ const f=(ALLDAY[b.id]||{}).f||{}; for (const d of DEPTS){ const r=f[d.id]; if(r && r.support) fr.push(`• ${d.icon} ${d.ko} · ${b.ko}: ${r.support}`); } }
+  if (!lines.length && !fr.length){ toast('게시할 내용이 없습니다'); return; }
+  const ts = Date.now(); const by = ME.name||'?';
+  const text = [`🚚 지점 간 지원 매칭 ${DATE} (5개 지점 집계)`, ...(lines.length?['— 그로서리 —', ...lines.slice(0,60)]:[]), ...(fr.length?['— 신선·서비스 —', ...fr]:[])].join('\n');
+  const msgId = `scs_${DATE}_${ts}`;
+  const msg = { sender: by, senderBranch: BRANCH, senderRole: ME.role||'STAFF', isManager: !!ME.isManager, color: ME.color||'#3753A4', text, ts, photos: [], meta: { kind:'stock_check_support', date: DATE } };
+  const roomPatch = { lastMsg: '🚚 지점 간 지원 매칭 ' + DATE, lastTs: ts, lastSender: by };
+  try { if (DEMO) {} else if (window.kmChatQueue && window.kmChatQueue.send) await window.kmChatQueue.send({ room: ROOM_LOGI, msgId, msg, roomPatch }); else { await FB.set(FB.ref(FB.db, `chat/messages/${ROOM_LOGI}/${msgId}`), msg); await FB.update(FB.ref(FB.db, `chat/rooms/${ROOM_LOGI}`), roomPatch).catch(()=>{}); } toast('🚚 게시 완료'); } catch(e){ toast('게시 실패: '+(e.message||e)); }
+};
+window.addEventListener('storage', e => { if (e.key==='chat.me'){ ME = meObj(); document.getElementById('me').textContent = ME.name ? '👤 '+ME.name : ''; } });
+</script>
+</body>
+</html>
