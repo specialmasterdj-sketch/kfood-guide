@@ -145,6 +145,24 @@ body.fixmode .fixbar{display:flex;}
 /* 언어 선택 — 마이애미 매장이라 스페인어 직원이 많아 3개 언어를 고를 수 있게 함 */
 .langsel{border-style:solid; color:var(--ink); background:var(--card); appearance:auto;}
 
+/* 냉동·냉장 코너 */
+.coldwrap{margin:20px 0 0;}
+.coldgroup{margin:0 0 14px;}
+.coldgroup h3{font-size:12.5px; color:var(--sub); margin:0 0 7px; font-weight:700;}
+.coldgrid{display:flex; flex-wrap:wrap; gap:6px;}
+.coldunit{min-width:86px; padding:11px 8px; border-radius:8px; border:1px solid var(--line);
+  color:var(--ink); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11.5px;
+  cursor:pointer; text-align:center; transition:filter .1s;}
+.coldunit:hover{filter:brightness(1.08);}
+.coldunit.df{background:var(--a7); border-color:var(--a7b);}
+.coldunit.oc{background:var(--a1); border-color:var(--a1b);}
+.coldunit.dc{background:var(--a4); border-color:var(--a4b);}
+.coldunit.isfixed{box-shadow: inset 0 0 0 2px var(--accent); font-weight:700;}
+.coldunit .dot{display:inline-block; width:6px; height:6px; border-radius:50%; margin-left:4px; vertical-align:1px;}
+.coldunit .lock{display:inline-block; margin-left:3px; font-size:9.5px; vertical-align:1px;}
+body.fixmode .coldunit{cursor:crosshair;}
+body.fixmode .coldunit:hover{outline:2px solid var(--accent); outline-offset:-2px;}
+
 /* modal */
 .overlay{position:fixed; inset:0; background:rgba(10,15,10,.45); display:none; align-items:flex-start; justify-content:center; padding:4vh 12px; z-index:50; overflow-y:auto;}
 .overlay.show{display:flex;}
@@ -246,6 +264,11 @@ body.fixmode .fixbar{display:flex;}
   </div>
 
   <div class="floor" id="floor"></div>
+
+  <!-- 냉동·냉장 코너 — 통로 베이와 달리 배치가 벽면/섬 형태라 배치도 대신
+       유닛 목록으로 보여줌. 누르면 베이와 똑같이 선반 목록이 열림. -->
+  <div class="coldwrap" id="cold"></div>
+
   <datalist id="productNames"></datalist>
 
   <p class="note" id="pageNote">
@@ -294,7 +317,10 @@ var I18N = {
     fixAllConfirm: '베이 {n}개를 전부 고정으로 지정합니다. 그다음 유동인 곳만 눌러서 해제하시면 됩니다. 진행할까요?',
     fixNoneConfirm: '고정 지정을 전부 해제합니다. 진행할까요?',
     fixSaveFail: '저장 실패 — 되돌렸습니다: ',
-    fixBy: '🔒 고정 진열 · '
+    fixBy: '🔒 고정 진열 · ',
+    statCold: '냉동·냉장 유닛',
+    coldDF: '🧊 도어 프리저 (DF1~10)', coldOC: '❄️ 오픈 쿨러 (OC1~6)', coldDC: '🚪 도어 쿨러 (DC1~4)',
+    endcapTop: '안쪽 Endcap', endcapBottom: '입구 Endcap', emptyBay: '1 Bay 빈 공간'
   },
   en: {
     title: 'Kimchi Mart Hollywood — Shelf Manager',
@@ -328,7 +354,10 @@ var I18N = {
     fixAllConfirm: 'This marks all {n} bays as fixed. You can then tap the ones that stay flexible to unset them. Continue?',
     fixNoneConfirm: 'This clears every fixed marking. Continue?',
     fixSaveFail: 'Save failed — reverted: ',
-    fixBy: '🔒 Fixed position · '
+    fixBy: '🔒 Fixed position · ',
+    statCold: 'Cold units',
+    coldDF: '🧊 Door freezers (DF1–10)', coldOC: '❄️ Open coolers (OC1–6)', coldDC: '🚪 Door coolers (DC1–4)',
+    endcapTop: 'Inner endcap', endcapBottom: 'Entrance endcap', emptyBay: '1 bay empty'
   },
   // 마이애미 매장이라 스페인어를 쓰는 직원이 많음. 매대 용어는 소매 현장에서
   // 쓰는 말로: bay=bahía, endcap=cabecera, facing=frentes, shelf=estante.
@@ -364,7 +393,10 @@ var I18N = {
     fixAllConfirm: 'Se marcarán las {n} bahías como fijas. Después puede tocar las que sigan siendo flexibles para quitarlas. ¿Continuar?',
     fixNoneConfirm: 'Se quitarán todas las marcas de posición fija. ¿Continuar?',
     fixSaveFail: 'Error al guardar — se revirtió: ',
-    fixBy: '🔒 Posición fija · '
+    fixBy: '🔒 Posición fija · ',
+    statCold: 'Unidades de frío',
+    coldDF: '🧊 Congeladores de puerta (DF1–10)', coldOC: '❄️ Neveras abiertas (OC1–6)', coldDC: '🚪 Neveras de puerta (DC1–4)',
+    endcapTop: 'Cabecera interior', endcapBottom: 'Cabecera de entrada', emptyBay: '1 bahía vacía'
   }
 };
 var LANGS = ['ko', 'en', 'es'];
@@ -406,14 +438,16 @@ function buildColumn(rFace, lFace, topEndcap, bays, bottomEndcap, bottomEmpty){
   // 엔드캡도 베이처럼 클릭해서 사진 찍고 품목/수량을 적을 수 있어야 해서
   // 각 엔드캡에 고유 코드를 붙임 (같은 곤돌라 기둥 안에서 위/아래로 구분).
   var colKey = 'A' + rFace + (lFace ? ('A' + lFace) : '');
-  if (topEndcap) cells.push({kind:'endcap', label:'안쪽 Endcap', code:'EC-'+colKey+'-TOP', sub:'A'+rFace+(lFace?'/A'+lFace:'')});
+  // 라벨은 키만 담아두고 그릴 때 번역함 (layout 은 로드 시 한 번만 만들어지므로
+  // 여기서 한글 문자열을 박아두면 언어를 바꿔도 안 바뀜).
+  if (topEndcap) cells.push({kind:'endcap', labelKey:'endcapTop', code:'EC-'+colKey+'-TOP', sub:'A'+rFace+(lFace?'/A'+lFace:'')});
   bays.forEach(function(n){
     var faces = [{code: faceCode(rFace, 'R', n)}];
     if (lFace) faces.push({code: faceCode(lFace, 'L', n)});
     cells.push({kind:'bay', row:n, faces:faces});
   });
-  if (bottomEndcap) cells.push({kind:'endcap', label:'입구 Endcap', code:'EC-'+colKey+'-BOT', sub:'A'+rFace+(lFace?'/A'+lFace:'')});
-  if (bottomEmpty) cells.push({kind:'empty', label:'1 Bay 빈 공간'});
+  if (bottomEndcap) cells.push({kind:'endcap', labelKey:'endcapBottom', code:'EC-'+colKey+'-BOT', sub:'A'+rFace+(lFace?'/A'+lFace:'')});
+  if (bottomEmpty) cells.push({kind:'empty', labelKey:'emptyBay'});
   return cells.reverse(); // store bottom-first to match render()'s expectation
 }
 
@@ -430,6 +464,26 @@ var layout = [
   buildColumn(3, 2, true,  bayRange(11,1), true, true),
   buildColumn(2, 1, true,  bayRange(11,1), true, true),
 ];
+
+// ---- 냉동·냉장 코너 ----
+// 통로 베이는 곤돌라 양면 구조지만 냉동/냉장은 벽면·섬 형태라 배치도로 그리기
+// 어렵다. 그래서 유닛 목록으로 두고, 누르면 베이와 똑같은 선반 모달을 연다
+// (선반 수는 유닛마다 "+ 선반 추가"로 조절 — 도어 프리저는 보통 5단).
+function unitRange(prefix, from, to){
+  var out = [];
+  for (var n = from; n <= to; n++) out.push(prefix + n);
+  return out;
+}
+var COLD_GROUPS = [
+  { cls:'df', titleKey:'coldDF', codes: unitRange('DF', 1, 10) },
+  { cls:'oc', titleKey:'coldOC', codes: unitRange('OC', 1, 6) },
+  { cls:'dc', titleKey:'coldDC', codes: unitRange('DC', 1, 4) }
+];
+function allColdCodes(){
+  var out = [];
+  COLD_GROUPS.forEach(function(g){ g.codes.forEach(function(c){ out.push(c); }); });
+  return out;
+}
 
 // 선반 수는 베이마다 다를 수 있음(기본 5개, S01이 맨 아래).
 // "+ 선반 추가"/"- 맨 위 선반 숨기기" 로 베이별로 조절 가능 (아래 shelfCountCache 참고).
@@ -864,12 +918,12 @@ async function toggleFixed(bayId){
 // 하나씩 144번 누르는 것보다 훨씬 빠르다. 노드를 통째로 한 번에 쓴다.
 async function setFixedAll(on){
   if (!db){ showToast(t('dbUnavailable')); return; }
-  if (!confirm(on ? t('fixAllConfirm').replace('{n}', allBayCodes().length) : t('fixNoneConfirm'))) return;
+  if (!confirm(on ? t('fixAllConfirm').replace('{n}', allBayCodes().length + allColdCodes().length) : t('fixNoneConfirm'))) return;
   var prev = fixedMap;
   var next = {};
   if (on){
     var stamp = { at: todayStr(), by: meName() };
-    allBayCodes().forEach(function(code){ next[code] = prev[code] || stamp; });
+    allBayCodes().concat(allColdCodes()).forEach(function(code){ next[code] = prev[code] || stamp; });
   }
   fixedMap = next;
   render();
@@ -926,16 +980,16 @@ function render(){
         var b = document.createElement('button');
         b.className = 'face endcap';
         var stE = statusFor(cell.code);
-        b.innerHTML = cell.label + '<span class="dot ' + stE + '"></span>';
+        b.innerHTML = t(cell.labelKey) + '<span class="dot ' + stE + '"></span>';
         b.addEventListener('click', function(){
           if (fixMode){ showToast(t('fixEndcap')); return; }
-          openBay(cell.code, cell.label + (cell.sub ? ' · ' + cell.sub : ''));
+          openBay(cell.code, t(cell.labelKey) + (cell.sub ? ' · ' + cell.sub : ''));
         });
         wrap.appendChild(b);
       } else if (cell.kind === 'empty'){
         var b2 = document.createElement('div');
         b2.className = 'face empty';
-        b2.textContent = cell.label;
+        b2.textContent = t(cell.labelKey);
         wrap.appendChild(b2);
       } else {
         cell.faces.forEach(function(f){
@@ -961,20 +1015,56 @@ function render(){
   appendLane(LANE_NUMBERS[LANE_NUMBERS.length - 1]);
 
   floor.appendChild(grid);
+  renderCold();
   renderStats();
 }
 
+function renderCold(){
+  var wrap = document.getElementById('cold');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  COLD_GROUPS.forEach(function(g){
+    var box = document.createElement('div');
+    box.className = 'coldgroup';
+    var h = document.createElement('h3');
+    h.textContent = t(g.titleKey);
+    box.appendChild(h);
+    var grid = document.createElement('div');
+    grid.className = 'coldgrid';
+    g.codes.forEach(function(code){
+      var btn = document.createElement('button');
+      var isFixed = !!fixedMap[code];
+      btn.type = 'button';
+      btn.className = 'coldunit ' + g.cls + (isFixed ? ' isfixed' : '');
+      btn.dataset.bay = code;
+      btn.innerHTML = code + (isFixed ? '<span class="lock">🔒</span>' : '') +
+        '<span class="dot ' + statusFor(code) + '"></span>';
+      btn.addEventListener('click', function(){
+        if (fixMode){ toggleFixed(code); return; }
+        openBay(code);
+      });
+      grid.appendChild(btn);
+    });
+    box.appendChild(grid);
+    wrap.appendChild(box);
+  });
+}
+
 function renderStats(){
-  var allBays = allBayCodes();
+  var bays = allBayCodes();
+  var cold = allColdCodes();
+  // 점검 현황(체크완료/미점검/기록없음)은 냉동·냉장까지 합쳐서 세야 "오늘 매장을
+  // 얼마나 돌았나"가 맞게 나온다. 전체 개수는 베이/냉동냉장을 따로 보여줌.
   var done=0, pending=0, none=0, fixedN=0;
-  allBays.forEach(function(b){
+  bays.concat(cold).forEach(function(b){
     var s = statusFor(b);
     if (s==='done') done++; else if (s==='pending') pending++; else none++;
     if (fixedMap[b]) fixedN++;
   });
   var el = document.getElementById('stats');
   el.innerHTML =
-    '<div class="stat"><b>' + allBays.length + '</b><span>'+t('statTotal')+'</span></div>' +
+    '<div class="stat"><b>' + bays.length + '</b><span>'+t('statTotal')+'</span></div>' +
+    '<div class="stat"><b>' + cold.length + '</b><span>'+t('statCold')+'</span></div>' +
     '<div class="stat"><b style="color:var(--accent)">🔒 ' + fixedN + '</b><span>'+t('statFixed')+'</span></div>' +
     '<div class="stat"><b style="color:var(--ok)">' + done + '</b><span>'+t('statDone')+'</span></div>' +
     '<div class="stat"><b style="color:var(--warn)">' + pending + '</b><span>'+t('statPending')+'</span></div>' +
