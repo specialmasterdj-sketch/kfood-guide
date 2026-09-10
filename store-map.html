@@ -142,6 +142,8 @@ body.fixmode .fixbar{display:flex;}
 .fixbar button{font-size:12px; border-radius:6px; padding:6px 11px; cursor:pointer; border:1px solid var(--line); background:none; color:var(--ink);}
 .fixbar button.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent);}
 #fixModeBtn.on{background:var(--accent); color:var(--accent-ink); border-style:solid; border-color:var(--accent);}
+/* 언어 선택 — 마이애미 매장이라 스페인어 직원이 많아 3개 언어를 고를 수 있게 함 */
+.langsel{border-style:solid; color:var(--ink); background:var(--card); appearance:auto;}
 
 /* modal */
 .overlay{position:fixed; inset:0; background:rgba(10,15,10,.45); display:none; align-items:flex-start; justify-content:center; padding:4vh 12px; z-index:50; overflow-y:auto;}
@@ -207,7 +209,11 @@ body.fixmode .fixbar{display:flex;}
     </div>
     <div style="flex:none; display:flex; gap:6px; margin-top:2px;">
       <button type="button" class="addbtn" id="fixModeBtn">🔒 고정 지정</button>
-      <button type="button" class="addbtn" id="langToggleBtn">EN</button>
+      <select class="addbtn langsel" id="langSelect" aria-label="Language">
+        <option value="ko">한글</option>
+        <option value="en">English</option>
+        <option value="es">Español</option>
+      </select>
     </div>
   </div>
 
@@ -323,10 +329,59 @@ var I18N = {
     fixNoneConfirm: 'This clears every fixed marking. Continue?',
     fixSaveFail: 'Save failed — reverted: ',
     fixBy: '🔒 Fixed position · '
+  },
+  // 마이애미 매장이라 스페인어를 쓰는 직원이 많음. 매대 용어는 소매 현장에서
+  // 쓰는 말로: bay=bahía, endcap=cabecera, facing=frentes, shelf=estante.
+  es: {
+    title: 'Kimchi Mart Hollywood — Gestión de estanterías',
+    subtitle: 'Plano completo, pasillos 1–7 · Toque una bahía → estantes (S01–S05) → productos/código de barras/inventario',
+    legendBay: 'Bahía', legendEndcap: 'Cabecera', legendEmpty: 'Espacio vacío',
+    legendDone: 'Revisado hoy', legendPending: 'Sin revisar',
+    statTotal: 'Bahías totales (ambos lados)', statDone: 'Revisado hoy', statPending: 'Revisado en parte', statNone: 'Sin registro',
+    note: 'Toque el nombre de una bahía para abrir su lista de estantes (S01 abajo → S05 arriba). Toque un estante para ingresar productos, código de barras, frentes e inventario mínimo, y presione "Marcar revisado" cuando lo haya verificado hoy.',
+    close: 'Cerrar',
+    bayPhotoTitle: '📷 Foto de la bahía', photoChange: 'Cambiar foto', photoAdd: 'Agregar foto', photoDelete: 'Eliminar',
+    photoLoading: 'Cargando foto…', photoLoadFail: 'Error al cargar: ',
+    rowPos: 'Pos', rowName: 'Producto', rowNamePh: 'Nombre del producto (buscar por nombre)', rowBarcode: 'Código de barras', rowFacing: 'Frentes', rowMinStock: 'Inventario mín.', rowPhoto: 'Foto',
+    addItem: '+ Agregar producto', scanAddItem: '📷 Agregar escaneando código', photoUrlPh: 'URL de foto de referencia (opcional)',
+    checkDone: '✓ Revisado hoy', checkMark: 'Marcar revisado hoy',
+    save: 'Guardar', saving: 'Guardando…', saved: 'Guardado ✓', saveFail: 'Error al guardar',
+    addShelf: '+ Agregar estante (arriba)', removeShelf: '- Ocultar estante superior',
+    scanTitle: '📷 Escanear código de barras', scanHint: 'Alinee el código dentro de la pantalla',
+    productPhotoTitle: '📷 Foto del producto',
+    itemsCount: ' productos', doneToday: ' · revisado hoy', notChecked: ' · sin revisar',
+    loading: 'Cargando…', loadFail: 'Error al cargar', dbUnavailable: 'Base de datos no disponible',
+    syncFail: 'Error de sincronización: ', retry: 'Reintentar', retrying: 'Reintentando…',
+    scanNotFound: 'No se encontró el nombre del producto (código ', scanNotFoundSuffix: '). Ingréselo manualmente.',
+    langToggle: 'Español',
+    legendFixed: 'Posición fija',
+    statFixed: 'Posición fija',
+    fixModeOn: '🔒 Marcar fijas', fixModeOff: '✓ Terminar',
+    fixHint: 'Toque una bahía para marcarla como posición fija. Tóquela de nuevo para quitarla. Las cabeceras son espacio de promoción y no se pueden fijar.',
+    fixAll: 'Fijar todas', fixNone: 'Quitar todas', fixDone: 'Terminar',
+    fixSet: 'Marcada como fija · ', fixUnset: 'Posición fija quitada · ',
+    fixEndcap: 'Las cabeceras son espacio de promoción y no se pueden fijar.',
+    fixAllConfirm: 'Se marcarán las {n} bahías como fijas. Después puede tocar las que sigan siendo flexibles para quitarlas. ¿Continuar?',
+    fixNoneConfirm: 'Se quitarán todas las marcas de posición fija. ¿Continuar?',
+    fixSaveFail: 'Error al guardar — se revirtió: ',
+    fixBy: '🔒 Posición fija · '
   }
 };
+var LANGS = ['ko', 'en', 'es'];
 var lang = (function(){
-  try { return localStorage.getItem('kmLang') === 'en' ? 'en' : 'ko'; } catch(e){ return 'ko'; }
+  // 저장된 선택이 우선. 없으면 폰/브라우저 언어를 보고 스페인어면 es 로 시작
+  // (마이애미 매장 — 스페인어 직원이 처음부터 자기 언어로 보게).
+  try {
+    var saved = localStorage.getItem('kmLang');
+    if (LANGS.indexOf(saved) !== -1) return saved;
+  } catch(e){}
+  try {
+    var nav = (navigator.language || '').toLowerCase();
+    if (nav.indexOf('es') === 0) return 'es';
+    if (nav.indexOf('ko') === 0) return 'ko';
+    if (nav.indexOf('en') === 0) return 'en';
+  } catch(e){}
+  return 'ko';
 })();
 function t(key){ return (I18N[lang] && I18N[lang][key] != null) ? I18N[lang][key] : (I18N.ko[key] || key); }
 
@@ -1214,8 +1269,9 @@ function applyStaticI18n(){
     var el = document.getElementById(id);
     if (el) el.textContent = t(map[id]);
   });
-  var langBtn = document.getElementById('langToggleBtn');
-  if (langBtn) langBtn.textContent = t('langToggle');
+  var langSel = document.getElementById('langSelect');
+  if (langSel) langSel.value = lang;
+  try { document.documentElement.lang = lang; } catch(e){}
   var fixBtn = document.getElementById('fixModeBtn');
   if (fixBtn) fixBtn.textContent = fixMode ? t('fixModeOff') : t('fixModeOn');
 }
@@ -1285,8 +1341,10 @@ document.getElementById('fixDoneBtn').addEventListener('click', function(){ setF
 document.getElementById('fixAllBtn').addEventListener('click', function(){ setFixedAll(true); });
 document.getElementById('fixNoneBtn').addEventListener('click', function(){ setFixedAll(false); });
 
-document.getElementById('langToggleBtn').addEventListener('click', function(){
-  lang = (lang === 'ko') ? 'en' : 'ko';
+document.getElementById('langSelect').addEventListener('change', function(){
+  var next = this.value;
+  if (LANGS.indexOf(next) === -1) return;
+  lang = next;
   try { localStorage.setItem('kmLang', lang); } catch(e){}
   applyStaticI18n();
   render();
