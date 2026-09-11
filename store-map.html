@@ -644,7 +644,9 @@ var masterLoadPromise = null;
 function loadMasterProductMap(){
   masterLoadPromise = (async function(){
     try {
-      var res = await fetch('./product-master.json', { cache: 'force-cache' });
+      // ?v= 를 붙이지 않으면 force-cache 때문에 폰에 한 번 저장된 옛 파일이 계속 쓰임.
+      // 상품 마스터를 갱신할 때마다 이 날짜를 같이 올릴 것.
+      var res = await fetch('./product-master.json?v=20260911', { cache: 'force-cache' });
       if (!res.ok){
         masterLoadState = res.status === 404 ? 'none' : 'error';
         console.error('[product-master] fetch not ok, status', res.status);
@@ -665,16 +667,46 @@ function loadMasterProductMap(){
 async function ensureMasterLoaded(){
   if (masterLoadPromise){ try { await masterLoadPromise; } catch(e){} }
 }
+// 스캐너가 읽은 풀바코드 하나로 여러 형태를 만들어 본다.
+// 벨라포스에 같은 상품이 형태를 달리해 등록돼 있기 때문:
+//  - 옛 등록분은 체크digit 을 빼고 11자리로 저장됨 (2026-09-09 이전 방식)
+//  - UPC-A(12자리)를 EAN-13(앞에 0)으로 넣어둔 것도 있음
+//  - 앞자리 0 이 붙거나 떨어진 것도 섞여 있음
+// 이 변환이 없으면 11자리로 등록된 상품 2만여 개 중 70% 가 스캔해도 안 찾아짐.
+// 정확히 일치하는 것을 먼저 쓰고, 그다음 변형을 순서대로 시도한다.
+function barcodeCandidates(code){
+  var c = String(code || '').trim();
+  var out = [];
+  function add(v){ if (v && out.indexOf(v) === -1) out.push(v); }
+  add(c);
+  add(c.replace(/^0+/, ''));
+  if (c.length === 13 && c.charAt(0) === '0') add(c.slice(1));   // EAN-13 로 읽힌 UPC-A
+  if (c.length === 12) add('0' + c);                              // UPC-A 를 EAN-13 으로 등록해둔 경우
+  var noCheck = c.slice(0, -1);                                   // 체크digit 뺀 옛 등록분
+  add(noCheck);
+  add(noCheck.replace(/^0+/, ''));
+  if (c.length === 13 && c.charAt(0) === '0'){
+    var upc = c.slice(1);
+    add(upc.slice(0, -1));
+    add(upc.slice(0, -1).replace(/^0+/, ''));
+  }
+  return out;
+}
 function lookupMasterName(code){
   if (!code) return '';
-  if (masterBarcodeMap[code]) return masterBarcodeMap[code];
-  var stripped = code.replace(/^0+/, '');
-  if (stripped && masterBarcodeMap[stripped]) return masterBarcodeMap[stripped];
-  if (code.length === 12 && masterBarcodeMap['0'+code]) return masterBarcodeMap['0'+code];
+  var cands = barcodeCandidates(code);
+  for (var i = 0; i < cands.length; i++){
+    if (masterBarcodeMap[cands[i]]) return masterBarcodeMap[cands[i]];
+  }
   return '';
 }
 function lookupProductName(code){
-  return productIndex.byBarcode[code] || lookupMasterName(code) || '';
+  if (!code) return '';
+  var cands = barcodeCandidates(code);
+  for (var i = 0; i < cands.length; i++){
+    if (productIndex.byBarcode[cands[i]]) return productIndex.byBarcode[cands[i]];
+  }
+  return lookupMasterName(code) || '';
 }
 
 // ---- 작은 알림 (스캔 결과 등을 잠깐 화면 아래쪽에 띄움) ----
