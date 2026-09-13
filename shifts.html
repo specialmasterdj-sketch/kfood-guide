@@ -512,7 +512,7 @@ body.readonly .shift-cell { cursor:default !important; }
       <div class="tpl-row" id="tplRow"></div>
     </div>
     <div class="field">
-      <label><input type="checkbox" id="shiftUnavail"> <span data-t="lbl_unavail">결근 / Unavailable (전일)</span></label>
+      <label><input type="checkbox" id="shiftUnavail"> <span data-t="lbl_unavail">휴무 / 결근 (전일)</span></label>
     </div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeOverlay('shiftOverlay')" data-t="btn_cancel">취소</button>
@@ -542,15 +542,10 @@ body.readonly .shift-cell { cursor:default !important; }
         Connecteam 시프트 export: 이름·날짜·시작·종료·포지션 자동 감지 → 직원 + 시프트 한 번에 생성.
       </div>
     </div>
-    <div class="field" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px">
-      <label style="color:#92400e" data-t="import_seed_lbl">🏢 Connecteam 스크린샷 데이터 (이번 주)</label>
-      <div style="font-size:.78em;color:#92400e;margin-bottom:6px" data-t="import_seed_help">
-        제공된 Hollywood 화면의 11명 + 이번 주 시프트를 즉시 시드합니다 (현재 지점에 적용).
-      </div>
-      <button class="btn secondary" onclick="seedHollywood()" data-t="btn_seed">🏢 Hollywood 샘플 적용</button>
-      <button class="btn secondary" style="margin-top:6px" onclick="seedMiami()" data-t="btn_seed_miami">🌴 Miami 샘플 적용</button>
-      <button class="btn secondary" style="margin-top:6px" onclick="seedPembrokePines()">🌳 Pembroke Pines 샘플 적용</button>
-    </div>
+    <!-- 🗑 2026-09-13 제거 — [샘플 적용] 버튼 3개.
+         한 번 누르면 (확인창도 없이) 보고 있던 주의 월~일 시프트를 2026-04 스크린샷 값으로
+         통째로 덮어쓰고, 지웠던 직원까지 다시 집어넣었다. "쉬는 날 줬는데 일주일 내내 스케줄이
+         들어간다" / "지운 직원이 다시 나온다" 의 직접 원인. 함수는 남겨두되 확인창으로 잠금. -->
     <div class="field">
       <label><input type="checkbox" id="importSkipDup" checked> <span data-t="import_skip_dup">같은 이름 직원은 건너뛰기</span></label>
     </div>
@@ -703,7 +698,7 @@ const T = {
   lbl_position:    {ko:'포지션',                en:'Position',           es:'Posición'},
   lbl_note:        {ko:'메모 (선택)',           en:'Note (optional)',    es:'Nota'},
   lbl_recent:      {ko:'최근 시프트 (클릭하여 채우기)', en:'Recent shifts (click to fill)', es:'Turnos recientes'},
-  lbl_unavail:     {ko:'결근 / Unavailable (전일)', en:'Unavailable (all day)', es:'No disponible (todo el día)'},
+  lbl_unavail:     {ko:'휴무 / 결근 (전일)', en:'Off / Unavailable (all day)', es:'Libre / No disponible (todo el día)'},
   sum_hours:       {ko:'주간 시간',             en:'Weekly hours',       es:'Horas semanales'},
   sum_shifts:      {ko:'시프트',                en:'Shifts',             es:'Turnos'},
   sum_users:       {ko:'직원',                  en:'Employees',          es:'Empleados'},
@@ -913,6 +908,43 @@ function stripDrafts(d){
   return c;
 }
 let __pendingDeletes = new Set();    // 아직 클라우드에 반영 안 된 삭제 키
+
+// ===== 삭제한 직원이 되살아나는 문제 (2026-09-13) =====
+// 스케줄은 지점 전체를 통째로 저장(last-write-wins)이라, 옛 화면이 열려 있던 다른 PC·폰이
+// 뭔가 저장하면 방금 지운 직원이 그 사본에 실려 통째로 부활한다.
+// → 삭제 기록(묘비)을 데이터에 남겨서, 어느 기기에서 온 사본이든 그 직원을 다시 제거한다.
+//   같은 이름으로 다시 등록(재입사)하면 묘비는 자동 해제. 120일 지나면 묘비 자동 정리.
+const TOMB_TTL = 120 * 24 * 3600 * 1000;
+function _tombs(d){ if (!d.deletedEmp || typeof d.deletedEmp !== 'object') d.deletedEmp = {}; return d.deletedEmp; }
+function _normEmpName(x){ return String(x || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function addTomb(d, emp){ if (emp && emp.id) _tombs(d)['' + emp.id] = { ts: Date.now(), name: emp.name || '' }; }
+function clearTombByName(d, name){
+  const t = _tombs(d), nn = _normEmpName(name);
+  Object.keys(t).forEach(k => { if (nn && _normEmpName(t[k] && t[k].name) === nn) delete t[k]; });
+}
+function pruneTombs(d){
+  const t = _tombs(d), now = Date.now();
+  Object.keys(t).forEach(k => { const ts = (t[k] && t[k].ts) || 0; if (!ts || now - ts > TOMB_TTL) delete t[k]; });
+}
+// target(보통 원격에서 받은 데이터)에서 묘비에 오른 직원과 그 시프트를 제거. 제거 인원수 반환.
+function applyTombs(target, extraTombs){
+  const t = _tombs(target);
+  if (extraTombs) Object.keys(extraTombs).forEach(k => {
+    const a = extraTombs[k], b = t[k];
+    if (a && (!b || (a.ts || 0) > (b.ts || 0))) t[k] = a;
+  });
+  pruneTombs(target);
+  let removed = 0;
+  if (Array.isArray(target.employees)) {
+    const before = target.employees.length;
+    target.employees = target.employees.filter(e => !(e && t['' + e.id]));
+    removed = before - target.employees.length;
+  }
+  if (removed && target.shifts) {
+    Object.keys(target.shifts).forEach(k => { if (t[k.split('@')[0]]) delete target.shifts[k]; });
+  }
+  return removed;
+}
 function saveLocalOnly(d){           // 이 기기에만 저장 — 클라우드 푸시·재발표 dirty 없음
   try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); }
   catch(e){ try { localStorage.removeItem('shifts.bak.' + BRANCH); localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); } catch(_){} }
@@ -2014,6 +2046,7 @@ function saveEmployee(){
   } else {
     DATA.employees.push({ id: 'e' + Date.now() + Math.floor(Math.random()*900), name, role, target, color, initials });
   }
+  clearTombByName(DATA, name);        // 재입사 — 같은 이름 묘비는 해제
   saveBranchData(DATA);
   closeOverlay('empOverlay');
   render();
@@ -2042,6 +2075,7 @@ function deleteEmployee(){
   btn.dataset.armed = '0';
   btn.style.background = '';
   const name = editingEmp.name;
+  addTomb(DATA, editingEmp);          // 다른 기기의 옛 사본이 되살리지 못하게 삭제 기록
   DATA.employees = DATA.employees.filter(e => e.id !== editingEmp.id);
   Object.keys(DATA.shifts).forEach(k => { if (k.startsWith(editingEmp.id + '@')) delete DATA.shifts[k]; });
   saveBranchData(DATA);
@@ -2338,6 +2372,8 @@ function parseTimeLike(v){
 
 // ========= HOLLYWOOD SEED (from screenshot) =========
 function seedHollywood(){
+  // ⚠️ 2026-04 스크린샷 기준 고정 데이터 — 보고 있는 주를 통째로 덮어쓴다. 실수 방지용 잠금.
+  if (!confirm('⚠️ Hollywood 샘플 데이터를 덮어씁니다.\n\n지금 보고 있는 주(월~일)의 시프트가 2026년 4월 샘플 값으로 바뀌고,\n쉬는 날 설정도 사라집니다. 정말 진행할까요?')) return;
   // switch to HOLLYWOOD branch and load its data
   if (BRANCH !== 'HOLLYWOOD') {
     BRANCH = 'HOLLYWOOD';
@@ -2404,6 +2440,8 @@ function seedHollywood(){
 
 // ========= PEMBROKE PINES SEED (from Connecteam screenshot, week of Apr 20-26 2026) =========
 function seedPembrokePines(){
+  // ⚠️ 2026-04 스크린샷 기준 고정 데이터 — 보고 있는 주를 통째로 덮어쓴다. 실수 방지용 잠금.
+  if (!confirm('⚠️ Pembroke Pines 샘플 데이터를 덮어씁니다.\n\n지금 보고 있는 주(월~일)의 시프트가 2026년 4월 샘플 값으로 바뀌고,\n쉬는 날 설정도 사라집니다. 정말 진행할까요?')) return;
   if (BRANCH !== 'PEMBROKE_PINES') {
     BRANCH = 'PEMBROKE_PINES';
     localStorage.setItem('hub.branch', 'PEMBROKE_PINES');
@@ -2465,6 +2503,8 @@ function seedPembrokePines(){
 
 // ========= MIAMI SEED (from Connecteam screenshot, week of Apr 20-26 2026) =========
 function seedMiami(){
+  // ⚠️ 2026-04 스크린샷 기준 고정 데이터 — 보고 있는 주를 통째로 덮어쓴다. 실수 방지용 잠금.
+  if (!confirm('⚠️ Miami 샘플 데이터를 덮어씁니다.\n\n지금 보고 있는 주(월~일)의 시프트가 2026년 4월 샘플 값으로 바뀌고,\n쉬는 날 설정도 사라집니다. 정말 진행할까요?')) return;
   if (BRANCH !== 'MIAMI') {
     BRANCH = 'MIAMI';
     localStorage.setItem('hub.branch', 'MIAMI');
@@ -2756,6 +2796,7 @@ function applyRemote(remote){
   if (!remote) return false;
   migrateRoles(remote);
   const _leaked = cleanRemoteDrafts(remote);   // 클라우드에 새어나간 임시 시프트 제거
+  const _localTombs = JSON.parse(JSON.stringify((DATA && DATA.deletedEmp) || {}));   // 이 기기가 아는 삭제 기록
   // 편집 중(임시 있음/일괄편집 ON)이 아니면 보류 삭제 목록은 더 이상 필요 없다 —
   //   남겨두면 다른 매니저가 같은 칸에 새로 넣은 시프트까지 가려버린다.
   if (__pendingDeletes.size && !isBatchEdit() && countDraftShifts() === 0) __pendingDeletes.clear();
@@ -2797,6 +2838,15 @@ function applyRemote(remote){
     } catch(_){}
     // 아직 푸시되지 않은 로컬 삭제는 원격본이 되살리지 못하게 다시 제거 (2026-09-13)
     try { __pendingDeletes.forEach(function(k){ delete DATA.shifts[k]; }); } catch(_){}
+    // 삭제한 직원이 옛 사본에 실려 되살아나면 묘비로 다시 제거하고, 클라우드도 바로잡는다.
+    var _revived = 0;
+    try { _revived = applyTombs(DATA, _localTombs); } catch(_){}
+    if (_revived) {
+      try {
+        if (typeof canEdit === 'function' && canEdit()) setTimeout(syncPushBranch, 1500);
+        if (typeof showToast === 'function') showToast('🗑 삭제된 직원 ' + _revived + '명이 다른 기기에서 되살아나 다시 제거했습니다');
+      } catch(_){}
+    }
     // 클라우드에 임시가 섞여 있었으면 한 번만 정리 푸시(편집 권한자 기기에서만)
     if (_leaked && !__draftLeakCleaned) {
       __draftLeakCleaned = true;
