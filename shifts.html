@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'shifts_2026_08_16_draft_keep';   // 🛑 사용 중 강제 리로드 금지 + 임시(draft) 시프트 보존·오탐 경고 제거
+    var BUST = 'shifts_2026_09_13_draft_local_only';   // 🛠 임시(draft) 클라우드 유출 차단 + 삭제·[취소] 가 되살아나지 않게
     var KEY = 'kmtools_bust_shifts';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -899,6 +899,35 @@ function saveBranchData(d, opts){
   updateSyncDot('local');
   try { _schedBackupRing(d, 'edit'); } catch(_){}   // 백업은 맨 마지막 — 절대 본 저장을 막지 않음
 }
+// ===== 임시(draft) 시프트 — 이 기기에만 저장, 클라우드로는 절대 내보내지 않음 =====
+// 🐛 2026-09-13 신고 — "지운 스케줄이 다시 나오고 임시 점선으로 뜬다".
+//   원인 ① 저장/푸시 페이로드에 _draft 시프트가 그대로 실려 Firebase 로 새어나감 →
+//        다른 기기·다음 세션에도 '임시' 가 그대로 보이고 배너가 사라지지 않음.
+//   원인 ② 임시 시프트 삭제 · [❌ 취소] 는 로컬에조차 저장을 안 해서(클라우드 보호 목적)
+//        다음 동기화 때 원격본이 지운 것을 그대로 되살림.
+//   대책: 임시는 localStorage 에만, 클라우드 페이로드에서는 제거. 아직 푸시 안 된 삭제는
+//        기억해 두었다가 원격 스냅샷을 덮어쓴 뒤 다시 지운다.
+function stripDrafts(d){
+  const c = JSON.parse(JSON.stringify(d || {}));
+  if (c.shifts) Object.keys(c.shifts).forEach(k => { if (c.shifts[k] && c.shifts[k]._draft) delete c.shifts[k]; });
+  return c;
+}
+let __pendingDeletes = new Set();    // 아직 클라우드에 반영 안 된 삭제 키
+function saveLocalOnly(d){           // 이 기기에만 저장 — 클라우드 푸시·재발표 dirty 없음
+  try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); }
+  catch(e){ try { localStorage.removeItem('shifts.bak.' + BRANCH); localStorage.setItem('shifts.' + BRANCH, JSON.stringify(d)); } catch(_){} }
+}
+// 원격 스냅샷에 섞여 있는 임시 시프트 제거(예전 버전이 흘린 것) — 제거한 개수 반환
+function cleanRemoteDrafts(remote){
+  let leaked = 0;
+  try {
+    if (remote && remote.shifts) Object.keys(remote.shifts).forEach(function(k){
+      if (remote.shifts[k] && remote.shifts[k]._draft) { delete remote.shifts[k]; leaked++; }
+    });
+  } catch(_){}
+  return leaked;
+}
+
 let DATA = loadBranchData();
 
 // ========= ACCESS CONTROL =========
@@ -1387,10 +1416,12 @@ function copyFromLastWeek(skipConfirm){
       const cloned = JSON.parse(JSON.stringify(lastShift));
       cloned._draft = true;          // mark as preview — not yet committed
       DATA.shifts[newK] = cloned;
+      __pendingDeletes.delete(newK);
       copied++;
     }
   });
-  // Note: NO saveBranchData here — drafts stay local until user commits
+  // NO saveBranchData — 클라우드로는 안 나가고 이 기기에만 남는다(새로고침 보호)
+  saveLocalOnly(DATA);
   render();
 }
 
@@ -1428,6 +1459,7 @@ function clearCurrentWeek(){
   });
   // In batch-edit mode we keep changes pending until commit; otherwise persist immediately if any committed shift was removed
   if (!isBatchEdit() && hadCommitted) saveBranchData(DATA);
+  else { weekKeys.forEach(k => __pendingDeletes.add(k)); saveLocalOnly(DATA); }
   render();
 }
 
@@ -1500,6 +1532,7 @@ function commitDrafts(){
     : `임시 시프트 ${n}개를 확정 저장할까요?`;
   if (!confirm(msg)) return;
   Object.values(DATA.shifts).forEach(s => { if (s && s._draft) delete s._draft; });
+  __pendingDeletes.clear();          // 확정 = 삭제분까지 클라우드에 반영됨
   saveBranchData(DATA);
   // exit batch mode if active
   if (__BATCH_EDIT) { __BATCH_EDIT = false; __BATCH_SNAPSHOT = null; refreshBatchEditBtn(); }
@@ -1515,6 +1548,8 @@ function cancelDrafts(){
     ? `¿Descartar ${n} cambios? Se restaurará el estado anterior.`
     : `임시 변경 ${n}개를 취소하고 편집 시작 상태로 되돌릴까요?`;
   if (!confirm(msg)) return;
+  // 취소로 사라지는 임시 키를 기록 — 예전 버전이 클라우드에 흘려 둔 사본이 되살아나지 않게.
+  const __gone = Object.keys(DATA.shifts).filter(k => DATA.shifts[k] && DATA.shifts[k]._draft);
   if (__BATCH_EDIT && __BATCH_SNAPSHOT) {
     // Restore the entire shifts object from the snapshot taken at batch-edit start
     DATA.shifts = JSON.parse(JSON.stringify(__BATCH_SNAPSHOT));
@@ -1525,6 +1560,9 @@ function cancelDrafts(){
     // Pure draft cleanup (e.g. copyFromLastWeek without batch mode)
     Object.keys(DATA.shifts).forEach(k => { if (DATA.shifts[k] && DATA.shifts[k]._draft) delete DATA.shifts[k]; });
   }
+  __pendingDeletes.clear();
+  __gone.forEach(k => { if (!DATA.shifts[k]) __pendingDeletes.add(k); });
+  saveLocalOnly(DATA);               // 취소 결과를 이 기기에 확정 저장(새로고침해도 안 돌아옴)
   render();
 }
 
@@ -1590,6 +1628,11 @@ function onCellDrop(ev, empId, dKey){
   const sourceDraft = (DATA.shifts[fromK] && DATA.shifts[fromK]._draft) || (moving && moving._draft);
   const destDraft = DATA.shifts[toK] && DATA.shifts[toK]._draft;
   if (!sourceDraft && !destDraft && !isBatchEdit()) saveBranchData(DATA);
+  else {
+    if (!DATA.shifts[fromK]) __pendingDeletes.add(fromK);   // 원본 칸이 비었으면 삭제로 기억
+    __pendingDeletes.delete(toK);
+    saveLocalOnly(DATA);
+  }
   render();
 }
 function goToday(){ weekStart = mondayOf(new Date()); render(); }
@@ -2061,8 +2104,9 @@ function saveShift(){
   }
   // Preserve draft flag if the shift being edited was a draft, or if batch-edit mode is on
   if (wasDraft || isBatchEdit()) DATA.shifts[k]._draft = true;
-  // Only persist now if it's NOT a draft — drafts wait for commit
+  // Only persist now if it's NOT a draft — drafts wait for commit (로컬 저장은 항상)
   if (!DATA.shifts[k]._draft) saveBranchData(DATA);
+  else { __pendingDeletes.delete(k); saveLocalOnly(DATA); }
   closeOverlay('shiftOverlay');
   render();
 }
@@ -2071,8 +2115,10 @@ function deleteShift(){
   const k = shiftKey(editingShift.empId, editingShift.dateKey);
   const wasDraft = !!(DATA.shifts[k] && DATA.shifts[k]._draft);
   delete DATA.shifts[k];
-  // If we just removed a draft, OR we're in batch-edit mode, don't push yet — wait for commit
+  // If we just removed a draft, OR we're in batch-edit mode, don't push yet — wait for commit.
+  // 단, 로컬에는 반드시 저장하고 삭제를 기억해 둬야 원격 스냅샷이 되살리지 않는다 (2026-09-13).
   if (!wasDraft && !isBatchEdit()) saveBranchData(DATA);
+  else { __pendingDeletes.add(k); saveLocalOnly(DATA); }
   closeOverlay('shiftOverlay');
   render();
 }
@@ -2705,9 +2751,14 @@ const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 let __fbUnsub = null;
 let __lastFbSnapshot = '';
 
+let __draftLeakCleaned = false;
 function applyRemote(remote){
   if (!remote) return false;
   migrateRoles(remote);
+  const _leaked = cleanRemoteDrafts(remote);   // 클라우드에 새어나간 임시 시프트 제거
+  // 편집 중(임시 있음/일괄편집 ON)이 아니면 보류 삭제 목록은 더 이상 필요 없다 —
+  //   남겨두면 다른 매니저가 같은 칸에 새로 넣은 시프트까지 가려버린다.
+  if (__pendingDeletes.size && !isBatchEdit() && countDraftShifts() === 0) __pendingDeletes.clear();
   const sig = JSON.stringify(remote);
   if (sig === __lastFbSnapshot) return false;
   const localEmpty = !DATA.employees || DATA.employees.length === 0;
@@ -2744,6 +2795,13 @@ function applyRemote(remote){
       if (!DATA.shifts) DATA.shifts = {};
       Object.keys(_drafts).forEach(function(k){ if (!DATA.shifts[k]) DATA.shifts[k] = _drafts[k]; });
     } catch(_){}
+    // 아직 푸시되지 않은 로컬 삭제는 원격본이 되살리지 못하게 다시 제거 (2026-09-13)
+    try { __pendingDeletes.forEach(function(k){ delete DATA.shifts[k]; }); } catch(_){}
+    // 클라우드에 임시가 섞여 있었으면 한 번만 정리 푸시(편집 권한자 기기에서만)
+    if (_leaked && !__draftLeakCleaned) {
+      __draftLeakCleaned = true;
+      try { if (typeof canEdit === 'function' && canEdit()) setTimeout(syncPushBranch, 1500); } catch(_){}
+    }
     try { localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA)); }
     catch(e){ try { localStorage.removeItem('shifts.bak.' + BRANCH); localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA)); } catch(_){} }
     __suppressFbWrite = false;
@@ -2763,7 +2821,7 @@ function _schedBackupRing(d, tag){
     var key = 'shifts.bak.' + BRANCH;
     var ring = [];
     try { ring = JSON.parse(localStorage.getItem(key) || '[]'); } catch(_){ ring = []; }
-    var json = JSON.stringify(d);
+    var json = JSON.stringify(stripDrafts(d));   // 임시 시프트는 백업에도 넣지 않음(복구 시 좀비 방지)
     if (ring.length && ring[ring.length-1].json === json) return;    // 동일 상태 중복 백업 skip
     ring.push({ ts: Date.now(), tag: tag || '', json: json });
     while (ring.length > 5) ring.shift();                            // 최근 5개만(용량 보호 — 2026-06-24 10→5)
@@ -2861,6 +2919,7 @@ async function syncFetchRest(){
       const localEmpty = !DATA.employees || DATA.employees.length === 0;
       const remoteHasData = remote && ((remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length));
       if (localEmpty && remoteHasData) {
+        cleanRemoteDrafts(remote);        // 클라우드에 섞인 임시 시프트는 받아오지 않음
         __suppressFbWrite = true;
         DATA = Object.assign(emptyData(), remote);
         localStorage.setItem('shifts.' + BRANCH, JSON.stringify(DATA));
@@ -2879,7 +2938,7 @@ async function syncFetchRest(){
 }
 async function syncPushRest(){
   const branch = BRANCH;
-  const payload = JSON.parse(JSON.stringify(DATA));
+  const payload = stripDrafts(DATA);   // 임시 시프트는 클라우드로 보내지 않음
   __lastFbSnapshot = JSON.stringify(payload);
   const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
   const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
@@ -2922,7 +2981,7 @@ function syncPushBranch(){
   // Use SDK when present (faster, batched). Otherwise REST fallback.
   if (!window.__fb) { syncPushRest(); return; }
   const { db, ref, set } = window.__fb;
-  const payload = JSON.parse(JSON.stringify(DATA));
+  const payload = stripDrafts(DATA);   // 임시 시프트는 클라우드로 보내지 않음
   __lastFbSnapshot = JSON.stringify(payload);
   set(ref(db, 'schedules/' + BRANCH), payload)
     .then(() => updateSyncDot('synced'))
