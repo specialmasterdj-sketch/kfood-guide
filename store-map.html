@@ -304,6 +304,16 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
   <p class="sub" id="frzHint" style="margin:-2px 0 10px;"></p>
   <div class="frzscroll"><div class="frz" id="freezers"></div></div>
 
+  <!-- 냉장 진열대 — 손그림 도면(2026-09-13 전무님 확인)의 위치·칸 수 그대로.
+       R4(6문)만 문이 달렸고 나머지 5대는 문 없는 오픈쿨러.
+       번호 순서도 전무님 지정: 오른쪽 세로(아래→위) → 윗줄 오른쪽→왼쪽 → 왼쪽 세로 → 가운데 3베이. -->
+  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+    <h3 class="secttl" id="clrTitle" style="margin-bottom:6px;">🧊 냉장 진열대</h3>
+    <button type="button" class="addbtn" id="qrPrintClrBtn" style="margin-top:18px;">🖨️ QR 인쇄</button>
+  </div>
+  <p class="sub" id="clrHint" style="margin:-2px 0 10px;"></p>
+  <div class="frzscroll"><div class="frz" id="coolers"></div></div>
+
   <datalist id="productNames"></datalist>
 
   <p class="note" id="pageNote">
@@ -357,6 +367,10 @@ var I18N = {
     frzTitle: '❄️ 냉동 진열대', statFrz: '냉동 진열대',
     doorNo: '{n}번 문', doorCount: '{n}문',
     frzHint: '진열대 {u}개 · 문 {d}개. 문을 누르면 그 문의 선반이 열립니다. 문 번호는 실제 매장 번호대로 매겨져 있습니다.',
+    clrTitle: '🧊 냉장 진열대', statClr: '냉장 진열대',
+    bayNo: '{n}번 베이', bayCount: '{n}베이',
+    clrHint: '진열대 {u}개 · 칸 {d}개. R4(6문)만 문이 달렸고 나머지는 문 없는 오픈쿨러입니다. 칸을 누르면 그 칸의 선반이 열립니다. 스티커 번호는 진열대-칸 (예: R4-05).',
+    qrTitleClr: '냉장 QR 스티커',
     qrOpen: '🖨️ QR 인쇄', qrTitle: '문 QR 스티커', qrPrint: '인쇄', qrCount: '{n}장',
     qrLibFail: 'QR 만드는 프로그램을 못 불러왔습니다. 인터넷 연결을 확인하고 다시 눌러주세요.'
   },
@@ -397,6 +411,10 @@ var I18N = {
     frzTitle: '❄️ Freezer cases', statFrz: 'Freezer cases',
     doorNo: 'Door {n}', doorCount: '{n} doors',
     frzHint: '{u} cases · {d} doors. Tap a door to open its shelves. Door numbers follow how they are numbered in the store.',
+    clrTitle: '🧊 Cooler cases', statClr: 'Cooler cases',
+    bayNo: 'Bay {n}', bayCount: '{n} bays',
+    clrHint: '{u} cases · {d} spots. Only R4 has doors (6); the rest are open coolers. Tap a spot to open its shelves. Labels are case-spot (e.g. R4-05).',
+    qrTitleClr: 'Cooler QR labels',
     qrOpen: '🖨️ Print QR', qrTitle: 'Door QR labels', qrPrint: 'Print', qrCount: '{n} labels',
     qrLibFail: 'Could not load the QR generator. Check your connection and try again.'
   },
@@ -439,6 +457,10 @@ var I18N = {
     frzTitle: '❄️ Congeladores', statFrz: 'Congeladores',
     doorNo: 'Puerta {n}', doorCount: '{n} puertas',
     frzHint: '{u} congeladores · {d} puertas. Toque una puerta para abrir sus estantes. Los números siguen la numeración real de la tienda.',
+    clrTitle: '🧊 Refrigeradores', statClr: 'Refrigeradores',
+    bayNo: 'Bahía {n}', bayCount: '{n} bahías',
+    clrHint: '{u} refrigeradores · {d} espacios. Solo R4 tiene puertas (6); los demás son abiertos. Toque un espacio para abrir sus estantes. La etiqueta es mueble-espacio (ej. R4-05).',
+    qrTitleClr: 'Etiquetas QR de refrigeradores',
     qrOpen: '🖨️ Imprimir QR', qrTitle: 'Etiquetas QR de puertas', qrPrint: 'Imprimir', qrCount: '{n} etiquetas',
     qrLibFail: 'No se pudo cargar el generador de QR. Revise la conexión e inténtelo de nuevo.'
   }
@@ -525,13 +547,54 @@ var FREEZERS = [
   { code:'DF5', doors:3,  x:330, y:98,  w:48,  h:28,  dir:'h' },
   { code:'DF6', doors:9,  x:330, y:56,  w:144, h:30,  dir:'h' }
 ];
+// ---- 냉장 진열대 ----
+// 손그림 도면 그대로 (2026-09-13 전무님 확인). 냉동과 같은 좌표 방식.
+// 번호 순서는 전무님 지정 — 오른쪽 세로(아래→위) → 윗줄 오른쪽→왼쪽 → 왼쪽 세로 → 가운데 3베이:
+//   R1 8베이(우측 세로) · R2 6베이(위 오른쪽) · R3 4베이(위 가운데)
+//   R4 6문(위 왼쪽) · R5 10베이(좌측 세로) · R6 3베이(가운데 작은 것)
+// 코드는 R# — 스티커 번호(R4-05)와 앞글자가 같다. (DC# 는 Door Cooler 로 읽혀서 안 씀.
+//  냉장 6대 중 문이 달린 건 R4 하나뿐이고 나머지는 전부 문 없는 오픈쿨러다.)
+// kind: 'door' = 문이 달린 진열대(R4), 'bay' = 오픈쿨러 칸.
+// 칸 안의 1번 위치는 도는 순서를 그대로 따라감(rev 로 뒤집음) — 스티커 붙이기 전에 화면에서 확인.
+var COOLERS = [
+  { code:'R1', kind:'bay',  doors:8,  x:398, y:96,  w:44,  h:128, dir:'v' },            // 우측 세로 오픈쿨러 · 아래가 1번
+  { code:'R2', kind:'bay',  doors:6,  x:322, y:40,  w:120, h:30,  dir:'h', rev:true },  // 위 오른쪽 오픈쿨러 · 오른쪽이 1번
+  { code:'R3', kind:'bay',  doors:4,  x:216, y:40,  w:80,  h:30,  dir:'h', rev:true },  // 위 가운데 오픈쿨러
+  { code:'R4', kind:'door', doors:6,  x:84,  y:40,  w:120, h:30,  dir:'h', rev:true },  // 위 왼쪽 · 유일하게 문 6개
+  { code:'R5', kind:'bay',  doors:10, x:60,  y:96,  w:44,  h:160, dir:'v', rev:true },  // 좌측 세로 오픈쿨러 · 위가 1번
+  { code:'R6', kind:'bay',  doors:3,  x:124, y:106, w:40,  h:48,  dir:'v' }             // 가운데 오픈쿨러 · 아래(1)·중간(2)·위(3)
+];
+function unitKind(u){ return (u && u.kind) || 'door'; }
+function unitByCode(code){
+  var c = String(code || '').toUpperCase();
+  return FREEZERS.concat(COOLERS).filter(function(u){ return u.code === c; })[0] || null;
+}
 function doorCode(unit, n){ return unit + '-D' + String(n).padStart(2, '0'); }
+function bayCellCode(unit, n){ return unit + '-B' + String(n).padStart(2, '0'); }
+// 진열대 종류에 맞는 칸 코드 — 문은 -D, 오픈 베이는 -B
+function cellCode(u, n){ return unitKind(u) === 'bay' ? bayCellCode(u.code, n) : doorCode(u.code, n); }
+function cellLabel(u, n){
+  return u.code + ' · ' + t(unitKind(u) === 'bay' ? 'bayNo' : 'doorNo').replace('{n}', n);
+}
+function cellCountLabel(u){
+  return t(unitKind(u) === 'bay' ? 'bayCount' : 'doorCount').replace('{n}', u.doors);
+}
+function cellsOf(u){
+  var out = [];
+  for (var i = 1; i <= u.doors; i++) out.push(cellCode(u, i));
+  return out;
+}
+function allCoolerCodes(){
+  return COOLERS.reduce(function(out, u){ return out.concat(cellsOf(u)); }, []);
+}
 // 문 일련번호 — 스티커에 인쇄해 붙이고, 사람이 읽고 부르는 번호.
 // F4-05 = 냉동 4번 진열대의 5번 문. 진열대·문 번호에서 바로 나오니 문 수가
 // 바뀌어도 이미 붙인 스티커 번호가 밀리지 않는다(그냥 일련번호였다면 밀림).
+// F4-05 = 냉동 4번 진열대 5번 문 · R4-05 = 냉장 4번 진열대 5번 칸.
+// 냉장은 진열대 코드가 이미 R# 라 그대로 쓰고, 냉동만 DF# → F# 로 줄인다.
 function doorSerial(unitCode, n){
-  var unitNo = String(unitCode).replace(/^DF/i, '');
-  return 'F' + unitNo + '-' + String(n).padStart(2, '0');
+  var u = String(unitCode).toUpperCase();
+  return u.replace(/^DF/, 'F') + '-' + String(n).padStart(2, '0');
 }
 function doorsOf(f){
   var out = [];
@@ -1008,12 +1071,12 @@ async function toggleFixed(bayId){
 // 하나씩 144번 누르는 것보다 훨씬 빠르다. 노드를 통째로 한 번에 쓴다.
 async function setFixedAll(on){
   if (!db){ showToast(t('dbUnavailable')); return; }
-  if (!confirm(on ? t('fixAllConfirm').replace('{n}', allBayCodes().length + allDoorCodes().length) : t('fixNoneConfirm'))) return;
+  if (!confirm(on ? t('fixAllConfirm').replace('{n}', allBayCodes().length + allDoorCodes().length + allCoolerCodes().length) : t('fixNoneConfirm'))) return;
   var prev = fixedMap;
   var next = {};
   if (on){
     var stamp = { at: todayStr(), by: meName() };
-    allBayCodes().concat(allDoorCodes()).forEach(function(code){ next[code] = prev[code] || stamp; });
+    allBayCodes().concat(allDoorCodes()).concat(allCoolerCodes()).forEach(function(code){ next[code] = prev[code] || stamp; });
   }
   fixedMap = next;
   render();
@@ -1106,6 +1169,7 @@ function render(){
 
   floor.appendChild(grid);
   renderFreezers();
+  renderCoolers();
   renderStats();
 }
 
@@ -1139,23 +1203,26 @@ function doorUrl(code){
 }
 // 딥링크(?bay=)로 들어왔을 때 모달 제목을 "DF4 · 5번 문" 으로 보여주기 위한 변환
 function labelForCode(code){
-  var m = String(code || '').toUpperCase().match(/^(DF\d+)-D(\d+)$/);
+  var m = String(code || '').toUpperCase().match(/^(DF\d+|R\d+)-[DB](\d+)$/);
   if (!m) return undefined;
   var n = parseInt(m[2], 10);
-  return doorLabel(m[1], n) + ' · ' + doorSerial(m[1], n);
+  var u = unitByCode(m[1]);
+  var label = u ? cellLabel(u, n) : doorLabel(m[1], n);
+  return label + ' · ' + doorSerial(m[1], n);
 }
 
 function closeQrSheet(){
   var el = document.getElementById('qrsheet');
   if (el) el.remove();
 }
-async function openQrSheet(){
+async function openQrSheet(which){
+  var units = which === 'clr' ? COOLERS : FREEZERS;   // 필요한 쪽만 인쇄 (한 번에 96장 뽑지 않게)
   closeQrSheet();
   var sheet = document.createElement('div');
   sheet.id = 'qrsheet';
   sheet.innerHTML =
     '<div class="qrbar">' +
-      '<b>' + t('qrTitle') + '</b>' +
+      '<b>' + t(which === 'clr' ? 'qrTitleClr' : 'qrTitle') + '</b>' +
       '<span class="qrcount"></span>' +
       '<button type="button" class="addbtn" id="qrDoPrint">' + t('qrPrint') + '</button>' +
       '<button type="button" class="addbtn" id="qrClose">' + t('close') + '</button>' +
@@ -1176,10 +1243,10 @@ async function openQrSheet(){
   var grid = document.getElementById('qrgrid');
   grid.innerHTML = '';
   var made = 0;
-  for (var fi = 0; fi < FREEZERS.length; fi++){
-    var f = FREEZERS[fi];
+  for (var fi = 0; fi < units.length; fi++){
+    var f = units[fi];
     for (var n = 1; n <= f.doors; n++){
-      var code = doorCode(f.code, n);
+      var code = cellCode(f, n);
       var cell = document.createElement('div');
       cell.className = 'qrlabel';
       var box = document.createElement('div');
@@ -1189,7 +1256,7 @@ async function openQrSheet(){
       s.textContent = doorSerial(f.code, n);
       cell.appendChild(s);
       var sub = document.createElement('span');
-      sub.textContent = doorLabel(f.code, n);
+      sub.textContent = cellLabel(f, n);
       cell.appendChild(sub);
       grid.appendChild(cell);
       // 인쇄 품질을 위해 넉넉한 픽셀로 그림 (CSS 로 축소해서 보여줌).
@@ -1205,14 +1272,17 @@ async function openQrSheet(){
   sheet.querySelector('.qrcount').textContent = t('qrCount').replace('{n}', made);
 }
 
-function renderFreezers(){
-  var box = document.getElementById('freezers');
+function renderFreezers(){ renderUnits(FREEZERS, 'freezers', 'frzHint'); }
+function renderCoolers(){ renderUnits(COOLERS, 'coolers', 'clrHint'); }
+// 냉동·냉장 공통 — 유닛 배열만 주면 위치·칸·상태점·고정자물쇠까지 같은 방식으로 그린다.
+function renderUnits(UNITS, boxId, hintId){
+  var box = document.getElementById(boxId);
   if (!box) return;
   box.innerHTML = '';
 
   // 진열대들을 감싸는 사각형 + 여백(진열대 이름표가 위쪽 여백에 들어감)
   var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  FREEZERS.forEach(function(f){
+  UNITS.forEach(function(f){
     minX = Math.min(minX, f.x); minY = Math.min(minY, f.y);
     maxX = Math.max(maxX, f.x + f.w); maxY = Math.max(maxY, f.y + f.h);
   });
@@ -1220,7 +1290,7 @@ function renderFreezers(){
   var W = maxX - minX, H = maxY - minY;
   box.style.aspectRatio = W + ' / ' + H;
 
-  FREEZERS.forEach(function(f){
+  UNITS.forEach(function(f){
     var unit = document.createElement('div');
     unit.className = 'unit ' + f.dir + (f.rev ? ' rev' : '');
     unit.style.left   = ((f.x - minX) / W * 100) + '%';
@@ -1230,17 +1300,17 @@ function renderFreezers(){
 
     var tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = f.code + ' · ' + t('doorCount').replace('{n}', f.doors);
+    tag.textContent = f.code + ' · ' + cellCountLabel(f);
     unit.appendChild(tag);
 
     for (var i = 1; i <= f.doors; i++){
       (function(n){
-        var code = doorCode(f.code, n);
+        var code = cellCode(f, n);
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'door' + (fixedMap[code] ? ' isfixed' : '');
         btn.dataset.bay = code;
-        btn.title = doorLabel(f.code, n) + ' · ' + doorSerial(f.code, n);
+        btn.title = cellLabel(f, n) + ' · ' + doorSerial(f.code, n);
         var st = statusFor(code);
         btn.innerHTML = '<span>' + n + '</span>' +
           (fixedMap[code] ? '<span class="lock">🔒</span>' : '') +
@@ -1248,7 +1318,7 @@ function renderFreezers(){
           (st === 'done' ? 'var(--ok)' : st === 'pending' ? 'var(--warn)' : 'transparent') + '"></span>';
         btn.addEventListener('click', function(){
           if (fixMode){ toggleFixed(code); return; }
-          openBay(code, doorLabel(f.code, n) + ' · ' + doorSerial(f.code, n));
+          openBay(code, cellLabel(f, n) + ' · ' + doorSerial(f.code, n));
         });
         unit.appendChild(btn);
       })(i);
@@ -1256,24 +1326,26 @@ function renderFreezers(){
     box.appendChild(unit);
   });
 
-  var hint = document.getElementById('frzHint');
+  var hint = document.getElementById(hintId);
   if (hint){
-    hint.textContent = t('frzHint')
-      .replace('{u}', FREEZERS.length)
-      .replace('{d}', allDoorCodes().length);
+    var cells = UNITS.reduce(function(a, u){ return a + u.doors; }, 0);
+    hint.textContent = t(hintId)
+      .replace('{u}', UNITS.length)
+      .replace('{d}', cells);
   }
 }
 
 function renderStats(){
   var allBays = allBayCodes();
   var allDoors = allDoorCodes();
+  var allClr = allCoolerCodes();
   // 점검 현황은 통로 베이 + 냉동 진열대 문을 합쳐서 세야 "오늘 매장을 얼마나
   // 돌았나"가 맞게 나온다. 개수 카드는 베이/진열대를 따로 보여줌.
 
   // 점검 현황(체크완료/미점검/기록없음)은 냉동·냉장까지 합쳐서 세야 "오늘 매장을
   // 얼마나 돌았나"가 맞게 나온다. 전체 개수는 베이/냉동냉장을 따로 보여줌.
   var done=0, pending=0, none=0, fixedN=0;
-  allBays.concat(allDoors).forEach(function(b){
+  allBays.concat(allDoors).concat(allClr).forEach(function(b){
     var s = statusFor(b);
     if (s==='done') done++; else if (s==='pending') pending++; else none++;
     if (fixedMap[b]) fixedN++;
@@ -1284,6 +1356,9 @@ function renderStats(){
     '<div class="stat"><b>' + FREEZERS.length +
       ' <span style="font-size:12px; font-weight:400; color:var(--sub)">🚪' + allDoors.length + '</span>' +
       '</b><span>'+t('statFrz')+'</span></div>' +
+    '<div class="stat"><b>' + COOLERS.length +
+      ' <span style="font-size:12px; font-weight:400; color:var(--sub)">🧊' + allClr.length + '</span>' +
+      '</b><span>'+t('statClr')+'</span></div>' +
     '<div class="stat"><b style="color:var(--accent)">🔒 ' + fixedN + '</b><span>'+t('statFixed')+'</span></div>' +
     '<div class="stat"><b style="color:var(--ok)">' + done + '</b><span>'+t('statDone')+'</span></div>' +
     '<div class="stat"><b style="color:var(--warn)">' + pending + '</b><span>'+t('statPending')+'</span></div>' +
@@ -1573,7 +1648,8 @@ function applyStaticI18n(){
     legendBay:'legendBay', legendEndcap:'legendEndcap', legendEmpty:'legendEmpty',
     legendDone:'legendDone', legendPending:'legendPending', legendFixed:'legendFixed',
     fixHint:'fixHint', fixAllBtn:'fixAll', fixNoneBtn:'fixNone', fixDoneBtn:'fixDone',
-    frzTitle:'frzTitle', qrPrintBtn:'qrOpen'
+    frzTitle:'frzTitle', qrPrintBtn:'qrOpen',
+    clrTitle:'clrTitle', qrPrintClrBtn:'qrOpen'
   };
   Object.keys(map).forEach(function(id){
     var el = document.getElementById(id);
@@ -1646,7 +1722,8 @@ async function boot(){
   } catch(e){}
 }
 
-document.getElementById('qrPrintBtn').addEventListener('click', function(){ openQrSheet(); });
+document.getElementById('qrPrintBtn').addEventListener('click', function(){ openQrSheet('frz'); });
+document.getElementById('qrPrintClrBtn').addEventListener('click', function(){ openQrSheet('clr'); });
 document.getElementById('fixModeBtn').addEventListener('click', function(){ setFixMode(!fixMode); });
 document.getElementById('fixDoneBtn').addEventListener('click', function(){ setFixMode(false); });
 document.getElementById('fixAllBtn').addEventListener('click', function(){ setFixedAll(true); });
