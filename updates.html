@@ -302,7 +302,7 @@ input[type=file]{display:none}
 <div class="overlay" id="meOverlay">
   <div class="modal">
     <h3>본인 이름 선택</h3>
-    <div style="font-size:.85em;color:#6b7280;margin-bottom:12px">공지 작성은 오너만 가능합니다. 직원은 읽기 전용입니다.</div>
+    <div style="font-size:.85em;color:#6b7280;margin-bottom:12px">공지 작성은 오너·임원만 가능합니다. 직원은 읽기 전용입니다.</div>
     <button onclick="saveMeOwner()" style="width:100%;margin-bottom:14px;background:#1a5c3a;color:#fff;border:0;border-radius:12px;padding:13px;font-weight:900;font-size:1em;cursor:pointer;font-family:inherit">👑 오너(DJ)로 계속 — 지점 선택 불필요</button>
     <div style="font-size:.78em;color:#9ca3af;text-align:center;margin-bottom:10px">— 직원은 아래에서 지점·이름 선택 —</div>
     <div class="field">
@@ -363,7 +363,7 @@ const UP_T = {
     del:'🗑 Delete',
     just_now:'just now', min_ago:'m ago', hr_ago:'h ago',
     mgr_can:'👔 Manager (role: $r) — can post', staff_only:'Staff (role: $r) — read only',
-    toast_name:'Please enter your name', toast_mgr_only:'Only the owner can post announcements',
+    toast_name:'Please enter your name', toast_mgr_only:'Only the owner or an executive can post announcements',
     back:'← Apps',
   },
   es: {
@@ -375,7 +375,7 @@ const UP_T = {
     del:'🗑 Eliminar',
     just_now:'ahora', min_ago:'min', hr_ago:'h',
     mgr_can:'👔 Gerente (rol: $r) — puede publicar', staff_only:'Personal (rol: $r) — solo lectura',
-    toast_name:'Ingresa tu nombre', toast_mgr_only:'Solo el dueño puede publicar anuncios',
+    toast_name:'Ingresa tu nombre', toast_mgr_only:'Solo el dueño o un ejecutivo puede publicar anuncios',
     back:'← Apps',
   },
   ko: {
@@ -387,7 +387,7 @@ const UP_T = {
     del:'🗑 삭제',
     just_now:'방금', min_ago:'분 전', hr_ago:'시간 전',
     mgr_can:'👔 매니저 권한 (역할: $r) — 공지 작성 가능', staff_only:'일반 직원 (역할: $r) — 읽기만 가능',
-    toast_name:'이름을 입력하세요', toast_mgr_only:'공지는 오너만 작성할 수 있습니다',
+    toast_name:'이름을 입력하세요', toast_mgr_only:'공지는 오너·임원만 작성할 수 있습니다',
     back:'← Apps',
   }
 };
@@ -435,12 +435,20 @@ function colorFor(name){
 }
 function initialsOf(name){ return (name||'?').split(/\s+/).map(w=>w[0]||'').join('').slice(0,2).toUpperCase(); }
 // 👑 2026-08-08 사장님 지시: 공지 작성은 오너만 (매니저 작성 불가로 전면 축소)
+// 🔧 2026-09-14 전무님 지시: 임원(EXECUTIVE)까지 허용.
+//    8/8 에 매니저를 막으면서 임원도 같이 걸려, 같은 파일의 삭제 권한은
+//    EXECUTIVE 를 허용하는데 작성만 막히는 비대칭 상태였다
+//    ("남의 공지는 지울 수 있는데 내 공지는 못 쓴다").
+//    판별식은 renderCard 의 ownerCanDelete 와 동일하게 맞춘다.
+//    ⚠️ 매니저·슈퍼바이저·일반 직원 차단은 그대로 — 'STORE MANAGER' 등
+//       MANAGER 계열 역할은 아래 정규식에 걸리지 않는다.
 function isOwnerMe(){
   if (!me) return false;
   const r = String(me.role || '').toUpperCase().trim();
-  if (r === 'OWNER') return true;
+  if (/OWNER|BOSS|오너|사장|대표|EXECUTIVE|전무/i.test(r)) return true;
+  // 역할 문자열이 비었거나 비표준일 때를 위한 이름 백업
   const nm = String(me.name || '').toUpperCase().replace(/\s+/g, '');
-  return nm === 'DJ';
+  return nm === 'DJ' || nm === 'SUNKIM' || /^B\.?H\.?K$|^BYUNGHO/i.test(nm);
 }
 function isManagerRole(role){
   if (!role) return false;
@@ -558,7 +566,7 @@ function refreshMePill(){
 }
 function refreshComposeFab(){
   const fab = document.getElementById('composeFab');
-  fab.classList.toggle('show', isOwnerMe());   // 👑 공지 작성 = 오너만
+  fab.classList.toggle('show', isOwnerMe());   // 👑 공지 작성 = 오너·임원만
 }
 
 // ===== UPDATES STATE =====
@@ -751,7 +759,7 @@ async function uploadPhoto(att, updateId, idx){
 }
 
 async function postUpdate(){
-  if (!isOwnerMe()) return;   // 👑 공지 작성 = 오너만
+  if (!isOwnerMe()) return;   // 👑 공지 작성 = 오너·임원만
   const title = document.getElementById('cTitle').value.trim();
   const body = document.getElementById('cBody').value.trim();
   if (!title && !body && ATTACH.length === 0) { showToast('제목 / 내용 / 사진 중 하나는 입력하세요', '#dc2626'); return; }
