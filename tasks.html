@@ -991,6 +991,9 @@ button{font-family:inherit;cursor:pointer}
 <!-- ============= 🏠 DASHBOARD VIEW (매니저 진입 시 default) ============= -->
 <div class="page" id="page-home">
   <div class="dash-wrap">
+    <!-- 💡 개선 요청 마운트 (매니저·임원 첫 화면) -->
+    <div class="km-idea-mount"></div>
+
     <!-- 매장 + 매니저 정보 -->
     <div class="dash-store-bar">
       <div class="ic">🏪</div>
@@ -1286,6 +1289,9 @@ button{font-family:inherit;cursor:pointer}
     if (document.readyState==='loading') document.addEventListener('DOMContentLoaded',initAll); else initAll();
   })();
   </script>
+  <!-- 💡 개선 요청 마운트 (직원 첫 화면) -->
+  <div class="km-idea-mount"></div>
+
   <div id="clockInCard" class="clockin-card warn" style="display:none">
     <span class="ic">📡</span>
     <div class="body"><b>위치 정보 받는 중...</b><span class="sub">위치 권한 허용 필요</span></div>
@@ -1298,17 +1304,23 @@ button{font-family:inherit;cursor:pointer}
   <div id="empList"></div>
 
   <!-- ============================================================================
-       💡 개선 요청 (Ideas) — 2026-09-14
+       💡 개선 요청 (Ideas) — 2026-09-14 / v2 2026-09-14 (전무님 지시: 대시보드 상단으로)
        월마트 AX 사례(티타임즈)에서 사장님 지시로 도입. 핵심 논리:
          "서로 모르는 직원 여러 명이 같은 불편을 말하면 = 그 업무에 공통 문제가 있다는 신호"
        → 직원이 한 줄 올리고, 다른 직원이 "나도!" 누른다. 나도 수 = 개발 우선순위.
+
+       ⚙️ 마운트 2곳 (챔피언 배너와 같은 방식):
+          · page-home 최상단 — 매니저·임원은 앱 열면 대시보드가 첫 화면
+          · page-emp  상단   — 일반 직원은 내 업무가 첫 화면 (대시보드 탭은 전 직원
+                               공개지만 default 진입은 매니저만이라 둘 다 필요)
+          마운트 지점 = div.km-idea-mount (class 로만 찾음). style/script 는 이 1벌만.
+
        데이터: ideas/{branch}/{pushId} = {text,by,branch,lang,ts,status,votes:{name:ts},
                                           reply,replyBy,replyTs,awarded}
-       ⚠️ RTDB 규칙에 ideas 경로 read/write(approved) 허용 필요 (Console 수동 게시).
-       채택(status=done) 시 요청자에게 mgrBonus +3 자동 지급 → 활동순위에 반영.
+       ⚠️ RTDB 규칙 ideas 게시 완료(2026-09-14). 채택(done) 시 요청자에게 mgrBonus +3.
        ============================================================================ -->
   <style>
-    .idea-box{border:2px solid #c7d2fe;border-radius:18px;overflow:hidden;margin:18px 0 8px;
+    .idea-box{border:2px solid #c7d2fe;border-radius:18px;overflow:hidden;margin:0 0 16px;
       background:linear-gradient(180deg,#fbfcff 0%,#f2f5ff 100%);box-shadow:0 8px 28px rgba(79,70,229,.10)}
     .idea-box>summary{list-style:none;cursor:pointer;padding:14px 18px;
       background:linear-gradient(135deg,#6366f1 0%,#4f46e5 100%);color:#fff;
@@ -1316,6 +1328,8 @@ button{font-family:inherit;cursor:pointer}
     .idea-box>summary::-webkit-details-marker{display:none}
     .idea-box>summary .t1{font-weight:900;font-size:1.04em;letter-spacing:-.01em}
     .idea-box>summary .t2{font-weight:700;font-size:.78em;opacity:.85}
+    .idea-box>summary .cnt{font-weight:900;font-size:.76em;background:rgba(255,255,255,.22);
+      border-radius:20px;padding:3px 10px;white-space:nowrap}
     .idea-box>summary .chev{margin-left:auto;font-size:.9em;opacity:.8;transition:.2s}
     .idea-box[open]>summary .chev{transform:rotate(180deg)}
     .idea-body{padding:16px 16px 18px}
@@ -1361,32 +1375,12 @@ button{font-family:inherit;cursor:pointer}
     .idea-filter button.active{border-color:#4f46e5;background:#4f46e5;color:#fff}
   </style>
 
-  <details class="idea-box" id="ideaBox" ontoggle="if(this.open) kmIdeaLoad()">
-    <summary>
-      <span style="font-size:1.2em">💡</span>
-      <span class="t1" id="ideaTitle">이거 불편해요</span>
-      <span class="t2" id="ideaSub">불편한 점을 알려주세요 — 같은 얘기가 많이 나오면 먼저 고칩니다</span>
-      <span class="chev">▾</span>
-    </summary>
-    <div class="idea-body">
-      <div class="idea-write">
-        <textarea id="ideaText" maxlength="300" placeholder="예) 반품할 때 매니저를 찾아야 해서 손님이 오래 기다립니다"></textarea>
-        <button class="idea-send" id="ideaSendBtn" onclick="kmIdeaSend()">보내기</button>
-      </div>
-      <div class="idea-hint" id="ideaHint">
-        · 이름이 같이 올라갑니다. 고쳐지면 누가 말했는지 공지에 나옵니다.<br>
-        · 아래 목록에서 같은 생각이면 <b>나도!</b> 를 눌러주세요. 많이 눌린 것부터 고칩니다.
-      </div>
-      <div class="idea-filter" id="ideaFilter"></div>
-      <div id="ideaList"><div class="idea-empty">...</div></div>
-    </div>
-  </details>
-
   <script>
   // ========================= 💡 개선 요청 (Ideas) =========================
   const KM_IDEA_PATH = 'ideas';
   const KM_IDEA_AWARD_PTS = 3;          // 채택 시 요청자에게 주는 활동순위 점수
   const KM_IDEA_HOT = 3;                // "나도!" 이 수 이상이면 🔥 (= 공통 문제 신호)
+  const KM_IDEA_OPEN_KEY = 'tasks.ideaOpen';   // 접었는지 기억 (기본: 펼침)
   let KM_IDEA_DATA = [];                // [{id, branch, ...}]
   let KM_IDEA_FILTER = 'open';          // open | all | mine
   let KM_IDEA_LOADED = false;
@@ -1412,6 +1406,7 @@ button{font-family:inherit;cursor:pointer}
                es:'Aún no hay solicitudes.\n¡Sé el primero en decirnos qué te retrasa!' },
     emptyF:  { ko:'이 조건에 해당하는 요청이 없습니다.', en:'Nothing matches this filter.', es:'Nada coincide con este filtro.' },
     loading: { ko:'불러오는 중...', en:'Loading...', es:'Cargando...' },
+    cntOpen: { ko:'{n}건 진행 중', en:'{n} open', es:'{n} abiertos' },
     stNew:   { ko:'접수됨', en:'Received', es:'Recibido' },
     stRev:   { ko:'검토 중', en:'Reviewing', es:'En revisión' },
     stDone:  { ko:'반영됨', en:'Fixed', es:'Resuelto' },
@@ -1446,32 +1441,66 @@ button{font-family:inherit;cursor:pointer}
   function kmIdeaKey(n){ return String(n||'').trim().replace(/[.#$\[\]\/]/g,'_'); }
   function kmIdeaVoteCount(it){ return it.votes ? Object.keys(it.votes).length : 0; }
   function kmIdeaIVoted(it){ const m = kmIdeaMe(); if (!m) return false; return !!(it.votes && it.votes[kmIdeaKey(m.name)]); }
+  function kmIdeaEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  // ---- 마운트: page-home 상단 + page-emp 상단. 껍데기는 1회만 주입 ----
+  function kmIdeaWantOpen(){ try { return localStorage.getItem(KM_IDEA_OPEN_KEY) !== '0'; } catch(_){ return true; } }
+  function kmIdeaToggle(el){
+    try { localStorage.setItem(KM_IDEA_OPEN_KEY, el.open ? '1' : '0'); } catch(_){}
+    document.querySelectorAll('.idea-box').forEach(function(b){ if (b !== el) b.open = el.open; });
+  }
+  function kmIdeaInit(){
+    const shell =
+      '<details class="idea-box" ontoggle="kmIdeaToggle(this)"' + (kmIdeaWantOpen() ? ' open' : '') + '>'
+      + '<summary>'
+      +   '<span style="font-size:1.2em">💡</span>'
+      +   '<span class="t1 idea-i18n-title"></span>'
+      +   '<span class="t2 idea-i18n-sub"></span>'
+      +   '<span class="cnt idea-cnt" style="display:none"></span>'
+      +   '<span class="chev">▾</span>'
+      + '</summary>'
+      + '<div class="idea-body">'
+      +   '<div class="idea-write">'
+      +     '<textarea class="idea-text" maxlength="300"></textarea>'
+      +     '<button class="idea-send" onclick="kmIdeaSend(this)"></button>'
+      +   '</div>'
+      +   '<div class="idea-hint"></div>'
+      +   '<div class="idea-filter"></div>'
+      +   '<div class="idea-list"><div class="idea-empty">' + kmIdeaEsc(kmIdeaT('loading')) + '</div></div>'
+      + '</div></details>';
+    document.querySelectorAll('.km-idea-mount').forEach(function(m){
+      if (m.dataset.init) return;
+      m.innerHTML = shell;
+      m.dataset.init = '1';
+    });
+    kmIdeaApplyI18n();
+  }
 
   function kmIdeaApplyI18n(){
-    const set = (id, v, prop) => { const el = document.getElementById(id); if (el) el[prop || 'textContent'] = v; };
-    set('ideaTitle', kmIdeaT('title'));
-    set('ideaSub',   kmIdeaT('sub'));
-    set('ideaSendBtn', kmIdeaT('send'));
-    set('ideaHint',  kmIdeaT('hint'), 'innerHTML');
-    const ta = document.getElementById('ideaText'); if (ta) ta.placeholder = kmIdeaT('ph');
+    document.querySelectorAll('.idea-box').forEach(function(b){
+      const q = function(s){ return b.querySelector(s); };
+      if (q('.idea-i18n-title')) q('.idea-i18n-title').textContent = kmIdeaT('title');
+      if (q('.idea-i18n-sub'))   q('.idea-i18n-sub').textContent   = kmIdeaT('sub');
+      if (q('.idea-send'))       q('.idea-send').textContent       = kmIdeaT('send');
+      if (q('.idea-hint'))       q('.idea-hint').innerHTML         = kmIdeaT('hint');
+      if (q('.idea-text'))       q('.idea-text').placeholder       = kmIdeaT('ph');
+    });
   }
-  window.addEventListener('km-lang-changed', () => { kmIdeaApplyI18n(); if (KM_IDEA_LOADED) kmIdeaRender(); });
+  window.addEventListener('km-lang-changed', function(){ kmIdeaApplyI18n(); if (KM_IDEA_LOADED) kmIdeaRender(); });
 
   async function kmIdeaLoad(){
-    kmIdeaApplyI18n();
-    const list = document.getElementById('ideaList');
-    if (list && !KM_IDEA_LOADED) list.innerHTML = '<div class="idea-empty">'+kmIdeaT('loading')+'</div>';
+    kmIdeaInit();
     const brs = kmIdeaBranches();
-    if (!brs.length) { if (list) list.innerHTML = '<div class="idea-empty">'+kmIdeaT('empty').replace(/\n/g,'<br>')+'</div>'; return; }
+    if (!brs.length) { kmIdeaRender(); return; }
     try {
       const out = [];
-      await Promise.all(brs.map(async (br) => {
+      await Promise.all(brs.map(async function(br){
         try {
           const r = await fetch(FB_DB_URL+'/'+KM_IDEA_PATH+'/'+br+'.json?t='+Date.now(), { cache:'no-store' });
           if (!r.ok) return;
           const d = await r.json();
           if (!d) return;
-          Object.keys(d).forEach(id => { const v = d[id]; if (v && v.text) out.push(Object.assign({ id, branch: br }, v)); });
+          Object.keys(d).forEach(function(id){ const v = d[id]; if (v && v.text) out.push(Object.assign({ id: id, branch: br }, v)); });
         } catch(e){ console.warn('[idea] load', br, e); }
       }));
       KM_IDEA_DATA = out;
@@ -1479,20 +1508,31 @@ button{font-family:inherit;cursor:pointer}
       kmIdeaRender();
     } catch(e){
       console.warn('[idea] load', e);
-      if (list) list.innerHTML = '<div class="idea-empty">'+kmIdeaT('failed')+'</div>';
+      document.querySelectorAll('.idea-list').forEach(function(el){
+        el.innerHTML = '<div class="idea-empty">'+kmIdeaEsc(kmIdeaT('failed'))+'</div>'; });
     }
   }
+  // me(이름/지점)가 준비된 뒤 로드. 최대 ~10초 기다렸다 그냥 시도.
+  function kmIdeaBoot(){
+    kmIdeaInit();
+    let tries = 0;
+    (function tick(){
+      if (kmIdeaMe() || tries++ > 40) { kmIdeaLoad(); }
+      else setTimeout(tick, 250);
+    })();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', kmIdeaBoot);
+  else kmIdeaBoot();
 
   function kmIdeaSetFilter(f){ KM_IDEA_FILTER = f; kmIdeaRender(); }
 
   function kmIdeaRender(){
-    const list = document.getElementById('ideaList');
-    const fw   = document.getElementById('ideaFilter');
-    if (!list || !fw) return;
+    const boxes = document.querySelectorAll('.idea-box');
+    if (!boxes.length) return;
     const m = kmIdeaMe();
     const admin = kmIdeaIsAdmin();
 
-    fw.innerHTML = [['open', kmIdeaT('fOpen')], ['all', kmIdeaT('fAll')], ['mine', kmIdeaT('fMine')]]
+    const filterHtml = [['open', kmIdeaT('fOpen')], ['all', kmIdeaT('fAll')], ['mine', kmIdeaT('fMine')]]
       .map(function(p){ return '<button class="'+(KM_IDEA_FILTER===p[0]?'active':'')+'" onclick="kmIdeaSetFilter(\''+p[0]+'\')">'+p[1]+'</button>'; }).join('');
 
     let rows = KM_IDEA_DATA.slice();
@@ -1502,64 +1542,75 @@ button{font-family:inherit;cursor:pointer}
     // 🔑 핵심 정렬: "나도!" 많은 순 → 최신 순. 중복이 곧 우선순위.
     rows.sort(function(a, b){ return (kmIdeaVoteCount(b) - kmIdeaVoteCount(a)) || ((b.ts||0) - (a.ts||0)); });
 
+    let listHtml;
     if (!rows.length) {
       const msg = KM_IDEA_DATA.length ? kmIdeaT('emptyF') : kmIdeaT('empty');
-      list.innerHTML = '<div class="idea-empty">'+msg.replace(/\n/g,'<br>')+'</div>';
-      return;
+      listHtml = '<div class="idea-empty">'+kmIdeaEsc(msg).replace(/\n/g,'<br>')+'</div>';
+    } else {
+      const esc = kmIdeaEsc;
+      const stMap = { 'new':['new', kmIdeaT('stNew')], 'reviewing':['reviewing', kmIdeaT('stRev')],
+                      'done':['done', '✅ '+kmIdeaT('stDone')], 'wont':['wont', kmIdeaT('stWont')] };
+      const showBranch = (typeof isOwner === 'function' && isOwner());
+      listHtml = rows.map(function(it){
+        const n     = kmIdeaVoteCount(it);
+        const hot   = n >= KM_IDEA_HOT;
+        const voted = kmIdeaIVoted(it);
+        const mine  = m && kmIdeaKey(it.by) === kmIdeaKey(m.name);
+        const st    = stMap[it.status] || stMap['new'];
+        const d     = it.ts ? new Date(it.ts) : null;
+        const ds    = d ? ((d.getMonth()+1)+'/'+d.getDate()) : '';
+        const brName = (typeof BRANCHES !== 'undefined' && Array.isArray(BRANCHES))
+          ? ((BRANCHES.filter(function(b){ return b.id === it.branch; })[0] || {}).name || it.branch) : it.branch;
+
+        return '<div class="idea-item '+(hot?'hot':'')+'">'
+          + '<div class="idea-top">'
+          +   '<div class="idea-txt">'+esc(it.text)+'</div>'
+          +   '<button class="idea-vote '+(voted?'on':'')+'" '+(mine?'disabled style="opacity:.45;cursor:default"':'')
+          +           ' onclick="kmIdeaVote(\''+it.branch+'\',\''+it.id+'\')">'
+          +     '<span class="n">'+n+'</span><span class="l">'+kmIdeaT('metoo')+'</span>'
+          +   '</button>'
+          + '</div>'
+          + '<div class="idea-meta">'
+          +   '<span class="idea-badge '+st[0]+'">'+st[1]+'</span>'
+          +   (hot ? '<span class="idea-badge hot">'+kmIdeaT('hot')+'</span>' : '')
+          +   '<span>'+esc(it.by||'')+'</span>'
+          +   (showBranch ? '<span>· '+esc(brName)+'</span>' : '')
+          +   '<span>· '+ds+'</span>'
+          + '</div>'
+          + (it.reply ? '<div class="idea-reply"><b>'+kmIdeaT('replyBy')+' — '+esc(it.replyBy||'')+'</b>'+esc(it.reply)+'</div>' : '')
+          + (admin ? '<div class="idea-admin">'
+          +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'reviewing\')">👀 '+kmIdeaT('stRev')+'</button>'
+          +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'done\')">✅ '+kmIdeaT('stDone')+'</button>'
+          +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'wont\')">⏸ '+kmIdeaT('stWont')+'</button>'
+          +   '<button onclick="kmIdeaReply(\''+it.branch+'\',\''+it.id+'\')">💬 '+kmIdeaT('replyBy')+'</button>'
+          + '</div>' : '')
+          + '</div>';
+      }).join('');
     }
 
-    const esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
-    const stMap = { 'new':['new', kmIdeaT('stNew')], 'reviewing':['reviewing', kmIdeaT('stRev')],
-                    'done':['done', '✅ '+kmIdeaT('stDone')], 'wont':['wont', kmIdeaT('stWont')] };
-    const showBranch = (typeof isOwner === 'function' && isOwner());
-
-    list.innerHTML = rows.map(function(it){
-      const n     = kmIdeaVoteCount(it);
-      const hot   = n >= KM_IDEA_HOT;
-      const voted = kmIdeaIVoted(it);
-      const mine  = m && kmIdeaKey(it.by) === kmIdeaKey(m.name);
-      const st    = stMap[it.status] || stMap['new'];
-      const d     = it.ts ? new Date(it.ts) : null;
-      const ds    = d ? ((d.getMonth()+1)+'/'+d.getDate()) : '';
-      const brName = (typeof BRANCHES !== 'undefined' && Array.isArray(BRANCHES))
-        ? ((BRANCHES.filter(function(b){ return b.id === it.branch; })[0] || {}).name || it.branch) : it.branch;
-
-      return '<div class="idea-item '+(hot?'hot':'')+'">'
-        + '<div class="idea-top">'
-        +   '<div class="idea-txt">'+esc(it.text)+'</div>'
-        +   '<button class="idea-vote '+(voted?'on':'')+'" '+(mine?'disabled style="opacity:.45;cursor:default"':'')
-        +           ' onclick="kmIdeaVote(\''+it.branch+'\',\''+it.id+'\')">'
-        +     '<span class="n">'+n+'</span><span class="l">'+kmIdeaT('metoo')+'</span>'
-        +   '</button>'
-        + '</div>'
-        + '<div class="idea-meta">'
-        +   '<span class="idea-badge '+st[0]+'">'+st[1]+'</span>'
-        +   (hot ? '<span class="idea-badge hot">'+kmIdeaT('hot')+'</span>' : '')
-        +   '<span>'+esc(it.by||'')+'</span>'
-        +   (showBranch ? '<span>· '+esc(brName)+'</span>' : '')
-        +   '<span>· '+ds+'</span>'
-        + '</div>'
-        + (it.reply ? '<div class="idea-reply"><b>'+kmIdeaT('replyBy')+' — '+esc(it.replyBy||'')+'</b>'+esc(it.reply)+'</div>' : '')
-        + (admin ? '<div class="idea-admin">'
-        +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'reviewing\')">👀 '+kmIdeaT('stRev')+'</button>'
-        +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'done\')">✅ '+kmIdeaT('stDone')+'</button>'
-        +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'wont\')">⏸ '+kmIdeaT('stWont')+'</button>'
-        +   '<button onclick="kmIdeaReply(\''+it.branch+'\',\''+it.id+'\')">💬 '+kmIdeaT('replyBy')+'</button>'
-        + '</div>' : '')
-        + '</div>';
-    }).join('');
+    // 접혀 있어도 건수는 헤더에 보이게 — 대시보드 상단에서 한눈에.
+    const openN = KM_IDEA_DATA.filter(function(x){ return x.status !== 'done' && x.status !== 'wont'; }).length;
+    boxes.forEach(function(b){
+      const fl = b.querySelector('.idea-filter'); if (fl) fl.innerHTML = filterHtml;
+      const ls = b.querySelector('.idea-list');   if (ls) ls.innerHTML = listHtml;
+      const ct = b.querySelector('.idea-cnt');
+      if (ct){
+        if (openN > 0){ ct.textContent = kmIdeaT('cntOpen').replace('{n}', openN); ct.style.display = ''; }
+        else ct.style.display = 'none';
+      }
+    });
   }
 
-  async function kmIdeaSend(){
+  async function kmIdeaSend(btn){
     const m = kmIdeaMe();
     if (!m) { alert(kmIdeaT('noName')); if (typeof goSetName === 'function') goSetName(); return; }
-    const ta = document.getElementById('ideaText');
+    const box = btn.closest('.idea-box');
+    const ta  = box.querySelector('.idea-text');
     const txt = (ta.value || '').trim();
     if (!txt) { ta.focus(); return; }
     const br = (m.branch && m.branch !== '*') ? m.branch
              : ((typeof BRANCHES !== 'undefined' && BRANCHES[0]) ? BRANCHES[0].id : '');
     if (!br) { alert(kmIdeaT('failed')); return; }
-    const btn = document.getElementById('ideaSendBtn');
     btn.disabled = true;
     try {
       const rec = { text: txt, by: m.name, branch: br, lang: (typeof LANG==='string'?LANG:'ko'),
@@ -1570,7 +1621,8 @@ button{font-family:inherit;cursor:pointer}
       const j = await r.json();
       KM_IDEA_DATA.push(Object.assign({ id: j.name, branch: br }, rec));
       KM_IDEA_LOADED = true;
-      ta.value = '';
+      // 두 마운트의 입력창을 모두 비운다 (같은 사람이 양쪽을 오갈 수 있음)
+      document.querySelectorAll('.idea-text').forEach(function(t){ t.value = ''; });
       KM_IDEA_FILTER = 'open';
       kmIdeaRender();
       if (typeof showToast === 'function') showToast('💡', kmIdeaT('sent')); else alert(kmIdeaT('sent'));
