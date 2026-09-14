@@ -1355,6 +1355,9 @@ button{font-family:inherit;cursor:pointer}
     .idea-vote .n{font-weight:900;font-size:1.15em;line-height:1}
     .idea-vote .l{font-size:.62em;font-weight:700;letter-spacing:.01em;white-space:nowrap}
     .idea-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px;font-size:.76em;color:#94a3b8}
+    .idea-src{border:0;background:none;color:#6366f1;font:inherit;font-weight:800;cursor:pointer;padding:0;text-decoration:underline}
+    .idea-src:hover{color:#4338ca}
+    .idea-trtag{font-size:.9em;opacity:.75}
     .idea-badge{font-weight:800;border-radius:20px;padding:3px 10px;font-size:.95em}
     .idea-badge.new{background:#e0e7ff;color:#4338ca}
     .idea-badge.reviewing{background:#fef3c7;color:#92400e}
@@ -1384,6 +1387,7 @@ button{font-family:inherit;cursor:pointer}
   let KM_IDEA_DATA = [];                // [{id, branch, ...}]
   let KM_IDEA_FILTER = 'open';          // open | all | mine
   let KM_IDEA_LOADED = false;
+  const KM_IDEA_SHOWSRC = {};           // {itemKey:true} — 원문 보기로 토글한 글
 
   const KM_IDEA_I18N = {
     title:   { ko:'이거 불편해요',  en:'Something not working?', es:'¿Algo incómodo?' },
@@ -1398,6 +1402,9 @@ button{font-family:inherit;cursor:pointer}
                en:'· Your name is attached. When it gets fixed, we announce who asked.<br>· If you agree with one below, tap <b>Me too!</b>. Most-tapped gets fixed first.',
                es:'· Tu nombre se adjunta. Cuando se arregle, anunciamos quién lo pidió.<br>· Si estás de acuerdo con alguno, toca <b>¡Yo también!</b>. Lo más votado se arregla primero.' },
     metoo:   { ko:'나도!', en:'Me too!', es:'¡Yo también!' },
+    showSrc: { ko:'원문 보기', en:'Show original', es:'Ver original' },
+    showTr:  { ko:'번역 보기', en:'Show translation', es:'Ver traducción' },
+    trTag:   { ko:'🌐 번역됨', en:'🌐 translated', es:'🌐 traducido' },
     fOpen:   { ko:'진행 중', en:'Open', es:'Abiertos' },
     fAll:    { ko:'전체', en:'All', es:'Todos' },
     fMine:   { ko:'내가 쓴 것', en:'Mine', es:'Míos' },
@@ -1442,6 +1449,21 @@ button{font-family:inherit;cursor:pointer}
   function kmIdeaVoteCount(it){ return it.votes ? Object.keys(it.votes).length : 0; }
   function kmIdeaIVoted(it){ const m = kmIdeaMe(); if (!m) return false; return !!(it.votes && it.votes[kmIdeaKey(m.name)]); }
   function kmIdeaEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function kmIdeaItemKey(it){ return it.branch + '/' + it.id; }
+  // 보는 사람 언어로 보여준다. 번역은 Cloud Function(ideaTranslate)이 tr 에 붙여준다.
+  // 아직 안 붙었거나 실패했으면 원문 그대로 — 글이 안 보이는 일은 없다.
+  function kmIdeaBody(it){
+    const src = ['ko','en','es'].indexOf(it.lang) >= 0 ? it.lang : 'ko';
+    const tr  = it.tr && typeof it.tr[LANG] === 'string' ? it.tr[LANG].trim() : '';
+    const can = !!tr && src !== LANG;                       // 번역본이 있고 원문 언어와 다름
+    const showSrc = !!KM_IDEA_SHOWSRC[kmIdeaItemKey(it)];
+    return { text: (can && !showSrc) ? tr : it.text, canToggle: can, showingSrc: showSrc };
+  }
+  function kmIdeaToggleSrc(branch, id){
+    const k = branch + '/' + id;
+    KM_IDEA_SHOWSRC[k] = !KM_IDEA_SHOWSRC[k];
+    kmIdeaRender();
+  }
 
   // ---- 마운트: page-home 상단 + page-emp 상단. 껍데기는 1회만 주입 ----
   function kmIdeaWantOpen(){ try { return localStorage.getItem(KM_IDEA_OPEN_KEY) !== '0'; } catch(_){ return true; } }
@@ -1562,9 +1584,10 @@ button{font-family:inherit;cursor:pointer}
         const brName = (typeof BRANCHES !== 'undefined' && Array.isArray(BRANCHES))
           ? ((BRANCHES.filter(function(b){ return b.id === it.branch; })[0] || {}).name || it.branch) : it.branch;
 
+        const body = kmIdeaBody(it);
         return '<div class="idea-item '+(hot?'hot':'')+'">'
           + '<div class="idea-top">'
-          +   '<div class="idea-txt">'+esc(it.text)+'</div>'
+          +   '<div class="idea-txt">'+esc(body.text)+'</div>'
           +   '<button class="idea-vote '+(voted?'on':'')+'" '+(mine?'disabled style="opacity:.45;cursor:default"':'')
           +           ' onclick="kmIdeaVote(\''+it.branch+'\',\''+it.id+'\')">'
           +     '<span class="n">'+n+'</span><span class="l">'+kmIdeaT('metoo')+'</span>'
@@ -1576,6 +1599,9 @@ button{font-family:inherit;cursor:pointer}
           +   '<span>'+esc(it.by||'')+'</span>'
           +   (showBranch ? '<span>· '+esc(brName)+'</span>' : '')
           +   '<span>· '+ds+'</span>'
+          +   (body.canToggle && !body.showingSrc ? '<span class="idea-trtag">· '+kmIdeaT('trTag')+'</span>' : '')
+          +   (body.canToggle ? '<button class="idea-src" onclick="kmIdeaToggleSrc(\''+it.branch+'\',\''+it.id+'\')">'
+                                + (body.showingSrc ? kmIdeaT('showTr') : kmIdeaT('showSrc')) + '</button>' : '')
           + '</div>'
           + (it.reply ? '<div class="idea-reply"><b>'+kmIdeaT('replyBy')+' — '+esc(it.replyBy||'')+'</b>'+esc(it.reply)+'</div>' : '')
           + (admin ? '<div class="idea-admin">'
@@ -1626,6 +1652,8 @@ button{font-family:inherit;cursor:pointer}
       KM_IDEA_FILTER = 'open';
       kmIdeaRender();
       if (typeof showToast === 'function') showToast('💡', kmIdeaT('sent')); else alert(kmIdeaT('sent'));
+      // 번역은 서버(ideaTranslate)가 몇 초 뒤 붙인다 — 조용히 한 번 다시 읽어 반영.
+      setTimeout(function(){ kmIdeaLoad(); }, 7000);
     } catch(e){
       console.warn('[idea] send', e);
       alert(kmIdeaT('failed'));

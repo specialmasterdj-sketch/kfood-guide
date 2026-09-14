@@ -66,3 +66,80 @@ exports.chatPush = onValueCreated(
     await Promise.all(sends);
   }
 );
+
+// =============================================================================
+// 🌐 개선 요청(ideas) 자동 번역 — 2026-09-14
+// 직원이 올린 글을 한/영/스페인어로 번역해 ideas/{branch}/{id}/tr 에 붙인다.
+// 히스패닉 직원 80% · 한국인 2% 라 원문 그대로 두면 서로 못 읽고,
+// 그러면 "나도!" 투표(= 중복 신호)가 언어별로 갈려 기능의 의미가 없어진다.
+//
+// 설계 의도:
+//   · 클라이언트가 아니라 RTDB 트리거 — API 키가 브라우저 근처에 가지 않는다.
+//   · 글 저장 "후"에 붙는다. 번역이 실패해도 원문은 이미 저장돼 있어 안전.
+//   · 작성 시 1회만. 읽을 때는 저장된 걸 쓰므로 조회는 공짜.
+//   · 원문 언어는 번역하지 않고 그대로 넣는다 (토큰 낭비 방지).
+//
+// 비용: 글 1건당 약 $0.0014 (Haiku 4.5). 하루 20건이어도 월 $1 미만.
+// 키: firebase functions:secrets:set ANTHROPIC_API_KEY  (Secret Manager)
+// 배포: firebase deploy --only functions
+// =============================================================================
+const { defineSecret } = require('firebase-functions/params');
+const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
+
+const LANG_NAME = { ko: 'Korean', en: 'English', es: 'Spanish' };
+
+exports.ideaTranslate = onValueCreated(
+  { ref: '/ideas/{branch}/{ideaId}', region: 'us-central1', secrets: [ANTHROPIC_API_KEY] },
+  async (event) => {
+    const rec = event.data.val();
+    if (!rec || !rec.text) return;
+    if (rec.tr) return;                        // 이미 번역됨 (재실행 방지)
+
+    const text = String(rec.text).slice(0, 500);
+    const src = ['ko', 'en', 'es'].includes(rec.lang) ? rec.lang : 'ko';
+    const targets = ['ko', 'en', 'es'].filter((l) => l !== src);
+
+    let out = null;
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+      const res = await client.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 1000,
+        system:
+          'You translate short messages written by grocery store employees about problems ' +
+          'they hit at work. Keep it plain and natural — the way a coworker would say it, ' +
+          'not formal business writing. Keep store jargon (aisle numbers, product names, ' +
+          'brand names, department names) as-is. Do not add, explain, or soften anything. ' +
+          'Reply with ONLY a JSON object, no markdown fence, no commentary.',
+        messages: [{
+          role: 'user',
+          content:
+            'Translate this ' + LANG_NAME[src] + ' message into ' +
+            targets.map((l) => LANG_NAME[l]).join(' and ') + '.\n' +
+            'Reply as JSON with exactly these keys: ' + targets.map((l) => '"' + l + '"').join(', ') + '\n\n' +
+            'Message:\n' + text,
+        }],
+      });
+      const raw = (res.content || [])
+        .filter((b) => b.type === 'text').map((b) => b.text).join('').trim()
+        .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(raw);
+      out = { [src]: text };
+      for (const l of targets) {
+        if (typeof parsed[l] === 'string' && parsed[l].trim()) out[l] = parsed[l].trim();
+      }
+      // 한 개도 못 건졌으면 저장하지 않는다 (원문만 남는 게 낫다)
+      if (Object.keys(out).length < 2) out = null;
+    } catch (e) {
+      console.warn('[ideaTranslate] failed', event.params.branch, event.params.ideaId, e && e.message);
+      return;                                   // 조용히 포기 — 원문은 그대로 살아 있다
+    }
+
+    if (!out) return;
+    await admin.database()
+      .ref('ideas/' + event.params.branch + '/' + event.params.ideaId + '/tr')
+      .set(out)
+      .catch((e) => console.warn('[ideaTranslate] save', e && e.message));
+  }
+);
