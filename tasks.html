@@ -1363,8 +1363,9 @@ button{font-family:inherit;cursor:pointer}
 
   <script>
   // ========================= 🤖 매장 어시스턴트 =========================
-  // ⚠️ Cloud Function(askAssistant) 배포 후 true 로 바꿀 것.
-  const KM_ASK_ENABLED = false;
+  // 2026-09-14 전무님 지시로 배포 전에 켬 ("오류나도 괜찮으니 올려줘").
+  // 함수가 아직 없으면 아래 eNotReady 안내가 뜬다 — 고장으로 보이지 않게.
+  const KM_ASK_ENABLED = true;
   const KM_ASK_URL = 'https://us-central1-kimchi-mart-order.cloudfunctions.net/askAssistant';
 
   const KM_ASK_I18N = {
@@ -1388,7 +1389,10 @@ button{font-family:inherit;cursor:pointer}
     eQuota: { ko:'오늘 질문 한도({l}회)를 다 쓰셨습니다. 내일 다시 물어보세요.',
               en:'You have used today\'s limit ({l}). Please try again tomorrow.',
               es:'Has usado el límite de hoy ({l}). Inténtalo mañana.' },
-    eFail:  { ko:'답을 가져오지 못했습니다. 잠시 후 다시 해주세요.', en:'Could not get an answer. Please try again.', es:'No se pudo obtener respuesta. Inténtalo de nuevo.' }
+    eFail:  { ko:'답을 가져오지 못했습니다. 잠시 후 다시 해주세요.', en:'Could not get an answer. Please try again.', es:'No se pudo obtener respuesta. Inténtalo de nuevo.' },
+    eNotReady:{ ko:'아직 준비 중입니다. 곧 열립니다 — 조금만 기다려주세요!',
+                en:'Not ready yet. Coming soon — hang tight!',
+                es:'Aún no está listo. Pronto estará disponible.' }
   };
   function kmAskT(k){ const m = KM_ASK_I18N[k]; if(!m) return k; const l = (typeof LANG==='string' && m[LANG]) ? LANG : 'ko'; return m[l]; }
 
@@ -1483,6 +1487,8 @@ button{font-family:inherit;cursor:pointer}
       const j = await r.json().catch(function(){ return {}; });
 
       if (r.status === 429) { show(kmAskT('eQuota').replace('{l}', j.limit || 20), true); return; }
+      // 함수가 아직 배포되지 않았으면 404 가 온다 — 고장이 아니라 "준비 중"이다
+      if (r.status === 404) { show(kmAskT('eNotReady'), true); return; }
       if (!r.ok || !j.answer) { show(kmAskT('eFail'), true); return; }
 
       show(j.answer, false);
@@ -1491,8 +1497,11 @@ button{font-family:inherit;cursor:pointer}
         quo.textContent = kmAskT('quota').replace('{u}', j.used).replace('{l}', j.limit || 20);
       }
     } catch (e) {
+      // fetch 자체가 터지면(함수 없음 → CORS/네트워크) 역시 "준비 중"으로 본다.
+      // 함수가 올라간 뒤의 일시적 네트워크 오류도 여기 걸리지만, 직원에게는
+      // "잠시 후 다시" 보다 이 문구가 덜 불안하다.
       console.warn('[ask]', e);
-      show(kmAskT('eFail'), true);
+      show(kmAskT('eNotReady'), true);
     } finally {
       btn.disabled = false;
     }
