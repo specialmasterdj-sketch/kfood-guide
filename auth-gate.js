@@ -212,13 +212,16 @@ function syncToChatMe(profile){
 // ===== REST + 명시 토큰 헬퍼 (auth.html 과 동일 패턴) =====
 // 전화 인증 직후 토큰이 RTDB 에 전파되기 전 첫 요청이 401/네트워크로 실패하는
 // 케이스 → 토큰 강제 갱신하며 3회 재시도.
+// ⏱ 2026-09-15 — 타임아웃 없는 fetch 가 폰 망 전환 순간 몇 분씩 매달려
+//   '로그인 뒤 한참 버퍼링' 현상 → 8초 컷 후 즉시 재시도.
+function _tf(u, o){ const c = new AbortController(); const t = setTimeout(() => { try { c.abort(); } catch(_){} }, 8000); return fetch(u, Object.assign({}, o, { signal: c.signal })).finally(() => clearTimeout(t)); }
 async function _restGetProfile(user){
   let tok = '';
   try { tok = await user.getIdToken(); } catch(_){}
   let lastErr = null;
   for (let i = 0; i < 3; i++){
     try {
-      const r = await fetch(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
+      const r = await _tf(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
       if (r.ok) return { ok: true, val: await r.json() };
       lastErr = 'HTTP ' + r.status;
     } catch(e){ lastErr = (e && e.message) || String(e); }
@@ -233,7 +236,7 @@ async function _restPutProfile(user, profile){
   let lastErr = null;
   for (let i = 0; i < 3; i++){
     try {
-      const r = await fetch(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok), {
+      const r = await _tf(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok), {
         method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
       if (r.ok) return { ok: true };
       lastErr = 'HTTP ' + r.status;
@@ -246,7 +249,7 @@ async function _restPutProfile(user, profile){
 async function _restGet(path, user){
   try {
     const tok = await user.getIdToken();
-    const r = await fetch(cfg.databaseURL + '/' + path + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
+    const r = await _tf(cfg.databaseURL + '/' + path + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
     if (r.ok) return await r.json();
   } catch(_){}
   return undefined;   // 실패 (null 데이터와 구분)

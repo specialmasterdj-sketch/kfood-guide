@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -904,6 +904,9 @@ onAuthStateChanged(auth, async (user) => {
   // First-time login: create record and bootstrap admins
   // 전화 인증 직후엔 RTDB 실시간연결 auth 가 지연돼 SDK get/set/onValue 가 멈출 수
   // 있어(무한 로딩), 로그인 완료 경로를 REST + 명시 토큰으로 처리한다.
+  // ⏱ 2026-09-15 사장님 신고 "인증 뒤 2분 대기": 타임아웃 없는 fetch 가 폰 망 전환
+  //   순간 몇 분씩 매달리던 것 → 로그인 REST 전부 8초 컷 후 즉시 재시도.
+  const _tf = (u, o) => { const c = new AbortController(); const t = setTimeout(() => { try { c.abort(); } catch(_){} }, 8000); return fetch(u, Object.assign({}, o, { signal: c.signal })).finally(() => clearTimeout(t)); };
   let __tok = '';
   try { __tok = await user.getIdToken(); } catch(_){}
   let __uurl = cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(__tok);
@@ -913,7 +916,7 @@ onAuthStateChanged(auth, async (user) => {
   for (let __a = 0; __a < 3; __a++) {
     getErr = null;
     try {
-      const __r = await fetch(__uurl, { cache:'no-store' });
+      const __r = await _tf(__uurl, { cache:'no-store' });
       if (__r.ok) { const v = await __r.json(); snap = { exists: () => v != null, val: () => v }; break; }
       getErr = 'HTTP ' + __r.status;
     } catch(e){ getErr = e.message || e; }
@@ -937,7 +940,7 @@ onAuthStateChanged(auth, async (user) => {
       try {
         const rk = String(user.phoneNumber).replace(/\D/g, '');
         const tok = await user.getIdToken();
-        const rr = await fetch(cfg.databaseURL + '/phoneRoster/' + rk + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
+        const rr = await _tf(cfg.databaseURL + '/phoneRoster/' + rk + '.json?auth=' + encodeURIComponent(tok), { cache:'no-store' });
         if (rr.ok) { const v = await rr.json(); if (v) roster = v; }
       } catch(_){}
     }
@@ -960,7 +963,7 @@ onAuthStateChanged(auth, async (user) => {
     for (let __b = 0; __b < 3; __b++) {
       __putErr = null;
       try {
-        const __pr = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
+        const __pr = await _tf(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profile) });
         if (__pr.ok) { __putOk = true; break; }
         __putErr = 'HTTP ' + __pr.status;
       } catch(e){ __putErr = e.message || e; }
@@ -988,7 +991,7 @@ onAuthStateChanged(auth, async (user) => {
         approvedAt: existing.approvedAt || Date.now(), approvedBy: existing.approvedBy || 'bootstrap-upgrade',
       });
       try {
-        const __ur = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up) });
+        const __ur = await _tf(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up) });
         if (__ur.ok) existing = __up;
       } catch (e) { console.warn('bootstrap-upgrade failed:', e); }
     }
@@ -997,7 +1000,7 @@ onAuthStateChanged(auth, async (user) => {
     if (!boot && existing.status !== 'approved' && user.phoneNumber) {
       try {
         const __rk = String(user.phoneNumber).replace(/\D/g, '');
-        const __rr = await fetch(cfg.databaseURL + '/phoneRoster/' + __rk + '.json?auth=' + encodeURIComponent(__tok), { cache:'no-store' });
+        const __rr = await _tf(cfg.databaseURL + '/phoneRoster/' + __rk + '.json?auth=' + encodeURIComponent(__tok), { cache:'no-store' });
         if (__rr.ok) {
           const __rv = await __rr.json();
           if (__rv) {
@@ -1010,7 +1013,7 @@ onAuthStateChanged(auth, async (user) => {
               approvedAt: existing.approvedAt || Date.now(),
               approvedBy: existing.approvedBy || 'roster',
             });
-            const __ur2 = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up2) });
+            const __ur2 = await _tf(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up2) });
             if (__ur2.ok) existing = __up2;
           }
         }
@@ -1023,12 +1026,12 @@ onAuthStateChanged(auth, async (user) => {
       const __phd = String(user.phoneNumber).replace(/\D/g, '');
       if (!existing.name || existing.name === user.phoneNumber || existing.name === __phd) {
         try {
-          const __rr3 = await fetch(cfg.databaseURL + '/phoneRoster/' + __phd + '.json?auth=' + encodeURIComponent(__tok), { cache:'no-store' });
+          const __rr3 = await _tf(cfg.databaseURL + '/phoneRoster/' + __phd + '.json?auth=' + encodeURIComponent(__tok), { cache:'no-store' });
           if (__rr3.ok) {
             const __rv3 = await __rr3.json();
             if (__rv3 && __rv3.name && __rv3.name !== existing.name) {
               const __up3 = Object.assign({}, existing, { name: __rv3.name });
-              const __ur3 = await fetch(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up3) });
+              const __ur3 = await _tf(__uurl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(__up3) });
               if (__ur3.ok) existing = __up3;
             }
           }

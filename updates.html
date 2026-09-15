@@ -897,7 +897,23 @@ Object.assign(window, {
 
 // ===== INIT =====
 applyUpLang();
-if (me) { refreshMePill(); refreshComposeFab(); } else { openMeModal(); }
+// 🔐 2026-09-15 — 계정-신원 동기화(me-persist)가 로그인 계정의 실명을 곧 채우므로
+//   질문 모달을 바로 띄우지 않고 6초 기다림. 도착하면 질문 없이 진행(오너 포함),
+//   미등록 계정만 그때 모달 (자동 닫힘 리스너 포함).
+if (me) { refreshMePill(); refreshComposeFab(); }
+else {
+  let __meWait = setTimeout(() => { __meWait = null; if (!me || !me.name) openMeModal(); }, 6000);
+  const __onIdent = () => {
+    try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+    if (!me || !me.name) return;
+    if (__meWait) { clearTimeout(__meWait); __meWait = null; }
+    try { document.getElementById('meOverlay').classList.remove('show'); } catch(e){}
+    refreshMePill(); refreshComposeFab(); renderFeed();
+  };
+  window.addEventListener('km-identity-changed', __onIdent);
+  window.addEventListener('storage', e => { if (e.key === 'chat.me' && e.newValue) __onIdent(); });
+  try { if (window.__kmSyncIdentity) window.__kmSyncIdentity(); } catch(e){}
+}
 
 // Mark as 'seen up to now' the moment the page opens, so the sidebar
 // badge clears even before fetchRest() returns (network-flaky case).

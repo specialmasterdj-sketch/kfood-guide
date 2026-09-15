@@ -230,6 +230,7 @@
     } catch(e){} finally { syncing = false; }
   }
   window.addEventListener('fb-auth-ready', function(){ syncIdentity(); });
+  setTimeout(syncIdentity, 1200);   // ⚡ 2026-09-15: 질문 모달보다 계정 신원이 먼저 도착하게 조기 1회
   setTimeout(syncIdentity, 4000);
   setInterval(syncIdentity, 10 * 60 * 1000);
   window.__kmSyncIdentity = syncIdentity;

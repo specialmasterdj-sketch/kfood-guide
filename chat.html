@@ -1076,6 +1076,33 @@ function initialsOf(name){ return (name || '?').split(/\s+/).map(w => w[0] || ''
 let me = (function(){
   try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){ return null; }
 })();
+// 🔐 2026-09-15 사장님 지시 "명확한 오너 로그인 루트": 계정-신원 동기화(me-persist)가
+//   로그인 계정의 이름·직급을 채우면 즉시 반영 — 열려 있던 '본인 이름 선택' 모달도
+//   자동으로 닫는다. 오너/직원 모두 지점·이름 질문 없이 계정 그대로 입장.
+(function(){
+  function _acctIdentityArrived(){
+    let fresh = null;
+    try { fresh = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+    if (!fresh || !fresh.name) return;
+    const had = me && me.name;
+    me = fresh;
+    try { if (typeof markMePillStatus === 'function') markMePillStatus(); } catch(e){}
+    // 계정 동기화로 이름이 채워졌으면 질문 모달 자동 닫기 (직접 입력 중이 아닐 때만)
+    try {
+      const ov = document.getElementById('meOverlay');
+      const typing = document.activeElement && document.activeElement.id === 'meCustom' && document.activeElement.value;
+      if (ov && ov.classList.contains('show') && !had && !typing) {
+        ov.classList.remove('show');
+        if (typeof showStatus === 'function') {
+          showStatus('✅ ' + fresh.name + ({ko:' 계정으로 자동 로그인되었습니다',en:' signed in from your account',es:' — sesión iniciada con su cuenta'}[LANG]||''));
+          setTimeout(() => { try { hideStatus(); } catch(e){} }, 2500);
+        }
+      }
+    } catch(e){}
+  }
+  window.addEventListener('km-identity-changed', _acctIdentityArrived);
+  window.addEventListener('storage', e => { if (e.key === 'chat.me' && e.newValue) _acctIdentityArrived(); });
+})();
 
 // 🚫 chat.me role 자동 동기화 코드 비활성화 (2026-05-18) —
 //    매번 chat.html 로드마다 익명 Firebase Auth 계정 생성 (accounts:signUp) 호출이
@@ -1179,6 +1206,8 @@ function ensureMe(){
     if (me && isGenericName(me.name)) {
       alert('⚠️ "'+me.name+'"은 공용 이름입니다.\n\n본인 실제 이름을 선택해 주세요.\n예: Cristopher Lopez, 김철수');
     }
+    // 🔐 계정 동기화를 먼저 재촉 — 로그인 계정에 실명이 있으면 모달이 곧 자동으로 닫힘
+    try { if (window.__kmSyncIdentity) window.__kmSyncIdentity(); } catch(e){}
     openMeModal();
     return false;
   }
@@ -3909,6 +3938,13 @@ async function probeStorage(){
   } catch(e){ __storageActive = false; }
   return __storageActive;
 }
+// ⏱ 2026-09-15 사장님 신고 "사진 올리다 끊김·한참 기다림": 타임아웃 없는 fetch 가
+//   폰 망 전환 순간 몇 분씩 매달리던 것 → 시도당 25초 컷 후 즉시 재시도.
+function _fetchTimeout(url, opts, ms){
+  const ctl = new AbortController();
+  const t = setTimeout(() => { try { ctl.abort(); } catch(e){} }, ms || 25000);
+  return fetch(url, Object.assign({}, opts, { signal: ctl.signal })).finally(() => clearTimeout(t));
+}
 async function uploadPhoto(att, roomId, msgId, idx){
   const path = `chat/${roomId}/${msgId}/${idx}.jpg`;
   const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`;
@@ -3917,7 +3953,7 @@ async function uploadPhoto(att, roomId, msgId, idx){
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       console.log('[uploadPhoto] attempt', attempt+1, 'idx=', idx);
-      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob });
+      const r = await _fetchTimeout(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob }, 25000);
       if (r.ok) {
         __storageActive = true;
         const meta = await r.json();
@@ -3950,7 +3986,7 @@ async function uploadFile(att, roomId, msgId, idx){
   let lastErr = '';
   for (let attempt = 0; attempt < 4; attempt++){
     try {
-      const r = await fetch(url, { method:'POST', headers:{'Content-Type': att.mime || 'application/octet-stream'}, body: att.file });
+      const r = await _fetchTimeout(url, { method:'POST', headers:{'Content-Type': att.mime || 'application/octet-stream'}, body: att.file }, 60000);
       if (r.ok){
         const meta = await r.json();
         return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
@@ -4174,12 +4210,26 @@ async function sendMessage(){
       const fls = ATTACH.filter(a => a.type === 'file');
       const total = imgs.length + fls.length;
       let done = 0;
-      for (let i = 0; i < imgs.length; i++) {
-        showStatus(`업로드 중... ${done} / ${total}`);
-        const url = await uploadPhoto(imgs[i], ACTIVE_ROOM, msgId, i);
-        msg.photos.push(url);
-        done++;
+      // ⚡ 2026-09-15 사장님 신고 "사진이 늦게 올라감": 26장을 한 장씩 직렬 업로드하던 것을
+      //   3장 동시 병렬로 (순서는 인덱스로 보존). 폰 LTE 에서 체감 3배↑.
+      showStatus(`업로드 중... 0 / ${total}`);
+      const photoUrls = new Array(imgs.length);
+      let nextImg = 0;
+      const workers = [];
+      const workerCount = Math.min(3, imgs.length);
+      for (let w = 0; w < workerCount; w++) {
+        workers.push((async () => {
+          while (true) {
+            const i = nextImg++;
+            if (i >= imgs.length) break;
+            photoUrls[i] = await uploadPhoto(imgs[i], ACTIVE_ROOM, msgId, i);
+            done++;
+            showStatus(`업로드 중... ${done} / ${total}`);
+          }
+        })());
       }
+      await Promise.all(workers);
+      msg.photos = photoUrls.filter(Boolean);
       for (let i = 0; i < fls.length; i++) {
         showStatus(`파일 업로드 중... ${done} / ${total}`);
         const url = await uploadFile(fls[i], ACTIVE_ROOM, msgId, i);
