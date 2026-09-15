@@ -813,6 +813,11 @@ const PAY_I18N = {
     chatTagCash:'[현금]', chatTagCpa:'[CPA]',
     chatStaff:'인원', chatStaffSuffix:'명', chatTotal:'총', chatSig:'사인', chatSigBlank:'(공란)',
     emailStaffLine:'인원', emailFooter:'— 김치마트 매니저 앱',
+    delAsk:'이 행을 삭제할까요?',
+    delQuit:'{n} 님을 명단에서도 뺄까요?\n\n확인 = 퇴사 (다음 주부터 안 나옴)\n취소 = 이번 주만 제외',
+    delQuitOk:'{n} 명단에서 제거됨 — 다음 주부터 안 나옵니다',
+    delQuitFail:'명단 저장 실패 — 다시 시도해주세요',
+    addedToRoster:'{n} 명단에 추가됨 — 다음 주부터 자동으로 나옵니다',
   },
   en: {
     pageTitleCash: '💵 Cash Payroll',
@@ -832,6 +837,11 @@ const PAY_I18N = {
     chatTagCash:'[CASH]', chatTagCpa:'[CPA]',
     chatStaff:'Staff', chatStaffSuffix:'', chatTotal:'Total', chatSig:'Signed by', chatSigBlank:'(blank)',
     emailStaffLine:'Staff', emailFooter:'— Kimchi Mart Manager App',
+    delAsk:'Delete this row?',
+    delQuit:'Also remove {n} from the roster?\n\nOK = left the company (won\'t appear next week)\nCancel = skip this week only',
+    delQuitOk:'{n} removed from the roster',
+    delQuitFail:'Could not save the roster — please try again',
+    addedToRoster:'{n} added to the roster — will appear automatically next week',
   },
   es: {
     pageTitleCash: '💵 Nómina en Efectivo',
@@ -851,6 +861,11 @@ const PAY_I18N = {
     chatTagCash:'[EFECTIVO]', chatTagCpa:'[CPA]',
     chatStaff:'Empleados', chatStaffSuffix:'', chatTotal:'Total', chatSig:'Firmado por', chatSigBlank:'(en blanco)',
     emailStaffLine:'Empleados', emailFooter:'— App de Gerente Kimchi Mart',
+    delAsk:'¿Eliminar esta fila?',
+    delQuit:'¿Quitar también a {n} de la lista?\n\nAceptar = ya no trabaja (no aparecerá la próxima semana)\nCancelar = omitir solo esta semana',
+    delQuitOk:'{n} eliminado de la lista',
+    delQuitFail:'No se pudo guardar la lista — inténtalo de nuevo',
+    addedToRoster:'{n} agregado a la lista — aparecerá automáticamente la próxima semana',
   },
 };
 let PAY_LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; }})();
@@ -1065,9 +1080,21 @@ function recalcTotal(){
 }
 function delRow(i){
   if (!requireEdit()) return;
-  if (!confirm('이 행을 삭제할까요?')) return;
+  const t = (typeof payT === 'function') ? payT() : null;
+  const nm = (DATA.rows[i] && DATA.rows[i].name) ? String(DATA.rows[i].name).trim() : '';
+  const msg1 = (t && t.delAsk) ? t.delAsk : '이 행을 삭제할까요?';
+  if (!confirm(msg1)) return;
   DATA.rows.splice(i,1);
   renderRows();
+  // 이름이 있는 행이면 "이번 주만" 인지 "퇴사" 인지 물어본다.
+  // 예전에는 무조건 이번 주만이라, 그만둔 사람이 다음 주에 되살아났다.
+  if (!nm) return;
+  const msg2 = ((t && t.delQuit) ? t.delQuit : '{n} 님을 명단에서도 뺄까요?\n\n확인 = 퇴사 (다음 주부터 안 나옴)\n취소 = 이번 주만 제외').replace('{n}', nm);
+  if (!confirm(msg2)) return;
+  rosterRemove(nm).then(ok => {
+    showStatus(ok ? (((t && t.delQuitOk) ? t.delQuitOk : '{n} 명단에서 제거됨').replace('{n}', nm))
+                  : (((t && t.delQuitFail) ? t.delQuitFail : '명단 저장 실패 — 다시 시도해주세요')), !ok);
+  });
 }
 function insertRowAt(i){
   if (!requireEdit()) return;
@@ -1104,6 +1131,12 @@ function addRow(){
   ['addName','addHours','addRate','addCurrent','addMemo'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('addRowForm').classList.remove('show');
   renderRows();
+  // 새 사람은 명단에도 넣어 다음 주부터 자동으로 나오게 한다.
+  rosterAdd(name, isNaN(rate)?null:rate, memo).then(added => {
+    if (!added) return;
+    const t = (typeof payT === 'function') ? payT() : null;
+    showStatus(((t && t.addedToRoster) ? t.addedToRoster : '{n} 명단에 추가됨 — 다음 주부터 자동으로 나옵니다').replace('{n}', name), false);
+  });
 }
 
 // ================== AUTO-FILL FROM SHIFTS ==================
@@ -1183,7 +1216,7 @@ function prefillFromLastWeek(){
   return false;
 }
 function prefillFromRoster(){
-  const roster = (TYPE==='cpa' ? PAYROLL_ROSTER_CPA : PAYROLL_ROSTER)[BRANCH];
+  const roster = currentRoster();   // 서버 명단 우선 (없으면 코드 시드)
   if (!roster) return;
   if (DATA.rows && DATA.rows.length) return; // already has data, don't overwrite
   DATA.rows = roster.map(r => {
@@ -1198,8 +1231,55 @@ function prefillFromRoster(){
 }
 // ROSTER defaultAmount 적용 — 기존 row 가 current=0/null 이면 default 로 채움.
 // 사용자가 명시적으로 다른 값 (예: $600, 휴가시 $0 입력 후 저장) 으로 수정한 row 는 그대로 유지.
+// ========== 명단(roster) — 2026-09-14 ==========
+// 예전에는 PAYROLL_ROSTER(코드 상수)가 곧 명단이라, 그만둔 직원을 매주 지워도
+// 명단에는 남아 다음 주에 되살아났다. 이제 서버에 두고 추가·퇴사를 영구 반영한다.
+// 경로: payroll/_roster/{지점} — 기존 payroll 규칙 안이라 RTDB 규칙 추가 불필요.
+// (payroll/{지점}/{주} 구조라 '_roster' 는 지점 자리에 들어간다. 지점 전체를
+//  통째로 읽는 코드가 없어 주(week) 로 오인될 일이 없음 — 2026-09-14 확인.)
+let ROSTER = null;                    // 서버에서 받은 명단. null 이면 아직 못 받음.
+function rosterKey(){ return (TYPE==='cpa'?'payroll-cpa/':'payroll/') + '_roster/' + BRANCH; }
+function seedRoster(){ return ((TYPE==='cpa' ? PAYROLL_ROSTER_CPA : PAYROLL_ROSTER)[BRANCH] || []).slice(); }
+// 지금 쓸 명단 — 서버 것 우선, 없으면 코드의 시드
+function currentRoster(){ return ROSTER || seedRoster(); }
+
+function loadRoster(){
+  return fetch(FB_DB_URL + '/' + rosterKey() + '.json?t=' + Date.now(), { cache:'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (Array.isArray(d) && d.length){ ROSTER = d; return ROSTER; }
+      // 서버에 아직 없으면 코드의 명단을 한 번만 올려 둔다 (이후로는 서버가 기준)
+      ROSTER = seedRoster();
+      if (ROSTER.length) saveRoster();
+      return ROSTER;
+    })
+    .catch(() => { ROSTER = seedRoster(); return ROSTER; });
+}
+function saveRoster(){
+  if (!Array.isArray(ROSTER)) return Promise.resolve(false);
+  return fetch(FB_DB_URL + '/' + rosterKey() + '.json', {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(ROSTER)
+  }).then(r => r.ok).catch(() => false);
+}
+// 퇴사 — 명단에서 영구 제거
+function rosterRemove(name){
+  const key = String(name||'').trim().toUpperCase();
+  if (!key) return Promise.resolve(false);
+  ROSTER = currentRoster().filter(x => String(x.name||'').trim().toUpperCase() !== key);
+  return saveRoster();
+}
+// 신규 — 명단에 없으면 추가
+function rosterAdd(name, rate, memo){
+  const key = String(name||'').trim().toUpperCase();
+  if (!key) return Promise.resolve(false);
+  const list = currentRoster();
+  if (list.some(x => String(x.name||'').trim().toUpperCase() === key)) return Promise.resolve(false);
+  ROSTER = list.concat([{ name: String(name).trim(), rate: (rate==null||isNaN(rate))?null:rate, memo: memo || '' }]);
+  return saveRoster();
+}
+
 function applyRosterDefaults(){
-  const roster = (TYPE==='cpa' ? PAYROLL_ROSTER_CPA : PAYROLL_ROSTER)[BRANCH];
+  const roster = currentRoster();
   if (!roster || !DATA.rows) return false;
   let changed = false;
   for (const row of DATA.rows){
@@ -1218,6 +1298,15 @@ function applyRosterDefaults(){
     if (r.memo && !row.memo){ row.memo = r.memo; changed = true; }
   }
   return changed;
+}
+// 로스터를 먼저 받아 두고 리포트를 연다. 지점이 바뀌면 명단도 바뀌므로
+// 지점 키가 달라졌을 때만 다시 받는다(주 이동은 재요청 불필요).
+let _rosterFor = null;
+function loadReportWithRoster(){
+  if (_rosterFor === rosterKey()){ loadReport(); return; }
+  _rosterFor = rosterKey();
+  ROSTER = null;
+  loadRoster().then(() => loadReport()).catch(() => loadReport());
 }
 function loadReport(){
   const local = (() => { try { return JSON.parse(localStorage.getItem(fbKey()) || 'null'); } catch(_){ return null; } })();
@@ -1418,7 +1507,7 @@ async function postToPayrollRoom(){
 function onBranchChange(){
   BRANCH = document.getElementById('branchSel').value;
   localStorage.setItem('payroll.branch', BRANCH);
-  loadReport();
+  loadReportWithRoster();
 }
 function toggleType(){
   // type 토글: cash <-> cpa
@@ -1614,7 +1703,7 @@ async function downloadReportImage(){
 function onWeekChange(){
   WEEK = document.getElementById('weekInput').value;
   localStorage.setItem('payroll.week', WEEK);
-  loadReport();
+  loadReportWithRoster();
 }
 // ← / → / 오늘 버튼: type="week" 가 iOS Safari 등에서 작동 안 할 때 사용
 // delta = -1 (이전 주), 0 (이번 주 초기화 — 지난 주 default), +1 (다음 주)
@@ -1632,7 +1721,7 @@ function shiftWeek(delta){
     }
   }
   localStorage.setItem('payroll.week', WEEK);
-  loadReport();
+  loadReportWithRoster();
 }
 window.shiftWeek = shiftWeek;
 
@@ -1666,7 +1755,7 @@ function checkLoginState(){
 window.addEventListener('storage', e => {
   if (e.key === 'chat.me') applyReadonlyMode();
 });
-loadReport();
+loadReportWithRoster();
 checkLoginState();
 </script>
 </body>
