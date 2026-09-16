@@ -286,6 +286,7 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
       <p class="sub" id="pageSubtitle">통로 1~7 전체 배치도 · 베이 클릭 → 선반(S01~S05) → 품목/바코드/재고 확인</p>
     </div>
     <div style="flex:none; display:flex; gap:6px; margin-top:2px;">
+      <button type="button" class="addbtn" id="scanBayBtn">📷 QR 스캔</button>
       <button type="button" class="addbtn" id="fixModeBtn">🔒 고정 지정</button>
       <select class="addbtn langsel" id="langSelect" aria-label="Language">
         <option value="ko">한글</option>
@@ -380,6 +381,9 @@ var I18N = {
     addItem: '+ 품목 추가', scanAddItem: '📷 바코드 스캔으로 추가', photoUrlPh: '선반 정답 사진 URL (선택)',
     checkDone: '✓ 오늘 체크완료', checkMark: '오늘 체크완료로 표시',
     bayOk: '✅ 이상 없음', bayIssue: '⚠️ 문제 있음',
+    scanBay: '📷 QR 스캔', scanBayHint: '매대에 붙은 QR 을 화면 안에 맞춰주세요',
+    scanBayBad: '매대 QR 이 아닙니다 — 다시 찍어주세요',
+    scanBayUnknown: '이 매장 도면에 없는 코드입니다: ',
     bayNever: '아직 점검 기록이 없는 자리입니다.',
     bayLastOk: '✅ {by} · {at} 이상 없음', bayLastIssue: '⚠️ {by} · {at} 문제 보고',
     bayIssuePrompt: '무엇이 문제인가요? (예: 3번 선반 비어있음 · 가격표 없음)',
@@ -432,6 +436,9 @@ var I18N = {
     addItem: '+ Add item', scanAddItem: '📷 Add by barcode scan', photoUrlPh: 'Reference photo URL (optional)',
     checkDone: '✓ Checked today', checkMark: 'Mark checked today',
     bayOk: '✅ All good', bayIssue: '⚠️ Problem',
+    scanBay: '📷 Scan QR', scanBayHint: 'Line up the shelf QR in view',
+    scanBayBad: 'Not a shelf QR — please scan again',
+    scanBayUnknown: 'Code not in this store map: ',
     bayNever: 'No check recorded for this spot yet.',
     bayLastOk: '✅ {by} · {at} all good', bayLastIssue: '⚠️ {by} · {at} problem reported',
     bayIssuePrompt: 'What is wrong? (e.g. shelf 3 empty · no price tag)',
@@ -486,6 +493,9 @@ var I18N = {
     addItem: '+ Agregar producto', scanAddItem: '📷 Agregar escaneando código', photoUrlPh: 'URL de foto de referencia (opcional)',
     checkDone: '✓ Revisado hoy', checkMark: 'Marcar revisado hoy',
     bayOk: '✅ Todo bien', bayIssue: '⚠️ Problema',
+    scanBay: '📷 Escanear QR', scanBayHint: 'Alinee el QR del estante',
+    scanBayBad: 'No es un QR de estante — escanee de nuevo',
+    scanBayUnknown: 'Código no está en este plano: ',
     bayNever: 'Aún no hay registro de revisión en este lugar.',
     bayLastOk: '✅ {by} · {at} todo bien', bayLastIssue: '⚠️ {by} · {at} problema reportado',
     bayIssuePrompt: '¿Qué pasa? (ej. estante 3 vacío · sin etiqueta de precio)',
@@ -915,14 +925,17 @@ function openProductPhotoEditor(pkey, currentRec, onChange){
 }
 
 // ---- 바코드 스캔 (카메라) ----
-function openScanner(onResult){
+function openScanner(onResult, opts){
+  // opts.title / opts.hint 로 문구 교체 — 상품 바코드를 찍는 건지 매대 QR 을 찍는 건지
+  // 화면에 분명해야 직원이 엉뚱한 걸 찍지 않는다.
+  opts = opts || {};
   var overlay = document.createElement('div');
   overlay.className = 'scan-overlay';
   overlay.innerHTML =
     '<div class="scan-box">' +
-      '<div class="scan-head"><span>'+t('scanTitle')+'</span><button type="button" id="scanCloseBtn">&times;</button></div>' +
+      '<div class="scan-head"><span>'+(opts.title || t('scanTitle'))+'</span><button type="button" id="scanCloseBtn">&times;</button></div>' +
       '<video class="scan-video" id="scanVideoEl" playsinline muted autoplay></video>' +
-      '<div class="scan-hint" id="scanHint">'+t('scanHint')+'</div>' +
+      '<div class="scan-hint" id="scanHint">'+(opts.hint || t('scanHint'))+'</div>' +
     '</div>';
   document.body.appendChild(overlay);
   var video = overlay.querySelector('#scanVideoEl');
@@ -948,6 +961,34 @@ function openScanner(onResult){
   }).then(function(c){ controlsRef = c; }).catch(function(e){
     hint.textContent = '카메라를 열 수 없습니다: ' + (e && e.message ? e.message : e);
   });
+}
+
+// 📷 앱 안에서 매대 QR 을 찍어 그 자리를 바로 연다.
+// 앱이 닫혀 있으면 폰 카메라로 찍어도 되지만(QR 에 주소가 들어 있음), 순찰 중에는
+// 앱이 계속 열려 있어서 매대마다 카메라 앱으로 나갔다 오는 게 번거롭다.
+// "찍고 ✅, 찍고 ✅" 리듬이 되게 앱 안에서 바로 찍는다.
+function bayCodeFromScan(text){
+  var v = String(text || '').trim();
+  var m = v.match(/[?&]bay=([^&#\s]+)/i);
+  if (m) return decodeURIComponent(m[1]).toUpperCase();
+  if (/^[A-Z]+\d+[LR]?-[DB]\d+$/i.test(v) || /^ENDCAP/i.test(v)) return v.toUpperCase();
+  return null;
+}
+function isKnownBayCode(code){
+  if (!code) return false;
+  if (allBayCodes().indexOf(code) >= 0) return true;
+  if (allDoorCodes().indexOf(code) >= 0) return true;
+  if (allCoolerCodes().indexOf(code) >= 0) return true;
+  return false;
+}
+function scanToOpenBay(){
+  if (typeof openScanner !== 'function') return;
+  openScanner(function(text){
+    var code = bayCodeFromScan(text);
+    if (!code){ showToast(t('scanBayBad')); return; }
+    if (!isKnownBayCode(code)){ showToast(t('scanBayUnknown') + code); return; }
+    openBay(code, labelForCode(code) || code);
+  }, { title: t('scanBay'), hint: t('scanBayHint') });
 }
 
 async function initDb(){
@@ -1876,7 +1917,7 @@ function applyStaticI18n(){
     legendBay:'legendBay', legendEndcap:'legendEndcap', legendEmpty:'legendEmpty',
     legendDone:'legendDone', legendPending:'legendPending', legendFixed:'legendFixed',
     fixHint:'fixHint', fixAllBtn:'fixAll', fixNoneBtn:'fixNone', fixDoneBtn:'fixDone',
-    frzTitle:'frzTitle', qrPrintBtn:'qrOpen',
+    frzTitle:'frzTitle', qrPrintBtn:'qrOpen', scanBayBtn:'scanBay',
     clrTitle:'clrTitle', qrPrintClrBtn:'qrOpen'
   };
   Object.keys(map).forEach(function(id){
@@ -1951,6 +1992,7 @@ async function boot(){
   } catch(e){}
 }
 
+document.getElementById('scanBayBtn').addEventListener('click', scanToOpenBay);
 document.getElementById('qrPrintBtn').addEventListener('click', function(){ openQrSheet('frz'); });
 document.getElementById('qrPrintClrBtn').addEventListener('click', function(){ openQrSheet('clr'); });
 document.getElementById('fixModeBtn').addEventListener('click', function(){ setFixMode(!fixMode); });
