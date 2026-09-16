@@ -2005,6 +2005,7 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn sec" onclick="openAssignModal('가격표 감사')" title="가격표 감사 발송 — 구역(🗺 도면) 선택해 배정. 직원이 그 구역 QR 스캔으로 시작" style="background:#dbeafe;border-color:#0369a1;color:#0c4a6e;font-weight:700">🏷️ 가격표 발송</button>
     <button class="btn sec" onclick="sendFrozenDailyAll()" title="지점 + 직원을 골라 오늘 냉동고 전체 진열 보고 발송 (2점)" style="background:#e0e7ff;border-color:#6366f1;color:#3730a3;font-weight:700">🧊 냉동고 발송</button>
     <button class="btn sec" onclick="sendTempCheckDailyAll()" title="온도 체크 일일 발송 (오전/오후/마감 3슬롯) — 카드 🌡 버튼으로 온도관리 앱 이동, 슬롯당 1점" style="background:#cffafe;border-color:#0891b2;color:#0e7490;font-weight:700">🌡 온도 발송</button>
+    <button class="btn sec" onclick="sendShelfPatrolDaily()" title="오늘 요일에 해당하는 구역의 매대 순찰 발송 — QR 스캔 → ✅ 이상 없음 / ⚠️ 문제 / 📦 품절" style="background:#dcfce7;border-color:#16a34a;color:#15803d;font-weight:700">🗺 매대 순찰 발송</button>
     <button class="btn sec" onclick="exportMgrCSV()" title="필터된 표를 CSV로 다운로드">📥 CSV</button>
   </div>
   <div class="mgr-toolbar" style="margin-top:-6px">
@@ -7043,6 +7044,98 @@ async function sendTempCheckDailyAll(){
     (failed?(_fail+failed+'\n'):''));
 }
 window.sendTempCheckDailyAll = sendTempCheckDailyAll;
+
+// 🗺 매대 순찰 일일 발송 — 2026-09-16 전무님 요청.
+// 240칸(통로 144 + 냉동 59 + 냉장 37)을 하루에 다 도는 건 불가능하므로 요일로 쪼갠다.
+// 온도 체크와 같은 틀: 버튼 하나 → 담당자 '*'(그날 있는 사람) → 고정 taskId(중복 방지)
+// → 카드의 앱 열기 버튼으로 매대 관리 앱 바로 이동.
+const SHELF_PATROL_ZONES = {
+  1: { ko:'통로 1 · 2',       en:'Aisle 1 · 2',        es:'Pasillo 1 · 2' },   // 월
+  2: { ko:'통로 3 · 4',       en:'Aisle 3 · 4',        es:'Pasillo 3 · 4' },   // 화
+  3: { ko:'통로 5 · 6',       en:'Aisle 5 · 6',        es:'Pasillo 5 · 6' },   // 수
+  4: { ko:'통로 7 · 엔드캡',   en:'Aisle 7 · Endcaps',  es:'Pasillo 7 · Cabeceras' }, // 목
+  5: { ko:'❄️ 냉동 진열대 (59문)', en:'❄️ Freezer cases (59 doors)', es:'❄️ Congeladores (59 puertas)' }, // 금
+  6: { ko:'🧊 냉장 진열대 (37칸)', en:'🧊 Cooler cases (37 spots)',  es:'🧊 Refrigeradores (37 espacios)' }, // 토
+  0: { ko:'미점검 구역 훑기',  en:'Sweep unchecked spots', es:'Repasar lugares sin revisar' },  // 일
+};
+async function sendShelfPatrolDaily(){
+  if (!me) { alert(LANG==='en'?'Please register your name first.':LANG==='es'?'Registre su nombre primero.':'이름 먼저 등록해 주세요.'); return; }
+  if (!canAssignTask()) { alert(LANG==='en'?'Manager permission required':LANG==='es'?'Permiso de gerente requerido':'매니저 권한 필요'); return; }
+  const allowedBranches = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowedBranches.length) { alert(LANG==='en'?'No branch info':LANG==='es'?'Sin info de sucursal':'지점 정보 없음'); return; }
+  let chosenBranch;
+  if (allowedBranches.length === 1) chosenBranch = allowedBranches[0].id;
+  else {
+    chosenBranch = await pickBranchModal('🗺',
+      LANG==='en'?'Shelf patrol — which branch?':LANG==='es'?'Ronda de estantes — ¿qué sucursal?':'매대 순찰 발송 — 어느 지점에 보낼까요?',
+      allowedBranches);
+    if (!chosenBranch) return;
+  }
+  const _b = BRANCHES.find(b => b.id === chosenBranch) || {};
+  const branchKo = _b[LANG] || _b.ko || chosenBranch;
+  // 📅 예약 발송(전날 지시)을 쓰면 그 날짜의 요일로 구역을 정한다.
+  const dayKey = (typeof assignDateStr === 'function') ? assignDateStr() : todayStr();
+  const dow = (function(){ const p = dayKey.split('-'); return new Date(+p[0], +p[1]-1, +p[2]).getDay(); })();
+  const zone = SHELF_PATROL_ZONES[dow] || SHELF_PATROL_ZONES[0];
+  const zoneLbl = zone[LANG] || zone.ko;
+  const taskId = 'auto_shelf_patrol_all';
+  const nameTr = {
+    ko: '🗺 매대 순찰 — ' + zone.ko,
+    en: '🗺 Shelf patrol — ' + zone.en,
+    es: '🗺 Ronda de estantes — ' + zone.es,
+  };
+  const noteTr = {
+    ko: '매대 관리 앱에서 📷 QR 스캔 → 사진으로 진열 확인 → [✅ 이상 없음]. 진열이 무너졌거나 가격표가 없으면 [⚠️ 문제 있음], 물건이 없으면 [📦 품절/부족]로 바코드를 찍어주세요.',
+    en: 'In the Shelf Manager app: 📷 scan the QR → check the photo → [✅ All good]. Use [⚠️ Problem] for a broken display or missing price tag, and [📦 Out of stock] to scan the missing item.',
+    es: 'En la app de Estantes: 📷 escanee el QR → revise la foto → [✅ Todo bien]. Use [⚠️ Problema] si el exhibidor está mal o falta etiqueta, y [📦 Sin stock] para escanear el producto faltante.',
+  };
+  if (!confirm((LANG==='en' ? 'Send shelf patrol to ' : LANG==='es' ? 'Enviar ronda de estantes a ' : '매대 순찰을 발송할까요?\n지점: ') +
+      branchKo + '\n' + (LANG==='ko' ? '구역: ' : 'Zone: ') + zoneLbl + '\n' +
+      (LANG==='ko' ? '날짜: ' : 'Date: ') + dayKey)) return;
+  let aq = '';
+  try {
+    const u = window.__fb?.auth?.currentUser;
+    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
+  } catch(_){}
+  const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${dayKey}/${taskId}.json` + (aq ? aq : '');
+  try {
+    const r = await fetch(restUrl, { cache:'no-store' });
+    if (r.ok) {
+      const existing = await r.json();
+      if (existing && existing.shelfPatrolDaily) {
+        alert(LANG==='en'?'Already sent for this day.':LANG==='es'?'Ya enviado para ese día.':'이 날짜에는 이미 발송돼 있습니다.');
+        return;
+      }
+    }
+    const payload = {
+      name: nameTr.ko, nameTr,
+      deadline: '',
+      category: '진열',
+      requirePhoto: false,          // 사진은 매대 관리 앱에서 자리별로 남는다
+      place: zoneLbl,
+      locationNote: noteTr.ko, locationNoteTr: noteTr,
+      appLink: 'store-map.html',
+      appLinkLabel: { ko:'🗺 매대 관리 앱 열기', en:'🗺 Open Shelf Manager', es:'🗺 Abrir Gestión de Estantes' },
+      assignedTo: '*', assignedToId: null,
+      from: me.name + ' (매대 순찰 발송)',
+      fromRole: me.role || 'MANAGER',
+      createdAt: Date.now(),
+      shelfPatrolDaily: true,
+      shelfPatrolZone: zoneLbl,
+      points: 1,
+    };
+    const w = await fetch(restUrl, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    if (!w.ok) throw new Error('HTTP ' + w.status);
+    alert('🗺 ' + (LANG==='en'?'Shelf patrol sent — ':LANG==='es'?'Ronda enviada — ':'매대 순찰 발송 완료 — ') +
+      branchKo + ' · ' + zoneLbl + '\n' + dayKey);
+  } catch(e) {
+    console.warn('[shelf-patrol]', e);
+    alert((LANG==='en'?'Send failed: ':LANG==='es'?'Error al enviar: ':'발송 실패: ') + (e.message || e));
+  }
+}
+window.sendShelfPatrolDaily = sendShelfPatrolDaily;
 
 // K-Food '+ 음식 추가' / Seafood '+ 생선 추가' / Produce '+ 농산물 추가' —
 // iOS PWA 에서 prompt() 가 가끔 블록돼서 커스텀 모달 사용. 새 항목을 checklist
