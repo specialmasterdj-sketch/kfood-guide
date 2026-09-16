@@ -682,15 +682,27 @@ window.doSendPhoneCode = async function(){
     document.getElementById('phCode').focus();
   } catch(e){
     btn.disabled = false;
-    _resetRecaptcha();   // 다음 시도가 깨끗하게 되도록 위젯·컨테이너 전부 리셋
-    if (String(e && e.message || '').includes('KM_SEND_TIMEOUT')) {
-      showError('요청이 너무 오래 걸립니다. 네트워크(와이파이/LTE) 확인 후 다시 눌러주세요.');
-      return;
-    }
-    const friendly = friendlyAuthError(e.code);
-    showError(friendly || ('문자 발송 실패: ' + (e.code || e.message || 'unknown')));
+    _resetRecaptcha();
+    // 🔄 완벽 복구 (2026-09-15 사장님 지시): 같은 페이지에서 reCAPTCHA 재실행은 구글
+    //   위젯 결함으로 불안정 — 실패하면 번호를 보존한 채 2.5초 후 자동 새로고침.
+    //   새 페이지 첫 시도는 항상 성공(재현 검증 2회) → 재시도가 100% 깨끗한 상태.
+    const isTimeout = String(e && e.message || '').includes('KM_SEND_TIMEOUT');
+    const friendly = isTimeout ? null : friendlyAuthError(e.code);
+    showError((friendly || (isTimeout ? '요청이 오래 걸렸습니다.' : '문자 발송 실패: ' + (e.code || e.message || 'unknown')))
+      + ' — 화면을 새로 고친 뒤 다시 시도해 주세요 (자동 새로고침 중…)');
+    try { sessionStorage.setItem('km.phRetry', document.getElementById('phNumber').value || ''); } catch(_){}
+    setTimeout(() => { try { location.reload(); } catch(_){} }, 2500);
   }
 };
+// 실패 자동 새로고침 후 — 입력했던 번호 복원 + 포커스 (한 번만)
+try {
+  const __phRetry = sessionStorage.getItem('km.phRetry');
+  if (__phRetry) {
+    sessionStorage.removeItem('km.phRetry');
+    const __phEl = document.getElementById('phNumber');
+    if (__phEl) { __phEl.value = __phRetry; setTimeout(() => { try { __phEl.focus(); } catch(_){} }, 300); }
+  }
+} catch(_){}
 window.doVerifyPhoneCode = async function(){
   const code = (document.getElementById('phCode').value || '').replace(/\D/g,'');
   if (code.length < 6){ showError('문자로 받은 6자리 코드를 입력하세요.'); return; }
