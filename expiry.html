@@ -1947,7 +1947,13 @@ function openProductDetail(id){
       _bay.style.cssText = 'margin-top:4px;font-size:.92em;font-weight:700;color:#047857';
       _dn.insertAdjacentElement('afterend', _bay);
     }
-    if (_bay) _bay.textContent = p.bay ? ('📍 ' + p.bay) : '';
+    if (_bay){
+      _bay.style.cursor = 'pointer';
+      _bay.title = '누르면 위치 입력/수정';
+      _bay.onclick = function(){ editProductBay(p.id); };
+      _bay.textContent = p.bay ? ('📍 ' + p.bay) : '📍 위치 지정하기';
+      _bay.style.color = p.bay ? '#047857' : '#b45309';
+    }
   } catch(e){}
   // 수정 버튼 — 같은 지점 상품에만 노출 (다른 지점은 읽기 전용)
   const isOtherForEdit = p._branch && p._branch !== BRANCH;
@@ -2264,8 +2270,19 @@ async function markStatus(id, kind){
     upd.discardedAt = null;
     upd.discardQty = null;
   }
+  // 📍 위치 도장이 잡혀 있고 이 상품에 아직 자리가 없으면 체크하는 김에 채운다.
+  //    이미 자리가 있으면 건드리지 않는다(직원이 다른 통로에서 눌렀을 수 있음).
+  var _bayMsg = '';
+  try {
+    var _p = (PRODUCTS || []).find(function(x){ return x.id === id; });
+    if (_p && !_p.bay && loadBaySession()){
+      upd.bay = BAY_SESSION.code;
+      _p.bay = BAY_SESSION.code;
+      _bayMsg = ' · 📍 ' + BAY_SESSION.code;
+    }
+  } catch(e){}
   await window.__fb.update(window.__fb.ref(window.__fb.db, path), upd);
-  showToast(t('marked'));
+  showToast(t('marked') + _bayMsg);
   // ✅ 정상 체크 후 홈으로 — 다음 체크 작업 빠르게 시작할 수 있도록
   if (kind === 'normal') switchPage('home');
 }
@@ -2555,11 +2572,61 @@ function renderHome(){
   if (over > 0) { $('alertDot').textContent = over; $('alertDot').style.display = ''; }
   else $('alertDot').style.display = 'none';
 }
+// 📍 기존 상품에 위치 채우기 — 이미 등록된 수백 개에도 자리를 붙일 수 있어야 한다.
+//    ① 체크할 때 자동(위치 도장이 있고 상품에 위치가 없으면)
+//    ② 목록의 [📍 여기] 버튼 — 지금 서 있는 자리로 한 번에
+//    ③ 상세 화면에서 직접 수정
+async function setProductBay(id, bay){
+  var code = String(bay || '').trim().toUpperCase();
+  try {
+    await window.__fb.update(
+      window.__fb.ref(window.__fb.db, 'expiry/' + BRANCH + '/products/' + id),
+      { bay: code || null }
+    );
+  } catch(e){ showToast('저장 실패: ' + (e.message || e)); return false; }
+  var p = (PRODUCTS || []).find(function(x){ return x.id === id; });
+  if (p) p.bay = code || null;                 // 화면 즉시 반영 (구독이 늦어도)
+  renderAll();
+  return true;
+}
+window.setProductBay = setProductBay;
+// [📍 여기] — 지금 찍어둔 위치 도장을 이 상품에 붙인다.
+async function stampBayHere(id, ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  loadBaySession();
+  if (!BAY_SESSION){
+    showToast('먼저 매대 QR 을 찍어 위치를 잡아주세요 📷');
+    return;
+  }
+  if (await setProductBay(id, BAY_SESSION.code)) showToast('📍 ' + BAY_SESSION.code);
+}
+window.stampBayHere = stampBayHere;
+// 상세/목록에서 직접 입력·수정
+async function editProductBay(id, ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  var p = (PRODUCTS || []).find(function(x){ return x.id === id; });
+  loadBaySession();
+  var def = (p && p.bay) || (BAY_SESSION && BAY_SESSION.code) || '';
+  var v = prompt('📍 매대 위치 (예: A7R-B13 · DF4-D05 · R2-B03)\n비우면 위치 삭제', def);
+  if (v === null) return;
+  if (await setProductBay(id, v)) showToast(v.trim() ? ('📍 ' + v.trim().toUpperCase()) : '위치 삭제됨');
+}
+window.editProductBay = editProductBay;
+
 // 📍 목록에 붙는 위치 배지. 위치가 없는 옛 데이터는 아무것도 안 붙는다(조용히).
 function bayBadge(p){
-  if (!p || !p.bay) return '';
-  return '<span style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;border-radius:6px;' +
-    'padding:1px 6px;font-size:.8em;font-weight:700;white-space:nowrap">📍 ' + escHtml(p.bay) + '</span>';
+  if (!p) return '';
+  if (p.bay){
+    return '<span onclick="editProductBay(\'' + p.id + '\', event)" title="누르면 위치 수정" ' +
+      'style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;border-radius:6px;' +
+      'padding:1px 6px;font-size:.8em;font-weight:700;white-space:nowrap;cursor:pointer">📍 ' + escHtml(p.bay) + '</span>';
+  }
+  // 위치가 없는 옛 상품 — 지금 서 있는 자리로 한 번에 붙일 수 있게.
+  // 위치 도장이 잡혀 있을 때만 보여준다(아무 데서나 누르면 엉뚱한 자리가 박힌다).
+  if (!BAY_SESSION) return '';      // 세션은 각 렌더 시작에서 한 번만 읽는다
+  return '<span onclick="stampBayHere(\'' + p.id + '\', event)" title="지금 위치로 지정" ' +
+    'style="background:#fffbeb;border:1px dashed #fcd34d;color:#b45309;border-radius:6px;' +
+    'padding:1px 6px;font-size:.8em;font-weight:700;white-space:nowrap;cursor:pointer">📍 여기</span>';
 }
 // 자리순 정렬 — 같은 통로/진열대끼리 묶여야 한 바퀴에 처리할 수 있다.
 // 위치 없는 상품은 맨 뒤로 (어차피 헤매야 하니 나중에).
@@ -2576,6 +2643,7 @@ function setCheckSort(v){ CHECK_SORT = v; renderCheckList(); }
 window.setCheckSort = setCheckSort;
 
 function renderCheckList(){
+  loadBaySession();                 // 위치 도장 상태를 이번 렌더 동안 한 번만 읽는다
   const chips = $('checkChips');
   const counts = { all: PRODUCTS.length, unchecked: 0, done: 0 };
   const todayStr = new Date().toDateString();
@@ -2588,6 +2656,25 @@ function renderCheckList(){
     <button class="chip ${CHECK_FILTER==='done'?'active':''}" onclick="setCheckFilter('done')">${t('chipDone')} <span class="count">${counts.done}</span></button>
     <button class="chip ${CHECK_FILTER==='all'?'active':''}" onclick="setCheckFilter('all')">${t('chipAll')} <span class="count">${counts.all}</span></button>
     <button class="chip ${CHECK_SORT==='bay'?'active':''}" onclick="setCheckSort('${CHECK_SORT==='bay'?'dday':'bay'}')" title="같은 자리끼리 묶어서 한 바퀴에 처리">${CHECK_SORT==='bay'?'📍 자리순':'📅 임박순'}</button>`;
+  // 지금 잡혀 있는 위치를 눈에 보이게 — 어디 자리로 기록되는지 모르면 불안하다.
+  (function(){
+    var bar = document.getElementById('bayNowBar');
+    if (!bar){
+      bar = document.createElement('div');
+      bar.id = 'bayNowBar';
+      bar.style.cssText = 'margin:6px 0 2px;font-size:.84em;font-weight:700;padding:7px 11px;border-radius:9px;';
+      chips.insertAdjacentElement('afterend', bar);
+    }
+    var sess = loadBaySession();
+    if (sess){
+      bar.style.background = '#ecfdf5'; bar.style.border = '1px solid #a7f3d0'; bar.style.color = '#047857';
+      bar.innerHTML = '📍 지금 위치: <b>' + escHtml(sess.code) + '</b> — 체크하면 이 자리로 기록됩니다 ' +
+        '<span onclick="clearBaySession();renderCheckList()" style="cursor:pointer;color:#9ca3af;font-weight:600">✕ 해제</span>';
+    } else {
+      bar.style.background = '#f9fafb'; bar.style.border = '1px dashed #e5e7eb'; bar.style.color = '#9ca3af';
+      bar.innerHTML = '📍 위치 미지정 — 매대 QR 을 찍으면 체크하는 상품에 자리가 자동으로 붙습니다';
+    }
+  })();
   const q = ($('searchInput').value || '').trim().toLowerCase();
   let rows = PRODUCTS.slice();
   if (CHECK_FILTER === 'unchecked') rows = rows.filter(p => !p.lastCheckedAt || new Date(p.lastCheckedAt).toDateString() !== todayStr);
@@ -2642,8 +2729,10 @@ function renderCheckList(){
 }
 function setCheckFilter(f){ CHECK_FILTER = f; renderCheckList(); }
 window.setCheckFilter = setCheckFilter;
+window.renderCheckList = renderCheckList;   // 위치 상태바의 인라인 핸들러에서 호출
 
 function renderAlertList(){
+  loadBaySession();
   const counts = { over:0, d1:0, d3:0, early:0 };
   PRODUCTS.forEach(p => {
     if (p.status === 'discarded') return;
