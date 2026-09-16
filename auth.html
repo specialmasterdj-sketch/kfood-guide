@@ -648,6 +648,14 @@ window.resetPhoneLogin = function(){
   const b = document.getElementById('phSendBtn'); if (b) b.disabled = false;
   const c = document.getElementById('phCode'); if (c) c.value = '';
 };
+// 🔄 2026-09-15 전 직원 로그인 불가 사고: 발송이 한 번 실패하면(오타 번호 등)
+//   reCAPTCHA 위젯이 교착 → 이후 버튼이 영원히 무반응 (새로고침 전까지 로그인 불가).
+//   원인 = clear() 만으로는 컨테이너 DOM 이 안 비워져 재생성이 깨짐 + 발송에 시간제한 없음.
+function _resetRecaptcha(){
+  try { if (window.__recaptcha && window.__recaptcha.clear) window.__recaptcha.clear(); } catch(_){}
+  window.__recaptcha = null;
+  try { const rc = document.getElementById('recaptcha-container'); if (rc) rc.innerHTML = ''; } catch(_){}
+}
 window.doSendPhoneCode = async function(){
   const e164 = _toE164(document.getElementById('phNumber').value || '');
   if (!e164){ showError('휴대폰 번호를 정확히 입력하세요 (예: 954-123-4567).'); return; }
@@ -659,16 +667,26 @@ window.doSendPhoneCode = async function(){
     try { await setPersistence(auth, indexedDBLocalPersistence); }
     catch(_){ try { await setPersistence(auth, browserLocalPersistence); } catch(_){} }
     if (!window.__recaptcha){
+      try { const rc = document.getElementById('recaptcha-container'); if (rc) rc.innerHTML = ''; } catch(_){}
       window.__recaptcha = new RecaptchaVerifier(auth, 'recaptcha-container', { size:'invisible' });
     }
-    window.__confirmationResult = await signInWithPhoneNumber(auth, e164, window.__recaptcha);
+    // ⏱ 35초 워치독 — 교착돼도 반드시 버튼이 살아나고 안내가 뜬다
+    const sendP = signInWithPhoneNumber(auth, e164, window.__recaptcha);
+    window.__confirmationResult = await Promise.race([
+      sendP,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('KM_SEND_TIMEOUT')), 35000)),
+    ]);
     document.getElementById('phoneStep1').style.display = 'none';
     document.getElementById('phoneStep2').style.display = '';
     document.getElementById('phSentMsg').textContent = '📨 ' + e164 + ' 로 보낸 6자리 코드를 입력하세요';
     document.getElementById('phCode').focus();
   } catch(e){
     btn.disabled = false;
-    try { if (window.__recaptcha && window.__recaptcha.clear){ window.__recaptcha.clear(); window.__recaptcha = null; } } catch(_){}
+    _resetRecaptcha();   // 다음 시도가 깨끗하게 되도록 위젯·컨테이너 전부 리셋
+    if (String(e && e.message || '').includes('KM_SEND_TIMEOUT')) {
+      showError('요청이 너무 오래 걸립니다. 네트워크(와이파이/LTE) 확인 후 다시 눌러주세요.');
+      return;
+    }
     const friendly = friendlyAuthError(e.code);
     showError(friendly || ('문자 발송 실패: ' + (e.code || e.message || 'unknown')));
   }
