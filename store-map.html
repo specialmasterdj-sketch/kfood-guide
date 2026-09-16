@@ -258,6 +258,11 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
   cursor:pointer; border:1.5px solid var(--line); background:var(--card); color:var(--ink);}
 .bay-check .ok.on{background:var(--ok); border-color:var(--ok); color:#fff;}
 .bay-check .bad.on{background:var(--bad); border-color:var(--bad); color:#fff;}
+.bay-check .oos{background:#fff7ed; border-color:#fdba74; color:#9a3412;}
+.bay-oos{margin:-4px 0 12px; border:1px solid #fdba74; background:#fff7ed; border-radius:9px; padding:8px 10px;}
+.bay-oos-h{font-size:11.5px; font-weight:800; color:#9a3412; margin-bottom:5px;}
+.bay-oos-row{display:flex; align-items:center; justify-content:space-between; gap:8px;
+  font-size:12.5px; color:var(--ink); padding:3px 0; border-top:1px solid #fed7aa;}
 .bay-check-state{font-size:12px; color:var(--sub); margin:-6px 0 12px;}
 .bay-check-state.issue{color:var(--bad); font-weight:700;}
 /* 선반 상세는 기본으로 접어둔다 — 평소 순찰엔 필요 없고, 품목까지 볼 사람만 편다. */
@@ -383,6 +388,13 @@ var I18N = {
     bayOk: '✅ 이상 없음', bayIssue: '⚠️ 문제 있음',
     scanBay: '📷 QR 스캔', scanBayHint: '매대에 붙은 QR 을 화면 안에 맞춰주세요',
     issueGo: '이 자리 열기', issueResolve: '✅ 해결됨',
+    oosBtn: '📦 품절 / 부족', oosScanTitle: '📦 품절 상품 스캔',
+    oosScanHint: '품절·부족한 상품의 바코드를 찍어주세요',
+    oosAskQty: '{p}\n\n몇 개 남았나요? (0 = 완전 품절)\n비워두면 0 으로 기록합니다.',
+    oosSaved: '📦 재고부족 방에 보고됨 — ',
+    oosFailChat: '기록은 됐지만 채팅 보고 실패: ',
+    oosUnknown: '(이름 모름) 바코드 ',
+    oosHere: '📦 이 자리 품절 보고',
     issueResolveAsk: '{b} 문제가 해결됐나요?\n이상 없음으로 바꿉니다.',
     issueNone: '보고된 문제가 없습니다.', issueDays: '{d}일째 미해결',
     scanBayBad: '매대 QR 이 아닙니다 — 다시 찍어주세요',
@@ -441,6 +453,13 @@ var I18N = {
     bayOk: '✅ All good', bayIssue: '⚠️ Problem',
     scanBay: '📷 Scan QR', scanBayHint: 'Line up the shelf QR in view',
     issueGo: 'Open this spot', issueResolve: '✅ Resolved',
+    oosBtn: '📦 Out of stock', oosScanTitle: '📦 Scan the missing item',
+    oosScanHint: 'Scan the barcode of the item that is out or low',
+    oosAskQty: '{p}\n\nHow many are left? (0 = completely out)\nLeave blank to record 0.',
+    oosSaved: '📦 Reported to the stock room — ',
+    oosFailChat: 'Saved, but the chat report failed: ',
+    oosUnknown: '(unknown item) barcode ',
+    oosHere: '📦 Out-of-stock reports here',
     issueResolveAsk: 'Is the problem at {b} fixed?\nIt will be marked all good.',
     issueNone: 'No problems reported.', issueDays: 'open {d} days',
     scanBayBad: 'Not a shelf QR — please scan again',
@@ -501,6 +520,13 @@ var I18N = {
     bayOk: '✅ Todo bien', bayIssue: '⚠️ Problema',
     scanBay: '📷 Escanear QR', scanBayHint: 'Alinee el QR del estante',
     issueGo: 'Abrir este lugar', issueResolve: '✅ Resuelto',
+    oosBtn: '📦 Sin stock', oosScanTitle: '📦 Escanear producto faltante',
+    oosScanHint: 'Escanee el código del producto agotado o bajo',
+    oosAskQty: '{p}\n\n¿Cuántos quedan? (0 = agotado)\nEn blanco se registra 0.',
+    oosSaved: '📦 Reportado a la sala de inventario — ',
+    oosFailChat: 'Guardado, pero falló el reporte al chat: ',
+    oosUnknown: '(producto desconocido) código ',
+    oosHere: '📦 Reportes de falta aquí',
     issueResolveAsk: '¿Se resolvió el problema en {b}?\nSe marcará como todo bien.',
     issueNone: 'No hay problemas reportados.', issueDays: '{d} días sin resolver',
     scanBayBad: 'No es un QR de estante — escanee de nuevo',
@@ -1177,6 +1203,114 @@ async function setBayCheck(bayId, state, note){
   }
 }
 
+// 📦 순찰 중 품절/부족 등록 — 2026-09-16 전무님 제안.
+//   품절 기록 앱(Top500·음성재고)이 안 쓰이는 이유는 그 앱을 열러 따로 가야 하기 때문.
+//   직원은 이미 매대 QR 을 찍으며 순찰 중이므로, 그 자리에서 바코드만 찍으면 끝나게 한다.
+//   기록은 두 곳: ① 📦 재고 부족/과다 채팅방(매니저가 이미 보는 곳 — 정리 보기·🚚 로지스틱스
+//   흐름에 그대로 합류) ② 이 자리(bay) — 순찰 화면에서 "여기 품절 2건"이 보이고,
+//   덤으로 상품↔자리 색인이 쌓인다.
+var OOS_ROOM = 'need_overstock';
+var OOS_BRANCH = 'HOLLYWOOD';   // 이 도면 앱은 헐리우드 전용 (floorplan/matdae-hollywood)
+function oosKey(bayId, code){ return bayId + '__' + code; }
+var oosMap = {};    // bayId__barcode -> {bay, code, name, qty, by, at, ts}
+async function loadOos(){
+  if (!db) return;
+  try {
+    var snap = await db.collection('outOfStock').get();
+    var next = {};
+    snap.docs.forEach(function(d){ next[d.id] = d.data(); });
+    oosMap = next;
+  } catch(e){ console.error('[planogram] oos preload failed', e); }
+}
+function oosForBay(bayId){
+  return Object.keys(oosMap)
+    .filter(function(k){ return oosMap[k] && oosMap[k].bay === bayId; })
+    .map(function(k){ return oosMap[k]; })
+    .sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+}
+// 📦 재고 부족/과다 방으로 보고. 텍스트에 '부족'/'품절' 이 들어가야 그 방의
+// '정리 보기'가 need 카드로 분류한다(_needClassify 규칙).
+async function postOosToChat(rec, branchLabel){
+  var FB = RTDB_URL;
+  var ts = rec.ts || Date.now();
+  var msgId = 'm' + ts + Math.floor(Math.random() * 900);
+  var qtyTxt = (rec.qty === 0 || rec.qty === '0') ? '품절 (0개 남음)' : ('부족 — ' + rec.qty + '개 남음');
+  var lines = [
+    '📦 ' + qtyTxt,
+    '🛒 ' + (rec.name || (t('oosUnknown') + rec.code)),
+    '📍 ' + rec.bay + (branchLabel ? (' · ' + branchLabel) : ''),
+    '🏷 ' + rec.code,
+    '— ' + (rec.by || '') + ' · 매대 순찰'
+  ];
+  var text = lines.join('\n');
+  var msg = {
+    sender: rec.by || '', senderBranch: OOS_BRANCH, senderRole: '',
+    isManager: false, color: '#1a5c3a',
+    text: text, ts: ts, photos: [],
+    meta: { kind: 'oos_scan', bay: rec.bay, barcode: rec.code, qty: rec.qty }
+  };
+  var r = await fetch(FB + '/chat/messages/' + OOS_ROOM + '/' + msgId + '.json', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg)
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  fetch(FB + '/chat/rooms/' + OOS_ROOM + '.json', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lastMsg: '📦 ' + (rec.name || rec.code).slice(0, 28), lastTs: ts, lastSender: rec.by || '' })
+  }).catch(function(){});
+}
+function scanOutOfStock(bayId){
+  if (typeof openScanner !== 'function') return;
+  openScanner(async function(text){
+    var code = String(text || '').trim();
+    if (!code) return;
+    if (bayCodeFromScan(code)){                       // 매대 QR 을 잘못 찍음
+      showToast(t('scanBayBad'));
+      return;
+    }
+    var name = '';
+    try { name = lookupProductName(code) || ''; } catch(e){}
+    var shown = name || (t('oosUnknown') + code);
+    var ans = prompt(t('oosAskQty').replace('{p}', shown), '0');
+    if (ans === null) return;                          // 취소
+    var qty = parseInt(String(ans).trim(), 10);
+    if (isNaN(qty) || qty < 0) qty = 0;
+    var rec = { bay: bayId, code: code, name: name, qty: qty,
+                by: meName(), at: todayStr(), ts: Date.now() };
+    var key = oosKey(bayId, code);
+    oosMap[key] = rec;                                 // 화면 먼저
+    try {
+      await fetch(rtdbPath('outOfStock/' + key), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec)
+      }).then(function(r){ if (!r.ok) throw new Error(r.status); });
+    } catch(e){
+      delete oosMap[key];
+      showToast(t('saveFail') + ' (' + (e.message || e) + ')');
+      return;
+    }
+    renderBayCheckBox(bayId);                          // 이 자리 품절 목록 갱신
+    render();
+    try {
+      await postOosToChat(rec, null);
+      showToast(t('oosSaved') + shown);
+    } catch(e){
+      showToast(t('oosFailChat') + (e.message || e));  // 기록은 남았음을 분명히
+    }
+  }, { title: t('oosScanTitle'), hint: t('oosScanHint') });
+}
+async function removeOos(key, bayId){
+  var prev = oosMap[key];
+  delete oosMap[key];
+  renderBayCheckBox(bayId); render();
+  try {
+    await fetch(rtdbPath('outOfStock/' + key), { method: 'DELETE' })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); });
+  } catch(e){
+    if (prev) oosMap[key] = prev;
+    renderBayCheckBox(bayId); render();
+    showToast(t('saveFail'));
+  }
+}
+
 // ⚠️ 문제 보고 목록 — 지도에서 빨간 점을 눈으로 찾는 건 240칸에서 불가능하다.
 //    상단 '문제 보고' 카드를 누르면 목록이 뜨고, 눌러서 그 자리로 바로 간다.
 function openIssueList(){
@@ -1707,7 +1841,8 @@ function renderBayCheckBox(bayId){
   var prev = bayCheckMap[bayId];
   box.innerHTML =
     '<button type="button" class="ok' + (today && today.state === 'ok' ? ' on' : '') + '" id="bayOkBtn">' + t('bayOk') + '</button>' +
-    '<button type="button" class="bad' + (today && today.state === 'issue' ? ' on' : '') + '" id="bayIssueBtn">' + t('bayIssue') + '</button>';
+    '<button type="button" class="bad' + (today && today.state === 'issue' ? ' on' : '') + '" id="bayIssueBtn">' + t('bayIssue') + '</button>' +
+    '<button type="button" class="oos" id="bayOosBtn">' + t('oosBtn') + '</button>';
   // 마지막 점검이 언제/누구였는지 — 오늘이 아니어도 보여줘야 "며칠째 방치" 가 드러난다.
   var line = '';
   if (prev && prev.at){
@@ -1720,8 +1855,26 @@ function renderBayCheckBox(bayId){
   } else {
     line = '<div class="bay-check-state">' + t('bayNever') + '</div>';
   }
+  // 📦 이 자리에 보고된 품절 목록 — 다음 사람이 중복 보고하지 않게 보여준다.
+  var oosRows = oosForBay(bayId);
+  if (oosRows.length){
+    line += '<div class="bay-oos"><div class="bay-oos-h">' + t('oosHere') + ' (' + oosRows.length + ')</div>' +
+      oosRows.map(function(r){
+        var key = oosKey(r.bay, r.code);
+        return '<div class="bay-oos-row">' +
+          '<span>' + escapeHtml(r.name || r.code) +
+            ' <b>' + (r.qty === 0 ? '품절' : (r.qty + '개')) + '</b>' +
+            ' <span style="color:var(--sub)">· ' + escapeHtml(r.by || '') + ' ' + escapeHtml(r.at || '') + '</span></span>' +
+          '<button type="button" class="addbtn" data-oosdel="' + escapeHtml(key) + '" style="padding:2px 8px">✕</button>' +
+        '</div>';
+      }).join('') + '</div>';
+  }
   stateEl.innerHTML = line;
+  stateEl.querySelectorAll('[data-oosdel]').forEach(function(b){
+    b.addEventListener('click', function(){ removeOos(b.getAttribute('data-oosdel'), bayId); });
+  });
 
+  document.getElementById('bayOosBtn').addEventListener('click', function(){ scanOutOfStock(bayId); });
   document.getElementById('bayOkBtn').addEventListener('click', async function(){
     try { await setBayCheck(bayId, 'ok', ''); }
     catch(e){ showToast(t('saveFail') + ' (' + (e.message||e) + ')'); return; }
@@ -2046,6 +2199,7 @@ async function boot(){
   if (db){
     await loadFixed(); // 고정 지정 상태 — 자물쇠 표시가 첫 화면부터 맞게
     await loadBayChecks(); // 오늘 점검 상태 — 지도 점이 첫 화면부터 맞게
+    await loadOos();       // 자리별 품절 보고
     // preload today's status for all bays so the dots are accurate on first paint
     var ok = await preloadShelves();
     if (!ok){
