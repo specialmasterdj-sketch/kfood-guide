@@ -129,6 +129,8 @@ h1{font-size:19px; margin:0 0 2px;}
 .dot.done{background:var(--ok);} .dot.pending{background:var(--warn);} .dot.none{background:transparent;}
 /* 문제 보고된 자리 — 지도에서 바로 눈에 띄어야 매니저가 찾아간다 */
 .dot.issue{background:var(--bad); box-shadow:0 0 0 2px rgba(220,38,38,.25);}
+/* 📦 품절 보고가 있는 자리 — 점검 상태 점과 별개로 붙는다 */
+.oosmark{font-size:9px; margin-left:3px; vertical-align:1px;}
 .aisle-label{writing-mode:vertical-rl; text-orientation:mixed; font-size:11px; color:var(--sub); text-align:center; padding:2px;}
 
 /* 고정 진열(플래노그램) 지정 — 슈퍼바이저가 돌면서 베이를 눌러 표시 */
@@ -395,6 +397,10 @@ var I18N = {
     oosFailChat: '기록은 됐지만 채팅 보고 실패: ',
     oosUnknown: '(이름 모름) 바코드 ',
     oosHere: '📦 이 자리 품절 보고',
+    statOos: '품절 보고', oosListTitle: '📦 품절 / 부족 보고',
+    oosNone: '보고된 품절이 없습니다.', oosDays: '{d}일째',
+    oosRestocked: '✕ 입고됨', oosRestockAsk: '{p}\n입고돼서 목록에서 지울까요?',
+    oosChatHint: '📦 재고 부족/과다 채팅방에도 자동으로 보고됩니다.',
     issueResolveAsk: '{b} 문제가 해결됐나요?\n이상 없음으로 바꿉니다.',
     issueNone: '보고된 문제가 없습니다.', issueDays: '{d}일째 미해결',
     scanBayBad: '매대 QR 이 아닙니다 — 다시 찍어주세요',
@@ -460,6 +466,10 @@ var I18N = {
     oosFailChat: 'Saved, but the chat report failed: ',
     oosUnknown: '(unknown item) barcode ',
     oosHere: '📦 Out-of-stock reports here',
+    statOos: 'Out of stock', oosListTitle: '📦 Out of stock / low',
+    oosNone: 'No out-of-stock reports.', oosDays: '{d}d',
+    oosRestocked: '✕ Restocked', oosRestockAsk: '{p}\nRestocked — remove from the list?',
+    oosChatHint: '📦 Also reported automatically to the stock chat room.',
     issueResolveAsk: 'Is the problem at {b} fixed?\nIt will be marked all good.',
     issueNone: 'No problems reported.', issueDays: 'open {d} days',
     scanBayBad: 'Not a shelf QR — please scan again',
@@ -527,6 +537,10 @@ var I18N = {
     oosFailChat: 'Guardado, pero falló el reporte al chat: ',
     oosUnknown: '(producto desconocido) código ',
     oosHere: '📦 Reportes de falta aquí',
+    statOos: 'Sin stock', oosListTitle: '📦 Sin stock / bajo',
+    oosNone: 'No hay reportes de falta.', oosDays: '{d}d',
+    oosRestocked: '✕ Repuesto', oosRestockAsk: '{p}\n¿Repuesto — quitar de la lista?',
+    oosChatHint: '📦 También se reporta automáticamente a la sala de inventario.',
     issueResolveAsk: '¿Se resolvió el problema en {b}?\nSe marcará como todo bien.',
     issueNone: 'No hay problemas reportados.', issueDays: '{d} días sin resolver',
     scanBayBad: 'No es un QR de estante — escanee de nuevo',
@@ -1311,6 +1325,59 @@ async function removeOos(key, bayId){
   }
 }
 
+// 📦 품절 보고 목록 — 자리를 일일이 열어보지 않고 한 화면에서 확인한다.
+function openOosList(){
+  var rows = Object.keys(oosMap)
+    .filter(function(k){ return oosMap[k]; })
+    .map(function(k){ return Object.assign({ _key: k }, oosMap[k]); })
+    .sort(function(a, b){ return (a.ts || 0) - (b.ts || 0); });   // 오래된 것 먼저
+  var modal = document.getElementById('modal');
+  var body = rows.length
+    ? '<div style="font-size:11.5px; color:var(--sub); margin:-2px 0 10px">' + t('oosChatHint') + '</div>' +
+      rows.map(function(r){
+        var days = Math.max(0, Math.floor((Date.now() - (r.ts || 0)) / 86400000));
+        var aged = days >= 2
+          ? '<span style="color:var(--bad); font-weight:800"> · ' + t('oosDays').replace('{d}', days) + '</span>' : '';
+        var qty = (r.qty === 0) ? '<b style="color:var(--bad)">품절</b>' : ('<b>' + r.qty + '개</b>');
+        return '<div style="border:1px solid #fed7aa; border-radius:10px; padding:10px 12px; margin-bottom:8px; background:#fff7ed">' +
+          '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px">' +
+            '<b style="font-family:ui-monospace,Menlo,Consolas,monospace">' + escapeHtml(r.bay) + '</b>' +
+            '<span style="font-size:12.5px">' + escapeHtml(r.name || r.code) + ' ' + qty + '</span>' +
+            aged +
+          '</div>' +
+          '<div style="font-size:11.5px; color:var(--sub); margin-bottom:7px">' +
+            escapeHtml(r.by || '') + ' · ' + escapeHtml(r.at || '') + ' · 🏷 ' + escapeHtml(r.code) + '</div>' +
+          '<div style="display:flex; gap:6px">' +
+            '<button type="button" class="addbtn" data-oosgo="' + escapeHtml(r.bay) + '">' + t('issueGo') + '</button>' +
+            '<button type="button" class="addbtn" data-oosdone="' + escapeHtml(r._key) + '" data-bay="' + escapeHtml(r.bay) + '" ' +
+              'style="color:var(--ok); border-color:var(--ok)">' + t('oosRestocked') + '</button>' +
+          '</div>' +
+        '</div>';
+      }).join('')
+    : '<div style="font-size:13px; color:var(--sub); padding:6px 2px">' + t('oosNone') + '</div>';
+  modal.innerHTML =
+    '<div class="modal-head"><h2>' + t('oosListTitle') + ' (' + rows.length + ')</h2>' +
+      '<button class="modal-close" id="closeBtn">&times;</button></div>' +
+    '<div class="modal-body">' + body + '</div>';
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('closeBtn').onclick = closeModal;
+  modal.querySelectorAll('[data-oosgo]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var code = b.getAttribute('data-oosgo');
+      openBay(code, labelForCode(code) || code);
+    });
+  });
+  modal.querySelectorAll('[data-oosdone]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      var key = b.getAttribute('data-oosdone');
+      var rec = oosMap[key];
+      if (!confirm(t('oosRestockAsk').replace('{p}', (rec && (rec.name || rec.code)) || ''))) return;
+      await removeOos(key, b.getAttribute('data-bay'));
+      openOosList();
+    });
+  });
+}
+
 // ⚠️ 문제 보고 목록 — 지도에서 빨간 점을 눈으로 찾는 건 240칸에서 불가능하다.
 //    상단 '문제 보고' 카드를 누르면 목록이 뜨고, 눌러서 그 자리로 바로 간다.
 function openIssueList(){
@@ -1395,6 +1462,12 @@ document.addEventListener('DOMContentLoaded', function(){
 document.addEventListener('keydown', function(e){
   if (e.key === 'Escape') closePhotoViewer();
 });
+
+// 이 자리에 품절 보고가 있으면 지도에서 바로 보이게 (점검 상태와 별개로 표시)
+function hasOos(bayId){
+  for (var k in oosMap){ if (oosMap[k] && oosMap[k].bay === bayId) return true; }
+  return false;
+}
 
 function statusFor(bayId){
   // 🐛 2026-09-16 수정 — 문제 보고는 '오늘' 것만 보던 탓에 하루만 지나면 지도에서
@@ -1532,7 +1605,7 @@ function render(){
         var b = document.createElement('button');
         b.className = 'face endcap';
         var stE = statusFor(cell.code);
-        b.innerHTML = t(cell.labelKey) + '<span class="dot ' + stE + '"></span>';
+        b.innerHTML = t(cell.labelKey) + (hasOos(cell.code) ? '<span class="oosmark">📦</span>' : '') + '<span class="dot ' + stE + '"></span>';
         b.addEventListener('click', function(){
           if (fixMode){ showToast(t('fixEndcap')); return; }
           openBay(cell.code, t(cell.labelKey) + (cell.sub ? ' · ' + cell.sub : ''));
@@ -1551,7 +1624,8 @@ function render(){
           btn.className = 'face' + (an ? ' aisle-' + an : '') + (isFixed ? ' isfixed' : '');
           btn.dataset.bay = f.code;
           var st = statusFor(f.code);
-          btn.innerHTML = f.code + (isFixed ? '<span class="lock">🔒</span>' : '') + '<span class="dot ' + st + '"></span>';
+          btn.innerHTML = f.code + (isFixed ? '<span class="lock">🔒</span>' : '') +
+            (hasOos(f.code) ? '<span class="oosmark">📦</span>' : '') + '<span class="dot ' + st + '"></span>';
           btn.addEventListener('click', function(){
             if (fixMode){ toggleFixed(f.code); return; }
             openBay(f.code);
@@ -1744,6 +1818,7 @@ function renderStats(){
   // 점검 현황(체크완료/미점검/기록없음)은 냉동·냉장까지 합쳐서 세야 "오늘 매장을
   // 얼마나 돌았나"가 맞게 나온다. 전체 개수는 베이/냉동냉장을 따로 보여줌.
   var done=0, pending=0, none=0, fixedN=0, issue=0;
+  var oosN = Object.keys(oosMap).length;
   allBays.concat(allDoors).concat(allClr).forEach(function(b){
     var s = statusFor(b);
     if (s==='done') done++;
@@ -1762,6 +1837,8 @@ function renderStats(){
       ' <span style="font-size:12px; font-weight:400; color:var(--sub)">🧊' + allClr.length + '</span>' +
       '</b><span>'+t('statClr')+'</span></div>' +
     '<div class="stat"><b style="color:var(--accent)">🔒 ' + fixedN + '</b><span>'+t('statFixed')+'</span></div>' +
+    '<div class="stat" id="oosStat"' + (oosN ? ' style="cursor:pointer; outline:2px solid #fb923c; outline-offset:-2px"' : '') +
+      '><b style="color:#c2410c">📦 ' + oosN + '</b><span>'+t('statOos')+'</span></div>' +
     '<div class="stat" id="issueStat"' + (issue ? ' style="cursor:pointer; outline:2px solid var(--bad); outline-offset:-2px"' : '') +
       '><b style="color:var(--bad)">⚠️ ' + issue + '</b><span>'+t('statIssue')+'</span></div>' +
     '<div class="stat"><b style="color:var(--ok)">' + done + '</b><span>'+t('statDone')+'</span></div>' +
@@ -1770,6 +1847,8 @@ function renderStats(){
   // 문제가 1건이라도 있으면 카드를 눌러 목록을 볼 수 있게 (빨간 테두리로 표시)
   var issueCard = document.getElementById('issueStat');
   if (issueCard && issue) issueCard.addEventListener('click', openIssueList);
+  var oosCard = document.getElementById('oosStat');
+  if (oosCard && oosN) oosCard.addEventListener('click', openOosList);
 }
 
 // ---- bay modal ----
