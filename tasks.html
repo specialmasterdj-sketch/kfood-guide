@@ -7144,32 +7144,74 @@ function splitZones(list, k){
   return out;
 }
 // 보내는 방식 고르기 — 오늘 요일 구역(전체) vs 직원 나눠서 전 구역
-function pickPatrolModeModal(){
+function pickPatrolPlanModal(names, defaultZoneIdx){
   return new Promise(resolve => {
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:99999;padding:16px';
-    const t1 = LANG==='en'?'Today\'s zone → everyone':LANG==='es'?'Zona de hoy → todos':'오늘 요일 구역 → 전체에게';
-    const t1s = LANG==='en'?'One task, whoever is in today':LANG==='es'?'Una tarea, quien esté hoy':'업무 1건 · 그날 있는 사람이 처리';
-    const t2 = LANG==='en'?'Split the whole store by staff':LANG==='es'?'Dividir toda la tienda por personal':'직원끼리 나눠서 매장 전체';
-    const t2s = LANG==='en'?'Pick people → 10 zones divided evenly':LANG==='es'?'Elegir personas → 10 zonas divididas':'인원 선택 → 10개 구역을 균등 분배';
-    const cancelTxt = LANG==='en'?'Cancel':LANG==='es'?'Cancelar':'취소';
-    ov.innerHTML = `
-      <div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.35)">
-        <h3 style="margin:0 0 14px;font-size:1.08em;color:#0f172a">🗺 ${LANG==='en'?'Shelf patrol — how to send?':LANG==='es'?'Ronda — ¿cómo enviar?':'매대 순찰 — 어떻게 보낼까요?'}</h3>
-        <button class="_pm-opt" data-m="day" style="display:block;width:100%;text-align:left;border:1.5px solid #d1d5db;background:#f9fafb;border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;font-family:inherit">
-          <div style="font-weight:800;color:#0f172a">📅 ${t1}</div>
-          <div style="font-size:.85em;color:#6b7280;margin-top:3px">${t1s}</div></button>
-        <button class="_pm-opt" data-m="split" style="display:block;width:100%;text-align:left;border:1.5px solid #16a34a;background:#f0fdf4;border-radius:12px;padding:14px;cursor:pointer;font-family:inherit">
-          <div style="font-weight:800;color:#15803d">👥 ${t2}</div>
-          <div style="font-size:.85em;color:#15803d;margin-top:3px">${t2s}</div></button>
-        <button class="_pm-cancel" style="margin-top:14px;width:100%;background:#f3f4f6;border:0;border-radius:10px;padding:11px;cursor:pointer;font-weight:600;color:#374151">${cancelTxt}</button>
-      </div>`;
-    ov.querySelectorAll('._pm-opt').forEach(b => b.addEventListener('click', () => { document.body.removeChild(ov); resolve(b.dataset.m); }));
-    ov.querySelector('._pm-cancel').addEventListener('click', () => { document.body.removeChild(ov); resolve(null); });
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:99999;padding:14px';
+    const L = (ko, en, es) => LANG==='en' ? en : LANG==='es' ? es : ko;
+    const zoneRows = SHELF_PATROL_ALL.map((z, i) =>
+      '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;font-size:.93em">' +
+        '<input type="checkbox" class="_pz" value="' + i + '"' + (defaultZoneIdx.indexOf(i) >= 0 ? ' checked' : '') +
+        ' style="width:17px;height:17px;accent-color:#16a34a"><span>' + escHtml(z[LANG] || z.ko) + '</span></label>').join('');
+    const staffRows = names.map(nm =>
+      '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;font-size:.93em">' +
+        '<input type="checkbox" class="_ps" value="' + escHtml(nm) + '" style="width:17px;height:17px;accent-color:#16a34a">' +
+        '<span>' + escHtml(nm) + '</span></label>').join('');
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:16px;padding:18px;max-width:520px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;flex-direction:column;max-height:88vh">' +
+        '<h3 style="margin:0 0 4px;font-size:1.05em;color:#0f172a">🗺 ' + L('매대 순찰 발송','Shelf patrol','Ronda de estantes') + '</h3>' +
+        '<div style="font-size:.82em;color:#6b7280;margin-bottom:10px">' +
+          L('구역과 직원을 고르면 인원수대로 균등 분배됩니다.','Pick zones and staff — zones are split evenly.','Elija zonas y personal — se reparten equitativamente.') + '</div>' +
+        '<div style="display:flex;gap:10px;overflow:auto;flex:1;min-height:0">' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:.86em;color:#15803d;margin-bottom:4px">' +
+              '<span>📍 ' + L('구역','Zones','Zonas') + '</span>' +
+              '<button type="button" id="_pzAll" style="background:none;border:0;color:#2563eb;font-size:.9em;font-weight:700;cursor:pointer">' + L('전체','All','Todos') + '</button></div>' +
+            '<div style="border:1px solid #e5e7eb;border-radius:9px;padding:6px">' + zoneRows + '</div></div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:.86em;color:#15803d;margin-bottom:4px">' +
+              '<span>👥 ' + L('직원','Staff','Personal') + '</span>' +
+              '<button type="button" id="_psAll" style="background:none;border:0;color:#2563eb;font-size:.9em;font-weight:700;cursor:pointer">' + L('전체','All','Todos') + '</button></div>' +
+            '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;font-size:.93em;font-weight:700;color:#1d4ed8;background:#eff6ff;border-radius:8px;margin-bottom:4px">' +
+              '<input type="checkbox" id="_psAny" style="width:17px;height:17px"><span>📢 ' + L('지정 없이 전체에게','Anyone on shift','Cualquiera en turno') + '</span></label>' +
+            '<div id="_psBox" style="border:1px solid #e5e7eb;border-radius:9px;padding:6px">' + (staffRows || ('<div style="font-size:.85em;color:#9ca3af;padding:6px">' + L('명단 없음','No staff list','Sin lista') + '</div>')) + '</div></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button type="button" id="_ppCancel" style="flex:1;background:#f3f4f6;border:0;border-radius:10px;padding:11px;cursor:pointer;font-weight:600;color:#374151">' + L('취소','Cancel','Cancelar') + '</button>' +
+          '<button type="button" id="_ppOk" style="flex:2;background:#16a34a;color:#fff;border:0;border-radius:10px;padding:11px;cursor:pointer;font-weight:800">' + L('발송','Send','Enviar') + '</button>' +
+        '</div>' +
+      '</div>';
+    const zBoxes = () => Array.from(ov.querySelectorAll('._pz'));
+    const sBoxes = () => Array.from(ov.querySelectorAll('._ps'));
+    ov.querySelector('#_pzAll').addEventListener('click', () => {
+      const on = zBoxes().some(b => !b.checked); zBoxes().forEach(b => { b.checked = on; });
+    });
+    ov.querySelector('#_psAll').addEventListener('click', () => {
+      const on = sBoxes().some(b => !b.checked); sBoxes().forEach(b => { b.checked = on; });
+      if (on) ov.querySelector('#_psAny').checked = false;
+    });
+    // '전체에게' 를 켜면 개인 선택은 의미가 없어지므로 흐리게
+    ov.querySelector('#_psAny').addEventListener('change', function(){
+      const box = ov.querySelector('#_psBox');
+      box.style.opacity = this.checked ? '.4' : '1';
+      box.style.pointerEvents = this.checked ? 'none' : '';
+      if (this.checked) sBoxes().forEach(b => { b.checked = false; });
+    });
+    ov.querySelector('#_ppOk').addEventListener('click', () => {
+      const zones = zBoxes().filter(b => b.checked).map(b => SHELF_PATROL_ALL[+b.value]);
+      if (!zones.length){ alert(L('구역을 한 개 이상 고르세요.','Pick at least one zone.','Elija al menos una zona.')); return; }
+      const anyone = ov.querySelector('#_psAny').checked;
+      const staff = anyone ? ['*'] : sBoxes().filter(b => b.checked).map(b => b.value);
+      if (!staff.length){ alert(L('직원을 고르거나 "전체에게"를 체크하세요.','Pick staff or check "anyone on shift".','Elija personal o marque "cualquiera".')); return; }
+      document.body.removeChild(ov); resolve({ zones, staff });
+    });
+    ov.querySelector('#_ppCancel').addEventListener('click', () => { document.body.removeChild(ov); resolve(null); });
     ov.addEventListener('click', e => { if (e.target === ov){ document.body.removeChild(ov); resolve(null); } });
     document.body.appendChild(ov);
   });
 }
+// 요일별 기본 선택 구역 (SHELF_PATROL_ALL 인덱스) — 열자마자 오늘 것이 체크돼 있게
+const PATROL_DEFAULT_BY_DOW = { 1:[0,1], 2:[2,3], 3:[4,5], 4:[6,7], 5:[8], 6:[9], 0:[] };
 // 직원 여러 명 고르기 (체크박스)
 function pickEmployeesModal(names){
   return new Promise(resolve => {
@@ -7221,116 +7263,59 @@ async function sendShelfPatrolDaily(){
   }
   const _b = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _b[LANG] || _b.ko || chosenBranch;
-  const mode = await pickPatrolModeModal();
-  if (!mode) return;
-  if (mode === 'split'){ await _sendPatrolSplit(chosenBranch, branchKo); return; }
-  // 📅 예약 발송(전날 지시)을 쓰면 그 날짜의 요일로 구역을 정한다.
+  // 📅 예약 발송(전날 지시)을 쓰면 그 날짜 기준으로 기본 구역이 잡힌다.
   const dayKey = (typeof assignDateStr === 'function') ? assignDateStr() : todayStr();
   const dow = (function(){ const p = dayKey.split('-'); return new Date(+p[0], +p[1]-1, +p[2]).getDay(); })();
-  const zone = SHELF_PATROL_ZONES[dow] || SHELF_PATROL_ZONES[0];
-  const zoneLbl = zone[LANG] || zone.ko;
-  const taskId = 'auto_shelf_patrol_all';
-  const nameTr = {
-    ko: '🗺 매대 순찰 — ' + zone.ko,
-    en: '🗺 Shelf patrol — ' + zone.en,
-    es: '🗺 Ronda de estantes — ' + zone.es,
-  };
-  const noteTr = {
-    ko: '매대 관리 앱에서 📷 QR 스캔 → 사진으로 진열 확인 → [✅ 이상 없음]. 진열이 무너졌거나 가격표가 없으면 [⚠️ 문제 있음], 물건이 없으면 [📦 품절/부족]로 바코드를 찍어주세요.',
-    en: 'In the Shelf Manager app: 📷 scan the QR → check the photo → [✅ All good]. Use [⚠️ Problem] for a broken display or missing price tag, and [📦 Out of stock] to scan the missing item.',
-    es: 'En la app de Estantes: 📷 escanee el QR → revise la foto → [✅ Todo bien]. Use [⚠️ Problema] si el exhibidor está mal o falta etiqueta, y [📦 Sin stock] para escanear el producto faltante.',
-  };
-  if (!confirm((LANG==='en' ? 'Send shelf patrol to ' : LANG==='es' ? 'Enviar ronda de estantes a ' : '매대 순찰을 발송할까요?\n지점: ') +
-      branchKo + '\n' + (LANG==='ko' ? '구역: ' : 'Zone: ') + zoneLbl + '\n' +
-      (LANG==='ko' ? '날짜: ' : 'Date: ') + dayKey)) return;
-  let aq = '';
-  try {
-    const u = window.__fb?.auth?.currentUser;
-    if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
-  } catch(_){}
-  const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${dayKey}/${taskId}.json` + (aq ? aq : '');
-  try {
-    const r = await fetch(restUrl, { cache:'no-store' });
-    if (r.ok) {
-      const existing = await r.json();
-      if (existing && existing.shelfPatrolDaily) {
-        alert(LANG==='en'?'Already sent for this day.':LANG==='es'?'Ya enviado para ese día.':'이 날짜에는 이미 발송돼 있습니다.');
-        return;
-      }
-    }
-    const payload = {
-      name: nameTr.ko, nameTr,
-      deadline: '',
-      category: '진열',
-      requirePhoto: false,          // 사진은 매대 관리 앱에서 자리별로 남는다
-      place: zoneLbl,
-      locationNote: noteTr.ko, locationNoteTr: noteTr,
-      appLink: 'store-map.html',
-      appLinkLabel: { ko:'🗺 매대 관리 앱 열기', en:'🗺 Open Shelf Manager', es:'🗺 Abrir Gestión de Estantes' },
-      assignedTo: '*', assignedToId: null,
-      from: me.name + ' (매대 순찰 발송)',
-      fromRole: me.role || 'MANAGER',
-      createdAt: Date.now(),
-      shelfPatrolDaily: true,
-      shelfPatrolZone: zoneLbl,
-      points: 1,
-    };
-    const w = await fetch(restUrl, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-    });
-    if (!w.ok) throw new Error('HTTP ' + w.status);
-    alert('🗺 ' + (LANG==='en'?'Shelf patrol sent — ':LANG==='es'?'Ronda enviada — ':'매대 순찰 발송 완료 — ') +
-      branchKo + ' · ' + zoneLbl + '\n' + dayKey);
-  } catch(e) {
-    console.warn('[shelf-patrol]', e);
-    alert((LANG==='en'?'Send failed: ':LANG==='es'?'Error al enviar: ':'발송 실패: ') + (e.message || e));
-  }
-}
-// 👥 직원끼리 나눠 매장 전체를 하루에 도는 방식.
-async function _sendPatrolSplit(branchId, branchLbl){
-  const names = await loadBranchEmployeeNames(branchId);
-  if (!names.length){
-    alert(LANG==='en'?'No staff list for this branch.':LANG==='es'?'Sin lista de personal.':'이 지점 직원 명단을 불러오지 못했습니다.');
-    return;
-  }
-  const picked = await pickEmployeesModal(names);
-  if (!picked || !picked.length) return;
-  const zones = splitZones(SHELF_PATROL_ALL, picked.length);
-  const dayKey = (typeof assignDateStr === 'function') ? assignDateStr() : todayStr();
-  const preview = picked.map((nm, i) => '  · ' + nm + ' — ' + zones[i].map(z => z[LANG] || z.ko).join(', ')).join('\n');
-  if (!confirm((LANG==='en'?'Send shelf patrol\n':LANG==='es'?'Enviar ronda\n':'매대 순찰을 이렇게 나눠 보낼까요?\n') +
-      branchLbl + ' · ' + dayKey + '\n\n' + preview)) return;
+  const names = await loadBranchEmployeeNames(chosenBranch);
+  const plan = await pickPatrolPlanModal(names, PATROL_DEFAULT_BY_DOW[dow] || []);
+  if (!plan) return;
+
+  // 담당자별 구역 배분 — '전체에게'면 한 건, 아니면 인원수로 균등 분배(인접 구역끼리)
+  const groups = plan.staff[0] === '*'
+    ? [{ who: '*', zones: plan.zones }]
+    : splitZones(plan.zones, plan.staff.length)
+        .map((zs, i) => ({ who: plan.staff[i], zones: zs }))
+        .filter(g => g.zones.length);
+
+  const preview = groups.map(g =>
+    '  · ' + (g.who === '*' ? (LANG==='en'?'Anyone on shift':LANG==='es'?'Cualquiera':'전체') : g.who) +
+    ' — ' + g.zones.map(z => z[LANG] || z.ko).join(', ')).join('\n');
+  if (!confirm((LANG==='en'?'Send shelf patrol\n':LANG==='es'?'Enviar ronda\n':'매대 순찰을 이렇게 보낼까요?\n') +
+      branchKo + ' · ' + dayKey + '\n\n' + preview)) return;
+
   let aq = '';
   try {
     const u = window.__fb?.auth?.currentUser;
     if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
   } catch(_){}
   let created = 0, failed = 0;
-  for (let i = 0; i < picked.length; i++){
-    const who = picked[i];
-    const zl = zones[i];
-    if (!zl.length) continue;
-    const zoneKo = zl.map(z => z.ko).join(' · ');
+  for (const g of groups){
+    const zoneKo = g.zones.map(z => z.ko).join(' · ');
     const nameTr = {
       ko: '🗺 매대 순찰 — ' + zoneKo,
-      en: '🗺 Shelf patrol — ' + zl.map(z => z.en).join(' · '),
-      es: '🗺 Ronda de estantes — ' + zl.map(z => z.es).join(' · '),
+      en: '🗺 Shelf patrol — ' + g.zones.map(z => z.en).join(' · '),
+      es: '🗺 Ronda de estantes — ' + g.zones.map(z => z.es).join(' · '),
+    };
+    const howto = {
+      ko: '매대 관리 앱에서 📷 QR 스캔 → 사진으로 진열 확인 → [✅ 이상 없음] (사진 필수). 진열이 무너졌거나 가격표가 없으면 [⚠️ 문제 있음], 물건이 없으면 [📦 품절/부족]로 바코드를 찍어주세요.',
+      en: 'In the Shelf Manager app: 📷 scan the QR → check the photo → [✅ All good] (photo required). Use [⚠️ Problem] or [📦 Out of stock] as needed.',
+      es: 'En la app de Estantes: 📷 escanee el QR → revise la foto → [✅ Todo bien] (foto obligatoria). Use [⚠️ Problema] o [📦 Sin stock].',
     };
     const noteTr = {
-      ko: '내 구역: ' + zoneKo + '\n매대 관리 앱에서 📷 QR 스캔 → 사진으로 진열 확인 → [✅ 이상 없음]. 진열이 무너졌거나 가격표가 없으면 [⚠️ 문제 있음], 물건이 없으면 [📦 품절/부족]로 바코드를 찍어주세요.',
-      en: 'My zone: ' + zl.map(z => z.en).join(' · ') + '\nIn the Shelf Manager app: 📷 scan the QR → check the photo → [✅ All good]. Use [⚠️ Problem] or [📦 Out of stock] as needed.',
-      es: 'Mi zona: ' + zl.map(z => z.es).join(' · ') + '\nEn la app de Estantes: 📷 escanee el QR → revise la foto → [✅ Todo bien]. Use [⚠️ Problema] o [📦 Sin stock].',
+      ko: (LANG ? '내 구역: ' : '') + zoneKo + '\n' + howto.ko,
+      en: 'My zone: ' + g.zones.map(z => z.en).join(' · ') + '\n' + howto.en,
+      es: 'Mi zona: ' + g.zones.map(z => z.es).join(' · ') + '\n' + howto.es,
     };
-    const taskId = 'auto_shelf_patrol_' + slug(who);
-    const restUrl = `${FB_DB_URL}/tasks/${branchId}/${dayKey}/${taskId}.json` + (aq ? aq : '');
+    const taskId = 'auto_shelf_patrol_' + (g.who === '*' ? 'all' : slug(g.who));
+    const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${dayKey}/${taskId}.json` + (aq ? aq : '');
     const payload = {
       name: nameTr.ko, nameTr, deadline: '',
-      category: '진열', requirePhoto: false,
+      category: '진열', requirePhoto: false,   // 사진은 매대 관리 앱에서 자리마다 필수로 받는다
       place: zoneKo,
       locationNote: noteTr.ko, locationNoteTr: noteTr,
       appLink: 'store-map.html',
       appLinkLabel: { ko:'🗺 매대 관리 앱 열기', en:'🗺 Open Shelf Manager', es:'🗺 Abrir Gestión de Estantes' },
-      assignedTo: who, assignedToId: who,
+      assignedTo: g.who, assignedToId: g.who === '*' ? null : g.who,
       from: me.name + ' (매대 순찰 발송)',
       fromRole: me.role || 'MANAGER',
       createdAt: Date.now(),
@@ -7339,12 +7324,14 @@ async function _sendPatrolSplit(branchId, branchLbl){
     };
     try {
       const w = await fetch(restUrl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      if (w.ok) created++; else { failed++; console.warn('[patrol-split] write', who, w.status); }
-    } catch(e){ failed++; console.warn('[patrol-split]', who, e); }
+      if (w.ok) created++; else { failed++; console.warn('[patrol] write', g.who, w.status); }
+    } catch(e){ failed++; console.warn('[patrol]', g.who, e); }
   }
-  alert('🗺 ' + (LANG==='en'?'Shelf patrol split — ':LANG==='es'?'Ronda dividida — ':'매대 순찰 분배 발송 — ') + branchLbl + '\n' +
+  alert('🗺 ' + (LANG==='en'?'Shelf patrol sent — ':LANG==='es'?'Ronda enviada — ':'매대 순찰 발송 완료 — ') + branchKo + '\n' +
     (LANG==='ko'?'  발송: ':'  Sent: ') + created + (failed ? ((LANG==='ko'?'\n  실패: ':'\n  Failed: ') + failed) : ''));
 }
+// 👥 직원끼리 나눠 매장 전체를 하루에 도는 방식.
+
 window.sendShelfPatrolDaily = sendShelfPatrolDaily;
 
 // K-Food '+ 음식 추가' / Seafood '+ 생선 추가' / Produce '+ 농산물 추가' —
