@@ -6870,10 +6870,16 @@ async function sendFrozenDailyAll(){
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
+  // 👥 전체(*) 또는 직원 지정 — 지정하면 각자에게 개별 업무로 나간다.
+  const targets = await chooseSendTargets(chosenBranch, '🧊',
+    LANG==='en'?'Frozen display report — send to?':LANG==='es'?'Reporte de congelados — ¿a quién?':'냉동고 진열 보고 — 누구에게 보낼까요?',
+    LANG==='en'?'Everyone on shift':LANG==='es'?'Todos los presentes':'그날 있는 사람 전체',
+    LANG==='en'?'Pick staff':LANG==='es'?'Elegir personal':'직원 골라서 보내기');
+  if (!targets) return;
   const branches = [chosenBranch];
-  const targetName = '*';
   let created = 0, skipped = 0, failed = 0;
   for (const branchId of branches){
+   for (const targetName of targets){
     const today = todayStr();
     const userKey = targetName === '*' ? 'all' : slug(targetName);
     const taskId = 'auto_frozen_daily_' + userKey;
@@ -6922,6 +6928,7 @@ async function sendFrozenDailyAll(){
       });
       if (w.ok) created++; else { console.warn('[frozen-daily] write fail', branchId, w.status); failed++; }
     } catch(e) { console.warn('[frozen-daily]', branchId, e); failed++; }
+   }
   }
   const _hdr=LANG==='en'?'🧊 Frozen display report sent — ':LANG==='es'?'🧊 Reporte de congeladores enviado — ':'🧊 냉동고 전체 진열 발송 완료 — ';
   const _sent=LANG==='en'?'  Newly sent\n':LANG==='es'?'  Enviado\n':'  새로 발송됨\n';
@@ -6948,7 +6955,15 @@ async function sendTempCheckDailyAll(){
   }
   const _branchObj = BRANCHES.find(b => b.id === chosenBranch) || {};
   const branchKo = _branchObj[LANG] || _branchObj.ko || chosenBranch;
-  const targetName = '*';
+  // 👥 전체(*) 또는 슬롯별 담당자.
+  //   ⚠️ 온도 task 의 ID 는 temp.html 이 하드코딩해서 자동완료에 쓰므로(auto_temp_daily_*_all)
+  //   ID 는 절대 바꾸지 않는다. 대신 슬롯마다 담당자만 지정한다 — 교대 현실과도 맞는다.
+  //   고른 인원이 슬롯보다 적으면 순환 배정(2명 → 오전A·오후B·마감A).
+  const _tTargets = await chooseSendTargets(chosenBranch, '🌡',
+    LANG==='en'?'Temp check — send to?':LANG==='es'?'Revisión temp. — ¿a quién?':'온도 체크 — 누구에게 보낼까요?',
+    LANG==='en'?'Everyone on shift':LANG==='es'?'Todos los presentes':'그날 있는 사람 전체',
+    LANG==='en'?'Assign per slot (morning/afternoon/closing)':LANG==='es'?'Asignar por turno':'슬롯별 담당자 지정 (오전/오후/마감)');
+  if (!_tTargets) return;
   let created = 0, skipped = 0, failed = 0;
   const today = todayStr();
   // 3개 슬롯 정의 — temp.html 의 SETTINGS.slot1/2/3 과 일치 (08:00 / 14:00 / 21:00 기본)
@@ -6998,7 +7013,9 @@ async function sendTempCheckDailyAll(){
     const u = window.__fb?.auth?.currentUser;
     if (u) { const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); }
   } catch(_){}
-  for (const slot of SLOTS){
+  for (let si = 0; si < SLOTS.length; si++){
+    const slot = SLOTS[si];
+    const targetName = _tTargets[0] === '*' ? '*' : _tTargets[si % _tTargets.length];
     const restUrl = `${FB_DB_URL}/tasks/${chosenBranch}/${today}/${slot.taskId}.json` + (aq ? aq : '');
     try {
       const r = await fetch(restUrl, { cache:'no-store' });
@@ -7018,7 +7035,7 @@ async function sendTempCheckDailyAll(){
         appLink: 'temp.html',
         appLinkLabel: { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Temp Tracker' },
         assignedTo: targetName,
-        assignedToId: null,
+        assignedToId: targetName === '*' ? null : targetName,
         from: me.name + ' (온도 일괄 발송)',
         fromRole: me.role || 'MANAGER',
         createdAt: Date.now(),
@@ -7058,6 +7075,49 @@ const SHELF_PATROL_ZONES = {
   6: { ko:'🧊 냉장 진열대 (37칸)', en:'🧊 Cooler cases (37 spots)',  es:'🧊 Refrigeradores (37 espacios)' }, // 토
   0: { ko:'미점검 구역 훑기',  en:'Sweep unchecked spots', es:'Repasar lugares sin revisar' },  // 일
 };
+// 지점 직원 이름 목록 (발송 대상 고르기용)
+async function loadBranchEmployeeNames(branchId){
+  try {
+    const raw = await fetch(FB_DB_URL + '/schedules/' + branchId + '/employees.json', { cache:'no-store' }).then(r => r.json());
+    const arr = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+    return arr.filter(e => e && e.name).map(e => e.name);
+  } catch(e){ console.warn('[employees]', e); return []; }
+}
+// 전체(*)로 보낼지, 사람을 골라 보낼지 — 일괄 발송 버튼들이 공용으로 쓴다.
+function pickSendTargetModal(emoji, title, allLabel, pickLabel){
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:99999;padding:16px';
+    const cancelTxt = LANG==='en'?'Cancel':LANG==='es'?'Cancelar':'취소';
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:16px;padding:22px 20px;max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.35)">' +
+        '<h3 style="margin:0 0 14px;font-size:1.08em;color:#0f172a">' + emoji + ' ' + title + '</h3>' +
+        '<button class="_st-opt" data-m="all" style="display:block;width:100%;text-align:left;border:1.5px solid #d1d5db;background:#f9fafb;border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;font-family:inherit">' +
+          '<div style="font-weight:800;color:#0f172a">📢 ' + allLabel + '</div></button>' +
+        '<button class="_st-opt" data-m="people" style="display:block;width:100%;text-align:left;border:1.5px solid #16a34a;background:#f0fdf4;border-radius:12px;padding:14px;cursor:pointer;font-family:inherit">' +
+          '<div style="font-weight:800;color:#15803d">👥 ' + pickLabel + '</div></button>' +
+        '<button class="_st-cancel" style="margin-top:14px;width:100%;background:#f3f4f6;border:0;border-radius:10px;padding:11px;cursor:pointer;font-weight:600;color:#374151">' + cancelTxt + '</button>' +
+      '</div>';
+    ov.querySelectorAll('._st-opt').forEach(b => b.addEventListener('click', () => { document.body.removeChild(ov); resolve(b.dataset.m); }));
+    ov.querySelector('._st-cancel').addEventListener('click', () => { document.body.removeChild(ov); resolve(null); });
+    ov.addEventListener('click', e => { if (e.target === ov){ document.body.removeChild(ov); resolve(null); } });
+    document.body.appendChild(ov);
+  });
+}
+// 지점 → 대상 선택까지 한 번에. 반환: null(취소) | ['*'] | ['이름1','이름2'...]
+async function chooseSendTargets(branchId, emoji, title, allLabel, pickLabel){
+  const mode = await pickSendTargetModal(emoji, title, allLabel, pickLabel);
+  if (!mode) return null;
+  if (mode === 'all') return ['*'];
+  const names = await loadBranchEmployeeNames(branchId);
+  if (!names.length){
+    alert(LANG==='en'?'No staff list for this branch.':LANG==='es'?'Sin lista de personal.':'이 지점 직원 명단을 불러오지 못했습니다.');
+    return null;
+  }
+  const picked = await pickEmployeesModal(names);
+  return (picked && picked.length) ? picked : null;
+}
+
 // 매장 전체를 나눌 때 쓰는 구역 단위 (10개). 인접한 것끼리 붙여 나눠야 동선이 산다.
 const SHELF_PATROL_ALL = [
   { ko:'통로 1', en:'Aisle 1', es:'Pasillo 1' },
@@ -7228,12 +7288,7 @@ async function sendShelfPatrolDaily(){
 }
 // 👥 직원끼리 나눠 매장 전체를 하루에 도는 방식.
 async function _sendPatrolSplit(branchId, branchLbl){
-  let names = [];
-  try {
-    const raw = await fetch(`${FB_DB_URL}/schedules/${branchId}/employees.json`, { cache:'no-store' }).then(r => r.json());
-    const arr = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
-    names = arr.filter(e => e && e.name).map(e => e.name);
-  } catch(e){ console.warn('[patrol-split] employees load', e); }
+  const names = await loadBranchEmployeeNames(branchId);
   if (!names.length){
     alert(LANG==='en'?'No staff list for this branch.':LANG==='es'?'Sin lista de personal.':'이 지점 직원 명단을 불러오지 못했습니다.');
     return;
