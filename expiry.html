@@ -718,7 +718,10 @@ button{cursor:pointer}
     </div>
     <div class="field">
       <label id="lblBay">📍 매대 위치</label>
-      <div id="bayChip" onclick="onBayChipClick()" style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;display:flex;align-items:center;justify-content:space-between;cursor:pointer"></div>
+      <div style="display:flex;gap:6px;align-items:stretch">
+        <div id="bayChip" onclick="onBayChipClick()" style="flex:1;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;display:flex;align-items:center;justify-content:space-between;cursor:pointer"></div>
+        <button type="button" onclick="scanBayForForm(event)" style="background:#1a5c3a;color:#fff;border:0;border-radius:10px;padding:0 14px;font-size:.9em;font-weight:700;cursor:pointer;white-space:nowrap">📷 QR</button>
+      </div>
       <input type="text" id="addBay" placeholder="예: A7R-B13 · DF4-D05 · R2-B03" style="display:none;margin-top:4px;text-transform:uppercase" oninput="renderBayField()">
     </div>
     <div class="field">
@@ -1645,11 +1648,14 @@ async function uploadAddPhoto(){
 var BAY_SESSION = null;                 // {code, ts}
 var BAY_SESSION_MS = 2 * 60 * 60 * 1000; // 2시간 — 한 통로 작업 한 번을 덮는 길이
 function loadBaySession(){
-  try {
-    var raw = JSON.parse(localStorage.getItem('km.bay.session') || 'null');
-    if (raw && raw.code && (Date.now() - (raw.ts || 0)) < BAY_SESSION_MS) BAY_SESSION = raw;
-    else BAY_SESSION = null;
-  } catch(e){ BAY_SESSION = null; }
+  // ⚠️ 저장소가 막힌 폰(사파리 프라이빗 모드, 사이트 데이터 차단)에서는 getItem 이 던진다.
+  //    예전엔 그때 세션을 null 로 밀어버려서, 방금 찍은 위치가 즉시 사라졌다.
+  //    → 저장소를 못 읽으면 메모리에 있는 세션을 그대로 쓴다(그 폰에서는 앱을 닫을 때까지 유지).
+  var raw = null, readable = true;
+  try { raw = JSON.parse(localStorage.getItem('km.bay.session') || 'null'); }
+  catch(e){ readable = false; }
+  if (readable) BAY_SESSION = (raw && raw.code) ? raw : null;   // 다른 탭에서 해제했으면 반영
+  if (BAY_SESSION && (Date.now() - (BAY_SESSION.ts || 0)) >= BAY_SESSION_MS) BAY_SESSION = null;
   return BAY_SESSION;
 }
 function setBaySession(code){
@@ -1696,6 +1702,44 @@ function onBayChipClick(){
 }
 window.onBayChipClick = onBayChipClick;
 
+// 📷 스캔 결과를 특정 작업으로 돌리는 임시 핸들러.
+// 평소(null)에는 등록 폼 동작(매대 QR=위치 도장 · 바코드=상품). 값이 있으면 그쪽으로.
+var __scanHandler = null;
+var __scanWarnAt = 0;
+// 이 상품의 위치를 QR 로 지정 — 손으로 코드를 타이핑하는 건 현장에서 안 쓴다.
+function scanBayForProduct(id, ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  __scanHandler = {
+    label: '매대 QR 을 찍어주세요',
+    bay: async function(code){
+      setBaySession(code);                       // 그 자리에 서 있으니 도장도 같이 찍어둔다
+      if (await setProductBay(id, code)) showToast('📍 ' + code + ' 지정됨');
+    },
+    barcode: function(){
+      showToast('상품 바코드네요 — 매대에 붙은 QR 을 찍어주세요 📷');
+    }
+  };
+  scanBarcode();
+}
+window.scanBayForProduct = scanBayForProduct;
+// 등록 폼에서 위치만 QR 로 잡기
+function scanBayForForm(ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  __scanHandler = {
+    label: '매대 QR 을 찍어주세요',
+    bay: function(code){
+      setBaySession(code);
+      var inp = document.getElementById('addBay');
+      if (inp) inp.value = code;
+      renderBayField();
+      showToast('📍 ' + code);
+    },
+    barcode: function(){ showToast('상품 바코드네요 — 매대에 붙은 QR 을 찍어주세요 📷'); }
+  };
+  scanBarcode();
+}
+window.scanBayForForm = scanBayForForm;
+
 // Camera barcode scanning — uses native BarcodeDetector when available
 // (Chrome/Edge Android), falls back to ZXing for everything else (iOS Safari).
 async function scanBarcode(){
@@ -1706,13 +1750,16 @@ async function scanBarcode(){
     modal.style.cssText = 'position:fixed;inset:0;background:#000;z-index:600;display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px';
     modal.innerHTML = `
       <video id="__bcVideo" style="width:100%;max-width:480px;max-height:60vh;border-radius:14px;object-fit:cover" autoplay playsinline muted></video>
-      <div style="color:#fff;margin-top:20px;font-size:1em;font-weight:600;text-align:center">바코드를 화면 가운데에 맞추세요</div>
+      <div id="__bcHint" style="color:#fff;margin-top:20px;font-size:1em;font-weight:600;text-align:center">바코드를 화면 가운데에 맞추세요</div>
       <div id="__bcStatus" style="color:#22c55e;margin-top:8px;font-size:.9em;font-weight:600">📡 인식 중…</div>
       <button onclick="closeBcModal()" style="margin-top:18px;background:#fff;color:#1a5c3a;border:0;border-radius:24px;padding:10px 28px;font-weight:700;font-size:.95em;cursor:pointer">취소</button>
     `;
     document.body.appendChild(modal);
   }
   modal.style.display = 'flex';
+  // 무엇을 찍어야 하는지 화면에 명확히 — 상품 바코드와 매대 QR 을 헷갈리지 않게
+  const hintEl = document.getElementById('__bcHint');
+  if (hintEl) hintEl.textContent = __scanHandler ? ('📍 ' + __scanHandler.label) : '바코드를 화면 가운데에 맞추세요';
   const video = document.getElementById('__bcVideo');
   const statusEl = document.getElementById('__bcStatus');
 
@@ -1742,6 +1789,14 @@ async function scanBarcode(){
         if (codes && codes.length) {
           const raw = codes[0].rawValue;
           const bay = bayCodeFromScan(raw);          // 매대 QR 이면 상품이 아니라 '위치' 로 처리
+          if (__scanHandler) {                        // 특정 작업(상품 위치 지정 등)으로 넘긴다
+            const h = __scanHandler;
+            if (bay) { __scanHandler = null; closeBcModal(); h.bay(bay); return; }
+            h.barcode(raw);                           // 잘못 찍음 — 창은 열어둔 채 다시 시도
+            await new Promise(r => setTimeout(r, 1200));
+            setTimeout(tick, 250);
+            return;
+          }
           if (bay) {
             setBaySession(bay);
             showToast('📍 ' + bay + ' 위치 설정됨');
@@ -1779,6 +1834,13 @@ async function scanBarcode(){
     reader.decodeFromVideoElementContinuously(video, (result) => {
       if (result && __bcActive) {
         const bay = bayCodeFromScan(result.text);
+        if (__scanHandler) {
+          const h = __scanHandler;
+          if (bay) { __scanHandler = null; closeBcModal(); h.bay(bay); return; }
+          // ZXing 은 같은 코드를 연속으로 뱉어서 토스트가 도배된다 — 2초에 한 번만 안내
+          if (Date.now() - (__scanWarnAt || 0) > 2000) { __scanWarnAt = Date.now(); h.barcode(result.text); }
+          return;
+        }
         if (bay) {
           setBaySession(bay);
           showToast('📍 ' + bay + ' 위치 설정됨');
@@ -1801,6 +1863,7 @@ let __bcActive = false;
 let __bcReader = null;
 function closeBcModal(){
   __bcActive = false;
+  __scanHandler = null;          // 취소하면 다음 스캔이 엉뚱한 작업으로 가지 않게
   const modal = document.getElementById('__bcModal');
   if (modal) modal.style.display = 'none';
   const video = document.getElementById('__bcVideo');
@@ -1948,11 +2011,16 @@ function openProductDetail(id){
       _dn.insertAdjacentElement('afterend', _bay);
     }
     if (_bay){
-      _bay.style.cursor = 'pointer';
-      _bay.title = '누르면 위치 입력/수정';
-      _bay.onclick = function(){ editProductBay(p.id); };
-      _bay.textContent = p.bay ? ('📍 ' + p.bay) : '📍 위치 지정하기';
-      _bay.style.color = p.bay ? '#047857' : '#b45309';
+      _bay.style.cssText = 'margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+      _bay.innerHTML =
+        '<span style="font-size:.95em;font-weight:800;color:' + (p.bay ? '#047857' : '#b45309') + '">' +
+          (p.bay ? ('📍 ' + escHtml(p.bay)) : '📍 위치 없음') + '</span>' +
+        '<button type="button" onclick="scanBayForProduct(\'' + p.id + '\', event)" ' +
+          'style="background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:5px 12px;' +
+          'font-size:.82em;font-weight:700;cursor:pointer">📷 QR 스캔</button>' +
+        '<button type="button" onclick="editProductBay(\'' + p.id + '\', event)" ' +
+          'style="background:#fff;color:#6b7280;border:1px solid #d1d5db;border-radius:8px;padding:5px 10px;' +
+          'font-size:.82em;font-weight:600;cursor:pointer">직접 입력</button>';
     }
   } catch(e){}
   // 수정 버튼 — 같은 지점 상품에만 노출 (다른 지점은 읽기 전용)
