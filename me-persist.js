@@ -174,6 +174,67 @@
 })();
 
 // =============================================================
+// 🧹 저장소 풀방지 재니터 + Quota 자가치유 (2026-09-15 전 지점 튕김 사고)
+// 사고: localStorage 5MB 한도가 꽉 차면(입고 마스터 3.2MB + 캐시들) 이후 모든
+// setItem 이 QuotaExceededError 로 터져 방 열기·로그인 저장까지 실패 → 앱이
+// "안 열리고 튕기는" 증상 (PC·폰 공통). 대응:
+//  1) 로드 시 사용량 4MB 초과면 재생성 가능한 캐시부터 자동 정리
+//     (순위 캐시 → 스케줄 백업 → 스케줄 캐시 → 입고 마스터(IDB 백업 있음, 입고 페이지 제외))
+//  2) setItem 실패 시: 청소 → 재시도 → 그래도 실패면 조용히 드롭 (절대 throw 안 함)
+// 입고 마스터는 recv-persist 가 IndexedDB 에 미러하므로 지워도 입고 페이지에서 자동 복원.
+// ⚠️ 사용자 데이터(chat.me·인보이스 히스토리 등)는 절대 지우지 않는다.
+// =============================================================
+(function(){
+  'use strict';
+  var isRecvPage = /receiving-scan/i.test(location.pathname);
+  function usage(){
+    var t = 0;
+    try { for (var i = 0; i < localStorage.length; i++){ var k = localStorage.key(i); t += ((localStorage.getItem(k) || '').length + k.length); } } catch(e){}
+    return t;
+  }
+  function evict(aggressive){
+    var freed = 0;
+    try {
+      var keys = [];
+      for (var i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      keys.forEach(function(k){
+        if (!k) return;
+        var kill = /^lb_cache_/.test(k) || /^shifts\.bak\./.test(k);
+        if (!kill && aggressive) {
+          kill = (k === 'recv.master.v1' && !isRecvPage) || /^shifts\./.test(k);
+        }
+        if (kill) {
+          try { freed += (localStorage.getItem(k) || '').length; localStorage.removeItem(k); } catch(e){}
+        }
+      });
+      if (freed) console.warn('[storage-janitor] 캐시 정리 ' + Math.round(freed/1024) + 'KB (aggressive=' + !!aggressive + ')');
+    } catch(e){}
+    return freed;
+  }
+  // setItem 자가치유 — 이 시점의 setItem(me-persist 미러 포함) 위에 얹는다.
+  var chainSet = localStorage.setItem;
+  localStorage.setItem = function(k, v){
+    try { return chainSet.call(localStorage, k, v); }
+    catch(e){
+      var q = e && (e.name === 'QuotaExceededError' || /quota/i.test(String(e && e.message || e)));
+      if (!q) throw e;
+      evict(false);
+      try { return chainSet.call(localStorage, k, v); }
+      catch(e2){
+        evict(true);
+        try { return chainSet.call(localStorage, k, v); }
+        catch(e3){ try { console.warn('[storage-janitor] 저장소 가득참 — 쓰기 생략:', k); } catch(_){} }
+      }
+    }
+  };
+  // 로드 시 예방 청소
+  try {
+    var u = usage();
+    if (u > 4 * 1024 * 1024) { evict(false); if (usage() > 4.2 * 1024 * 1024) evict(true); }
+  } catch(e){}
+})();
+
+// =============================================================
 // 🔐 계정-신원 동기화 (2026-08-09 사장님 지시: "계정 접속의 정확성이 최우선")
 // 이름은 이제 기기 설정이 아니라 로그인 계정 소속이다.
 // 문자 인증으로 로그인한 계정(users/{uid})에 등록된 이름·지점·역할이
