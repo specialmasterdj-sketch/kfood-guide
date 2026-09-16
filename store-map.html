@@ -409,6 +409,8 @@ var I18N = {
     oosFailChat: '기록은 됐지만 채팅 보고 실패: ',
     oosUnknown: '(이름 모름) 바코드 ',
     oosHere: '📦 이 자리 품절 보고',
+    oosOut: '품절', oosLeft: '{n}개 남음', oosLeftShort: '{n}개',
+    oosPatrol: '매대 순찰',
     statOos: '품절 보고', oosListTitle: '📦 품절 / 부족 보고',
     oosNone: '보고된 품절이 없습니다.', oosDays: '{d}일째',
     oosRestocked: '✕ 입고됨', oosRestockAsk: '{p}\n입고돼서 목록에서 지울까요?',
@@ -482,6 +484,8 @@ var I18N = {
     oosFailChat: 'Saved, but the chat report failed: ',
     oosUnknown: '(unknown item) barcode ',
     oosHere: '📦 Out-of-stock reports here',
+    oosOut: 'out of stock', oosLeft: '{n} left', oosLeftShort: '{n}',
+    oosPatrol: 'shelf patrol',
     statOos: 'Out of stock', oosListTitle: '📦 Out of stock / low',
     oosNone: 'No out-of-stock reports.', oosDays: '{d}d',
     oosRestocked: '✕ Restocked', oosRestockAsk: '{p}\nRestocked — remove from the list?',
@@ -557,6 +561,8 @@ var I18N = {
     oosFailChat: 'Guardado, pero falló el reporte al chat: ',
     oosUnknown: '(producto desconocido) código ',
     oosHere: '📦 Reportes de falta aquí',
+    oosOut: 'agotado', oosLeft: 'quedan {n}', oosLeftShort: '{n}',
+    oosPatrol: 'ronda de estantes',
     statOos: 'Sin stock', oosListTitle: '📦 Sin stock / bajo',
     oosNone: 'No hay reportes de falta.', oosDays: '{d}d',
     oosRestocked: '✕ Repuesto', oosRestockAsk: '{p}\n¿Repuesto — quitar de la lista?',
@@ -1269,13 +1275,17 @@ async function postOosToChat(rec, branchLabel){
   var FB = RTDB_URL;
   var ts = rec.ts || Date.now();
   var msgId = 'm' + ts + Math.floor(Math.random() * 900);
-  var qtyTxt = (rec.qty === 0 || rec.qty === '0') ? '품절 (0개 남음)' : ('부족 — ' + rec.qty + '개 남음');
+  // ⚠️ 재고 부족/과다 방의 자동 분류(_needClassify)가 '품절'·'부족' 이라는 한국어 낱말로
+  //   need 카드를 가려낸다. 그래서 한국어 키워드는 항상 남기고, 보는 사람 언어 표기를 덧붙인다.
+  var qtyTxt = (rec.qty === 0 || rec.qty === '0')
+    ? ('품절 / ' + t('oosOut') + ' (0)')
+    : ('부족 / ' + t('oosLeft').replace('{n}', rec.qty));
   var lines = [
     '📦 ' + qtyTxt,
     '🛒 ' + (rec.name || (t('oosUnknown') + rec.code)),
     '📍 ' + rec.bay + (branchLabel ? (' · ' + branchLabel) : ''),
     '🏷 ' + rec.code,
-    '— ' + (rec.by || '') + ' · 매대 순찰'
+    '— ' + (rec.by || '') + ' · ' + t('oosPatrol')
   ];
   var text = lines.join('\n');
   var msg = {
@@ -1359,7 +1369,9 @@ function openOosList(){
         var days = Math.max(0, Math.floor((Date.now() - (r.ts || 0)) / 86400000));
         var aged = days >= 2
           ? '<span style="color:var(--bad); font-weight:800"> · ' + t('oosDays').replace('{d}', days) + '</span>' : '';
-        var qty = (r.qty === 0) ? '<b style="color:var(--bad)">품절</b>' : ('<b>' + r.qty + '개</b>');
+        var qty = (r.qty === 0)
+          ? ('<b style="color:var(--bad)">' + t('oosOut') + '</b>')
+          : ('<b>' + t('oosLeftShort').replace('{n}', r.qty) + '</b>');
         return '<div style="border:1px solid #fed7aa; border-radius:10px; padding:10px 12px; margin-bottom:8px; background:#fff7ed">' +
           '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px">' +
             '<b style="font-family:ui-monospace,Menlo,Consolas,monospace">' + escapeHtml(r.bay) + '</b>' +
@@ -2018,7 +2030,7 @@ function renderBayCheckBox(bayId){
         var key = oosKey(r.bay, r.code);
         return '<div class="bay-oos-row">' +
           '<span>' + escapeHtml(r.name || r.code) +
-            ' <b>' + (r.qty === 0 ? '품절' : (r.qty + '개')) + '</b>' +
+            ' <b>' + (r.qty === 0 ? t('oosOut') : t('oosLeftShort').replace('{n}', r.qty)) + '</b>' +
             ' <span style="color:var(--sub)">· ' + escapeHtml(r.by || '') + ' ' + escapeHtml(r.at || '') + '</span></span>' +
           '<button type="button" class="addbtn" data-oosdel="' + escapeHtml(key) + '" style="padding:2px 8px">✕</button>' +
         '</div>';
