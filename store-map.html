@@ -382,6 +382,9 @@ var I18N = {
     checkDone: '✓ 오늘 체크완료', checkMark: '오늘 체크완료로 표시',
     bayOk: '✅ 이상 없음', bayIssue: '⚠️ 문제 있음',
     scanBay: '📷 QR 스캔', scanBayHint: '매대에 붙은 QR 을 화면 안에 맞춰주세요',
+    issueGo: '이 자리 열기', issueResolve: '✅ 해결됨',
+    issueResolveAsk: '{b} 문제가 해결됐나요?\n이상 없음으로 바꿉니다.',
+    issueNone: '보고된 문제가 없습니다.', issueDays: '{d}일째 미해결',
     scanBayBad: '매대 QR 이 아닙니다 — 다시 찍어주세요',
     scanBayUnknown: '이 매장 도면에 없는 코드입니다: ',
     bayNever: '아직 점검 기록이 없는 자리입니다.',
@@ -437,6 +440,9 @@ var I18N = {
     checkDone: '✓ Checked today', checkMark: 'Mark checked today',
     bayOk: '✅ All good', bayIssue: '⚠️ Problem',
     scanBay: '📷 Scan QR', scanBayHint: 'Line up the shelf QR in view',
+    issueGo: 'Open this spot', issueResolve: '✅ Resolved',
+    issueResolveAsk: 'Is the problem at {b} fixed?\nIt will be marked all good.',
+    issueNone: 'No problems reported.', issueDays: 'open {d} days',
     scanBayBad: 'Not a shelf QR — please scan again',
     scanBayUnknown: 'Code not in this store map: ',
     bayNever: 'No check recorded for this spot yet.',
@@ -494,6 +500,9 @@ var I18N = {
     checkDone: '✓ Revisado hoy', checkMark: 'Marcar revisado hoy',
     bayOk: '✅ Todo bien', bayIssue: '⚠️ Problema',
     scanBay: '📷 Escanear QR', scanBayHint: 'Alinee el QR del estante',
+    issueGo: 'Abrir este lugar', issueResolve: '✅ Resuelto',
+    issueResolveAsk: '¿Se resolvió el problema en {b}?\nSe marcará como todo bien.',
+    issueNone: 'No hay problemas reportados.', issueDays: '{d} días sin resolver',
     scanBayBad: 'No es un QR de estante — escanee de nuevo',
     scanBayUnknown: 'Código no está en este plano: ',
     bayNever: 'Aún no hay registro de revisión en este lugar.',
@@ -1168,6 +1177,59 @@ async function setBayCheck(bayId, state, note){
   }
 }
 
+// ⚠️ 문제 보고 목록 — 지도에서 빨간 점을 눈으로 찾는 건 240칸에서 불가능하다.
+//    상단 '문제 보고' 카드를 누르면 목록이 뜨고, 눌러서 그 자리로 바로 간다.
+function openIssueList(){
+  var rows = Object.keys(bayCheckMap)
+    .filter(function(k){ return bayCheckMap[k] && bayCheckMap[k].state === 'issue'; })
+    .map(function(k){ return Object.assign({ bay: k }, bayCheckMap[k]); })
+    .sort(function(a, b){ return (a.at || '') < (b.at || '') ? -1 : 1; });   // 오래된 것 먼저
+  var modal = document.getElementById('modal');
+  var body = rows.length
+    ? rows.map(function(r){
+        var days = 0;
+        try { days = Math.floor((Date.now() - new Date(r.at + 'T00:00:00').getTime()) / 86400000); } catch(e){}
+        var aged = days >= 2
+          ? '<span style="color:var(--bad); font-weight:800"> · ' + t('issueDays').replace('{d}', days) + '</span>' : '';
+        return '<div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; background:var(--card)">' +
+          '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:5px">' +
+            '<b style="font-family:ui-monospace,Menlo,Consolas,monospace">' + escapeHtml(r.bay) + '</b>' +
+            '<span style="font-size:11.5px; color:var(--sub)">' + escapeHtml(r.by || '?') + ' · ' + escapeHtml(r.at || '') + '</span>' +
+            aged +
+          '</div>' +
+          (r.note ? '<div style="font-size:12.5px; color:var(--ink); white-space:pre-wrap; margin-bottom:7px">' + escapeHtml(r.note) + '</div>' : '') +
+          '<div style="display:flex; gap:6px">' +
+            '<button type="button" class="addbtn" data-go="' + escapeHtml(r.bay) + '">' + t('issueGo') + '</button>' +
+            '<button type="button" class="addbtn" data-fix="' + escapeHtml(r.bay) + '" style="color:var(--ok); border-color:var(--ok)">' + t('issueResolve') + '</button>' +
+          '</div>' +
+        '</div>';
+      }).join('')
+    : '<div style="font-size:13px; color:var(--sub); padding:6px 2px">' + t('issueNone') + '</div>';
+  modal.innerHTML =
+    '<div class="modal-head"><h2>' + t('statIssue') + ' (' + rows.length + ')</h2>' +
+      '<button class="modal-close" id="closeBtn">&times;</button></div>' +
+    '<div class="modal-body">' + body + '</div>';
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('closeBtn').onclick = closeModal;
+  modal.querySelectorAll('[data-go]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var code = b.getAttribute('data-go');
+      openBay(code, labelForCode(code) || code);
+    });
+  });
+  modal.querySelectorAll('[data-fix]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      var code = b.getAttribute('data-fix');
+      if (!confirm(t('issueResolveAsk').replace('{b}', code))) return;
+      try { await setBayCheck(code, 'ok', ''); }
+      catch(e){ showToast(t('saveFail') + ' (' + (e.message || e) + ')'); return; }
+      render();
+      openIssueList();          // 목록 갱신
+      showToast('✅ ' + code);
+    });
+  });
+}
+
 // 📷 전체화면 사진 뷰어 — 탭으로 맞춤↔확대(260%) 토글, 확대 상태에서는 스크롤로 이동.
 function openPhotoViewer(src, label){
   var v = document.getElementById('photoViewer');
@@ -1201,9 +1263,13 @@ document.addEventListener('keydown', function(e){
 });
 
 function statusFor(bayId){
-  // 자리 단위 점검이 오늘 찍혀 있으면 그게 우선 (선반 입력 여부와 무관)
+  // 🐛 2026-09-16 수정 — 문제 보고는 '오늘' 것만 보던 탓에 하루만 지나면 지도에서
+  //    조용히 사라졌다. 문제는 해결될 때까지 남아 있어야 한다(날짜 무관).
+  var rec = bayCheckMap[bayId];
+  if (rec && rec.state === 'issue') return 'issue';
+  // 이상 없음은 '오늘' 찍힌 것만 완료로 친다 (매일 다시 도는 게 순찰이므로)
   var bc = bayCheckToday(bayId);
-  if (bc) return bc.state === 'issue' ? 'issue' : 'done';
+  if (bc) return 'done';
   var any = false, done = 0, total = 0;
   // 베이마다 선반 수가 다를 수 있어서 최대치까지 다 확인 (실제로 저장된 선반만 집계됨)
   shelvesForCount(MAX_SHELF_COUNT).forEach(function(sc){
@@ -1562,10 +1628,14 @@ function renderStats(){
       ' <span style="font-size:12px; font-weight:400; color:var(--sub)">🧊' + allClr.length + '</span>' +
       '</b><span>'+t('statClr')+'</span></div>' +
     '<div class="stat"><b style="color:var(--accent)">🔒 ' + fixedN + '</b><span>'+t('statFixed')+'</span></div>' +
-    '<div class="stat"><b style="color:var(--bad)">⚠️ ' + issue + '</b><span>'+t('statIssue')+'</span></div>' +
+    '<div class="stat" id="issueStat"' + (issue ? ' style="cursor:pointer; outline:2px solid var(--bad); outline-offset:-2px"' : '') +
+      '><b style="color:var(--bad)">⚠️ ' + issue + '</b><span>'+t('statIssue')+'</span></div>' +
     '<div class="stat"><b style="color:var(--ok)">' + done + '</b><span>'+t('statDone')+'</span></div>' +
     '<div class="stat"><b style="color:var(--warn)">' + pending + '</b><span>'+t('statPending')+'</span></div>' +
     '<div class="stat"><b style="color:var(--sub)">' + none + '</b><span>'+t('statNone')+'</span></div>';
+  // 문제가 1건이라도 있으면 카드를 눌러 목록을 볼 수 있게 (빨간 테두리로 표시)
+  var issueCard = document.getElementById('issueStat');
+  if (issueCard && issue) issueCard.addEventListener('click', openIssueList);
 }
 
 // ---- bay modal ----
