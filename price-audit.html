@@ -49,6 +49,20 @@
   } catch(e){}
 })();
 </script>
+<!-- 📷 매대 QR 스캔용 ZXing — store-map 과 같은 모듈. 매장에 이미 붙어 있는
+     매대 QR(?bay=A7R-B13)을 그대로 읽어 가격표 감사를 시작한다. -->
+<script type="module">
+  import { BrowserMultiFormatReader } from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm';
+  window.__startBarcodeScan = async function(videoEl, onDetected){
+    var reader = new BrowserMultiFormatReader();
+    var controls = await reader.decodeFromConstraints(
+      { video: { facingMode: { ideal: 'environment' } } },
+      videoEl,
+      function(result){ if (result) onDetected(result.getText()); }
+    );
+    return controls;
+  };
+</script>
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getDatabase, ref, onValue, set, update, push, remove } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
@@ -125,7 +139,7 @@ input[type=text],input[type=number]{width:100%;border:1.5px solid #d1d5db;border
   <div id="listPage">
     <div class="card">
       <div class="prog"><div><div class="n" id="progN">0 / 0</div><div class="lbl" data-i18n="progLbl">오늘 감사한 구역</div></div>
-        <button class="btn-sec" style="width:auto;padding:9px 14px;border-radius:10px;font-weight:800" onclick="openQrSheet()" data-i18n="qrPrint">🖨️ QR 인쇄</button></div>
+        <button class="btn-sec" style="width:auto;padding:9px 14px;border-radius:10px;font-weight:800;background:#1a5c3a;color:#fff;border-color:#1a5c3a" onclick="openBayScanner()" data-i18n="scanBtn">📷 매대 QR 스캔</button></div>
       <div class="hint" data-i18n="hint">📷 매대 QR 스캔 → 가격표가 POS와 맞으면 이상 없음. 틀린 게 있으면 POS로 출력·교체한 뒤 → 🔧 수정 기록 한 번이면 수정완료.</div>
     </div>
     <div id="zoneList"></div>
@@ -191,6 +205,7 @@ const T = {
   hint:{ko:'📷 매대 QR 스캔 → 가격표가 POS와 맞으면 이상 없음. 틀린 게 있으면 POS로 출력·교체한 뒤 → 🔧 수정 기록(고친 개수 + 사진 여러 장) 한 번이면 수정완료.',
         en:'📷 Scan a shelf QR → if tags match POS, mark All correct. If wrong, reprint at POS & replace, then 🔧 Log fix (count + photos) in one step.',
         es:'📷 Escanea el QR del estante → si coincide con POS, marca Todo correcto. Si hay error, reimprime en POS y reemplaza, luego 🔧 Registrar corrección (cantidad + fotos).'},
+  scanBtn:{ko:'📷 매대 QR 스캔',en:'📷 Scan shelf QR',es:'📷 Escanear QR'},
   okBtn:{ko:'✅ 이 구역 이상 없음 (+1점)',en:'✅ This zone — all correct (+1pt)',es:'✅ Esta zona — todo correcto (+1pt)'},
   fixHead:{ko:'🔧 수정 기록 (고친 것)',en:'🔧 Log fix (what you fixed)',es:'🔧 Registrar corrección'},
   fixDesc:{ko:'틀린 가격표를 POS로 출력·교체한 뒤 → 몇 개 고쳤는지 + 사진으로 한 번에 수정완료',
@@ -345,8 +360,61 @@ function renderList(){
   }).join('');
 }
 
+// ===== 📷 매대 QR 로 가격표 감사 시작 (2026-09-16 전무님 지시) =====
+// 가격표 감사용 QR 을 따로 붙이지 않고, 매장에 이미 붙어 있는 매대 QR 을 그대로 쓴다.
+// 매대 QR 은 주소를 담고 있다: .../store-map.html?bay=A7R-B13
+function bayCodeFromScan(text){
+  var v=String(text||'').trim();
+  var m=v.match(/[?&]bay=([^&#\s]+)/i);
+  if(m) return decodeURIComponent(m[1]).toUpperCase();
+  if(/^[A-Z]+\d+[LR]?-[DB]\d+$/i.test(v)||/^ENDCAP/i.test(v)) return v.toUpperCase();
+  return null;
+}
+// 매대 코드를 이 앱의 '구역'으로 다룬다. 기존 zone 목록에 없으면 즉석에서 만들어 붙인다
+// (기록은 priceAudit/{지점}/{날짜}/{매대코드} 로 남아 zone 기록과 섞이지 않는다).
+function zoneForBay(code){
+  var found=ZONES.find(function(z){return z.id===code;});
+  if(found) return found;
+  var z={id:code,label:code,sub:'',num:'',isBay:true};   // sub 를 비워야 제목에 매대 코드가 그대로 뜬다(zoneName 은 한글 쪽을 우선함)
+  ZONES.push(z);
+  return z;
+}
+function openAuditByBay(code){
+  if(!code) return;
+  zoneForBay(code);
+  openAudit(code);
+}
+function openBayScanner(){
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(10,15,12,.92);z-index:999;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML='<div style="background:#fff;border-radius:14px;padding:14px;width:min(94vw,440px)">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;font-weight:800;margin-bottom:8px">'+
+      '<span>📷 '+(LANG==='en'?'Scan shelf QR':LANG==='es'?'Escanear QR del estante':'매대 QR 스캔')+'</span>'+
+      '<button type="button" id="_bsClose" style="background:none;border:0;font-size:20px;cursor:pointer;color:#6b7280">&times;</button></div>'+
+    '<video id="_bsVideo" style="width:100%;border-radius:10px;background:#000" playsinline muted autoplay></video>'+
+    '<div id="_bsHint" style="font-size:.82em;color:#6b7280;margin-top:8px;text-align:center">'+
+      (LANG==='en'?'Line up the shelf QR in view':LANG==='es'?'Alinee el QR del estante':'매대에 붙은 QR 을 화면 안에 맞춰주세요')+'</div></div>';
+  document.body.appendChild(ov);
+  var done=false, ctrl=null;
+  function cleanup(){ if(done)return; done=true; try{ctrl&&ctrl.stop&&ctrl.stop();}catch(e){} if(ov.parentNode)ov.parentNode.removeChild(ov); }
+  ov.querySelector('#_bsClose').addEventListener('click',cleanup);
+  ov.addEventListener('click',function(e){ if(e.target===ov) cleanup(); });
+  if(!window.__startBarcodeScan){ document.getElementById('_bsHint').textContent='스캔 기능을 불러오지 못했습니다.'; return; }
+  window.__startBarcodeScan(document.getElementById('_bsVideo'),function(text){
+    if(done)return;
+    var code=bayCodeFromScan(text);
+    if(!code){ document.getElementById('_bsHint').textContent=(LANG==='en'?'Not a shelf QR — try again':LANG==='es'?'No es un QR de estante':'매대 QR 이 아닙니다 — 다시 찍어주세요'); return; }
+    cleanup();
+    openAuditByBay(code);
+  }).then(function(c){ctrl=c;}).catch(function(e){
+    document.getElementById('_bsHint').textContent='카메라를 열 수 없습니다: '+(e&&e.message||e);
+  });
+}
+window.openBayScanner=openBayScanner;
+
 function openAudit(zoneId){
   CUR_ZONE=ZONES.find(z=>z.id===String(zoneId));
+  if(!CUR_ZONE && bayCodeFromScan(String(zoneId))) CUR_ZONE=zoneForBay(String(zoneId));  // 매대 코드면 즉석 생성
   if(!CUR_ZONE){toast('zone?');return;}
   document.getElementById('listPage').style.display='none';
   document.getElementById('qrPage').style.display='none';
@@ -518,10 +586,12 @@ async function boot(){
   if(!BRANCHES.some(b=>b.id===init))init='HOLLYWOOD';
   await setBranch(init);
   const z=getParam('z');if(z)openAudit(z);
+  // 🏷 매대 QR / 매대 관리 앱에서 넘어온 경우 — 그 자리 감사를 바로 연다
+  const bay=getParam('bay');if(bay)openAuditByBay(String(bay).toUpperCase());
 }
 if(window.__fb)boot();else window.addEventListener('fb-ready',boot,{once:true});
 window.addEventListener('fb-auth-ready',function(){try{if(ZONES.length)subscribeToday();}catch(e){}});
-window.openAudit=openAudit;window.submitOk=submitOk;window.addIssue=addIssue;window.goList=goList;window.openQrSheet=openQrSheet;
+window.openAudit=openAudit;window.openAuditByBay=openAuditByBay;window.submitOk=submitOk;window.addIssue=addIssue;window.goList=goList;window.openQrSheet=openQrSheet;
 window.onPickBefore=onPickBefore;window.onPickAfter=onPickAfter;window.rmBefore=rmBefore;window.markFixed=markFixed;
 </script>
 </body>
