@@ -127,6 +127,8 @@ h1{font-size:19px; margin:0 0 2px;}
 .aisle-legend .sw{width:13px; height:13px; border-radius:4px;}
 .face .dot{display:inline-block; width:6px; height:6px; border-radius:50%; margin-left:4px; vertical-align:1px;}
 .dot.done{background:var(--ok);} .dot.pending{background:var(--warn);} .dot.none{background:transparent;}
+/* 문제 보고된 자리 — 지도에서 바로 눈에 띄어야 매니저가 찾아간다 */
+.dot.issue{background:var(--bad); box-shadow:0 0 0 2px rgba(220,38,38,.25);}
 .aisle-label{writing-mode:vertical-rl; text-orientation:mixed; font-size:11px; color:var(--sub); text-align:center; padding:2px;}
 
 /* 고정 진열(플래노그램) 지정 — 슈퍼바이저가 돌면서 베이를 눌러 표시 */
@@ -235,6 +237,34 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
 .bay-photo-head{font-size:12.5px; font-weight:700; color:var(--sub); margin-bottom:8px;}
 .bay-photo-img{width:100%; max-height:320px; object-fit:contain; border-radius:8px; background:var(--card); display:block; margin-bottom:8px;}
 .bay-photo-actions{display:flex; gap:8px;}
+/* 📷 사진 탭 → 전체화면 확대 뷰어. 진열 사진은 작게 보면 상품 글씨가 안 보여서
+   확대가 없으면 찍어둔 사진이 사실상 쓸모없다. 한 번 탭 = 맞춤/확대 토글. */
+.bay-photo-img{cursor:zoom-in;}
+#photoViewer{position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.92); display:none;}
+#photoViewer.show{display:block;}
+#photoViewer .pv-scroll{position:absolute; inset:0; overflow:auto; -webkit-overflow-scrolling:touch;
+  display:flex; align-items:center; justify-content:center;}
+#photoViewer img{display:block; max-width:100%; height:auto; transition:none;}
+#photoViewer.zoomed .pv-scroll{display:block;}
+#photoViewer.zoomed img{max-width:none; width:260%; cursor:zoom-out;}
+#photoViewer .pv-bar{position:absolute; top:0; left:0; right:0; padding:10px 14px; color:#fff;
+  font-size:13px; font-weight:700; display:flex; justify-content:space-between; align-items:center;
+  background:linear-gradient(rgba(0,0,0,.6), transparent); pointer-events:none;}
+#photoViewer .pv-bar button{pointer-events:auto; background:rgba(255,255,255,.15); color:#fff;
+  border:1px solid rgba(255,255,255,.4); border-radius:8px; padding:6px 12px; font-size:13px; cursor:pointer;}
+/* ✅ 원탭 점검 — 선반을 하나씩 열어 체크하던 걸 버튼 하나로. */
+.bay-check{display:flex; gap:8px; margin:0 0 12px;}
+.bay-check button{flex:1; border-radius:10px; padding:12px 8px; font-size:14px; font-weight:800;
+  cursor:pointer; border:1.5px solid var(--line); background:var(--card); color:var(--ink);}
+.bay-check .ok.on{background:var(--ok); border-color:var(--ok); color:#fff;}
+.bay-check .bad.on{background:var(--bad); border-color:var(--bad); color:#fff;}
+.bay-check-state{font-size:12px; color:var(--sub); margin:-6px 0 12px;}
+.bay-check-state.issue{color:var(--bad); font-weight:700;}
+/* 선반 상세는 기본으로 접어둔다 — 평소 순찰엔 필요 없고, 품목까지 볼 사람만 편다. */
+.shelf-toggle{width:100%; text-align:left; background:var(--aisle); border:1px solid var(--line);
+  border-radius:10px; padding:10px 12px; font-size:13px; font-weight:700; color:var(--sub); cursor:pointer;}
+.bay-issue-note{font-size:12.5px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b;
+  border-radius:8px; padding:8px 10px; margin:-6px 0 12px; white-space:pre-wrap;}
 .photobtn{font-size:12px; border-radius:8px; border:1px solid var(--line); padding:7px 12px; cursor:pointer; background:var(--card); color:var(--ink); display:inline-block;}
 .photobtn.del{color:var(--bad); border-color:var(--bad);}
 .bay-photo-state{font-size:11px; color:var(--sub); margin-top:6px;}
@@ -321,6 +351,12 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
   </p>
 </div>
 
+<!-- 📷 사진 전체화면 뷰어 — 탭으로 맞춤/확대 토글, 확대 상태에서 스크롤로 이동 -->
+<div id="photoViewer">
+  <div class="pv-scroll" id="pvScroll"><img id="pvImg" alt=""></div>
+  <div class="pv-bar"><span id="pvLabel"></span><button type="button" id="pvClose">✕</button></div>
+</div>
+
 <div class="overlay" id="overlay">
   <div class="modal" id="modal"></div>
 </div>
@@ -343,6 +379,14 @@ var I18N = {
     rowPos: '위치', rowName: '상품명', rowNamePh: '상품명 (이름으로 찾기)', rowBarcode: '바코드', rowFacing: '폭', rowMinStock: '최소재고', rowPhoto: '사진',
     addItem: '+ 품목 추가', scanAddItem: '📷 바코드 스캔으로 추가', photoUrlPh: '선반 정답 사진 URL (선택)',
     checkDone: '✓ 오늘 체크완료', checkMark: '오늘 체크완료로 표시',
+    bayOk: '✅ 이상 없음', bayIssue: '⚠️ 문제 있음',
+    bayNever: '아직 점검 기록이 없는 자리입니다.',
+    bayLastOk: '✅ {by} · {at} 이상 없음', bayLastIssue: '⚠️ {by} · {at} 문제 보고',
+    bayIssuePrompt: '무엇이 문제인가요? (예: 3번 선반 비어있음 · 가격표 없음)',
+    shelfDetail: '선반 상세 {n}개 — 품목·바코드 (누르면 펼침)',
+    photoTaken: '촬영 {at}', photoOld: '⚠️ 사진이 오래됐습니다 ({d}일 전) — 갱신 권장',
+    photoNone: '사진 없음 — 지금 찍으면 다음 사람이 진열을 바로 확인할 수 있어요',
+    photoZoom: '탭하면 확대', viewerClose: '닫기', statIssue: '문제 보고',
     save: '저장', saving: '저장 중…', saved: '저장됨 ✓', saveFail: '저장 실패',
     addShelf: '+ 선반 추가 (맨 위)', removeShelf: '- 맨 위 선반 숨기기',
     scanTitle: '📷 바코드 스캔', scanHint: '바코드를 화면 안에 맞춰주세요',
@@ -387,6 +431,14 @@ var I18N = {
     rowPos: 'Pos', rowName: 'Product', rowNamePh: 'Product name (search by name)', rowBarcode: 'Barcode', rowFacing: 'Width', rowMinStock: 'Min stock', rowPhoto: 'Photo',
     addItem: '+ Add item', scanAddItem: '📷 Add by barcode scan', photoUrlPh: 'Reference photo URL (optional)',
     checkDone: '✓ Checked today', checkMark: 'Mark checked today',
+    bayOk: '✅ All good', bayIssue: '⚠️ Problem',
+    bayNever: 'No check recorded for this spot yet.',
+    bayLastOk: '✅ {by} · {at} all good', bayLastIssue: '⚠️ {by} · {at} problem reported',
+    bayIssuePrompt: 'What is wrong? (e.g. shelf 3 empty · no price tag)',
+    shelfDetail: 'Shelf details ({n}) — items & barcodes (tap to open)',
+    photoTaken: 'Taken {at}', photoOld: '⚠️ Photo is old ({d} days) — please retake',
+    photoNone: 'No photo — take one so the next person can check the display',
+    photoZoom: 'Tap to zoom', viewerClose: 'Close', statIssue: 'Problems',
     save: 'Save', saving: 'Saving…', saved: 'Saved ✓', saveFail: 'Save failed',
     addShelf: '+ Add shelf (top)', removeShelf: '- Hide top shelf',
     scanTitle: '📷 Scan barcode', scanHint: 'Line up the barcode in view',
@@ -433,6 +485,14 @@ var I18N = {
     rowPos: 'Pos', rowName: 'Producto', rowNamePh: 'Nombre del producto (buscar por nombre)', rowBarcode: 'Código de barras', rowFacing: 'Frentes', rowMinStock: 'Inventario mín.', rowPhoto: 'Foto',
     addItem: '+ Agregar producto', scanAddItem: '📷 Agregar escaneando código', photoUrlPh: 'URL de foto de referencia (opcional)',
     checkDone: '✓ Revisado hoy', checkMark: 'Marcar revisado hoy',
+    bayOk: '✅ Todo bien', bayIssue: '⚠️ Problema',
+    bayNever: 'Aún no hay registro de revisión en este lugar.',
+    bayLastOk: '✅ {by} · {at} todo bien', bayLastIssue: '⚠️ {by} · {at} problema reportado',
+    bayIssuePrompt: '¿Qué pasa? (ej. estante 3 vacío · sin etiqueta de precio)',
+    shelfDetail: 'Detalle de estantes ({n}) — artículos y códigos (toque para abrir)',
+    photoTaken: 'Tomada {at}', photoOld: '⚠️ Foto antigua ({d} días) — tome una nueva',
+    photoNone: 'Sin foto — tome una para que el siguiente pueda verificar',
+    photoZoom: 'Toque para ampliar', viewerClose: 'Cerrar', statIssue: 'Problemas',
     save: 'Guardar', saving: 'Guardando…', saved: 'Guardado ✓', saveFail: 'Error al guardar',
     addShelf: '+ Agregar estante (arriba)', removeShelf: '- Ocultar estante superior',
     scanTitle: '📷 Escanear código de barras', scanHint: 'Alinee el código dentro de la pantalla',
@@ -971,10 +1031,22 @@ async function renderBayPhotoBox(bayId){
   var loadErr = null;
   try { rec = await loadPhotoForBay(bayId); } catch(e){ loadErr = e; console.error('[bay photo] load failed', e); }
 
+  // 사진이 며칠 된 건지 — 오래된 사진을 현재 진열로 착각하면 안 된다.
+  var ageLine = '';
+  if (rec && rec.ts){
+    var days = Math.floor((Date.now() - rec.ts) / 86400000);
+    var at = new Date(rec.ts).toLocaleDateString();
+    ageLine = days >= 60
+      ? '<div class="bay-photo-state" style="color:var(--warn); font-weight:700">' + t('photoOld').replace('{d}', days) + '</div>'
+      : '<div class="bay-photo-state">' + t('photoTaken').replace('{at}', at) + ' · ' + t('photoZoom') + '</div>';
+  } else if (!rec && !loadErr){
+    ageLine = '<div class="bay-photo-state">' + t('photoNone') + '</div>';
+  }
   box.innerHTML =
     '<div class="bay-photo-head">' + t('bayPhotoTitle') + '</div>' +
     (loadErr ? '<div class="bay-photo-state" style="color:var(--bad)">' + t('photoLoadFail') + (loadErr.message || loadErr) + '</div>' : '') +
     (rec ? '<img class="bay-photo-img" id="bayPhotoImg" src="'+rec.dataURL+'">' : '') +
+    ageLine +
     '<div class="bay-photo-actions">' +
       '<label class="photobtn">' + (rec ? t('photoChange') : t('photoAdd')) +
         '<input type="file" accept="image/*" capture="environment" id="bayPhotoInput" style="display:none">' +
@@ -999,6 +1071,14 @@ async function renderBayPhotoBox(bayId){
     }
   });
 
+  // 탭 → 전체화면 확대. 작게 보면 상품 글씨가 안 보여 사진이 무용지물이 된다.
+  var imgEl = document.getElementById('bayPhotoImg');
+  if (imgEl && rec){
+    imgEl.addEventListener('click', function(){
+      openPhotoViewer(rec.dataURL, currentOpenBayLabel || bayId);
+    });
+  }
+
   var delBtn = document.getElementById('bayPhotoDel');
   if (delBtn){
     delBtn.addEventListener('click', async function(){
@@ -1008,7 +1088,81 @@ async function renderBayPhotoBox(bayId){
   }
 }
 
+// ---- 🆕 2026-09-16 원탭 자리 점검 ----
+// 전에는 베이 하나를 '점검 완료' 로 만들려면 선반 5개를 각각 열어서 각각 체크해야 했다.
+// 144베이 = 720번 탭. 그래서 240자리 중 222자리가 '기록 없음' 이었다.
+// → 자리 단위 기록을 따로 둔다: bayCheck/<베이코드> = {at, by, state:'ok'|'issue', note}
+//   순찰은 버튼 하나로 끝나고, 선반 품목 입력은 필요한 사람만 따로 한다.
+var bayCheckMap = {};   // bayId -> {at, by, state, note, ts}
+async function loadBayChecks(){
+  if (!db) return;
+  try {
+    var snap = await db.collection('bayCheck').get();
+    var next = {};
+    snap.docs.forEach(function(d){ next[d.id] = d.data(); });
+    bayCheckMap = next;
+  } catch(e){
+    // 점검 기록을 못 불러와도 배치도는 보여야 한다.
+    console.error('[planogram] bayCheck preload failed', e);
+  }
+}
+function bayCheckToday(bayId){
+  var c = bayCheckMap[bayId];
+  return (c && c.at === todayStr()) ? c : null;
+}
+async function setBayCheck(bayId, state, note){
+  var me = meName();
+  var rec = { at: todayStr(), by: me || '', state: state, note: note || '', ts: Date.now() };
+  var prev = bayCheckMap[bayId];
+  bayCheckMap[bayId] = rec;                       // 화면 먼저 (느린 네트워크에서도 즉시 반응)
+  try {
+    await fetch(rtdbPath('bayCheck/' + bayId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rec)
+    }).then(function(r){ if (!r.ok) throw new Error(r.status); });
+  } catch(e){
+    bayCheckMap[bayId] = prev;                    // 실패하면 되돌림 — 안 된 걸 된 것처럼 두지 않는다
+    throw e;
+  }
+}
+
+// 📷 전체화면 사진 뷰어 — 탭으로 맞춤↔확대(260%) 토글, 확대 상태에서는 스크롤로 이동.
+function openPhotoViewer(src, label){
+  var v = document.getElementById('photoViewer');
+  if (!v) return;
+  document.getElementById('pvImg').src = src;
+  document.getElementById('pvLabel').textContent = label || '';
+  v.classList.remove('zoomed');
+  v.classList.add('show');
+}
+function closePhotoViewer(){
+  var v = document.getElementById('photoViewer');
+  if (!v) return;
+  v.classList.remove('show');
+  v.classList.remove('zoomed');
+  document.getElementById('pvImg').src = '';      // 메모리 해제 (base64 사진이 크다)
+}
+document.addEventListener('DOMContentLoaded', function(){
+  var v = document.getElementById('photoViewer');
+  if (!v) return;
+  document.getElementById('pvClose').addEventListener('click', closePhotoViewer);
+  document.getElementById('pvImg').addEventListener('click', function(e){
+    e.stopPropagation();
+    v.classList.toggle('zoomed');
+  });
+  document.getElementById('pvScroll').addEventListener('click', function(e){
+    if (e.target && e.target.id !== 'pvImg') closePhotoViewer();   // 여백 탭 = 닫기
+  });
+});
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') closePhotoViewer();
+});
+
 function statusFor(bayId){
+  // 자리 단위 점검이 오늘 찍혀 있으면 그게 우선 (선반 입력 여부와 무관)
+  var bc = bayCheckToday(bayId);
+  if (bc) return bc.state === 'issue' ? 'issue' : 'done';
   var any = false, done = 0, total = 0;
   // 베이마다 선반 수가 다를 수 있어서 최대치까지 다 확인 (실제로 저장된 선반만 집계됨)
   shelvesForCount(MAX_SHELF_COUNT).forEach(function(sc){
@@ -1319,7 +1473,7 @@ function renderUnits(UNITS, boxId, hintId){
         btn.innerHTML = '<span>' + n + '</span>' +
           (fixedMap[code] ? '<span class="lock">🔒</span>' : '') +
           '<span class="dot" style="background:' +
-          (st === 'done' ? 'var(--ok)' : st === 'pending' ? 'var(--warn)' : 'transparent') + '"></span>';
+          (st === 'done' ? 'var(--ok)' : st === 'issue' ? 'var(--bad)' : st === 'pending' ? 'var(--warn)' : 'transparent') + '"></span>';
         btn.addEventListener('click', function(){
           if (fixMode){ toggleFixed(code); return; }
           openBay(code, cellLabel(f, n) + ' · ' + doorSerial(f.code, n));
@@ -1348,10 +1502,13 @@ function renderStats(){
 
   // 점검 현황(체크완료/미점검/기록없음)은 냉동·냉장까지 합쳐서 세야 "오늘 매장을
   // 얼마나 돌았나"가 맞게 나온다. 전체 개수는 베이/냉동냉장을 따로 보여줌.
-  var done=0, pending=0, none=0, fixedN=0;
+  var done=0, pending=0, none=0, fixedN=0, issue=0;
   allBays.concat(allDoors).concat(allClr).forEach(function(b){
     var s = statusFor(b);
-    if (s==='done') done++; else if (s==='pending') pending++; else none++;
+    if (s==='done') done++;
+    else if (s==='issue') issue++;              // 문제 보고 — 매니저가 제일 먼저 봐야 할 숫자
+    else if (s==='pending') pending++;
+    else none++;
     if (fixedMap[b]) fixedN++;
   });
   var el = document.getElementById('stats');
@@ -1364,6 +1521,7 @@ function renderStats(){
       ' <span style="font-size:12px; font-weight:400; color:var(--sub)">🧊' + allClr.length + '</span>' +
       '</b><span>'+t('statClr')+'</span></div>' +
     '<div class="stat"><b style="color:var(--accent)">🔒 ' + fixedN + '</b><span>'+t('statFixed')+'</span></div>' +
+    '<div class="stat"><b style="color:var(--bad)">⚠️ ' + issue + '</b><span>'+t('statIssue')+'</span></div>' +
     '<div class="stat"><b style="color:var(--ok)">' + done + '</b><span>'+t('statDone')+'</span></div>' +
     '<div class="stat"><b style="color:var(--warn)">' + pending + '</b><span>'+t('statPending')+'</span></div>' +
     '<div class="stat"><b style="color:var(--sub)">' + none + '</b><span>'+t('statNone')+'</span></div>';
@@ -1380,31 +1538,97 @@ var currentOpenBayLabel = null;
 async function openBay(bayId, label){
   currentOpenBayId = bayId;
   currentOpenBayLabel = label || null;
+  // 📍 위치 도장 — QR 을 찍어 이 자리를 열었다는 건 직원이 지금 그 앞에 서 있다는 뜻.
+  //   같은 폰의 다른 앱(유통기한 등)이 2시간 동안 이 위치를 이어받아 자동으로 채운다.
+  try { localStorage.setItem('km.bay.session', JSON.stringify({ code: bayId, ts: Date.now() })); } catch(e){}
   var modal = document.getElementById('modal');
   var fx = fixedMap[bayId];
   var fxLine = fx
     ? '<div style="font-size:11.5px; color:var(--accent); margin:-4px 0 10px;">' + t('fixBy') +
       (fx.by ? fx.by + ' · ' : '') + (fx.at || '') + '</div>'
     : '';
+  // 화면 순서 = 직원이 실제로 쓰는 순서.
+  //   ① 사진(진열 기준) → ② 이상 없음/문제 한 번 → ③ 선반 품목은 접어둠(필요한 사람만)
   modal.innerHTML =
     '<div class="modal-head"><h2>'+(label || bayId)+'</h2><button class="modal-close" id="closeBtn">&times;</button></div>' +
     '<div class="modal-body">' +
       fxLine +
       '<div class="bay-photo" id="bayPhotoBox">'+t('photoLoading')+'</div>' +
-      '<div id="shelvesWrap">'+t('loading')+'</div>' +
-      '<div class="shelf-count-actions" id="shelfCountActions"></div>' +
+      '<div class="bay-check" id="bayCheckBtns"></div>' +
+      '<div id="bayCheckState"></div>' +
+      '<button type="button" class="shelf-toggle" id="shelfToggle"></button>' +
+      '<div id="shelfSection" style="display:none; margin-top:10px;">' +
+        '<div id="shelvesWrap">'+t('loading')+'</div>' +
+        '<div class="shelf-count-actions" id="shelfCountActions"></div>' +
+      '</div>' +
     '</div>';
   document.getElementById('overlay').classList.add('show');
   document.getElementById('closeBtn').onclick = closeModal;
 
   renderBayPhotoBox(bayId);
+  renderBayCheckBox(bayId);
 
   var count = shelfCountCache[bayId];
   if (count == null){
     count = await loadShelfCount(bayId);
     shelfCountCache[bayId] = count;
   }
-  await renderShelfList(bayId, count);
+  // 선반 상세는 눌렀을 때 처음 한 번만 그린다 — 평소 순찰에서는 아예 안 그려 화면이 가볍다.
+  var toggle = document.getElementById('shelfToggle');
+  var section = document.getElementById('shelfSection');
+  var built = false;
+  if (toggle){
+    toggle.textContent = t('shelfDetail').replace('{n}', count);
+    toggle.addEventListener('click', async function(){
+      var open = section.style.display !== 'none';
+      section.style.display = open ? 'none' : '';
+      if (!open && !built){ built = true; await renderShelfList(bayId, count); }
+    });
+  }
+}
+
+// ✅ 원탭 점검 — 이 자리 하나를 버튼 한 번으로 "오늘 확인함" 으로 기록.
+function renderBayCheckBox(bayId){
+  var box = document.getElementById('bayCheckBtns');
+  var stateEl = document.getElementById('bayCheckState');
+  if (!box || !stateEl) return;
+  var today = bayCheckToday(bayId);
+  var prev = bayCheckMap[bayId];
+  box.innerHTML =
+    '<button type="button" class="ok' + (today && today.state === 'ok' ? ' on' : '') + '" id="bayOkBtn">' + t('bayOk') + '</button>' +
+    '<button type="button" class="bad' + (today && today.state === 'issue' ? ' on' : '') + '" id="bayIssueBtn">' + t('bayIssue') + '</button>';
+  // 마지막 점검이 언제/누구였는지 — 오늘이 아니어도 보여줘야 "며칠째 방치" 가 드러난다.
+  var line = '';
+  if (prev && prev.at){
+    var key = prev.state === 'issue' ? 'bayLastIssue' : 'bayLastOk';
+    line = '<div class="bay-check-state' + (prev.state === 'issue' ? ' issue' : '') + '">' +
+      t(key).replace('{by}', prev.by || '?').replace('{at}', prev.at) + '</div>';
+    if (prev.state === 'issue' && prev.note){
+      line += '<div class="bay-issue-note">' + escapeHtml(prev.note) + '</div>';
+    }
+  } else {
+    line = '<div class="bay-check-state">' + t('bayNever') + '</div>';
+  }
+  stateEl.innerHTML = line;
+
+  document.getElementById('bayOkBtn').addEventListener('click', async function(){
+    try { await setBayCheck(bayId, 'ok', ''); }
+    catch(e){ showToast(t('saveFail') + ' (' + (e.message||e) + ')'); return; }
+    renderBayCheckBox(bayId); render();
+    showToast('✅ ' + (currentOpenBayLabel || bayId));
+  });
+  document.getElementById('bayIssueBtn').addEventListener('click', async function(){
+    var note = prompt(t('bayIssuePrompt'), (prev && prev.state === 'issue' && prev.note) || '');
+    if (note === null) return;                      // 취소
+    try { await setBayCheck(bayId, 'issue', note.trim()); }
+    catch(e){ showToast(t('saveFail') + ' (' + (e.message||e) + ')'); return; }
+    renderBayCheckBox(bayId); render();
+    showToast('⚠️ ' + (currentOpenBayLabel || bayId));
+  });
+}
+function escapeHtml(x){
+  return String(x == null ? '' : x)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // 선반 목록 + "선반 추가/숨기기" 버튼을 그림. 선반 수를 바꾼 뒤에도 다시 호출됨.
@@ -1710,6 +1934,7 @@ async function boot(){
   } catch(e){ db = null; }
   if (db){
     await loadFixed(); // 고정 지정 상태 — 자물쇠 표시가 첫 화면부터 맞게
+    await loadBayChecks(); // 오늘 점검 상태 — 지도 점이 첫 화면부터 맞게
     // preload today's status for all bays so the dots are accurate on first paint
     var ok = await preloadShelves();
     if (!ok){

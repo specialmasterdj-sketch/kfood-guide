@@ -717,6 +717,11 @@ button{cursor:pointer}
       </div>
     </div>
     <div class="field">
+      <label id="lblBay">📍 매대 위치</label>
+      <div id="bayChip" onclick="onBayChipClick()" style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;display:flex;align-items:center;justify-content:space-between;cursor:pointer"></div>
+      <input type="text" id="addBay" placeholder="예: A7R-B13 · DF4-D05 · R2-B03" style="display:none;margin-top:4px;text-transform:uppercase" oninput="renderBayField()">
+    </div>
+    <div class="field">
       <label id="lblCat">카테고리</label>
       <div id="catChip" onclick="toggleCatEdit()" style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:1em;display:flex;align-items:center;justify-content:space-between;cursor:pointer">
         <span id="catChipText" style="color:#1a5c3a;font-weight:700">📂 기타</span>
@@ -1546,6 +1551,7 @@ function _openAddSheetInternal(receive){
   const seen = new Set();
   list.innerHTML = PRODUCTS.filter(p => p.name && !seen.has(p.name) && (seen.add(p.name), true))
     .map(p => `<option value="${escHtml(p.name)}">`).join('');
+  try { if ($('addBay')) { $('addBay').value = ''; $('addBay').style.display = 'none'; } renderBayField(); } catch(e){}
   $('addOv').classList.add('show');
   setTimeout(() => $('addName').focus(), 100);
 }
@@ -1632,6 +1638,64 @@ async function uploadAddPhoto(){
     return __ADD_PHOTO_DATA.dataUrl;  // 최후의 fallback
   }
 }
+// ===== 📍 매대 위치(베이) — 2026-09-16 =====
+// 유통기한 목록에 위치가 없어서, 임박 상품을 찾으려면 직원이 1만 개 매장을 헤매야 했다.
+// 매대 QR 을 찍어 "지금 이 자리에 있다" 를 찍어두면(위치 도장), 그 뒤 등록하는 상품에
+// 자리가 자동으로 붙는다. 스캐너가 이미 qr_code 를 읽으므로 추가 장비/작업이 없다.
+var BAY_SESSION = null;                 // {code, ts}
+var BAY_SESSION_MS = 2 * 60 * 60 * 1000; // 2시간 — 한 통로 작업 한 번을 덮는 길이
+function loadBaySession(){
+  try {
+    var raw = JSON.parse(localStorage.getItem('km.bay.session') || 'null');
+    if (raw && raw.code && (Date.now() - (raw.ts || 0)) < BAY_SESSION_MS) BAY_SESSION = raw;
+    else BAY_SESSION = null;
+  } catch(e){ BAY_SESSION = null; }
+  return BAY_SESSION;
+}
+function setBaySession(code){
+  BAY_SESSION = { code: code, ts: Date.now() };
+  try { localStorage.setItem('km.bay.session', JSON.stringify(BAY_SESSION)); } catch(e){}
+  renderBayField();
+}
+function clearBaySession(){
+  BAY_SESSION = null;
+  try { localStorage.removeItem('km.bay.session'); } catch(e){}
+  renderBayField();
+}
+window.clearBaySession = clearBaySession;
+// 매대 QR 은 주소를 담고 있다: .../store-map.html?bay=A7R-B13 → 베이 코드만 뽑는다.
+// 코드 형태: 통로 A7R-B13 · 냉동 DF4-D05 · 냉장 R2-B03
+function bayCodeFromScan(text){
+  var v = String(text || '').trim();
+  var m = v.match(/[?&]bay=([^&#\s]+)/i);
+  if (m) return decodeURIComponent(m[1]).toUpperCase();
+  if (/^(A\d+[LR]-B\d+|DF\d+-[DB]\d+|R\d+-[DB]\d+|ENDCAP[\w-]*)$/i.test(v)) return v.toUpperCase();
+  return null;
+}
+function renderBayField(){
+  var box = document.getElementById('bayChip');
+  if (!box) return;
+  loadBaySession();
+  var manual = (document.getElementById('addBay') || {}).value;
+  var code = manual || (BAY_SESSION && BAY_SESSION.code) || '';
+  if (document.getElementById('addBay')) document.getElementById('addBay').value = code;
+  box.innerHTML = code
+    ? '<span style="color:#1a5c3a;font-weight:700">📍 ' + escHtml(code) + '</span>' +
+      '<span style="font-size:.78em;color:#9ca3af;font-weight:600">' +
+        (BAY_SESSION && BAY_SESSION.code === code ? 'QR 스캔됨 · 지우기 ✕' : '직접 입력 · 지우기 ✕') + '</span>'
+    : '<span style="color:#9ca3af">📍 위치 없음 — 매대 QR 을 찍으면 자동 입력</span>' +
+      '<span style="font-size:.78em;color:#9ca3af;font-weight:600">직접 입력 ▾</span>';
+}
+window.renderBayField = renderBayField;
+function onBayChipClick(){
+  var input = document.getElementById('addBay');
+  if (!input) return;
+  if (input.value){ input.value = ''; clearBaySession(); return; }   // 지우기
+  input.style.display = input.style.display === 'none' ? '' : 'none'; // 직접 입력 열기
+  if (input.style.display !== 'none') input.focus();
+}
+window.onBayChipClick = onBayChipClick;
+
 // Camera barcode scanning — uses native BarcodeDetector when available
 // (Chrome/Edge Android), falls back to ZXing for everything else (iOS Safari).
 async function scanBarcode(){
@@ -1676,7 +1740,15 @@ async function scanBarcode(){
       try {
         const codes = await detector.detect(video);
         if (codes && codes.length) {
-          const norm = normalizeBarcodeForStorage(codes[0].rawValue);
+          const raw = codes[0].rawValue;
+          const bay = bayCodeFromScan(raw);          // 매대 QR 이면 상품이 아니라 '위치' 로 처리
+          if (bay) {
+            setBaySession(bay);
+            showToast('📍 ' + bay + ' 위치 설정됨');
+            closeBcModal();
+            return;
+          }
+          const norm = normalizeBarcodeForStorage(raw);
           $('addBarcode').value = norm;
           showToast('🏷 ' + norm);
           closeBcModal();
@@ -1706,6 +1778,13 @@ async function scanBarcode(){
     __bcReader = reader;
     reader.decodeFromVideoElementContinuously(video, (result) => {
       if (result && __bcActive) {
+        const bay = bayCodeFromScan(result.text);
+        if (bay) {
+          setBaySession(bay);
+          showToast('📍 ' + bay + ' 위치 설정됨');
+          closeBcModal();
+          return;
+        }
         const norm = normalizeBarcodeForStorage(result.text);
         $('addBarcode').value = norm;
         showToast('🏷 ' + norm);
@@ -1755,8 +1834,10 @@ async function saveProduct(){
   const ref = window.__fb.push(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/products'));
   const me = (function(){ try{return JSON.parse(localStorage.getItem('chat.me')||'null');}catch(e){return null;} })();
   const now = Date.now();
+  const bayCode = (($('addBay') && $('addBay').value) || (BAY_SESSION && BAY_SESSION.code) || '').trim().toUpperCase();
   const payload = {
     name, barcode: barcode || null, expiry, qty, price, cost, category: cat,
+    bay: bayCode || null,                       // 📍 어느 매대에서 등록했는지 — 찾으러 갈 때 쓴다
     photo: photo || null,
     addedAt: now,
     addedBy: me?.name || '미등록',
@@ -1856,6 +1937,18 @@ function openProductDetail(id){
     }
   }
   setText('detailName', p.name || t('detDash'));
+  // 📍 위치 — 찾으러 갈 때 제일 먼저 보는 정보라 이름 바로 아래.
+  try {
+    var _dn = document.getElementById('detailName');
+    var _bay = document.getElementById('detailBay');
+    if (_dn && !_bay){
+      _bay = document.createElement('div');
+      _bay.id = 'detailBay';
+      _bay.style.cssText = 'margin-top:4px;font-size:.92em;font-weight:700;color:#047857';
+      _dn.insertAdjacentElement('afterend', _bay);
+    }
+    if (_bay) _bay.textContent = p.bay ? ('📍 ' + p.bay) : '';
+  } catch(e){}
   // 수정 버튼 — 같은 지점 상품에만 노출 (다른 지점은 읽기 전용)
   const isOtherForEdit = p._branch && p._branch !== BRANCH;
   const editBtn = (field) => isOtherForEdit ? '' :
@@ -2462,6 +2555,26 @@ function renderHome(){
   if (over > 0) { $('alertDot').textContent = over; $('alertDot').style.display = ''; }
   else $('alertDot').style.display = 'none';
 }
+// 📍 목록에 붙는 위치 배지. 위치가 없는 옛 데이터는 아무것도 안 붙는다(조용히).
+function bayBadge(p){
+  if (!p || !p.bay) return '';
+  return '<span style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;border-radius:6px;' +
+    'padding:1px 6px;font-size:.8em;font-weight:700;white-space:nowrap">📍 ' + escHtml(p.bay) + '</span>';
+}
+// 자리순 정렬 — 같은 통로/진열대끼리 묶여야 한 바퀴에 처리할 수 있다.
+// 위치 없는 상품은 맨 뒤로 (어차피 헤매야 하니 나중에).
+function baySortKey(p){
+  var b = (p && p.bay) || '';
+  if (!b) return '~~~~';
+  var m = b.match(/^([A-Z]+)(\d+)([LR]?)-?([DB]?)(\d*)/i);
+  if (!m) return b.toUpperCase();
+  return (m[1] || '').toUpperCase() + String(m[2] || '').padStart(3, '0') +
+         (m[3] || '') + (m[4] || '') + String(m[5] || '').padStart(3, '0');
+}
+var CHECK_SORT = 'dday';                      // 'dday' 임박순(기본) · 'bay' 자리순
+function setCheckSort(v){ CHECK_SORT = v; renderCheckList(); }
+window.setCheckSort = setCheckSort;
+
 function renderCheckList(){
   const chips = $('checkChips');
   const counts = { all: PRODUCTS.length, unchecked: 0, done: 0 };
@@ -2473,14 +2586,23 @@ function renderCheckList(){
   chips.innerHTML = `
     <button class="chip ${CHECK_FILTER==='unchecked'?'active':''}" onclick="setCheckFilter('unchecked')">${t('chipUnchecked')} <span class="count">${counts.unchecked}</span></button>
     <button class="chip ${CHECK_FILTER==='done'?'active':''}" onclick="setCheckFilter('done')">${t('chipDone')} <span class="count">${counts.done}</span></button>
-    <button class="chip ${CHECK_FILTER==='all'?'active':''}" onclick="setCheckFilter('all')">${t('chipAll')} <span class="count">${counts.all}</span></button>`;
+    <button class="chip ${CHECK_FILTER==='all'?'active':''}" onclick="setCheckFilter('all')">${t('chipAll')} <span class="count">${counts.all}</span></button>
+    <button class="chip ${CHECK_SORT==='bay'?'active':''}" onclick="setCheckSort('${CHECK_SORT==='bay'?'dday':'bay'}')" title="같은 자리끼리 묶어서 한 바퀴에 처리">${CHECK_SORT==='bay'?'📍 자리순':'📅 임박순'}</button>`;
   const q = ($('searchInput').value || '').trim().toLowerCase();
   let rows = PRODUCTS.slice();
   if (CHECK_FILTER === 'unchecked') rows = rows.filter(p => !p.lastCheckedAt || new Date(p.lastCheckedAt).toDateString() !== todayStr);
   if (CHECK_FILTER === 'done') rows = rows.filter(p => p.lastCheckedAt && new Date(p.lastCheckedAt).toDateString() === todayStr);
   if (q) rows = rows.filter(p => (p.name||'').toLowerCase().includes(q) || (p.barcode||'').includes(q));
-  // sort by D-Day asc
-  rows.sort((a,b) => dayDiff(a.expiry) - dayDiff(b.expiry));
+  // 임박순(기본) 또는 자리순. 자리순에서도 같은 자리 안에서는 임박순.
+  if (CHECK_SORT === 'bay') {
+    rows.sort((a,b) => {
+      const ka = baySortKey(a), kb = baySortKey(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return dayDiff(a.expiry) - dayDiff(b.expiry);
+    });
+  } else {
+    rows.sort((a,b) => dayDiff(a.expiry) - dayDiff(b.expiry));
+  }
   const list = $('checkList');
   if (rows.length === 0) {
     list.innerHTML = `<div class="empty-state"><div class="ic">📋</div><div class="msg">${t('emptyList')}</div></div>`;
@@ -2504,6 +2626,7 @@ function renderCheckList(){
           <span class="dday ${kind}">${lbl}</span>
           <span>${escHtml(p.expiry||'')}</span>
           <span>${p.qty||1}${t('unitItem')}</span>
+          ${bayBadge(p)}
         </div>
         ${p.barcode?`<div style="margin-top:4px;font-family:monospace;font-size:.92em;font-weight:800;letter-spacing:.04em;color:#1a5c3a;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:3px 8px;display:inline-block">🏷 ${escHtml(p.barcode)}</div>`:''}
       </div>
@@ -2566,6 +2689,7 @@ function renderAlertList(){
         <div class="meta">
           <span class="dday ${kind}">${lbl}</span>
           <span>${p.qty||1}${t('unitItem')}</span>
+          ${bayBadge(p)}
           <span style="color:#dc2626;font-weight:700">$${lossOne.toFixed(0)}</span>
         </div>
         ${p.barcode?`<div style="margin-top:4px;font-family:monospace;font-size:.92em;font-weight:800;letter-spacing:.04em;color:#1a5c3a;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:3px 8px;display:inline-block">🏷 ${escHtml(p.barcode)}</div>`:''}
