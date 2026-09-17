@@ -275,6 +275,13 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
 .oos-name{font-size:12.5px; color:var(--sub); margin-top:6px; min-height:18px;}
 .oos-name.found{color:var(--ok); font-weight:700;}
 .oos-name.none{color:var(--warn); font-weight:700;}
+.oos-hits{max-height:190px; overflow:auto; margin-top:6px;}
+.oos-hit{display:block; width:100%; text-align:left; background:var(--card); color:var(--ink);
+  border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin-bottom:5px;
+  font-size:12.5px; cursor:pointer; font-family:inherit;}
+.oos-hit:hover{border-color:var(--accent); background:var(--aisle);}
+.oos-hit span{color:var(--sub); font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;}
+.oos-hit.none{color:var(--sub); cursor:default; border-style:dashed;}
 .oos-actions{display:flex; gap:8px; margin-top:14px;}
 .oos-actions .addbtn{flex:1; padding:11px;}
 .oos-actions .oos-save{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:800;}
@@ -422,6 +429,10 @@ var I18N = {
     oosHere: '📦 이 자리 품절 보고',
     oosOut: '품절', oosLeft: '{n}개 남음', oosLeftShort: '{n}개',
     oosCodeLbl: '바코드 번호', oosCodePh: '숫자로 입력 (예: 8801043015479)',
+    oosFindLbl: '번호를 모르면 — 상품명으로 찾기',
+    oosFindPh: '이름 일부 입력 (2글자 이상)',
+    oosFindNone: '찾는 상품이 없습니다 — 아래 메모에 적어주세요',
+    oosMemoLbl: '메모 (선택)', oosMemoPh: '예: 가격표는 있는데 물건이 없음',
     oosScanBtn: '📷 스캔', oosQtyLbl: '남은 수량 (0 = 완전 품절)',
     oosSaveBtn: '📦 기록하기', oosNeedCode: '바코드 번호를 입력해주세요',
     oosNameWait: '번호를 넣으면 상품명을 찾아봅니다',
@@ -502,6 +513,10 @@ var I18N = {
     oosHere: '📦 Out-of-stock reports here',
     oosOut: 'out of stock', oosLeft: '{n} left', oosLeftShort: '{n}',
     oosCodeLbl: 'Barcode number', oosCodePh: 'Type the digits (e.g. 8801043015479)',
+    oosFindLbl: "Don't know the number — search by name",
+    oosFindPh: 'Type part of the name (2+ letters)',
+    oosFindNone: 'No match — describe it in the memo below',
+    oosMemoLbl: 'Memo (optional)', oosMemoPh: 'e.g. price tag is there but no product',
     oosScanBtn: '📷 Scan', oosQtyLbl: 'How many left (0 = out)',
     oosSaveBtn: '📦 Record', oosNeedCode: 'Please enter the barcode number',
     oosNameWait: 'Enter a number to look up the item',
@@ -584,6 +599,10 @@ var I18N = {
     oosHere: '📦 Reportes de falta aquí',
     oosOut: 'agotado', oosLeft: 'quedan {n}', oosLeftShort: '{n}',
     oosCodeLbl: 'Número de código', oosCodePh: 'Escriba los dígitos (ej. 8801043015479)',
+    oosFindLbl: 'No sabe el número — busque por nombre',
+    oosFindPh: 'Escriba parte del nombre (2+ letras)',
+    oosFindNone: 'Sin resultados — descríbalo en la nota',
+    oosMemoLbl: 'Nota (opcional)', oosMemoPh: 'ej. hay etiqueta pero no producto',
     oosScanBtn: '📷 Escanear', oosQtyLbl: 'Cuántos quedan (0 = agotado)',
     oosSaveBtn: '📦 Registrar', oosNeedCode: 'Ingrese el número del código',
     oosNameWait: 'Escriba un número para buscar el producto',
@@ -1311,9 +1330,10 @@ async function postOosToChat(rec, branchLabel){
     '🛒 ' + (rec.name || (t('oosUnknown') + rec.code)),
     '📍 ' + rec.bay + (branchLabel ? (' · ' + branchLabel) : ''),
     '🏷 ' + rec.code,
+    (rec.memo ? '📝 ' + rec.memo : null),
     '— ' + (rec.by || '') + ' · ' + t('oosPatrol')
   ];
-  var text = lines.join('\n');
+  var text = lines.filter(function(x){ return x; }).join('\n');
   var msg = {
     sender: rec.by || '', senderBranch: OOS_BRANCH, senderRole: '',
     isManager: false, color: '#1a5c3a',
@@ -1329,6 +1349,33 @@ async function postOosToChat(rec, branchLabel){
     body: JSON.stringify({ lastMsg: '📦 ' + (rec.name || rec.code).slice(0, 28), lastTs: ts, lastSender: rec.by || '' })
   }).catch(function(){});
 }
+// 🔎 상품명으로 찾기 — 품절이면 물건이 없어서 바코드를 찍을 수가 없다.
+//   전 상품 마스터(바코드→이름)를 한 번만 뒤집어 이름 검색을 만든다.
+//   매장 상품이 수만 개라 매 글자마다 전체를 훑으면 폰이 버벅이므로,
+//   ① 2글자 이상부터 ② 최대 20개만 ③ 입력이 멈춘 뒤에만 검색한다.
+var masterNameList = null;     // [{code, name, up}]
+function buildMasterNameList(){
+  if (masterNameList) return masterNameList;
+  var out = [];
+  try {
+    Object.keys(masterBarcodeMap || {}).forEach(function(code){
+      var nm = masterBarcodeMap[code];
+      if (nm) out.push({ code: code, name: nm, up: String(nm).toUpperCase() });
+    });
+  } catch(e){ console.warn('[oos] name index', e); }
+  masterNameList = out;
+  return out;
+}
+function searchProductsByName(q){
+  var s = String(q || '').trim().toUpperCase();
+  if (s.length < 2) return [];
+  var list = buildMasterNameList(), out = [];
+  for (var i = 0; i < list.length && out.length < 20; i++){
+    if (list[i].up.indexOf(s) >= 0) out.push(list[i]);
+  }
+  return out;
+}
+
 // 📦 품절/부족 등록 — 바코드 번호를 직접 입력하거나(카메라가 약한 폰 대비)
 //   📷 스캔으로 채운다. 2026-09-17 사장님: "어떤 직원 폰은 카메라가 안 좋으니
 //   바코드 번호를 넣어서 제품을 등록하게 해줘".
@@ -1346,8 +1393,13 @@ function openOosEntry(bayId){
         '<button type="button" class="addbtn" id="oosScanBtn">' + t('oosScanBtn') + '</button>' +
       '</div>' +
       '<div class="oos-name" id="oosName">' + t('oosNameWait') + '</div>' +
+      '<label class="oos-lbl">' + t('oosFindLbl') + '</label>' +
+      '<input type="text" id="oosFind" autocomplete="off" placeholder="' + t('oosFindPh') + '">' +
+      '<div class="oos-hits" id="oosHits"></div>' +
       '<label class="oos-lbl">' + t('oosQtyLbl') + '</label>' +
       '<input type="number" id="oosQty" inputmode="numeric" min="0" value="0">' +
+      '<label class="oos-lbl">' + t('oosMemoLbl') + '</label>' +
+      '<input type="text" id="oosMemo" autocomplete="off" placeholder="' + t('oosMemoPh') + '">' +
       '<div class="oos-actions">' +
         '<button type="button" class="addbtn" id="oosCancel">' + t('close') + '</button>' +
         '<button type="button" class="addbtn oos-save" id="oosSave">' + t('oosSaveBtn') + '</button>' +
@@ -1372,6 +1424,35 @@ function openOosEntry(bayId){
   codeEl.addEventListener('input', refreshName);
   setTimeout(function(){ try { codeEl.focus(); } catch(e){} }, 60);
 
+  // 🔎 이름으로 찾기 — 고르면 바코드칸이 자동으로 채워진다.
+  var findEl = ov.querySelector('#oosFind');
+  var hitsEl = ov.querySelector('#oosHits');
+  var findTimer = null;
+  findEl.addEventListener('input', function(){
+    clearTimeout(findTimer);
+    findTimer = setTimeout(function(){
+      var q = findEl.value.trim();
+      if (q.length < 2){ hitsEl.innerHTML = ''; return; }
+      var hits = searchProductsByName(q);
+      if (!hits.length){
+        hitsEl.innerHTML = '<div class="oos-hit none">' + t('oosFindNone') + '</div>';
+        return;
+      }
+      hitsEl.innerHTML = hits.map(function(h){
+        return '<button type="button" class="oos-hit" data-code="' + escapeHtml(h.code) + '">' +
+          escapeHtml(h.name) + ' <span>' + escapeHtml(h.code) + '</span></button>';
+      }).join('');
+      hitsEl.querySelectorAll('[data-code]').forEach(function(b){
+        b.addEventListener('click', function(){
+          codeEl.value = b.getAttribute('data-code');
+          refreshName();
+          hitsEl.innerHTML = '';
+          findEl.value = '';
+        });
+      });
+    }, 220);
+  });
+
   // 📷 스캔은 '보조' — 되는 폰만 쓰면 된다. 찍으면 번호칸이 채워진다.
   ov.querySelector('#oosScanBtn').addEventListener('click', function(){
     if (typeof openScanner !== 'function') return;
@@ -1390,7 +1471,8 @@ function openOosEntry(bayId){
     if (isNaN(qty) || qty < 0) qty = 0;
     var name = '';
     try { name = lookupProductName(code) || ''; } catch(e){}
-    var rec = { bay: bayId, code: code, name: name, qty: qty,
+    var memo = (ov.querySelector('#oosMemo').value || '').trim();
+    var rec = { bay: bayId, code: code, name: name, qty: qty, memo: memo || null,
                 by: meName(), at: todayStr(), ts: Date.now() };
     var key = oosKey(bayId, code);
     oosMap[key] = rec;                                 // 화면 먼저
@@ -2103,7 +2185,8 @@ function renderBayCheckBox(bayId){
         return '<div class="bay-oos-row">' +
           '<span>' + escapeHtml(r.name || r.code) +
             ' <b>' + (r.qty === 0 ? t('oosOut') : t('oosLeftShort').replace('{n}', r.qty)) + '</b>' +
-            ' <span style="color:var(--sub)">· ' + escapeHtml(r.by || '') + ' ' + escapeHtml(r.at || '') + '</span></span>' +
+            ' <span style="color:var(--sub)">· ' + escapeHtml(r.by || '') + ' ' + escapeHtml(r.at || '') + '</span>' +
+            (r.memo ? '<br><span style="color:var(--sub)">📝 ' + escapeHtml(r.memo) + '</span>' : '') + '</span>' +
           '<button type="button" class="addbtn" data-oosdel="' + escapeHtml(key) + '" style="padding:2px 8px">✕</button>' +
         '</div>';
       }).join('') + '</div>';
