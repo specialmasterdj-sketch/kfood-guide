@@ -275,6 +275,7 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
 .oos-name{font-size:12.5px; color:var(--sub); margin-top:6px; min-height:18px;}
 .oos-name.found{color:var(--ok); font-weight:700;}
 .oos-name.none{color:var(--warn); font-weight:700;}
+.oos-codes{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--sub);}
 .oos-hits{max-height:190px; overflow:auto; margin-top:6px;}
 .oos-hit{display:block; width:100%; text-align:left; background:var(--card); color:var(--ink);
   border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin-bottom:5px;
@@ -433,6 +434,7 @@ var I18N = {
     oosFindPh: '이름 일부 입력 (2글자 이상)',
     oosFindNone: '찾는 상품이 없습니다 — 아래 메모에 적어주세요',
     oosMemoLbl: '메모 (선택)', oosMemoPh: '예: 가격표는 있는데 물건이 없음',
+    oosVendor: '벤더코드',
     oosScanBtn: '📷 스캔', oosQtyLbl: '남은 수량 (0 = 완전 품절)',
     oosSaveBtn: '📦 기록하기', oosNeedCode: '바코드 번호를 입력해주세요',
     oosNameWait: '번호를 넣으면 상품명을 찾아봅니다',
@@ -517,6 +519,7 @@ var I18N = {
     oosFindPh: 'Type part of the name (2+ letters)',
     oosFindNone: 'No match — describe it in the memo below',
     oosMemoLbl: 'Memo (optional)', oosMemoPh: 'e.g. price tag is there but no product',
+    oosVendor: 'vendor',
     oosScanBtn: '📷 Scan', oosQtyLbl: 'How many left (0 = out)',
     oosSaveBtn: '📦 Record', oosNeedCode: 'Please enter the barcode number',
     oosNameWait: 'Enter a number to look up the item',
@@ -603,6 +606,7 @@ var I18N = {
     oosFindPh: 'Escriba parte del nombre (2+ letras)',
     oosFindNone: 'Sin resultados — descríbalo en la nota',
     oosMemoLbl: 'Nota (opcional)', oosMemoPh: 'ej. hay etiqueta pero no producto',
+    oosVendor: 'proveedor',
     oosScanBtn: '📷 Escanear', oosQtyLbl: 'Cuántos quedan (0 = agotado)',
     oosSaveBtn: '📦 Registrar', oosNeedCode: 'Ingrese el número del código',
     oosNameWait: 'Escriba un número para buscar el producto',
@@ -1329,7 +1333,7 @@ async function postOosToChat(rec, branchLabel){
     '📦 ' + qtyTxt,
     '🛒 ' + (rec.name || (t('oosUnknown') + rec.code)),
     '📍 ' + rec.bay + (branchLabel ? (' · ' + branchLabel) : ''),
-    '🏷 ' + rec.code,
+    '🏷 ' + rec.code + (rec.vendorCode ? '   🏬 ' + t('oosVendor') + ' ' + rec.vendorCode : ''),
     (rec.memo ? '📝 ' + rec.memo : null),
     '— ' + (rec.by || '') + ' · ' + t('oosPatrol')
   ];
@@ -1349,6 +1353,47 @@ async function postOosToChat(rec, branchLabel){
     body: JSON.stringify({ lastMsg: '📦 ' + (rec.name || rec.code).slice(0, 28), lastTs: ts, lastSender: rec.by || '' })
   }).catch(function(){});
 }
+// 🏬 벤더코드 — 발주는 벤더 인보이스의 '아이템 번호'로 하므로, 품절 보고에
+//   바코드만 있으면 발주 담당자가 다시 찾아야 한다. barcodeMaster 는
+//   {벤더코드: {bc, name}} 구조라 바코드로 되찾으려면 뒤집어야 한다.
+var vendorByBarcode = {};
+var vendorLoadState = 'idle';   // idle | loading | ready | error
+function loadVendorCodes(){
+  if (vendorLoadState === 'loading' || vendorLoadState === 'ready') return;
+  vendorLoadState = 'loading';
+  fetch(RTDB_URL + '/barcodeMaster.json', { cache: 'no-store' })
+    .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function(obj){
+      var map = {};
+      Object.keys(obj || {}).forEach(function(vcode){
+        var v = obj[vcode];
+        var bc = v && (v.bc || v.barcode);
+        if (bc) map[String(bc)] = vcode;
+      });
+      vendorByBarcode = map;
+      vendorLoadState = 'ready';
+      console.log('[vendor] loaded', Object.keys(map).length, 'codes');
+      // 이미 열려 있는 화면에 바로 반영
+      try { if (currentOpenBayId) renderBayCheckBox(currentOpenBayId); } catch(e){}
+    })
+    .catch(function(e){
+      vendorLoadState = 'error';
+      console.warn('[vendor] load failed', (e && e.message) || e);
+    });
+}
+// 바코드 앞뒤 형태가 조금씩 달라(체크디지트 유무 등) 후보들로도 찾아본다.
+function vendorCodeFor(bc){
+  if (!bc) return '';
+  if (vendorByBarcode[bc]) return vendorByBarcode[bc];
+  try {
+    var cands = (typeof barcodeCandidates === 'function') ? barcodeCandidates(bc) : [];
+    for (var i = 0; i < cands.length; i++){
+      if (vendorByBarcode[cands[i]]) return vendorByBarcode[cands[i]];
+    }
+  } catch(e){}
+  return '';
+}
+
 // 🔎 상품명으로 찾기 — 품절이면 물건이 없어서 바코드를 찍을 수가 없다.
 //   전 상품 마스터(바코드→이름)를 한 번만 뒤집어 이름 검색을 만든다.
 //   매장 상품이 수만 개라 매 글자마다 전체를 훑으면 폰이 버벅이므로,
@@ -1418,7 +1463,11 @@ function openOosEntry(bayId){
     if (!c){ nameEl.textContent = t('oosNameWait'); nameEl.className = 'oos-name'; return; }
     var nm = '';
     try { nm = lookupProductName(c) || ''; } catch(e){}
-    if (nm){ nameEl.textContent = '✅ ' + nm; nameEl.className = 'oos-name found'; }
+    if (nm){
+      var vc = vendorCodeFor(c);
+      nameEl.textContent = '✅ ' + nm + (vc ? ('   🏬 ' + t('oosVendor') + ' ' + vc) : '');
+      nameEl.className = 'oos-name found';
+    }
     else   { nameEl.textContent = t('oosNameNone'); nameEl.className = 'oos-name none'; }
   }
   codeEl.addEventListener('input', refreshName);
@@ -1472,7 +1521,9 @@ function openOosEntry(bayId){
     var name = '';
     try { name = lookupProductName(code) || ''; } catch(e){}
     var memo = (ov.querySelector('#oosMemo').value || '').trim();
+    var vcode = vendorCodeFor(code);
     var rec = { bay: bayId, code: code, name: name, qty: qty, memo: memo || null,
+                vendorCode: vcode || null,
                 by: meName(), at: todayStr(), ts: Date.now() };
     var key = oosKey(bayId, code);
     oosMap[key] = rec;                                 // 화면 먼저
@@ -1534,7 +1585,10 @@ function openOosList(){
             aged +
           '</div>' +
           '<div style="font-size:11.5px; color:var(--sub); margin-bottom:7px">' +
-            escapeHtml(r.by || '') + ' · ' + escapeHtml(r.at || '') + ' · 🏷 ' + escapeHtml(r.code) + '</div>' +
+            escapeHtml(r.by || '') + ' · ' + escapeHtml(r.at || '') +
+            ' · 🏷 ' + escapeHtml(r.code) +
+            ((r.vendorCode || vendorCodeFor(r.code)) ? ' · 🏬 ' + escapeHtml(r.vendorCode || vendorCodeFor(r.code)) : '') +
+            (r.memo ? ' · 📝 ' + escapeHtml(r.memo) : '') + '</div>' +
           '<div style="display:flex; gap:6px">' +
             '<button type="button" class="addbtn" data-oosgo="' + escapeHtml(r.bay) + '">' + t('issueGo') + '</button>' +
             '<button type="button" class="addbtn" data-oosdone="' + escapeHtml(r._key) + '" data-bay="' + escapeHtml(r.bay) + '" ' +
@@ -2182,9 +2236,12 @@ function renderBayCheckBox(bayId){
     line += '<div class="bay-oos"><div class="bay-oos-h">' + t('oosHere') + ' (' + oosRows.length + ')</div>' +
       oosRows.map(function(r){
         var key = oosKey(r.bay, r.code);
+        var vc = r.vendorCode || vendorCodeFor(r.code);
         return '<div class="bay-oos-row">' +
           '<span>' + escapeHtml(r.name || r.code) +
             ' <b>' + (r.qty === 0 ? t('oosOut') : t('oosLeftShort').replace('{n}', r.qty)) + '</b>' +
+            '<br><span class="oos-codes">🏷 ' + escapeHtml(r.code) +
+              (vc ? ' · 🏬 ' + escapeHtml(vc) : '') + '</span>' +
             ' <span style="color:var(--sub)">· ' + escapeHtml(r.by || '') + ' ' + escapeHtml(r.at || '') + '</span>' +
             (r.memo ? '<br><span style="color:var(--sub)">📝 ' + escapeHtml(r.memo) + '</span>' : '') + '</span>' +
           '<button type="button" class="addbtn" data-oosdel="' + escapeHtml(key) + '" style="padding:2px 8px">✕</button>' +
@@ -2536,6 +2593,7 @@ async function boot(){
     await loadFixed(); // 고정 지정 상태 — 자물쇠 표시가 첫 화면부터 맞게
     await loadBayChecks(); // 오늘 점검 상태 — 지도 점이 첫 화면부터 맞게
     await loadOos();       // 자리별 품절 보고
+    loadVendorCodes();     // 바코드 → 벤더코드 (발주용, 실패해도 화면은 정상)
     // preload today's status for all bays so the dots are accurate on first paint
     var ok = await preloadShelves();
     if (!ok){
