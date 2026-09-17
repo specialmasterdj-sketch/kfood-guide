@@ -262,13 +262,17 @@ const I18N = {
  dEmpty:{ko:'이 달 기록 없음 — 위에서 하루씩 추가하세요',en:'No records this month — add a day above',es:'Sin registros este mes — agregue arriba'},
  dChart:{ko:'② 이 달 일별 추이',en:'② This month, day by day',es:'② Este mes, día a día'},
  dBulkH:{ko:'③ 일괄 붙여넣기',en:'③ Bulk paste',es:'③ Pegar en lote'},
- dBulkHint:{ko:'한 줄에: YYYY-MM-DD,금액',en:'One line: YYYY-MM-DD,amount',es:'Una línea: YYYY-MM-DD,monto'},
+ dBulkHint:{ko:'한 줄에: YYYY-MM-DD,금액  또는  지점,YYYY-MM-DD,금액',en:'Per line: YYYY-MM-DD,amount  or  branch,YYYY-MM-DD,amount',es:'Por línea: YYYY-MM-DD,monto  o  sucursal,YYYY-MM-DD,monto'},
  dBulkBtn:{ko:'📥 일괄 추가',en:'📥 Bulk add',es:'📥 Agregar lote'},
  dRollup:{ko:'이 달 일일 합계를 월 총매출(TOTAL)로 저장',en:'Save this month’s daily sum as monthly TOTAL',es:'Guardar suma diaria como TOTAL mensual'},
  dRollupHint:{ko:'→ 전 지점 매출 비교·평가에 자동 반영',en:'→ flows into comparison & evaluations',es:'→ se refleja en comparación y evaluaciones'},
  dRollupDone:{ko:m=>'✅ '+m+' 총매출로 저장됨 — 전 지점 비교에 반영',en:m=>'✅ Saved as '+m+' TOTAL — shown in comparison',es:m=>'✅ Guardado como TOTAL de '+m},
- dAllTitle:{ko:'④ 전 지점 최근일 매출',en:'④ Latest-day sales by branch',es:'④ Ventas del último día por sucursal'},
+ dAllTitle:{ko:'⑤ 전 지점 최근일 매출',en:'⑤ Latest-day sales by branch',es:'⑤ Ventas del último día por sucursal'},
  dAllNone:{ko:'전 지점 일일 기록이 아직 없어요',en:'No daily records across branches yet',es:'Aún no hay registros diarios'},
+ dAllEntry:{ko:'🏬 전 지점 한번에 입력',en:'🏬 Enter all branches at once',es:'🏬 Ingresar todas las sucursales'},
+ dAllEntryHint:{ko:'한 날짜의 지점별 매출을 한 번에 — 일일 비교용 (빈 칸은 건너뜀)',en:'One date, every branch — for daily comparison (blanks skipped)',es:'Una fecha, todas las sucursales (vacíos se omiten)'},
+ dAllSave:{ko:'✅ 전 지점 저장',en:'✅ Save all branches',es:'✅ Guardar todas'},
+ dAllOk:{ko:n=>'✅ '+n+'개 지점 저장',en:n=>'✅ Saved '+n+' branches',es:n=>'✅ '+n+' sucursales'},
  p_warn:{ko:'⚠ 경고',en:'⚠ Warning',es:'⚠ Advertencia'}, p_rev:{ko:'📸 리뷰',en:'📸 Review',es:'📸 Reseña'}, p_star:{ko:'⭐ 상점',en:'⭐ Merit',es:'⭐ Mérito'},
  sumRow:{ko:'합계 (자동 상점·리뷰)',en:'Total (auto merits·reviews)',es:'Total (automático)'},
  chipPts:{ko:(n,r)=>'⭐ 상점·리뷰 합계 +'+n+'pt ('+r+'회 리뷰)',en:(n,r)=>'⭐ Merits & reviews +'+n+'pt ('+r+' reviews)',es:(n,r)=>'⭐ Méritos y reseñas +'+n+'pt ('+r+')'},
@@ -864,8 +868,14 @@ function renderSalesCompare(all){
 }
 
 // ================= 📅 일일 매출 =================
-let DAILY=null, DAILY_ALL=null, DAILY_MONTH=null;
+let DAILY=null, DAILY_ALL=null, DAILY_MONTH=null, DAILY_ALLDATE=null;
 function _localDate(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function _matchBranch(tok){
+  const s=String(tok||'').toUpperCase().replace(/[\s_]+/g,'');
+  for(const b of BRANCHES){ const id=b.id.toUpperCase().replace(/[\s_]+/g,''); if(s===id||b.ko===String(tok).trim()) return b.id; }
+  for(const b of BRANCHES){ const id=b.id.toUpperCase().replace(/[\s_]+/g,''); if(id.indexOf(s)===0||b.ko.indexOf(String(tok).trim())===0) return b.id; }
+  return null;
+}
 window.openDailySales = async function(){
   let m=document.getElementById('dlyOv');
   if(!m){ m=document.createElement('div'); m.id='dlyOv';
@@ -882,9 +892,25 @@ window.openDailySales = async function(){
 window.dlyClose=function(){ const m=document.getElementById('dlyOv'); if(m) m.remove(); };
 async function dlyReload(){
   try{ DAILY = await fbGet('hr/'+BRANCH+'/dailySales') || {}; }catch(_){ DAILY={}; }
-  try{ DAILY_ALL[BRANCH] = await fbGet('hr/'+BRANCH+'/dailySales') || {}; }catch(_){}
+  DAILY_ALL = DAILY_ALL || {};
+  await Promise.all(BRANCHES.map(async b=>{ try{ DAILY_ALL[b.id]=await fbGet('hr/'+b.id+'/dailySales')||{}; }catch(_){} }));
   const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily();
 }
+window.dlyAllDateChange=function(v){ DAILY_ALLDATE=v||_localDate(); const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily(); };
+window.dlyAddAll = async function(){
+  const dt=document.getElementById('dlyAllDate').value;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)){ alert('날짜를 확인하세요'); return; }
+  let ok=0, changed=false;
+  for(const b of BRANCHES){
+    const el=document.getElementById('dlyAll_'+b.id); if(!el) continue;
+    const raw=String(el.value).replace(/[^0-9.]/g,''); if(raw==='') continue;
+    const amt=parseFloat(raw); if(!(amt>=0)) continue;
+    try{ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+b.id+'/dailySales/'+dt), { amt, memo:'', by:(me()&&me().name)||'', ts:Date.now() }); ok++; changed=true; }catch(_){}
+  }
+  if(!ok){ alert('입력된 금액이 없어요'); return; }
+  DAILY_MONTH=dt.slice(0,7); DAILY_ALLDATE=dt;
+  toast(t('dAllOk')(ok)+' ('+dt+')'); await dlyReload();
+};
 function _dailyDates(obj){ return Object.keys(obj||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort(); }
 function _dailyPctMap(){
   const ds=_dailyDates(DAILY); const pm={};
@@ -915,9 +941,12 @@ window.dlyBulk = async function(){
   let ok=0, bad=[];
   for(const ln of lines){
     const p=ln.split(/[,\t]+/).map(s=>s.trim());
-    const dt=p[0], amt=parseFloat(String(p[1]||'').replace(/[^0-9.]/g,''));
+    let bId=BRANCH, dt, amtRaw, memo;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(p[0])){ dt=p[0]; amtRaw=p[1]; memo=p[2]||''; }        // 현재 지점
+    else { const mb=_matchBranch(p[0]); if(!mb){ bad.push(ln); continue; } bId=mb; dt=p[1]; amtRaw=p[2]; memo=p[3]||''; }  // 지점 지정
+    const amt=parseFloat(String(amtRaw||'').replace(/[^0-9.]/g,''));
     if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||!(amt>=0)){ bad.push(ln); continue; }
-    try{ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt), { amt, memo:(p[2]||''), by:(me()&&me().name)||'', ts:Date.now() }); ok++; }catch(_){ bad.push(ln); }
+    try{ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+bId+'/dailySales/'+dt), { amt, memo, by:(me()&&me().name)||'', ts:Date.now() }); ok++; }catch(_){ bad.push(ln); }
   }
   alert('✅ '+ok+'건 저장'+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
   await dlyReload();
@@ -954,6 +983,7 @@ window.dlyPrint = function(){
 function renderDaily(){
   const b=BRANCHES.find(x=>x.id===BRANCH);
   const mo=DAILY_MONTH;
+  const _dad=DAILY_ALLDATE||_localDate();
   const pm=_dailyPctMap();
   const inMo=_dailyDates(DAILY).filter(k=>k.slice(0,7)===mo);
   const desc=inMo.slice().sort().reverse();
@@ -996,8 +1026,21 @@ function renderDaily(){
       <button class="btn sec2 small" onclick="dlyClose()">✕</button>
     </div>
 
+    <div style="background:var(--lgreen);border:1.5px solid #1a5c3a;border-radius:12px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="font-weight:900;color:#1a5c3a">${t('dAllEntry')}</span>
+        <span style="font-weight:600;color:#64748b;font-size:.78em">${t('dAllEntryHint')}</span>
+        <span style="flex:1"></span>
+        <input id="dlyAllDate" type="date" value="${_dad}" onchange="dlyAllDateChange(this.value)" style="border:1.5px solid var(--bd);border-radius:8px;padding:7px 9px;background:#fffde7">
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+        ${BRANCHES.map(b=>{ const ex=_cAmt((DAILY_ALL[b.id]||{})[_dad]); return `<div><label style="display:block;font-size:.74em;font-weight:800;color:#1a5c3a;margin-bottom:2px">${esc(LANG==='ko'?b.ko:String(b.id).replace(/_/g,' '))}</label><input id="dlyAll_${b.id}" inputmode="decimal" value="${ex!=null?ex:''}" placeholder="$" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fff"></div>`; }).join('')}
+      </div>
+      <button class="btn" style="width:100%;margin-top:10px" onclick="dlyAddAll()">${t('dAllSave')}</button>
+    </div>
+
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px;margin-bottom:12px">
-      <div style="font-weight:900;color:#1a5c3a;margin-bottom:6px">${t('dQuick')}</div>
+      <div style="font-weight:900;color:#1a5c3a;margin-bottom:6px">${t('dQuick')} <span style="font-weight:600;color:#94a3b8;font-size:.78em">— ${esc(b?b.ko:BRANCH)} (${LANG==='ko'?'메모 포함':'with note'})</span></div>
       <div class="addrow">
         <input id="dlyDate" type="date" value="${_localDate()}" style="width:150px">
         <input id="dlyAmt" placeholder="${t('dAmt')}" style="width:130px">
