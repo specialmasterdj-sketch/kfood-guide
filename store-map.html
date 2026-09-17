@@ -1145,10 +1145,23 @@ function isKnownBayCode(code){
   if (allCoolerCodes().indexOf(code) >= 0) return true;
   return false;
 }
+// 🩹 2026-09-17: 냉장/냉동 진열대 번호가 재배치되며 문(-D)↔오픈베이(-B) 종류가 바뀐 적이
+//   있음 (예: 옛 R4=문쿨러 R4-D0x → 현재 R4=오픈베이 R4-B0x). 예전에 붙인 스티커가
+//   현재 코드와 -D/-B 만 달라 인앱 스캔이 "알 수 없음"으로 튕기던 문제.
+//   유닛+번호가 지금도 존재하면 현재 종류에 맞는 코드로 교정해 그 자리를 연다.
+function normalizeCellCode(code){
+  var m = String(code || '').toUpperCase().match(/^(DF\d+|R\d+)-[DB](\d+)$/);
+  if (!m) return code;                         // 통로 베이(A..)·엔드캡 등은 그대로
+  var u = unitByCode(m[1]);
+  if (!u) return code;                          // 모르는 진열대 → 그대로
+  var n = parseInt(m[2], 10);
+  if (!(n >= 1 && n <= u.doors)) return code;   // 번호 범위 밖 → 그대로
+  return cellCode(u, n);                         // 현재 종류(-D/-B)에 맞춰 교정
+}
 function scanToOpenBay(){
   if (typeof openScanner !== 'function') return;
   openScanner(function(text){
-    var code = bayCodeFromScan(text);
+    var code = normalizeCellCode(bayCodeFromScan(text));
     if (!code){ showToast(t('scanBayBad')); return; }
     if (!isKnownBayCode(code)){ showToast(t('scanBayUnknown') + code); return; }
     openBay(code, labelForCode(code) || code);
@@ -2648,7 +2661,7 @@ async function boot(){
   try {
     var qp = new URLSearchParams(window.location.search);
     var bay = qp.get('bay');
-    if (bay){ var bc = bay.toUpperCase(); openBay(bc, labelForCode(bc)); }
+    if (bay){ var bc = normalizeCellCode(bay.toUpperCase()); openBay(bc, labelForCode(bc)); }
   } catch(e){}
 }
 
