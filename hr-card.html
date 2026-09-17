@@ -93,6 +93,7 @@
   <div id="empPick">
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn" onclick="openDeptSales()">📈 부서 매출 관리 (월 1회 입력 → 담당 전원 카드 자동 반영)</button>
+      <button class="btn" id="L_dailyBtn" onclick="openDailySales()">📅 일일 매출</button>
       <button class="btn sec2" onclick="openSalesCompare()">📊 전 지점 매출 비교</button>
     </div>
     <div class="notice" id="L_notice">직원을 선택하면 기록 카드가 열립니다. ⭐ 상점·구글리뷰 기록은 자동으로 쌓여요 — 시급·평가·면담은 여기서 직접 추가하면 클라우드에 저장됩니다 (모든 기기에서 동일하게 보임).</div>
@@ -241,6 +242,33 @@ const I18N = {
  cmpNoTotal:{ko:'총매출(TOTAL) 입력이 아직 없어요',en:'No TOTAL entered yet',es:'Aún no hay TOTAL'},
  cmpLoading:{ko:'전 지점 매출 불러오는 중…',en:'Loading all-branch sales…',es:'Cargando ventas…'},
  cmpPrint:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
+ // ---- 일일 매출 ----
+ dailyBtn:{ko:'📅 일일 매출',en:'📅 Daily Sales',es:'📅 Ventas diarias'},
+ dTitle:{ko:'일일 매출 기록',en:'Daily Sales Log',es:'Registro de ventas diarias'},
+ dSub:{ko:'하루 매출을 기록 → 전일 대비 추이 자동',en:'Log each day → day-over-day trend auto',es:'Registre cada día → tendencia automática'},
+ dQuick:{ko:'① 오늘 매출 입력',en:'① Enter a day’s sales',es:'① Ingresar ventas del día'},
+ dDate:{ko:'날짜',en:'Date',es:'Fecha'},
+ dAmt:{ko:'매출 $',en:'Sales $',es:'Ventas $'},
+ dMemo:{ko:'메모 (날씨·행사 등)',en:'Note (weather, event…)',es:'Nota (clima, evento…)'},
+ dSave:{ko:'＋ 저장',en:'＋ Save',es:'＋ Guardar'},
+ dMonthPick:{ko:'조회 월',en:'View month',es:'Mes'},
+ dCols:{ko:['날짜','요일','매출','전일 대비','메모'],en:['Date','Day','Sales','vs prev.','Note'],es:['Fecha','Día','Ventas','vs ant.','Nota']},
+ dWk:{ko:['일','월','화','수','목','금','토'],en:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],es:['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']},
+ dSumMonth:{ko:'월 합계',en:'Month total',es:'Total del mes'},
+ dSumAvg:{ko:'일 평균',en:'Daily avg.',es:'Promedio diario'},
+ dSumDays:{ko:'기록 일수',en:'Days logged',es:'Días registrados'},
+ dSumBest:{ko:'최고일',en:'Best day',es:'Mejor día'},
+ dSumWorst:{ko:'최저일',en:'Lowest day',es:'Día más bajo'},
+ dEmpty:{ko:'이 달 기록 없음 — 위에서 하루씩 추가하세요',en:'No records this month — add a day above',es:'Sin registros este mes — agregue arriba'},
+ dChart:{ko:'② 이 달 일별 추이',en:'② This month, day by day',es:'② Este mes, día a día'},
+ dBulkH:{ko:'③ 일괄 붙여넣기',en:'③ Bulk paste',es:'③ Pegar en lote'},
+ dBulkHint:{ko:'한 줄에: YYYY-MM-DD,금액',en:'One line: YYYY-MM-DD,amount',es:'Una línea: YYYY-MM-DD,monto'},
+ dBulkBtn:{ko:'📥 일괄 추가',en:'📥 Bulk add',es:'📥 Agregar lote'},
+ dRollup:{ko:'이 달 일일 합계를 월 총매출(TOTAL)로 저장',en:'Save this month’s daily sum as monthly TOTAL',es:'Guardar suma diaria como TOTAL mensual'},
+ dRollupHint:{ko:'→ 전 지점 매출 비교·평가에 자동 반영',en:'→ flows into comparison & evaluations',es:'→ se refleja en comparación y evaluaciones'},
+ dRollupDone:{ko:m=>'✅ '+m+' 총매출로 저장됨 — 전 지점 비교에 반영',en:m=>'✅ Saved as '+m+' TOTAL — shown in comparison',es:m=>'✅ Guardado como TOTAL de '+m},
+ dAllTitle:{ko:'④ 전 지점 최근일 매출',en:'④ Latest-day sales by branch',es:'④ Ventas del último día por sucursal'},
+ dAllNone:{ko:'전 지점 일일 기록이 아직 없어요',en:'No daily records across branches yet',es:'Aún no hay registros diarios'},
  p_warn:{ko:'⚠ 경고',en:'⚠ Warning',es:'⚠ Advertencia'}, p_rev:{ko:'📸 리뷰',en:'📸 Review',es:'📸 Reseña'}, p_star:{ko:'⭐ 상점',en:'⭐ Merit',es:'⭐ Mérito'},
  sumRow:{ko:'합계 (자동 상점·리뷰)',en:'Total (auto merits·reviews)',es:'Total (automático)'},
  chipPts:{ko:(n,r)=>'⭐ 상점·리뷰 합계 +'+n+'pt ('+r+'회 리뷰)',en:(n,r)=>'⭐ Merits & reviews +'+n+'pt ('+r+' reviews)',es:(n,r)=>'⭐ Méritos y reseñas +'+n+'pt ('+r+')'},
@@ -266,11 +294,12 @@ window.setLang = function(l){
   applyLang();
   const sc=document.getElementById('scOv'); if(sc) sc.remove();
   const cmp=document.getElementById('scmpOv'); if(cmp && cmp.style.display!=='none' && window.__cmpData) cmp.innerHTML=renderSalesCompare(window.__cmpData);
+  const dly=document.getElementById('dlyOv'); if(dly && dly.style.display!=='none' && typeof renderDaily==='function') dly.innerHTML=renderDaily();
   if (EMP) openCard(EMP.name, EMP.role); else { const g=document.getElementById('empGrid'); if(g && g.querySelector('.muted')) g.innerHTML='<div class="muted">'+t('loadingRoster')+'</div>'; }
 };
 function applyLang(){
   const set=(id,txt)=>{ const el=document.getElementById(id); if(el) el.textContent=txt; };
-  ['title','topNote','notice','back','print','save','sec1','sec2','sec3','sec3b','sec4','newEval','sec5','sec5b','sec6'].forEach(k=>set('L_'+k, t(k)));
+  ['title','topNote','notice','back','print','save','sec1','sec2','sec3','sec3b','sec4','newEval','sec5','sec5b','sec6','dailyBtn'].forEach(k=>set('L_'+k, t(k)));
   document.querySelectorAll('.L_add').forEach(b=>b.textContent=t('add'));
   const phs=I18N.ph[LANG]||I18N.ph.ko;
   Object.entries(phs).forEach(([id,p])=>{ const el=document.getElementById(id); if(el) el.placeholder=p; });
@@ -831,6 +860,179 @@ function renderSalesCompare(all){
       <button class="btn sec2 small" onclick="scmpClose()">✕</button>
     </div>
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px">${compareSections(all)}</div>
+  </div>`;
+}
+
+// ================= 📅 일일 매출 =================
+let DAILY=null, DAILY_ALL=null, DAILY_MONTH=null;
+function _localDate(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+window.openDailySales = async function(){
+  let m=document.getElementById('dlyOv');
+  if(!m){ m=document.createElement('div'); m.id='dlyOv';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px 8px';
+    document.body.appendChild(m); }
+  m.innerHTML='<div style="background:#fff;border-radius:16px;max-width:840px;width:100%;padding:22px;margin:auto 0;text-align:center;color:#64748b">⏳ '+t('cmpLoading')+'</div>';
+  m.style.display='flex';
+  DAILY_MONTH = DAILY_MONTH || _localDate().slice(0,7);
+  try{ DAILY = await fbGet('hr/'+BRANCH+'/dailySales') || {}; }catch(_){ DAILY={}; }
+  DAILY_ALL={};
+  await Promise.all(BRANCHES.map(async b=>{ try{ DAILY_ALL[b.id]=await fbGet('hr/'+b.id+'/dailySales')||{}; }catch(_){ DAILY_ALL[b.id]={}; } }));
+  m.innerHTML=renderDaily();
+};
+window.dlyClose=function(){ const m=document.getElementById('dlyOv'); if(m) m.remove(); };
+async function dlyReload(){
+  try{ DAILY = await fbGet('hr/'+BRANCH+'/dailySales') || {}; }catch(_){ DAILY={}; }
+  try{ DAILY_ALL[BRANCH] = await fbGet('hr/'+BRANCH+'/dailySales') || {}; }catch(_){}
+  const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily();
+}
+function _dailyDates(obj){ return Object.keys(obj||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort(); }
+function _dailyPctMap(){
+  const ds=_dailyDates(DAILY); const pm={};
+  for(let i=1;i<ds.length;i++){ const p=_cAmt(DAILY[ds[i-1]]); const c=_cAmt(DAILY[ds[i]]); if(p>0&&c!=null) pm[ds[i]]=Math.round((c-p)/p*1000)/10; }
+  return pm;
+}
+function _wkLbl(dstr){ const p=dstr.split('-'); const d=new Date(+p[0],+p[1]-1,+p[2]); return t('dWk')[d.getDay()]; }
+window.dlyMonthChange=function(v){ DAILY_MONTH=v||_localDate().slice(0,7); const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily(); };
+window.dlyAdd = async function(){
+  const dt=document.getElementById('dlyDate').value;
+  const amt=parseFloat(String(document.getElementById('dlyAmt').value).replace(/[^0-9.]/g,''));
+  const memo=document.getElementById('dlyMemo').value.trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||!(amt>=0)){ alert('날짜·매출을 확인하세요'); return; }
+  try{
+    await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt), { amt, memo, by:(me()&&me().name)||'', ts:Date.now() });
+    DAILY_MONTH = dt.slice(0,7);
+    toast('＋ '+dt+' 저장'); await dlyReload();
+  }catch(e){ alert('저장 실패: '+(e.message||e)); }
+};
+window.dlyDel = async function(dt){
+  if(!confirm(dt+' 매출 기록을 삭제할까요?')) return;
+  try{ await window.__fb.remove(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt)); toast('삭제됨'); await dlyReload(); }
+  catch(e){ alert('삭제 실패: '+(e.message||e)); }
+};
+window.dlyBulk = async function(){
+  const lines=document.getElementById('dlyBulk').value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+  if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
+  let ok=0, bad=[];
+  for(const ln of lines){
+    const p=ln.split(/[,\t]+/).map(s=>s.trim());
+    const dt=p[0], amt=parseFloat(String(p[1]||'').replace(/[^0-9.]/g,''));
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||!(amt>=0)){ bad.push(ln); continue; }
+    try{ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt), { amt, memo:(p[2]||''), by:(me()&&me().name)||'', ts:Date.now() }); ok++; }catch(_){ bad.push(ln); }
+  }
+  alert('✅ '+ok+'건 저장'+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
+  await dlyReload();
+};
+window.dlyRollup = async function(){
+  const mo=DAILY_MONTH;
+  const sum=_dailyDates(DAILY).filter(k=>k.slice(0,7)===mo).reduce((s,k)=>{ const v=_cAmt(DAILY[k]); return s+(v||0); },0);
+  if(!(sum>0)){ alert('이 달 일일 기록이 없어요'); return; }
+  if(!confirm(mo+' 일일 합계 $'+_cFmt(sum)+' 을(를) 월 총매출(TOTAL)로 저장할까요?\n\n전 지점 매출 비교·평가에 반영됩니다.\n(같은 달 기존 TOTAL 값은 덮어씁니다)')) return;
+  try{
+    const cur=await fbGet('hr/'+BRANCH+'/deptMap/TOTAL');
+    if(!cur) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/TOTAL'), {name:'TOTAL', staff:''});
+    await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptSales/TOTAL/'+mo), {amt:sum});
+    DEPT_MAP=null; DEPT_SALES=null;   // 캐시 무효화 → 다음 비교/카드에서 재로드
+    toast(t('dRollupDone')(mo));
+  }catch(e){ alert('저장 실패: '+(e.message||e)); }
+};
+window.dlyPrint = function(){
+  const mo=DAILY_MONTH, b=BRANCHES.find(x=>x.id===BRANCH);
+  const ds=_dailyDates(DAILY).filter(k=>k.slice(0,7)===mo).sort();
+  if(!ds.length){ alert('이 달 기록이 없어요'); return; }
+  const pm=_dailyPctMap();
+  const w=window.open('','_blank'); if(!w){ alert('팝업 차단을 해제해주세요'); return; }
+  let sum=0; const body=ds.map(k=>{ const v=_cAmt(DAILY[k])||0; sum+=v; const p=pm[k];
+    const ps=(p==null)?'':(' <span style="color:'+(p>=0?'#15803d':'#dc2626')+'">'+(p>0?'▲':p<0?'▼':'')+Math.abs(p)+'%</span>');
+    return '<tr><td>'+k+'</td><td>'+_wkLbl(k)+'</td><td style="text-align:right">$'+_cFmt(v)+ps+'</td><td>'+esc((DAILY[k]&&DAILY[k].memo)||'')+'</td></tr>'; }).join('');
+  const css='body{font-family:-apple-system,"Malgun Gothic",Arial,sans-serif;color:#000;padding:14px}h1{font-size:19px;margin:0 0 2px}.sub{font-size:12px;color:#444;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:10px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #999;padding:5px 7px;text-align:left}th{background:#1a5c3a;color:#fff}tfoot td{font-weight:800;background:#e8f5ee}';
+  w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+t('dTitle')+' '+mo+'</title><style>'+css+'</style></head><body>'+
+    '<h1>📅 '+t('dTitle')+' — '+esc(b?b.ko:BRANCH)+'</h1><div class="sub">'+mo+' · '+new Date().toLocaleString()+'</div>'+
+    '<table><tr><th>'+t('dCols')[0]+'</th><th>'+t('dCols')[1]+'</th><th>'+t('dCols')[2]+'</th><th>'+t('dCols')[4]+'</th></tr>'+body+
+    '<tfoot><tr><td colspan="2">'+t('dSumMonth')+' ('+ds.length+' '+t('dSumDays')+')</td><td style="text-align:right">$'+_cFmt(sum)+'</td><td></td></tr></tfoot></table></body></html>');
+  w.document.close(); w.focus(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 350);
+};
+function renderDaily(){
+  const b=BRANCHES.find(x=>x.id===BRANCH);
+  const mo=DAILY_MONTH;
+  const pm=_dailyPctMap();
+  const inMo=_dailyDates(DAILY).filter(k=>k.slice(0,7)===mo);
+  const desc=inMo.slice().sort().reverse();
+  const asc=inMo.slice().sort();
+  // 요약
+  const vals=inMo.map(k=>({k, v:_cAmt(DAILY[k])})).filter(r=>r.v!=null);
+  const sum=vals.reduce((s,r)=>s+r.v,0);
+  const days=vals.length;
+  const avg=days?sum/days:0;
+  let best=null, worst=null;
+  vals.forEach(r=>{ if(!best||r.v>best.v) best=r; if(!worst||r.v<worst.v) worst=r; });
+  const sumCard=(lbl,val,sub,color)=>`<div style="flex:1;min-width:120px;background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:10px 12px"><div style="font-size:.72em;font-weight:800;color:#64748b">${lbl}</div><div style="font-size:1.15em;font-weight:900;color:${color||'#1a5c3a'};margin-top:2px">${val}</div>${sub?`<div style="font-size:.72em;color:#94a3b8;margin-top:1px">${sub}</div>`:''}</div>`;
+  // 표
+  const tbl = desc.length ? desc.map(k=>{
+    const v=_cAmt(DAILY[k])||0; const p=pm[k];
+    const ps=(p==null)?'<span class="muted">–</span>':`<b style="color:${p>=0?'#15803d':'#dc2626'}">${p>0?'▲':p<0?'▼':''}${Math.abs(p)}%</b>`;
+    const memo=(DAILY[k]&&DAILY[k].memo)||'';
+    return `<tr><td style="text-align:left">${k.slice(5)}</td><td style="text-align:center;color:#64748b">${_wkLbl(k)}</td><td style="text-align:right"><b>$${_cFmt(v)}</b></td><td style="text-align:right">${ps}</td><td style="text-align:left;white-space:normal">${esc(memo)}</td><td style="text-align:center"><button class="btn danger" onclick="dlyDel('${k}')">${t('del')}</button></td></tr>`;
+  }).join('') : `<tr><td colspan="6" class="muted">${t('dEmpty')}</td></tr>`;
+  // 차트
+  const mx=Math.max(1,...asc.map(k=>_cAmt(DAILY[k])||0));
+  const chart = asc.length ? asc.map(k=>{ const v=_cAmt(DAILY[k])||0; const h=Math.round(v/mx*100);
+    return `<div title="${k}: $${_cFmt(v)}" style="flex:1;min-width:7px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px"><div style="width:72%;max-width:20px;height:${h}%;background:linear-gradient(180deg,#2e8b57,#1a5c3a);border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:.58em;color:#94a3b8">${k.slice(8)}</div></div>`;
+  }).join('') : `<div class="muted" style="margin:auto">${t('dEmpty')}</div>`;
+  // 전 지점 최근일
+  const allSet=new Set(); BRANCHES.forEach(x=>_dailyDates(DAILY_ALL[x.id]).forEach(d=>allSet.add(d)));
+  const latest=[...allSet].sort().reverse()[0];
+  let allBlk;
+  if(latest){
+    const rows=BRANCHES.map(x=>({x, v:_cAmt((DAILY_ALL[x.id]||{})[latest])})).filter(r=>r.v!=null).sort((p,q)=>q.v-p.v);
+    const amx=rows.length?rows[0].v:0;
+    allBlk = `<div style="font-size:.75em;color:#94a3b8;margin-bottom:6px">${esc(latest)}</div>`+
+      rows.map(r=>`<div class="rankrow"><div class="bn">${esc(LANG==='ko'?r.x.ko:String(r.x.id).replace(/_/g,' '))}</div><div class="rankbar"><span style="width:${amx>0?Math.round(r.v/amx*100):0}%"></span></div><div class="amt">$${_cFmt(r.v)}</div></div>`).join('');
+  } else allBlk=`<div class="muted">${t('dAllNone')}</div>`;
+
+  return `<div style="background:#f6f8f7;border-radius:16px;max-width:840px;width:100%;padding:16px 18px;margin:auto 0">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <h3 style="flex:1;color:#1a5c3a;min-width:150px">📅 ${t('dTitle')} — ${esc(b?b.ko:BRANCH)} <span style="font-weight:600;color:#94a3b8;font-size:.62em">${t('dSub')}</span></h3>
+      <button class="btn small" onclick="dlyPrint()">${t('cmpPrint')}</button>
+      <button class="btn sec2 small" onclick="dlyClose()">✕</button>
+    </div>
+
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-weight:900;color:#1a5c3a;margin-bottom:6px">${t('dQuick')}</div>
+      <div class="addrow">
+        <input id="dlyDate" type="date" value="${_localDate()}" style="width:150px">
+        <input id="dlyAmt" placeholder="${t('dAmt')}" style="width:130px">
+        <input id="dlyMemo" placeholder="${t('dMemo')}" style="flex:1;min-width:150px">
+        <button class="btn" onclick="dlyAdd()">${t('dSave')}</button>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <label style="font-weight:800;color:#64748b;font-size:.82em">${t('dMonthPick')}</label>
+      <input type="month" value="${mo}" onchange="dlyMonthChange(this.value)" style="border:1.5px solid var(--bd);border-radius:8px;padding:6px 9px;background:#fffde7">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      ${sumCard(t('dSumMonth'), '$'+_cFmt(sum), days+' '+t('dSumDays'))}
+      ${sumCard(t('dSumAvg'), '$'+_cFmt(avg))}
+      ${best?sumCard(t('dSumBest'), '$'+_cFmt(best.v), best.k.slice(5)+' ('+_wkLbl(best.k)+')','#15803d'):''}
+      ${worst&&days>1?sumCard(t('dSumWorst'), '$'+_cFmt(worst.v), worst.k.slice(5)+' ('+_wkLbl(worst.k)+')','#dc2626'):''}
+    </div>
+
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">
+      <table class="cmp"><tr><th style="width:64px;text-align:left">${t('dCols')[0]}</th><th style="width:44px">${t('dCols')[1]}</th><th>${t('dCols')[2]}</th><th>${t('dCols')[3]}</th><th style="text-align:left">${t('dCols')[4]}</th><th style="width:52px"></th></tr>${tbl}</table>
+    </div>
+
+    ${inMo.length?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">${t('dChart')}</div>
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 10px 8px;display:flex;align-items:flex-end;gap:3px;height:150px">${chart}</div>`:''}
+
+    ${inMo.length?`<div style="margin-top:12px"><button class="btn" style="width:100%" onclick="dlyRollup()">💾 ${t('dRollup')}</button>
+    <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`:''}
+
+    <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">${t('dBulkH')} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('dBulkHint')}</span></div>
+    <textarea id="dlyBulk" rows="4" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="2026-09-15,18450&#10;2026-09-16,20310,토요일 세일"></textarea>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="dlyBulk()">${t('dBulkBtn')}</button>
+
+    <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">${t('dAllTitle')}</div>
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px">${allBlk}</div>
   </div>`;
 }
 
