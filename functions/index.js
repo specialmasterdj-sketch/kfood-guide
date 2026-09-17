@@ -10,7 +10,7 @@
 //   · 그 외 방은 발송 안 함 (도배 방지).
 // 배포: PUSH-SETUP.md 참조 (firebase deploy --only functions)
 // =============================================================================
-const { onValueCreated } = require('firebase-functions/v2/database');
+const { onValueCreated, onValueWritten } = require('firebase-functions/v2/database');
 const admin = require('firebase-admin');
 admin.initializeApp();
 
@@ -753,13 +753,17 @@ const BAY_INDEX_SYSTEM = [
   '1. ONLY list what you can genuinely read or clearly recognize. This list is used to',
   '   send employees to a shelf — a made-up product sends them to the wrong place.',
   '   If a package is blurry, turned away, or too small to read, leave it out.',
-  '2. Write the name as printed. Korean packaging -> Korean. English packaging -> English.',
+  '2. Write the name as printed in "n". Korean packaging -> Korean. English packaging -> English.',
+  '   In "e" put the OTHER-language name people actually use, not a romanization:',
+  '   홈런볼 -> "Homerun Ball", 새우깡 -> "Saewookkang Shrimp Cracker", TOFU -> "두부".',
+  '   Employees ask in Korean, Spanish and English, so both spellings must be there.',
+  '   Leave "e" empty rather than guessing a brand you do not know.',
   '3. Include the brand when it is part of how people ask for it (신라면, 새우깡, ASSI).',
   '4. Do not include shelf tags, price labels, barcodes, or store signage.',
   '5. Do not repeat the same product twice, even if there are several facings.',
   '',
   'Reply with ONLY a JSON object, no markdown fence, no commentary:',
-  '{"items":[{"n":"<name as printed>","e":"<English or romanized name, or empty string>"}]}',
+  '{"items":[{"n":"<name as printed>","e":"<the other-language name, or empty string>"}]}',
 ].join('\n');
 
 exports.bayIndex = onValueCreated(
@@ -817,5 +821,172 @@ exports.bayIndex = onValueCreated(
     await outRef.set({ items, n: items.length, at: Date.now(), model: BAY_INDEX_MODEL }).catch(() => {});
     await reqRef.remove().catch(() => {});
     console.log('[bayIndex] done', bayId, items.length, 'items');
+  }
+);
+
+// =============================================================================
+// 🔄 사진이 바뀌면 그 자리를 자동으로 다시 읽는다 (2026-09-17)
+// 전무님: "자리 바뀐 거 사진 새로 올리면 자동으로 읽어주나?"
+// 안 그러면 진열을 바꿀 때마다 사람이 재실행을 걸어야 하는데 그건 오래 못 간다.
+//
+// 사진 본체(dataURL)가 아니라 옆의 ts 만 본다 — 710KB 짜리 사진을 이벤트로
+// 실어 나를 이유가 없다. 사진을 지우면 목록도 같이 지운다(엉뚱한 자리로
+// 직원을 보내는 것보다 "모른다"가 낫다).
+// =============================================================================
+exports.bayPhotoChanged = onValueWritten(
+  { ref: '/floorplan/matdae-hollywood/bayPhotos/{bayId}/ts', region: 'us-central1',
+    timeoutSeconds: 60, memory: '256MiB' },
+  async (event) => {
+    const bayId = event.params.bayId;
+    const db = admin.database();
+    const after = event.data.after.val();
+    const before = event.data.before.val();
+
+    if (!after) {
+      await db.ref('floorplan/matdae-hollywood/bayItems/' + bayId).remove().catch(() => {});
+      console.log('[bayPhoto] removed', bayId);
+      return;
+    }
+    if (before === after) return;            // 같은 사진 다시 저장 — 읽을 이유 없다
+    await db.ref('floorplan/matdae-hollywood/indexReq/' + bayId)
+      .set({ ts: Date.now(), auto: true })
+      .catch((e) => console.error('[bayPhoto] queue', bayId, e && e.message));
+    console.log('[bayPhoto] queued', bayId);
+  }
+);
+
+// =============================================================================
+// 🈯 상품 이름 한글 ↔ 영문 짝 붙이기 (2026-09-17)
+// 사진에서 읽은 이름은 포장지에 적힌 그대로다. 그래서 "홈런볼"로 물으면
+// "HOMERUN BALL"로 읽힌 자리를 못 찾는다 — 같은 상품인데 글자가 다르다.
+//
+// 사전을 손으로 채우는 건 끝이 없다(과자만 수백 종). 대신 이미 만들어 둔
+// 2,502개 이름을 AI 에게 통째로 보여주고 반대쪽 표기를 받아 각 항목의 e 에
+// 붙인다. 검색은 n 과 e 를 같이 뒤지므로 어느 쪽으로 물어도 걸린다.
+//
+// 이름만 주고받으므로 사진을 다시 읽는 것보다 훨씬 싸다 (전체 약 $1).
+// 진열이 바뀌어 bayIndex 를 다시 돌린 뒤에 한 번 더 돌리면 된다.
+// =============================================================================
+const ALIAS_MODEL = 'claude-sonnet-5';
+const ALIAS_BATCH = 45;            // 한 번에 보낼 이름 수
+                                   //   80 이면 답이 max_tokens 에서 잘려 묶음째 실패했다
+                                   //   (2026-09-17 첫 실행 29개 중 8개). 절반으로 줄였다.
+const ALIAS_PARALLEL = 4;          // 동시에 돌릴 묶음 수
+
+const ALIAS_SYSTEM = [
+  'You match product names between Korean and English for a Korean grocery store.',
+  'Employees ask in Korean, Spanish or English, but the shelf index stores whatever was',
+  'printed on the package — so "홈런볼" and "HOMERUN BALL" never match each other.',
+  'Your job is to supply the OTHER spelling so both find the same shelf.',
+  '',
+  'For each numbered name, give the other-language form people actually use:',
+  '  · Korean name  -> the English/romanized name as printed or commonly written',
+  '    (홈런볼 -> Homerun Ball, 새우깡 -> Saewookkang Shrimp Cracker, 고추장 -> Gochujang Hot Pepper Paste)',
+  '  · English name -> the Korean name Koreans would say',
+  '    (HOMERUN BALL -> 홈런볼, TOFU -> 두부, SOY SAUCE -> 간장)',
+  '  · Japanese/other -> both English and Korean if you know them',
+  'Include the plain category word too when it helps (라면 -> Ramen Instant Noodle).',
+  '',
+  'If you do not know a product, return an empty string for it. Never invent a brand.',
+  '',
+  'Reply with ONLY a JSON object mapping the number to the other spelling, no markdown:',
+  '{"1":"Homerun Ball","2":"","3":"두부 Tofu"}',
+].join('\n');
+
+exports.bayAlias = onValueCreated(
+  { ref: '/floorplan/matdae-hollywood/aliasReq/{reqId}', region: 'us-central1',
+    secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 540, memory: '1GiB' },
+  async (event) => {
+    const db = admin.database();
+    const reqRef = db.ref('floorplan/matdae-hollywood/aliasReq/' + event.params.reqId);
+    const logRef = db.ref('floorplan/matdae-hollywood/aliasLog');
+
+    let bays;
+    try {
+      bays = (await db.ref('floorplan/matdae-hollywood/bayItems').get()).val();
+    } catch (e) {
+      await logRef.set({ err: 'read', msg: String(e && e.message).slice(0, 200), at: Date.now() }).catch(() => {});
+      await reqRef.remove().catch(() => {}); return;
+    }
+    if (!bays) { await reqRef.remove().catch(() => {}); return; }
+
+    // 같은 이름이 여러 자리에 있으니 한 번만 물어본다.
+    const names = [];
+    const seen = {};
+    for (const bayId of Object.keys(bays)) {
+      const rec = bays[bayId];
+      if (!rec || !rec.items) continue;
+      for (const it of rec.items) {
+        const n = it && it.n;
+        if (!n || seen[n]) continue;
+        seen[n] = true; names.push(n);
+      }
+    }
+    console.log('[bayAlias] unique names', names.length);
+    if (!names.length) { await reqRef.remove().catch(() => {}); return; }
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+
+    async function runBatch(list){
+      const numbered = list.map((nm, i) => (i + 1) + '. ' + nm).join('\n');
+      const r = await client.messages.create({
+        model: ALIAS_MODEL,
+        max_tokens: 8000,
+        system: ALIAS_SYSTEM,
+        messages: [{ role: 'user', content: numbered }],
+      });
+      const raw = (r.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim()
+        .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(raw);
+      const out = {};
+      list.forEach((nm, i) => {
+        const v = parsed[String(i + 1)];
+        if (v && String(v).trim()) out[nm] = String(v).trim().slice(0, 70);
+      });
+      return out;
+    }
+
+    // 묶음을 만들어 몇 개씩 동시에 — 순차로 하면 32번 × 5초라 시간 제한에 닿는다.
+    const chunks = [];
+    for (let i = 0; i < names.length; i += ALIAS_BATCH) chunks.push(names.slice(i, i + ALIAS_BATCH));
+    const alias = {};
+    let failed = 0;
+    for (let i = 0; i < chunks.length; i += ALIAS_PARALLEL) {
+      const group = chunks.slice(i, i + ALIAS_PARALLEL);
+      const results = await Promise.all(group.map((c) =>
+        runBatch(c).catch(() => runBatch(c))        // 한 번 재시도
+          .catch((e) => { failed++; console.warn('[bayAlias] batch', e && e.message); return {}; })));
+      for (const m of results) Object.assign(alias, m);
+    }
+    console.log('[bayAlias] matched', Object.keys(alias).length, 'failed batches', failed);
+
+    // 각 자리의 항목 e 에 붙인다 — 검색이 n 과 e 를 같이 보므로 이걸로 양쪽이 걸린다.
+    let touched = 0;
+    const upd = {};
+    for (const bayId of Object.keys(bays)) {
+      const rec = bays[bayId];
+      if (!rec || !rec.items) continue;
+      let changed = false;
+      const items = rec.items.map((it) => {
+        const add = it && it.n && alias[it.n];
+        if (!add) return it;
+        const cur = String(it.e || '');
+        if (cur.toLowerCase().indexOf(add.toLowerCase()) >= 0) return it;   // 이미 들어 있음
+        changed = true;
+        return { n: it.n, e: (cur ? cur + ' ' : '') + add };
+      });
+      if (changed) { upd[bayId + '/items'] = items; touched++; }
+    }
+    if (Object.keys(upd).length) {
+      await db.ref('floorplan/matdae-hollywood/bayItems').update(upd)
+        .catch((e) => console.error('[bayAlias] save', e && e.message));
+    }
+    await logRef.set({
+      names: names.length, matched: Object.keys(alias).length,
+      baysUpdated: touched, failedBatches: failed, at: Date.now(), model: ALIAS_MODEL,
+    }).catch(() => {});
+    await reqRef.remove().catch(() => {});
+    console.log('[bayAlias] done — bays updated', touched);
   }
 );
