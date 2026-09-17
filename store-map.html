@@ -266,7 +266,18 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
 .bay-check .ok.on{background:var(--ok); border-color:var(--ok); color:#fff;}
 .bay-check .bad.on{background:var(--bad); border-color:var(--bad); color:#fff;}
 .bay-check .oos{background:#fff7ed; border-color:#fdba74; color:#9a3412;}
-.bay-check .tag{background:#eff6ff; border-color:#93c5fd; color:#1d4ed8;}
+.oos-lbl{display:block; font-size:12px; font-weight:700; color:var(--sub); margin:10px 0 4px;}
+.oos-row{display:flex; gap:6px;}
+.oos-row input{flex:1; min-width:0;}
+.scan-box input[type=text], .scan-box input[type=number]{
+  width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:9px;
+  font-size:16px; background:var(--card); color:var(--ink); font-family:inherit;}
+.oos-name{font-size:12.5px; color:var(--sub); margin-top:6px; min-height:18px;}
+.oos-name.found{color:var(--ok); font-weight:700;}
+.oos-name.none{color:var(--warn); font-weight:700;}
+.oos-actions{display:flex; gap:8px; margin-top:14px;}
+.oos-actions .addbtn{flex:1; padding:11px;}
+.oos-actions .oos-save{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:800;}
 .bay-oos{margin:-4px 0 12px; border:1px solid #fdba74; background:#fff7ed; border-radius:9px; padding:8px 10px;}
 .bay-oos-h{font-size:11.5px; font-weight:800; color:#9a3412; margin-bottom:5px;}
 .bay-oos-row{display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -410,6 +421,11 @@ var I18N = {
     oosUnknown: '(이름 모름) 바코드 ',
     oosHere: '📦 이 자리 품절 보고',
     oosOut: '품절', oosLeft: '{n}개 남음', oosLeftShort: '{n}개',
+    oosCodeLbl: '바코드 번호', oosCodePh: '숫자로 입력 (예: 8801043015479)',
+    oosScanBtn: '📷 스캔', oosQtyLbl: '남은 수량 (0 = 완전 품절)',
+    oosSaveBtn: '📦 기록하기', oosNeedCode: '바코드 번호를 입력해주세요',
+    oosNameWait: '번호를 넣으면 상품명을 찾아봅니다',
+    oosNameNone: '⚠️ 등록되지 않은 번호 — 그래도 기록됩니다',
     oosPatrol: '매대 순찰',
     statOos: '품절 보고', oosListTitle: '📦 품절 / 부족 보고',
     oosNone: '보고된 품절이 없습니다.', oosDays: '{d}일째',
@@ -485,6 +501,11 @@ var I18N = {
     oosUnknown: '(unknown item) barcode ',
     oosHere: '📦 Out-of-stock reports here',
     oosOut: 'out of stock', oosLeft: '{n} left', oosLeftShort: '{n}',
+    oosCodeLbl: 'Barcode number', oosCodePh: 'Type the digits (e.g. 8801043015479)',
+    oosScanBtn: '📷 Scan', oosQtyLbl: 'How many left (0 = out)',
+    oosSaveBtn: '📦 Record', oosNeedCode: 'Please enter the barcode number',
+    oosNameWait: 'Enter a number to look up the item',
+    oosNameNone: '⚠️ Unknown number — it will still be recorded',
     oosPatrol: 'shelf patrol',
     statOos: 'Out of stock', oosListTitle: '📦 Out of stock / low',
     oosNone: 'No out-of-stock reports.', oosDays: '{d}d',
@@ -562,6 +583,11 @@ var I18N = {
     oosUnknown: '(producto desconocido) código ',
     oosHere: '📦 Reportes de falta aquí',
     oosOut: 'agotado', oosLeft: 'quedan {n}', oosLeftShort: '{n}',
+    oosCodeLbl: 'Número de código', oosCodePh: 'Escriba los dígitos (ej. 8801043015479)',
+    oosScanBtn: '📷 Escanear', oosQtyLbl: 'Cuántos quedan (0 = agotado)',
+    oosSaveBtn: '📦 Registrar', oosNeedCode: 'Ingrese el número del código',
+    oosNameWait: 'Escriba un número para buscar el producto',
+    oosNameNone: '⚠️ Número desconocido — se registrará igual',
     oosPatrol: 'ronda de estantes',
     statOos: 'Sin stock', oosListTitle: '📦 Sin stock / bajo',
     oosNone: 'No hay reportes de falta.', oosDays: '{d}d',
@@ -1303,22 +1329,67 @@ async function postOosToChat(rec, branchLabel){
     body: JSON.stringify({ lastMsg: '📦 ' + (rec.name || rec.code).slice(0, 28), lastTs: ts, lastSender: rec.by || '' })
   }).catch(function(){});
 }
-function scanOutOfStock(bayId){
-  if (typeof openScanner !== 'function') return;
-  openScanner(async function(text){
-    var code = String(text || '').trim();
-    if (!code) return;
-    if (bayCodeFromScan(code)){                       // 매대 QR 을 잘못 찍음
-      showToast(t('scanBayBad'));
-      return;
-    }
+// 📦 품절/부족 등록 — 바코드 번호를 직접 입력하거나(카메라가 약한 폰 대비)
+//   📷 스캔으로 채운다. 2026-09-17 사장님: "어떤 직원 폰은 카메라가 안 좋으니
+//   바코드 번호를 넣어서 제품을 등록하게 해줘".
+function scanOutOfStock(bayId){ openOosEntry(bayId); }
+function openOosEntry(bayId){
+  var ov = document.createElement('div');
+  ov.className = 'scan-overlay';
+  ov.innerHTML =
+    '<div class="scan-box" style="max-width:420px">' +
+      '<div class="scan-head"><span>' + t('oosBtn') + ' · ' + escapeHtml(currentOpenBayLabel || bayId) + '</span>' +
+        '<button type="button" id="oosX">&times;</button></div>' +
+      '<label class="oos-lbl">' + t('oosCodeLbl') + '</label>' +
+      '<div class="oos-row">' +
+        '<input type="text" id="oosCode" inputmode="numeric" autocomplete="off" placeholder="' + t('oosCodePh') + '">' +
+        '<button type="button" class="addbtn" id="oosScanBtn">' + t('oosScanBtn') + '</button>' +
+      '</div>' +
+      '<div class="oos-name" id="oosName">' + t('oosNameWait') + '</div>' +
+      '<label class="oos-lbl">' + t('oosQtyLbl') + '</label>' +
+      '<input type="number" id="oosQty" inputmode="numeric" min="0" value="0">' +
+      '<div class="oos-actions">' +
+        '<button type="button" class="addbtn" id="oosCancel">' + t('close') + '</button>' +
+        '<button type="button" class="addbtn oos-save" id="oosSave">' + t('oosSaveBtn') + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  function close(){ if (ov.parentNode) ov.parentNode.removeChild(ov); }
+  ov.querySelector('#oosX').addEventListener('click', close);
+  ov.querySelector('#oosCancel').addEventListener('click', close);
+  ov.addEventListener('click', function(e){ if (e.target === ov) close(); });
+
+  var codeEl = ov.querySelector('#oosCode');
+  var nameEl = ov.querySelector('#oosName');
+  function refreshName(){
+    var c = codeEl.value.trim();
+    if (!c){ nameEl.textContent = t('oosNameWait'); nameEl.className = 'oos-name'; return; }
+    var nm = '';
+    try { nm = lookupProductName(c) || ''; } catch(e){}
+    if (nm){ nameEl.textContent = '✅ ' + nm; nameEl.className = 'oos-name found'; }
+    else   { nameEl.textContent = t('oosNameNone'); nameEl.className = 'oos-name none'; }
+  }
+  codeEl.addEventListener('input', refreshName);
+  setTimeout(function(){ try { codeEl.focus(); } catch(e){} }, 60);
+
+  // 📷 스캔은 '보조' — 되는 폰만 쓰면 된다. 찍으면 번호칸이 채워진다.
+  ov.querySelector('#oosScanBtn').addEventListener('click', function(){
+    if (typeof openScanner !== 'function') return;
+    openScanner(function(text){
+      var v = String(text || '').trim();
+      if (bayCodeFromScan(v)){ showToast(t('scanBayBad')); return; }
+      codeEl.value = v; refreshName();
+    }, { title: t('oosScanTitle'), hint: t('oosScanHint') });
+  });
+
+  ov.querySelector('#oosSave').addEventListener('click', async function(){
+    var code = codeEl.value.trim();
+    if (!code){ showToast(t('oosNeedCode')); codeEl.focus(); return; }
+    if (bayCodeFromScan(code)){ showToast(t('scanBayBad')); return; }
+    var qty = parseInt(ov.querySelector('#oosQty').value, 10);
+    if (isNaN(qty) || qty < 0) qty = 0;
     var name = '';
     try { name = lookupProductName(code) || ''; } catch(e){}
-    var shown = name || (t('oosUnknown') + code);
-    var ans = prompt(t('oosAskQty').replace('{p}', shown), '0');
-    if (ans === null) return;                          // 취소
-    var qty = parseInt(String(ans).trim(), 10);
-    if (isNaN(qty) || qty < 0) qty = 0;
     var rec = { bay: bayId, code: code, name: name, qty: qty,
                 by: meName(), at: todayStr(), ts: Date.now() };
     var key = oosKey(bayId, code);
@@ -1332,15 +1403,17 @@ function scanOutOfStock(bayId){
       showToast(t('saveFail') + ' (' + (e.message || e) + ')');
       return;
     }
-    renderBayCheckBox(bayId);                          // 이 자리 품절 목록 갱신
+    close();
+    renderBayCheckBox(bayId);
     render();
+    var shown = name || (t('oosUnknown') + code);
     try {
       await postOosToChat(rec, null);
       showToast(t('oosSaved') + shown);
     } catch(e){
       showToast(t('oosFailChat') + (e.message || e));  // 기록은 남았음을 분명히
     }
-  }, { title: t('oosScanTitle'), hint: t('oosScanHint') });
+  });
 }
 async function removeOos(key, bayId){
   var prev = oosMap[key];
@@ -2004,8 +2077,7 @@ function renderBayCheckBox(bayId){
   box.innerHTML =
     '<button type="button" class="ok' + (today && today.state === 'ok' ? ' on' : '') + '" id="bayOkBtn">' + t('bayOk') + '</button>' +
     '<button type="button" class="bad' + (today && today.state === 'issue' ? ' on' : '') + '" id="bayIssueBtn">' + t('bayIssue') + '</button>' +
-    '<button type="button" class="oos" id="bayOosBtn">' + t('oosBtn') + '</button>' +
-    '<button type="button" class="tag" id="bayTagBtn">' + t('tagBtn') + '</button>';
+    '<button type="button" class="oos" id="bayOosBtn">' + t('oosBtn') + '</button>';
   // 마지막 점검이 언제/누구였는지 — 오늘이 아니어도 보여줘야 "며칠째 방치" 가 드러난다.
   var line = '';
   if (prev && prev.at){
@@ -2046,10 +2118,8 @@ function renderBayCheckBox(bayId){
   });
 
   document.getElementById('bayOosBtn').addEventListener('click', function(){ scanOutOfStock(bayId); });
-  // 🏷 가격표 감사 앱으로 — 같은 매대 코드를 그대로 넘겨 그 자리 감사를 연다.
-  document.getElementById('bayTagBtn').addEventListener('click', function(){
-    location.href = './price-audit.html?bay=' + encodeURIComponent(bayId);
-  });
+  // 🏷 가격표 점검 버튼은 뺐다 (2026-09-17 사장님) — 이 화면은 점검·품절만.
+  //   가격표는 가격표 감사 앱에서 매대 QR 을 찍어 따로 한다.
   // 📷 사진 필수 — 전무님 2026-09-16: "필수로 해야 진짜 확인했는지, 가격표가 없거나
   //   틀린데도 수정 안 했는지 알 수 있다". 온도 0측정 차단과 같은 원칙.
   async function _checkWithPhoto(state, note){
