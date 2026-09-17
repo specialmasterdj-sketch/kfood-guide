@@ -1365,7 +1365,22 @@ button{font-family:inherit;cursor:pointer}
   // 2026-09-14 전무님 지시로 배포 전에 켬 ("오류나도 괜찮으니 올려줘").
   // 함수가 아직 없으면 아래 eNotReady 안내가 뜬다 — 고장으로 보이지 않게.
   const KM_ASK_ENABLED = true;
-  const KM_ASK_URL = 'https://us-central1-kimchi-mart-order.cloudfunctions.net/askAssistant';
+  // 🔁 2026-09-17 HTTPS 호출 → DB 우편함 방식.
+  //   조직 정책(Domain Restricted Sharing)이 Cloud Run 의 공개 호출을 막아서
+  //   공개 함수 주소를 쓸 수 없다. 대신 질문을 aiAsk/{uid}/{키} 에 적으면
+  //   서버 함수가 같은 노드에 답을 적는다 (자세한 건 functions/index.js).
+  //   폴링은 앱의 다른 곳과 같은 REST 방식이라 소켓·리스너를 새로 들이지 않는다.
+  const KM_ASK_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+  const KM_ASK_POLL_MS = 1200;
+  const KM_ASK_TIMEOUT_MS = 75000;   // 콜드 스타트(~20초) + 답 생성 여유
+
+  function kmAskUid(){
+    try {
+      const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
+      if (u && u.uid && !u.isAnonymous) return u.uid;
+    } catch(e){}
+    return null;
+  }
 
   const KM_ASK_I18N = {
     title:  { ko:'무엇이든 물어보세요', en:'Ask anything', es:'Pregunta lo que sea' },
@@ -1473,32 +1488,54 @@ button{font-family:inherit;cursor:pointer}
     ans.innerHTML = '<span class="ask-thinking">' + kmAskT('thinking') + '</span>';
 
     try {
-      // fb-auth-fetch.js 가 노출한 헬퍼로 ID 토큰을 받는다.
-      // (RTDB 가 아니라 Cloud Function 이라 fetch 자동첨부가 안 걸린다 — 직접 붙인다.)
+      const uid = kmAskUid();
+      if (!uid) { show(kmAskT('eAuth'), true); return; }
+      // 토큰을 미리 깨워둔다 — fetch 패치가 auth= 를 붙이려면 필요하다.
       const token = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
       if (!token) { show(kmAskT('eAuth'), true); return; }
 
-      const r = await fetch(KM_ASK_URL, {
+      const base = KM_ASK_DB + '/aiAsk/' + uid;
+
+      // ① 질문을 적는다 (POST = push 키 생성)
+      const w = await fetch(base + '.json', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify({ q: q }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: q, ts: Date.now() }),
       });
-      const j = await r.json().catch(function(){ return {}; });
+      if (!w.ok) {
+        // 규칙이 아직 게시되지 않았으면 여기서 401/403 이 온다 — 고장이 아니라 "준비 중"
+        console.warn('[ask] write', w.status);
+        show(kmAskT('eNotReady'), true); return;
+      }
+      const key = (await w.json().catch(function(){ return {}; })).name;
+      if (!key) { show(kmAskT('eFail'), true); return; }
 
-      if (r.status === 429) { show(kmAskT('eQuota').replace('{l}', j.limit || 20), true); return; }
-      // 함수가 아직 배포되지 않았으면 404 가 온다 — 고장이 아니라 "준비 중"이다
-      if (r.status === 404) { show(kmAskT('eNotReady'), true); return; }
-      if (!r.ok || !j.answer) { show(kmAskT('eFail'), true); return; }
+      // ② 답이 적힐 때까지 짧게 기다린다
+      const until = Date.now() + KM_ASK_TIMEOUT_MS;
+      let rec = null;
+      while (Date.now() < until) {
+        await new Promise(function(r){ setTimeout(r, KM_ASK_POLL_MS); });
+        const rr = await fetch(base + '/' + key + '.json', { cache: 'no-store' });
+        const got = rr.ok ? await rr.json().catch(function(){ return null; }) : null;
+        if (got && (got.a || got.err)) { rec = got; break; }
+      }
 
-      show(j.answer, false);
+      if (!rec) { show(kmAskT('eFail'), true); return; }          // 시간 초과
+      if (rec.err === 'quota') { show(kmAskT('eQuota').replace('{l}', rec.limit || 20), true); return; }
+      if (rec.err === 'no_name') {
+        show(kmAskT('eName'), true);
+        if (typeof goSetName === 'function') goSetName();
+        return;
+      }
+      if (rec.err || !rec.a) { console.warn('[ask] err', rec.err); show(kmAskT('eFail'), true); return; }
+
+      show(rec.a, false);
       ta.value = '';
-      if (typeof j.used === 'number') {
-        quo.textContent = kmAskT('quota').replace('{u}', j.used).replace('{l}', j.limit || 20);
+      if (typeof rec.used === 'number') {
+        quo.textContent = kmAskT('quota').replace('{u}', rec.used).replace('{l}', rec.limit || 20);
       }
     } catch (e) {
-      // fetch 자체가 터지면(함수 없음 → CORS/네트워크) 역시 "준비 중"으로 본다.
-      // 함수가 올라간 뒤의 일시적 네트워크 오류도 여기 걸리지만, 직원에게는
-      // "잠시 후 다시" 보다 이 문구가 덜 불안하다.
+      // 네트워크가 끊겼거나 규칙이 아직 없을 때. 직원에게는 "고장"보다 이 문구가 낫다.
       console.warn('[ask]', e);
       show(kmAskT('eNotReady'), true);
     } finally {

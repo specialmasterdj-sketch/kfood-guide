@@ -168,7 +168,6 @@ exports.ideaTranslate = onValueCreated(
 // 비용: 질문당 약 $0.005 (Haiku 4.5). 직원당 하루 20건 한도 + 콘솔 월 한도 $50.
 // 배포: IDEAS-TRANSLATE-SETUP.md 와 같은 키를 쓴다 (ANTHROPIC_API_KEY).
 // =============================================================================
-const { onRequest } = require('firebase-functions/v2/https');
 
 const ASK_MODEL = 'claude-haiku-4-5';
 const ASK_DAILY_LIMIT = 20;          // 직원 1인당 하루 질문 수
@@ -296,64 +295,85 @@ function buildContext(profile, shifts, tasks){
 }
 
 // ---- 함수 본체 ---------------------------------------------------------------
-exports.askAssistant = onRequest(
-  { region: 'us-central1', secrets: [ANTHROPIC_API_KEY], cors: true, maxInstances: 10 },
-  async (req, res) => {
-    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
-    if (req.method !== 'POST') { res.status(405).json({ error: 'method' }); return; }
-
-    // 1) 토큰 검증
-    const hdr = String(req.headers.authorization || '');
-    const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : '';
-    if (!token) { res.status(401).json({ error: 'auth' }); return; }
-    let uid;
-    try {
-      const decoded = await admin.auth().verifyIdToken(token);
-      uid = decoded.uid;
-      if (decoded.firebase && decoded.firebase.sign_in_provider === 'anonymous') {
-        res.status(403).json({ error: 'anonymous' }); return;
-      }
-    } catch (e) { res.status(401).json({ error: 'auth' }); return; }
+// 🔁 2026-09-17 HTTPS → DB 트리거로 전환.
+//   조직 정책 'Domain Restricted Sharing'(constraints/iam.allowedPolicyMemberDomains)이
+//   Cloud Run 의 allUsers 호출 허용을 막아서, 공개 HTTPS 함수를 아예 쓸 수 없다.
+//   정책을 푸는 쪽(= 이 프로젝트의 어떤 자원이든 외부 공개가 가능해짐)은 5개 매장
+//   데이터가 걸린 곳이라 택하지 않았다. 대신 chatPush·ideaTranslate 와 같은
+//   "DB 쓰기에 반응하는" 구조로 바꾼다 — 공개 엔드포인트가 생기지 않는다.
+//
+//   흐름: 직원이 aiAsk/{uid}/{askId} 에 {q, ts} 를 쓴다
+//        → 이 함수가 같은 노드의 a (실패면 err) 에 답을 쓴다
+//        → 직원 화면이 그 노드를 잠깐 폴링해 답을 띄운다.
+//
+//   uid 는 경로에서 온다. 남의 uid 로 쓰는 것은 RTDB 규칙이 막는다
+//   (aiAsk/$uid 는 auth.uid === $uid 만 읽고 쓸 수 있음).
+//   a·err·used 는 규칙의 $other validate:false 로 클라이언트가 못 쓴다 →
+//   직원이 답을 위조할 수 없다. 함수는 admin 이라 규칙을 지나친다.
+exports.aiAskAnswer = onValueCreated(
+  { ref: '/aiAsk/{uid}/{askId}', region: 'us-central1', secrets: [ANTHROPIC_API_KEY],
+    timeoutSeconds: 120, memory: '512MiB' },
+  async (event) => {
+    const uid = event.params.uid;
+    const askId = event.params.askId;
+    const rec = event.data.val();
+    if (!rec || rec.a || rec.err) return;          // 빈 노드 / 이미 처리됨
+    console.log('[ask] 1 start', uid, askId);
 
     const db = admin.database();
+    const node = db.ref('aiAsk/' + uid + '/' + askId);
+    const fail = (code) => node.child('err').set(code).catch(() => {});
 
-    // 2) 승인된 직원인지 + 프로필
+    const q = String(rec.q || '').trim().slice(0, ASK_MAX_LEN);
+    if (!q) { await fail('empty'); return; }
+
+    // 1) 승인된 직원인지 + 프로필 (규칙이 이미 막지만 서버에서 한 번 더 본다)
     let profile;
     try {
       const u = (await db.ref('users/' + uid).get()).val();
-      if (!u || u.status !== 'approved') { res.status(403).json({ error: 'not_approved' }); return; }
+      if (!u || u.status !== 'approved') { await fail('not_approved'); return; }
       profile = { name: u.name || '', branch: u.branch || '', role: u.role || '' };
-      if (!profile.name) { res.status(403).json({ error: 'no_name' }); return; }
-    } catch (e) { res.status(500).json({ error: 'profile' }); return; }
+      console.log('[ask] 2 profile', profile.name, profile.branch);
+      if (!profile.name) { await fail('no_name'); return; }
+    } catch (e) {
+      console.error('[ask] profile', e && e.message);
+      await fail('fail'); return;
+    }
 
-    // 3) 질문
-    const q = String((req.body && req.body.q) || '').trim().slice(0, ASK_MAX_LEN);
-    if (!q) { res.status(400).json({ error: 'empty' }); return; }
-
-    // 4) 하루 한도 — admin 권한이라 규칙 없이 서버만 읽고 쓴다
+    // 2) 하루 한도 — admin 권한이라 규칙 없이 서버만 읽고 쓴다
     const qKey = 'aiQuota/' + ymd(new Date()) + '/' + uid;
     let used = 0;
     try {
       const tx = await db.ref(qKey).transaction((cur) => (cur || 0) + 1);
       used = (tx.snapshot && tx.snapshot.val()) || 1;
     } catch (e) { console.warn('[ask] quota', e && e.message); }
+    console.log('[ask] 3 quota', used);
     if (used > ASK_DAILY_LIMIT) {
-      res.status(429).json({ error: 'quota', limit: ASK_DAILY_LIMIT });
+      await node.update({ err: 'quota', limit: ASK_DAILY_LIMIT }).catch(() => {});
       return;
     }
 
-    // 5) 컨텍스트 — 본인 지점·본인 것만
-    const [shifts, tasks] = await Promise.all([
-      myShifts(db, profile.branch, profile.name),
-      myTasks(db, profile.branch, profile.name),
-    ]);
-    const context = buildContext(profile, shifts, tasks);
+    // 3) 컨텍스트 — 본인 지점·본인 것만
+    let context;
+    try {
+      const [shifts, tasks] = await Promise.all([
+        myShifts(db, profile.branch, profile.name),
+        myTasks(db, profile.branch, profile.name),
+      ]);
+      context = buildContext(profile, shifts, tasks);
+      console.log('[ask] 4 context', context.length, 'chars');
+    } catch (e) {
+      console.error('[ask] context', e && e.message);
+      await fail('fail'); return;
+    }
 
-    // 6) Claude
+    // 4) Claude
     let answer = '';
     try {
       const Anthropic = require('@anthropic-ai/sdk');
-      const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+      const k = ANTHROPIC_API_KEY.value();
+      console.log('[ask] 5 key len', k ? k.length : 0);
+      const client = new Anthropic({ apiKey: k });
       const r = await client.messages.create({
         model: ASK_MODEL,
         max_tokens: 600,
@@ -363,17 +383,29 @@ exports.askAssistant = onRequest(
       answer = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
     } catch (e) {
       console.error('[ask] anthropic', e && e.message);
-      res.status(502).json({ error: 'upstream' });
+      // 실패 이유를 노드에 같이 남긴다 — 로그 조회가 막혀도 원인이 보인다.
+      await node.update({ err: 'upstream', msg: String((e && e.message) || e).slice(0, 250) }).catch(function(){});
       return;
     }
-    if (!answer) { res.status(502).json({ error: 'empty_answer' }); return; }
+    console.log('[ask] 6 answer', answer.length, 'chars');
+    if (!answer) { await fail('empty_answer'); return; }
 
-    // 7) 로그 — 무엇을 많이 묻는지가 다음 개발 우선순위가 된다 (월마트의 중복 신호와 같은 논리)
+    await node.update({ a: answer, used, limit: ASK_DAILY_LIMIT })
+      .catch((e) => console.error('[ask] save', e && e.message));
+
+    // 5) 로그 — 무엇을 많이 묻는지가 다음 개발 우선순위가 된다
     db.ref('aiLog').push({
       uid, name: profile.name, branch: profile.branch,
       q, a: answer.slice(0, 500), ts: Date.now(),
     }).catch(() => {});
 
-    res.json({ answer, used, limit: ASK_DAILY_LIMIT });
+    // 6) 우편함 정리 — 기록은 aiLog 에 남으므로 여기 쌓아둘 이유가 없다.
+    try {
+      const cut = Date.now() - 24 * 3600 * 1000;
+      const old = await db.ref('aiAsk/' + uid).orderByChild('ts').endAt(cut).limitToFirst(50).get();
+      const upd = {};
+      old.forEach((c) => { if (c.key !== askId) upd[c.key] = null; });
+      if (Object.keys(upd).length) await db.ref('aiAsk/' + uid).update(upd);
+    } catch (e) { console.warn('[ask] trim', e && e.message); }
   }
 );
