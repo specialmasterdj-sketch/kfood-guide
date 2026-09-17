@@ -213,6 +213,8 @@ const ASK_SYSTEM = [
   '',
   'Style: short and plain. Two or three sentences is usually enough. Talk like a helpful',
   'coworker, not a manual. No bullet lists unless you are listing several items.',
+  'Write PLAIN TEXT only — no markdown. The app shows your answer as-is, so **bold**',
+  'and *italics* just show up as literal asterisks. Use a plain dash for list items.',
   'Answer in the SAME language the employee wrote in (Korean, English, or Spanish).',
   '',
   'You know only about this store chain. If asked something unrelated to work, say briefly',
@@ -270,27 +272,294 @@ async function myTasks(db, branch, myName){
   } catch (e) { console.warn('[ask] myTasks', e && e.message); return null; }
 }
 
-function buildContext(profile, shifts, tasks){
+// 한국어·스페인어로 물어도 영어 상품명에 걸리게 하는 최소 사전.
+// 상품명은 전부 영어 대문자인데(HSE TOFU FIRM LARGE) 직원은 "두부 어디 있어?",
+// "donde esta la cebolla?" 로 묻는다. 완전한 번역 사전은 없어도 되고, 한인마트에서
+// 실제로 많이 찾는 것만 있으면 된다 — 없으면 "모른다"로 떨어지니 위험하지도 않다.
+// 빠진 낱말은 aiLog 를 보고 채운다.
+const ASK_GLOSSARY = {
+  // 두부·콩
+  '두부':['tofu'], '순두부':['tofu'], '유부':['fried','tofu'], '콩나물':['bean','sprout'],
+  '두유':['soy','milk'], '된장':['soybean','paste','doenjang'], '고추장':['gochujang','pepper','paste'],
+  '간장':['soy','sauce'], '쌈장':['ssamjang'],
+  // 김치·반찬
+  '김치':['kimchi'], '깍두기':['kkakdugi','radish'], '단무지':['pickled','radish'],
+  '김':['seaweed','laver','gim'], '미역':['seaweed','wakame'], '멸치':['anchovy'],
+  // 채소
+  '양파':['onion'], '마늘':['garlic'], '파':['green','onion','scallion'], '대파':['green','onion'],
+  '배추':['cabbage','napa'], '무':['radish','daikon'], '오이':['cucumber'], '당근':['carrot'],
+  '감자':['potato'], '고구마':['sweet','potato'], '호박':['squash','zucchini'], '버섯':['mushroom'],
+  '고추':['pepper','chili'], '상추':['lettuce'], '시금치':['spinach'], '깻잎':['perilla'],
+  // 고기·해산물
+  '소고기':['beef'], '쇠고기':['beef'], '차돌':['brisket','chadol'], '갈비':['galbi','rib'],
+  '불고기':['bulgogi'], '돼지':['pork'], '돼지고기':['pork'], '삼겹살':['pork','belly'],
+  '닭':['chicken'], '닭고기':['chicken'], '계란':['egg'], '달걀':['egg'],
+  '새우':['shrimp'], '생선':['fish'], '오징어':['squid'], '고등어':['mackerel'], '연어':['salmon'],
+  // 곡물·면
+  '쌀':['rice'], '현미':['brown','rice'], '라면':['ramen','noodle'], '국수':['noodle'],
+  '당면':['glass','noodle','vermicelli'], '떡':['rice','cake','tteok'], '만두':['dumpling'],
+  '밀가루':['flour'], '빵':['bread'],
+  // 양념·기름
+  '참기름':['sesame','oil'], '식용유':['oil'], '설탕':['sugar'], '소금':['salt'],
+  '식초':['vinegar'], '후추':['pepper'], '깨':['sesame'],
+  // 유제품·음료
+  '우유':['milk'], '치즈':['cheese'], '버터':['butter'], '요구르트':['yogurt'],
+  '물':['water'], '주스':['juice'], '커피':['coffee'], '차':['tea'],
+  '맥주':['beer'], '소주':['soju'], '막걸리':['makgeolli'], '와인':['wine'],
+  // 기타
+  '어묵':['fish','cake'], '스팸':['spam'], '참치':['tuna'], '아이스크림':['ice','cream'],
+  '과자':['snack','cracker'], '사과':['apple'], '바나나':['banana'], '딸기':['strawberry'],
+
+  // ---- 스페인어 (직원 다수) ----
+  'cebolla':['onion'], 'ajo':['garlic'], 'arroz':['rice'], 'pollo':['chicken'],
+  'carne':['beef','meat'], 'res':['beef'], 'cerdo':['pork'], 'puerco':['pork'],
+  'leche':['milk'], 'huevo':['egg'], 'huevos':['egg'], 'pan':['bread'], 'queso':['cheese'],
+  'aceite':['oil'], 'azucar':['sugar'], 'sal':['salt'], 'vinagre':['vinegar'],
+  'camaron':['shrimp'], 'camarones':['shrimp'], 'pescado':['fish'], 'atun':['tuna'],
+  'fideos':['noodle'], 'tallarines':['noodle'], 'papa':['potato'], 'papas':['potato'],
+  'zanahoria':['carrot'], 'pepino':['cucumber'], 'lechuga':['lettuce'], 'repollo':['cabbage'],
+  'hongo':['mushroom'], 'hongos':['mushroom'], 'manzana':['apple'], 'platano':['banana'],
+  'cerveza':['beer'], 'vino':['wine'], 'agua':['water'], 'jugo':['juice'], 'cafe':['coffee'],
+  'mantequilla':['butter'], 'helado':['ice','cream'], 'harina':['flour'], 'salsa':['sauce'],
+  'frijol':['bean'], 'frijoles':['bean'], 'maiz':['corn'], 'pimiento':['pepper'],
+};
+function glossaryHits(term){
+  if (ASK_GLOSSARY[term]) return ASK_GLOSSARY[term];
+  // 한국어는 조사가 붙는다("두부가", "양파는") — 사전 낱말로 시작하면 같은 것으로 본다.
+  for (const k of Object.keys(ASK_GLOSSARY)) {
+    if (k.length >= 2 && term.indexOf(k) === 0) return ASK_GLOSSARY[k];
+  }
+  return null;
+}
+
+// ---- 질문에서 검색어 뽑기 -----------------------------------------------------
+// 상품명은 영어 대문자("HSE TOFU FIRM LARGE 4PC 19OZ")인데 직원은 한국어·스페인어로
+// 묻는다. 완전한 번역 사전은 없으므로 ① 질문에 든 낱말을 그대로 상품명에서 찾고
+// ② 음성재고가 쌓아 둔 한국어→영어 별칭(inventory/voiceAlias)으로 한 번 더 찾는다.
+// 못 찾으면 아무것도 넣지 않는다 — 억지로 끼워 넣으면 엉뚱한 상품을 답하게 된다.
+const ASK_STOP = new Set([
+  '어디','있어','있나','있어요','뭐','무엇','얼마나','남았','남았어','언제','유통기한',
+  '재고','매대','위치','알려줘','알려','주세요','오늘','내일','지금','개수','수량',
+  'where','is','are','the','a','an','how','many','much','what','when','left','stock',
+  'location','shelf','expire','expiry','date','today','tomorrow','my','me','do','does',
+  'donde','esta','estan','cuanto','cuantos','hay','que','el','la','los','las','de','en',
+  'fecha','caducidad','ubicacion','estante','hoy','manana',
+]);
+function askTerms(q){
+  const raw = String(q || '').toLowerCase().split(/[^0-9a-z가-힣]+/).filter(Boolean);
+  const out = [];
+  for (const w of raw) {
+    if (w.length < 2 || ASK_STOP.has(w)) continue;
+    if (out.indexOf(w) < 0) out.push(w);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+// 한국어로 물으면 영어 상품명에 안 걸린다. 음성재고 별칭이 유일하게 있는 다리라
+// 그걸 태워 검색어를 넓힌다 (별칭은 작아서 통째로 읽어도 부담 없다).
+async function expandTerms(db, terms){
+  if (!terms.length) return terms;
+  const out = terms.slice();
+  for (const t of terms) {
+    const g = glossaryHits(t);
+    if (g) for (const w of g) if (out.indexOf(w) < 0) out.push(w);
+  }
+  try {
+    const al = (await db.ref('inventory/voiceAlias').get()).val() || {};
+    for (const dept of Object.keys(al)) {
+      const m = al[dept] || {};
+      for (const k of Object.keys(m)) {
+        const from = String(k || '').toLowerCase();
+        if (!terms.some((t) => from.indexOf(t) >= 0)) continue;
+        const to = String((m[k] && m[k].t) || '').toLowerCase();
+        for (const w of to.split(/[^0-9a-z가-힣]+/)) {
+          if (w.length >= 2 && out.indexOf(w) < 0) out.push(w);
+        }
+      }
+    }
+  } catch (e) { console.warn('[ask] alias', e && e.message); }
+  return out.slice(0, 12);
+}
+function hitsTerms(name, terms){
+  if (!terms.length) return false;
+  const n = String(name || '').toLowerCase();
+  return terms.some((t) => n.indexOf(t) >= 0);
+}
+// 오너·임원은 branch 가 '*' 라 지점 자료를 못 고른다. 본사가 있는 헐리우드를 기본으로
+// 삼되, 어느 지점 자료인지 컨텍스트에 밝혀 오해가 없게 한다.
+function branchFor(profile){
+  const b = profile && profile.branch;
+  return (!b || b === '*') ? 'HOLLYWOOD' : b;
+}
+
+// ---- 유통기한: 임박 목록 + 질문에 걸린 상품 ------------------------------------
+// 한 번만 읽어서 둘 다 만든다 (지점당 수백 건이라 두 번 읽을 이유가 없다).
+// bay 는 유통기한 앱에서 찍은 매대 위치 — "그 상품 어디 있어?" 의 유일한 근거다.
+async function expiryInfo(db, branch, terms){
+  const res = { soon: null, hits: null, total: 0 };
+  try {
+    const d = (await db.ref('expiry/' + branch + '/products').get()).val();
+    if (!d) return res;
+    const today = ymd(new Date());
+    const cut = ymd(new Date(Date.now() + 14 * 86400000));
+    const rows = [];
+    for (const id of Object.keys(d)) {
+      const p = d[id];
+      if (!p || !p.name) continue;
+      if (p.status && p.status !== 'active') continue;
+      rows.push(p);
+    }
+    res.total = rows.length;
+    const line = (p) => {
+      const bits = [String(p.name).slice(0, 60)];
+      if (p.expiry) bits.push('유통기한 ' + p.expiry + (p.expiry < today ? ' (지남)' : ''));
+      bits.push('수량 ' + (p.qty != null ? p.qty : 1));
+      if (p.bay) bits.push('매대 ' + p.bay);
+      return '- ' + bits.join(' | ');
+    };
+    const soon = rows.filter((p) => p.expiry && p.expiry <= cut)
+                     .sort((a, b) => String(a.expiry).localeCompare(String(b.expiry)))
+                     .slice(0, 20);
+    if (soon.length) res.soon = soon.map(line);
+    const hits = rows.filter((p) => hitsTerms(p.name, terms)).slice(0, 8);
+    if (hits.length) res.hits = hits.map(line);
+  } catch (e) { console.warn('[ask] expiryInfo', e && e.message); }
+  return res;
+}
+
+// ---- 헐리우드 매대: 지금 품절로 보고된 자리 ------------------------------------
+async function oosInfo(db, branch, terms){
+  const res = { count: 0, hits: null };
+  if (branch !== 'HOLLYWOOD') return res;          // 도면이 헐리우드에만 있다
+  try {
+    const d = (await db.ref('floorplan/matdae-hollywood/outOfStock').get()).val();
+    if (!d) return res;
+    const rows = Object.keys(d).map((k) => d[k]).filter((r) => r && r.name);
+    res.count = rows.length;
+    const hits = rows.filter((r) => hitsTerms(r.name, terms))
+                     .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+                     .slice(0, 8);
+    if (hits.length) {
+      res.hits = hits.map((r) => '- ' + String(r.name).slice(0, 60) +
+        ' | 매대 ' + (r.bay || '?') +
+        ' | ' + (r.qty === 0 ? '품절' : ('남은 수량 ' + r.qty)) +
+        ' | 보고 ' + (r.at || ''));
+    }
+  } catch (e) { console.warn('[ask] oosInfo', e && e.message); }
+  return res;
+}
+
+// ---- 음성 재고: 마지막으로 센 수량 ---------------------------------------------
+// ⚠️ 날짜를 반드시 함께 준다. 음성재고 앱이 거의 안 쓰여 자료가 몇 달씩 묵는데,
+//    이걸 현재 재고로 오해하면 발주가 틀어진다.
+async function countsInfo(db, branch, terms){
+  const res = { date: null, hits: null };
+  if (!terms.length) return res;
+  try {
+    const snap = await db.ref('inventory/voice/' + branch).orderByKey().limitToLast(1).get();
+    const byDate = snap.val();
+    if (!byDate) return res;
+    const date = Object.keys(byDate)[0];
+    res.date = date;
+    const rows = [];
+    const depts = byDate[date] || {};
+    for (const dept of Object.keys(depts)) {
+      const recs = depts[dept] || {};
+      for (const id of Object.keys(recs)) {
+        const r = recs[id];
+        if (r && r.item && hitsTerms(r.item, terms)) {
+          rows.push('- ' + String(r.item).slice(0, 60) + ' | ' + r.qty + ' ' + (r.unit || '') +
+                    ' | 부서 ' + dept);
+        }
+      }
+      if (rows.length >= 8) break;
+    }
+    if (rows.length) res.hits = rows.slice(0, 8);
+  } catch (e) { console.warn('[ask] countsInfo', e && e.message); }
+  return res;
+}
+
+// 네 가지를 한꺼번에 — 서로 독립이라 같이 읽는다.
+async function gatherExtra(db, branch, q){
+  const base = askTerms(q);
+  const terms = await expandTerms(db, base);
+  const [exp, oos, cnt] = await Promise.all([
+    expiryInfo(db, branch, terms),
+    oosInfo(db, branch, terms),
+    countsInfo(db, branch, terms),
+  ]);
+  return { branch, terms, exp, oos, cnt };
+}
+
+function buildContext(profile, shifts, tasks, extra){
   const now = new Date();
   const day = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][now.getDay()];
   const parts = [];
   parts.push('## Who is asking');
   parts.push('Name: ' + profile.name + ' | Store: ' + profile.branch + ' | Role: ' + (profile.role || '(not set)'));
   parts.push('Today: ' + ymd(now) + ' (' + day + ')');
+  if (extra && extra.branch && extra.branch !== profile.branch) {
+    parts.push('Store data below is for ' + extra.branch + ' (they cover all stores, so we default to the HQ store).');
+  }
   parts.push('');
   parts.push('## Their work schedule (next 7 days)');
   parts.push(shifts ? shifts.join('\n') : '(no schedule found for this person — tell them to check with their manager)');
   parts.push('');
   parts.push('## Their tasks today');
   parts.push(tasks ? tasks.join('\n') : '(no tasks assigned to them today)');
+
+  const e = extra || {};
+  const exp = e.exp || {}, oos = e.oos || {}, cnt = e.cnt || {};
+
+  // 유통기한 임박 — 질문과 상관없이 늘 넣는다. 가장 자주 묻고 가장 돈이 걸린 것.
+  parts.push('');
+  parts.push('## Items expiring within 14 days (' + (e.branch || '') + ')');
+  if (exp.soon) {
+    parts.push(exp.soon.join('\n'));
+    parts.push('(Registered in the expiry app. ' + exp.total + ' items tracked in total.)');
+  } else {
+    parts.push('(none registered as expiring soon)');
+  }
+
+  // 질문에 걸린 상품 — 위치·유통기한·수량이 여기 다 들어 있다.
+  if (exp.hits) {
+    parts.push('');
+    parts.push('## Products matching their question');
+    parts.push(exp.hits.join('\n'));
+    parts.push('The shelf location code looks like R4-D03. In Korean call it 매대 (never 매체);');
+    parts.push('in Spanish, estante. It comes from the expiry app,');
+    parts.push('so it is where that item was last registered — good enough to send someone to,');
+    parts.push('but say it may have moved.');
+  }
+
+  // 헐리우드 품절 보고
+  if (oos.count) {
+    parts.push('');
+    parts.push('## Out-of-stock reports right now (Hollywood shelves)');
+    parts.push(oos.count + ' spots are reported empty or low.');
+    if (oos.hits) parts.push(oos.hits.join('\n'));
+  }
+
+  // 음성 재고 — 날짜를 반드시 붙여 말하게 한다.
+  if (cnt.hits) {
+    parts.push('');
+    parts.push('## Last counted quantities');
+    parts.push('These were counted on ' + cnt.date + ' with the voice-stock app. This may be old.');
+    parts.push('ALWAYS say the count date when you use these numbers. Never present them as');
+    parts.push('current stock on hand.');
+    parts.push(cnt.hits.join('\n'));
+  }
+
   parts.push('');
   parts.push('## Which app does what');
   parts.push(APP_GUIDE.map((a) => '- ' + a[0] + ' — ' + a[1]).join('\n'));
   parts.push('');
   parts.push('## Not available');
-  parts.push('You do NOT have: product shelf locations, prices, return/exchange policy,');
-  parts.push('other people\'s schedules, other stores\' data, inventory counts.');
-  parts.push('If asked about any of these, say you do not have that and to ask a manager.');
+  parts.push('You do NOT have: prices, discounts, return/exchange policy, other people\'s');
+  parts.push('schedules, other stores\' data, or any product that is not listed above.');
+  parts.push('Shelf locations exist ONLY for items registered in the expiry app — if an item');
+  parts.push('is not in the lists above, you do not know where it is. Say so and tell them to');
+  parts.push('ask a manager. Never guess an aisle or bay code.');
   return parts.join('\n');
 }
 
@@ -356,11 +625,13 @@ exports.aiAskAnswer = onValueCreated(
     // 3) 컨텍스트 — 본인 지점·본인 것만
     let context;
     try {
-      const [shifts, tasks] = await Promise.all([
+      const branch = branchFor(profile);
+      const [shifts, tasks, extra] = await Promise.all([
         myShifts(db, profile.branch, profile.name),
         myTasks(db, profile.branch, profile.name),
+        gatherExtra(db, branch, q),          // 유통기한·매대 위치·품절·마지막 재고
       ]);
-      context = buildContext(profile, shifts, tasks);
+      context = buildContext(profile, shifts, tasks, extra);
       console.log('[ask] 4 context', context.length, 'chars');
     } catch (e) {
       console.error('[ask] context', e && e.message);
