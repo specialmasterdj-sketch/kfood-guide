@@ -1374,12 +1374,19 @@ button{font-family:inherit;cursor:pointer}
   const KM_ASK_POLL_MS = 1200;
   const KM_ASK_TIMEOUT_MS = 75000;   // 콜드 스타트(~20초) + 답 생성 여유
 
-  function kmAskUid(){
+  // uid 는 ID 토큰에서 꺼낸다.
+  //   ⚠️ 이 페이지의 window.__fb 에는 auth 가 없다({ db, ref, onValue, ... } 뿐) —
+  //   2026-09-17 "로그인이 필요합니다"가 계속 뜨던 원인. 토큰은 fb-auth-fetch.js 가
+  //   이미 관리하므로 그 안의 uid(user_id/sub)를 쓰는 게 가장 확실하다.
+  function kmAskUidFromToken(token){
     try {
-      const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
-      if (u && u.uid && !u.isAnonymous) return u.uid;
-    } catch(e){}
-    return null;
+      let p = String(token || '').split('.')[1];
+      if (!p) return null;
+      p = p.split('-').join('+').split('_').join('/');
+      while (p.length % 4) p += '=';
+      const o = JSON.parse(atob(p));
+      return o.user_id || o.sub || null;
+    } catch(e){ console.warn('[ask] uid decode', e); return null; }
   }
 
   const KM_ASK_I18N = {
@@ -1488,11 +1495,10 @@ button{font-family:inherit;cursor:pointer}
     ans.innerHTML = '<span class="ask-thinking">' + kmAskT('thinking') + '</span>';
 
     try {
-      const uid = kmAskUid();
-      if (!uid) { show(kmAskT('eAuth'), true); return; }
-      // 토큰을 미리 깨워둔다 — fetch 패치가 auth= 를 붙이려면 필요하다.
       const token = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
       if (!token) { show(kmAskT('eAuth'), true); return; }
+      const uid = kmAskUidFromToken(token);
+      if (!uid) { show(kmAskT('eAuth'), true); return; }
 
       const base = KM_ASK_DB + '/aiAsk/' + uid;
 
