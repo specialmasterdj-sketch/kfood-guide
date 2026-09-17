@@ -449,6 +449,38 @@ async function oosInfo(db, branch, terms){
   return res;
 }
 
+// ---- 사진에서 읽어낸 매대 상품 (bayIndex 가 만든 목록) --------------------------
+// 유통기한 앱의 bay 는 "등록된 상품"만 커버한다. 이건 그 자리에 실제로 진열된 것
+// 전부가 대상이라 훨씬 넓고, 포장지 한국어가 그대로 들어 있어 한국어 질문에도
+// 사전 없이 걸린다. 다만 AI 가 사진에서 읽은 것이라 틀린 이름이 섞인다 →
+// "사진으로 확인한 것"이라고 밝히고, 확실치 않으면 그렇게 말하도록 한다.
+async function bayItemInfo(db, branch, terms){
+  const res = { hits: null, bays: 0 };
+  if (branch !== 'HOLLYWOOD' || !terms.length) return res;   // 도면이 헐리우드에만 있다
+  try {
+    const d = (await db.ref('floorplan/matdae-hollywood/bayItems').get()).val();
+    if (!d) return res;
+    const found = [];
+    for (const bayId of Object.keys(d)) {
+      const rec = d[bayId];
+      if (!rec || !rec.items) continue;
+      res.bays++;
+      for (const it of rec.items) {
+        const hay = String((it && it.n) || '') + ' ' + String((it && it.e) || '');
+        if (hitsTerms(hay, terms)) {
+          found.push('- ' + String(it.n).slice(0, 60) +
+                     (it.e ? ' (' + String(it.e).slice(0, 40) + ')' : '') +
+                     ' | 매대 ' + bayId);
+          break;                       // 한 자리에서 한 줄이면 충분하다
+        }
+      }
+      if (found.length >= 10) break;
+    }
+    if (found.length) res.hits = found;
+  } catch (e) { console.warn('[ask] bayItemInfo', e && e.message); }
+  return res;
+}
+
 // ---- 음성 재고: 마지막으로 센 수량 ---------------------------------------------
 // ⚠️ 날짜를 반드시 함께 준다. 음성재고 앱이 거의 안 쓰여 자료가 몇 달씩 묵는데,
 //    이걸 현재 재고로 오해하면 발주가 틀어진다.
@@ -483,12 +515,13 @@ async function countsInfo(db, branch, terms){
 async function gatherExtra(db, branch, q){
   const base = askTerms(q);
   const terms = await expandTerms(db, base);
-  const [exp, oos, cnt] = await Promise.all([
+  const [exp, oos, cnt, shelf] = await Promise.all([
     expiryInfo(db, branch, terms),
     oosInfo(db, branch, terms),
     countsInfo(db, branch, terms),
+    bayItemInfo(db, branch, terms),
   ]);
-  return { branch, terms, exp, oos, cnt };
+  return { branch, terms, exp, oos, cnt, shelf };
 }
 
 function buildContext(profile, shifts, tasks, extra){
@@ -532,6 +565,17 @@ function buildContext(profile, shifts, tasks, extra){
     parts.push('but say it may have moved.');
   }
 
+  // 사진에서 읽어낸 자리 — 유통기한 앱에 없는 상품의 위치는 이것뿐이다
+  const shelf = e.shelf || {};
+  if (shelf.hits) {
+    parts.push('');
+    parts.push('## Shelf spots matching their question (read from shelf photos)');
+    parts.push(shelf.hits.join('\n'));
+    parts.push('These came from AI reading photos of the shelves, so a name can be slightly');
+    parts.push('off and stock may have moved since the photo. Give the bay code, but say it');
+    parts.push('is from the shelf photo and they should look around that spot.');
+  }
+
   // 헐리우드 품절 보고
   if (oos.count) {
     parts.push('');
@@ -557,9 +601,9 @@ function buildContext(profile, shifts, tasks, extra){
   parts.push('## Not available');
   parts.push('You do NOT have: prices, discounts, return/exchange policy, other people\'s');
   parts.push('schedules, other stores\' data, or any product that is not listed above.');
-  parts.push('Shelf locations exist ONLY for items registered in the expiry app — if an item');
-  parts.push('is not in the lists above, you do not know where it is. Say so and tell them to');
-  parts.push('ask a manager. Never guess an aisle or bay code.');
+  parts.push('Shelf locations come ONLY from the two lists above (expiry app registrations and');
+  parts.push('shelf photos). If an item is in neither, you do not know where it is. Say so and');
+  parts.push('tell them to ask a manager. Never guess an aisle or bay code.');
   return parts.join('\n');
 }
 
@@ -678,5 +722,100 @@ exports.aiAskAnswer = onValueCreated(
       old.forEach((c) => { if (c.key !== askId) upd[c.key] = null; });
       if (Object.keys(upd).length) await db.ref('aiAsk/' + uid).update(upd);
     } catch (e) { console.warn('[ask] trim', e && e.message); }
+  }
+);
+
+// =============================================================================
+// 📷 베이 사진 → 상품 목록 (2026-09-17)
+// 직원이 매대관리 앱으로 찍어 올린 베이 전체 사진 250장이 이미 DB 에 있다.
+// 그 사진을 읽어 "이 자리에 무엇이 있는지" 목록으로 만들어 두면, 어시스턴트가
+// "신라면 어디 있어?" 에 자리 번호로 답할 수 있다.
+//
+// 지금까지 위치를 아는 근거는 유통기한 앱에 등록된 상품의 bay 뿐이라 매대에
+// 있는 것의 일부만 커버됐다. 사진은 그 자리에 실제로 진열된 것 전부가 찍혀 있다.
+// 포장지에 한국어가 그대로 적혀 있어 한국어 질문에도 사전 없이 걸린다.
+//
+// 한 장씩 처리한다 — 250장을 한 번에 돌리면 한 건이 터졌을 때 어디서 멈췄는지
+// 알 수 없고, 함수 시간 제한에도 걸린다. 요청 노드에 베이 코드를 쓰면 그 한 장만
+// 처리하고 요청을 지운다. 진행 상황은 bayItems 를 보면 그대로 보인다.
+//
+// 비용: 사진 1장당 약 $0.012 (Sonnet, 960x1280 기준). 250장 전체 약 $3.
+// 한 번만 하면 되고, 진열이 바뀐 자리만 다시 돌리면 된다.
+// =============================================================================
+const BAY_INDEX_MODEL = 'claude-sonnet-5';
+const BAY_INDEX_MAX = 40;          // 한 자리에서 뽑을 상품 수 상한
+
+const BAY_INDEX_SYSTEM = [
+  'You look at a photo of one shelf section in a Korean grocery store and list the',
+  'products you can actually read on the packaging.',
+  '',
+  'Rules:',
+  '1. ONLY list what you can genuinely read or clearly recognize. This list is used to',
+  '   send employees to a shelf — a made-up product sends them to the wrong place.',
+  '   If a package is blurry, turned away, or too small to read, leave it out.',
+  '2. Write the name as printed. Korean packaging -> Korean. English packaging -> English.',
+  '3. Include the brand when it is part of how people ask for it (신라면, 새우깡, ASSI).',
+  '4. Do not include shelf tags, price labels, barcodes, or store signage.',
+  '5. Do not repeat the same product twice, even if there are several facings.',
+  '',
+  'Reply with ONLY a JSON object, no markdown fence, no commentary:',
+  '{"items":[{"n":"<name as printed>","e":"<English or romanized name, or empty string>"}]}',
+].join('\n');
+
+exports.bayIndex = onValueCreated(
+  { ref: '/floorplan/matdae-hollywood/indexReq/{bayId}', region: 'us-central1',
+    secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 300, memory: '1GiB' },
+  async (event) => {
+    const bayId = event.params.bayId;
+    const db = admin.database();
+    const reqRef = db.ref('floorplan/matdae-hollywood/indexReq/' + bayId);
+    const outRef = db.ref('floorplan/matdae-hollywood/bayItems/' + bayId);
+    const fail = async (code, msg) => {
+      await outRef.set({ err: code, msg: String(msg || '').slice(0, 200), at: Date.now() }).catch(() => {});
+      await reqRef.remove().catch(() => {});
+    };
+
+    console.log('[bayIndex] start', bayId);
+    let b64, mime;
+    try {
+      const url = (await db.ref('floorplan/matdae-hollywood/bayPhotos/' + bayId + '/dataURL').get()).val();
+      if (!url) { await fail('no_photo', ''); return; }
+      const m = String(url).match(/^data:(image\/[a-z]+);base64,(.+)$/);
+      if (!m) { await fail('bad_photo', String(url).slice(0, 40)); return; }
+      mime = m[1]; b64 = m[2];
+    } catch (e) { await fail('read', e && e.message); return; }
+
+    let items = null;
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+      const r = await client.messages.create({
+        model: BAY_INDEX_MODEL,
+        max_tokens: 1500,
+        system: BAY_INDEX_SYSTEM,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
+            { type: 'text', text: 'Shelf section ' + bayId + '. List the products you can read.' },
+          ],
+        }],
+      });
+      const raw = (r.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim()
+        .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(raw);
+      items = (parsed.items || [])
+        .filter((it) => it && it.n && String(it.n).trim())
+        .slice(0, BAY_INDEX_MAX)
+        .map((it) => ({ n: String(it.n).trim().slice(0, 70), e: String(it.e || '').trim().slice(0, 70) }));
+    } catch (e) {
+      console.error('[bayIndex] anthropic', bayId, e && e.message);
+      await fail('upstream', e && e.message); return;
+    }
+
+    if (!items || !items.length) { await fail('empty', ''); return; }
+    await outRef.set({ items, n: items.length, at: Date.now(), model: BAY_INDEX_MODEL }).catch(() => {});
+    await reqRef.remove().catch(() => {});
+    console.log('[bayIndex] done', bayId, items.length, 'items');
   }
 );
