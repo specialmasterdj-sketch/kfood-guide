@@ -262,7 +262,7 @@ const I18N = {
  dEmpty:{ko:'이 달 기록 없음 — 위에서 하루씩 추가하세요',en:'No records this month — add a day above',es:'Sin registros este mes — agregue arriba'},
  dChart:{ko:'② 이 달 일별 추이',en:'② This month, day by day',es:'② Este mes, día a día'},
  dBulkH:{ko:'③ 일괄 붙여넣기',en:'③ Bulk paste',es:'③ Pegar en lote'},
- dBulkHint:{ko:'한 줄에: [지점,][부서,]YYYY-MM-DD,금액 — 부서를 빼면 총매출 · 엑셀 복사 그대로 OK',en:'Per line: [branch,][dept,]YYYY-MM-DD,amount — no dept = total · Excel paste OK',es:'Por línea: [sucursal,][depto,]YYYY-MM-DD,monto — sin depto = total · pegar de Excel OK'},
+ dBulkHint:{ko:'POS 요약 보고서(SUMMARY-SALE REPORT)를 통째로 붙여넣어도 됩니다 · 또는 한 줄에: [지점,][부서,]YYYY-MM-DD,금액',en:'Per line: [branch,][dept,]YYYY-MM-DD,amount — no dept = total · Excel paste OK',es:'Por línea: [sucursal,][depto,]YYYY-MM-DD,monto — sin depto = total · pegar de Excel OK'},
  ddTitle:{ko:'부서별 일일 매출',en:'Daily sales by department',es:'Ventas diarias por departamento'},
  ddEmpty:{ko:'이 달 부서별 기록이 없어요 — 아래 일괄 붙여넣기에 "부서,날짜,금액" 으로 넣으세요 (예: PRODUCE,2026-09-16,1250)',en:'No department records this month — paste "dept,date,amount" below (e.g. PRODUCE,2026-09-16,1250)',es:'Sin registros por departamento — pegue "depto,fecha,monto" abajo (ej. PRODUCE,2026-09-16,1250)'},
  ddDept:{ko:'부서',en:'Dept',es:'Depto'},
@@ -956,8 +956,166 @@ window.dlyDel = async function(dt){
     toast('삭제됨'); await dlyReload(); }
   catch(e){ alert('삭제 실패: '+(e.message||e)); }
 };
+// ---- 📄 POS "SUMMARY-SALE REPORT" 통째 붙여넣기 ----
+// 2026-09-18 전무님: POS 일일 보고서를 그대로 ③ 칸에 붙여넣었는데 "부서,날짜,금액" 형식이
+// 아니라서 전부 형식 오류가 났다. 보고서 안에 지점·날짜·금액·부서가 다 있으니 그걸 읽는다.
+//   · 여러 지점 보고서를 이어 붙여도 된다 — 제목(SUMMARY-SALE REPORT)마다 끊는다.
+//   · 일일 매출 = TOTAL 줄 (세금 포함) — 전무님 지정.
+//   · 부서 = CATEGORIES-SALES 에서 반품(CATEGORIES-RETURNS)을 뺀 순매출.
+//   · 보고서 분류 전체 합계는 SUBTOTAL(세전·할인·반품 반영)과 맞아야 한다 → 저장 전에 검산.
+//
+// 앱 부서 ↔ POS 분류 — 전무님 2026-09-18 지정: "부서는 월 매출과 같이".
+// 월 부서매출은 담당자가 있는 부서만 보고 나머지는 "총매출 − 부서 합계"로 둔다.
+// 그래서 그로서리·냉동·음료·생활용품은 부서로 저장하지 않는다 (나머지로 자동 계산).
+//   ['앱 부서', 'group'=POS 큰 분류 합계 | 'cat'=세부 줄, [이름들]]
+const POS_DEPT_MAP = [
+  ['PRODUCE',   'group', ['PRODUCE']],                                  // 야채+과일
+  ['MEAT',      'cat',   ['MEAT','MARINATED MEAT']],                    // 양념고기 포함
+  ['SEAFOOD',   'cat',   ['SEAFOOD']],
+  ['SUSHI',     'cat',   ['SUSHI']],
+  ['K_FOOD',    'cat',   ['BANCHAN','READY-TO-EAT','KIMCHI','GIMBAP']], // 김밥·김치 포함
+];
+function _posFindBranch(chunk){
+  const sm=chunk.match(/STORE:\s*(.+)/i);
+  if(sm){
+    const tok=sm[1].replace(/KIMCHI\s*MART/i,'').replace(/^[\s\-–—:#]+/,'').trim();
+    const b=tok && _matchBranch(tok); if(b) return { branch:b, storeText:sm[1].trim() };
+  }
+  // STORE 줄로 못 찾으면 보고서 본문(주소 등)에서 지점 이름을 찾는다
+  const up=chunk.toUpperCase();
+  for(const x of BRANCHES){
+    const name=String(x.id).replace(/_/g,' ');
+    if(up.indexOf(name)>=0 || (x.ko && chunk.indexOf(x.ko)>=0)) return { branch:x.id, storeText:(sm?sm[1].trim():name) };
+  }
+  const flat=up.replace(/[\s_]+/g,'');   // 띄어쓰기가 다른 경우 (LAS OLAS ↔ LASOLAS)
+  for(const x of BRANCHES){ if(flat.indexOf(String(x.id).toUpperCase().replace(/[\s_]+/g,''))>=0) return { branch:x.id, storeText:(sm?sm[1].trim():x.id) }; }
+  return { branch:null, storeText:(sm?sm[1].trim():'') };
+}
+function _posNum(x){ return parseFloat(String(x).replace(/[,\[\]\s$]/g,'')); }
+// "TOTALS" 칸의 한 줄 값 (SUBTOTAL·TAX·TOTAL …) — 이름이 정확히 같은 첫 줄
+function _posLine(lines, from, name){
+  const re=new RegExp('^\\s*'+name.replace(/ /g,'\\s+')+'\\s+\\[?\\s*\\$?\\s*(-?[\\d,]+(?:\\.\\d+)?)\\s*\\]?\\s*$','i');
+  for(let i=from; i<lines.length; i++){ const m=lines[i].match(re); if(m) return _posNum(m[1]); if(/^-{5,}/.test(lines[i]) && i>from) break; }
+  return null;
+}
+// CATEGORIES-SALES / CATEGORIES-RETURNS 칸 → { groups:{큰분류:합계}, cats:{세부:금액}, catGroup:{세부:큰분류} }
+function _posCategories(lines, title){
+  const out={ groups:{}, cats:{}, catGroup:{} };
+  const start=lines.findIndex(l=>l.trim().toUpperCase()===title);
+  if(start<0) return out;
+  let group=null;
+  for(let i=start+1; i<lines.length; i++){
+    const l=lines[i];
+    if(/^\s*-{5,}/.test(l)) break;                        // 칸 끝
+    if(!l.trim()) continue;
+    const tot=l.match(/^\s*\[TOTAL\]\s*\[?\s*(-?[\d,]+\.\d{2})\s*\]?\s*$/i);
+    if(tot){ if(group) out.groups[group]=_posNum(tot[1]); continue; }
+    // 세부 줄: "  VEGETABLE (F)  (457)   1,235.50" / "(F)REFRIGERATED-N...,RICECAKE(80)365.46"
+    const cat=l.match(/^\s*(.+)\((\d+)\)\s*(-?[\d,]*\.\d{2})\s*$/);
+    if(cat && group){
+      const nm=cat[1].replace(/\(F\)/gi,' ').replace(/\s+/g,' ').trim().toUpperCase();
+      out.cats[nm]=(out.cats[nm]||0)+_posNum(cat[3]); out.catGroup[nm]=group; continue;
+    }
+    if(!/\d\.\d{2}\s*$/.test(l)) group=l.trim().toUpperCase();   // 금액 없는 줄 = 큰 분류 이름
+  }
+  return out;
+}
+function _parsePosReports(text){
+  const chunks=String(text).split(/(?=SUMMARY-SALE REPORT)/i).filter(c=>/SUMMARY-SALE REPORT/i.test(c));
+  return chunks.map(c=>{
+    const r={};
+    const lines=c.split(/\r?\n/);
+    // 날짜 — 제목 바로 아래 "Thu 09/17/2026". 아래 FIRST/LAST 거래 시각에도 날짜가 있으니 맨 처음 것.
+    const dm=c.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if(dm) r.date=dm[3]+'-'+String(dm[1]).padStart(2,'0')+'-'+String(dm[2]).padStart(2,'0');
+    const fb=_posFindBranch(c); r.branch=fb.branch; r.storeText=fb.storeText;
+    const ti=Math.max(0, lines.findIndex(l=>/^\s*TOTALS\s*$/i.test(l)));
+    r.total=_posLine(lines, ti, 'TOTAL');        // 세금 포함 — 일일 매출
+    r.subtotal=_posLine(lines, ti, 'SUBTOTAL');  // 세전 순매출 — 부서 합계와 맞아야 함
+    r.tax=_posLine(lines, ti, 'TAX');
+    // 부서
+    const sales=_posCategories(lines, 'CATEGORIES-SALES');
+    const rets=_posCategories(lines, 'CATEGORIES-RETURNS');
+    if(Object.keys(sales.groups).length){
+      const net={ groups:Object.assign({}, sales.groups), cats:Object.assign({}, sales.cats) };
+      Object.keys(rets.groups).forEach(g=>{ net.groups[g]=(net.groups[g]||0)+rets.groups[g]; });
+      Object.keys(rets.cats).forEach(k=>{ net.cats[k]=(net.cats[k]||0)+rets.cats[k]; });
+      const depts={};
+      POS_DEPT_MAP.forEach(([dk, kind, names])=>{
+        let v=0, hit=false;
+        names.forEach(n=>{
+          const src=(kind==='group')?net.groups:net.cats;
+          if(src[n]!=null){ v+=src[n]; hit=true; }
+        });
+        if(hit) depts[dk]=Math.round(v*100)/100;
+      });
+      r.depts=depts;
+      r.deptSum=Math.round(Object.values(depts).reduce((a,v)=>a+v,0)*100)/100;
+      // 검산용 — 보고서 분류 전체 합계 (SUBTOTAL 과 같아야 제대로 읽은 것)
+      r.catSum=Math.round(Object.values(net.groups).reduce((a,v)=>a+v,0)*100)/100;
+      // 보고서가 잘려 부서 일부만 읽혔으면 부서는 저장하지 않는다 — 빠진 부서가 0 으로 잡히면
+      // 평가(부서 매출 30점)가 틀어진다. SUBTOTAL 을 못 읽었으면 검산 불가라 그대로 둔다.
+      r.deptOk = (r.subtotal==null) || Math.abs(r.catSum-r.subtotal)<1;
+      // 원본 분류도 남긴다(나중에 부서 나누는 법이 바뀌어도 다시 붙여넣지 않고 재계산할 수 있게).
+      // ⚠️ Firebase 키에는 . / # $ [ ] 가 못 들어간다 — MEAT/SEAFOOD, VIN...SYRUP 같은 이름을
+      //    그대로 넣으면 그날 저장이 통째로 실패한다.
+      const _k=o=>{ const x={}; Object.keys(o).forEach(k=>{ x[k.replace(/[.#$\[\]\/]/g,'_')]=Math.round(o[k]*100)/100; }); return x; };
+      r.pos={ groups:_k(net.groups), cats:_k(net.cats), subtotal:r.subtotal, tax:r.tax, total:r.total };
+    }
+    return r;
+  });
+}
+async function dlyBulkReports(raw){
+  const reps=_parsePosReports(raw);
+  const good=[], bad=[];
+  reps.forEach((r,i)=>{
+    const miss=[];
+    if(!r.date) miss.push('날짜');
+    if(!r.branch) miss.push('지점'+(r.storeText?' ("'+r.storeText+'")':''));
+    if(!(r.total>=0)) miss.push('TOTAL');
+    if(miss.length) bad.push('보고서 '+(i+1)+': '+miss.join(', ')+' 못 읽음'); else good.push(r);
+  });
+  if(!good.length){ alert('⚠ 보고서를 읽지 못했어요\n\n'+bad.join('\n')); return; }
+  const lbl=id=>{ const x=BRANCHES.find(b=>b.id===id); return x?x.ko:id; };
+  const money=v=>'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const blocks=good.map(r=>{
+    const ex=_cAmt(((DAILY_ALL||{})[r.branch]||{})[r.date]);
+    let s='▶ '+lbl(r.branch)+' '+r.date+'  TOTAL '+money(r.total)+
+      (ex!=null && Math.abs(ex-r.total)>0.004 ? '  (기존 $'+_cFmt(ex)+' → 바뀜)' : '');
+    if(r.depts){
+      s+='\n   '+Object.keys(r.depts).map(k=>k.replace(/_/g,'-')+' '+_cFmt(r.depts[k])).join(' · ')+
+         '\n   나머지 '+money(r.total-r.deptSum)+' (총매출 − 부서 합계, 세금 포함)';
+      // 검산 — 보고서 분류 전체 합계가 SUBTOTAL 과 다르면 어딘가 잘못 읽은 것
+      if(r.subtotal!=null){
+        const diff=Math.round((r.catSum-r.subtotal)*100)/100;
+        s+=Math.abs(diff)<1 ? '\n   ✓ 검산 OK (분류 합계 = SUBTOTAL '+money(r.subtotal)+')' : '\n   ⚠ 검산 불일치: 분류 합계 '+money(r.catSum)+' ≠ SUBTOTAL '+money(r.subtotal)+'\n   → 보고서가 잘린 것 같아 부서매출은 저장하지 않고 총매출만 저장합니다. 보고서 전체를 다시 붙여넣으세요.';
+      }
+    } else s+='\n   (부서 칸 없음 — 총매출만 저장)';
+    return s;
+  });
+  if(!confirm('POS 보고서 '+good.length+'개를 저장할까요?\n\n'+blocks.join('\n\n')+(bad.length?'\n\n⚠ 건너뜀:\n'+bad.join('\n'):''))) return;
+  const by=(me()&&me().name)||'';
+  let ok=0;
+  for(const r of good){
+    const rec={ amt:r.total, by, ts:Date.now(), src:'POS' };
+    // 보고서가 그날의 정답이므로 부서는 통째로 바꾼다 (지난번 값이 섞여 남지 않게)
+    if(r.depts && r.deptOk){ rec.depts=r.depts; rec.pos=r.pos; }
+    try{
+      await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/dailySales/'+r.date), rec);
+      ok++; DAILY_MONTH=r.date.slice(0,7);
+    }catch(e){ bad.push(lbl(r.branch)+' '+r.date+': 저장 실패'); }
+  }
+  const skipped=good.filter(r=>r.depts && !r.deptOk).map(r=>lbl(r.branch)+' '+r.date);
+  alert('✅ '+ok+'개 지점 저장 (총매출'+(good.some(r=>r.depts&&r.deptOk)?' + 부서매출':'')+')'+
+    (skipped.length?'\n\n⚠ 부서매출 안 넣음 (보고서 잘림): '+skipped.join(', '):'')+(bad.length?'\n\n⚠ '+bad.join('\n'):''));
+  const ta=document.getElementById('dlyBulk'); if(ta && ok) ta.value='';
+  await dlyReload();
+}
+
 window.dlyBulk = async function(){
-  const lines=document.getElementById('dlyBulk').value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+  const _raw=document.getElementById('dlyBulk').value;
+  if(/SUMMARY-SALE REPORT/i.test(_raw)) return dlyBulkReports(_raw);   // POS 보고서 통째 붙여넣기
+  const lines=_raw.split(/\n+/).map(l=>l.trim()).filter(Boolean);
   if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
   const isDate=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x||''));
   const by=(me()&&me().name)||'';
