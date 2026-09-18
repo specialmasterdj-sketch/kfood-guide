@@ -273,6 +273,31 @@ table.rv tr:hover td{background:#fafffe}
 <!-- ======= STEP 2 ======= -->
 <div id="sc2" class="fin">
 
+  <!-- 🏢 이 인보이스의 벤더 — 원가를 벤더별로 쌓아 발주 때 더 싼 곳을 알려준다 (2026-09-18) -->
+  <div class="card" id="inv-vendor-card">
+    <div class="ct">🏢 이 인보이스 벤더</div>
+    <select id="inv-vendor" onchange="setInvVendor(this.value)" style="width:100%;padding:10px;border:1.5px solid #d1d5db;border-radius:10px;font-size:15px;background:#fffde7">
+      <option value="">— 선택 안 함 (원가 안 쌓음) —</option>
+      <option value="SEOULTRADING">SEOUL TRADING (서울트레이딩)</option>
+      <option value="ASSI">ASSI · RHEE BROS (리브라더스)</option>
+      <option value="JFC">JFC</option>
+      <option value="WISMETTAC">WISMETTAC (위스메탁)</option>
+      <option value="WANG HANMI">WANG HANMI · Wang Global (왕)</option>
+      <option value="EASTLAND">EASTLAND</option>
+      <option value="WELL LUCK">WELL LUCK (웰럭)</option>
+      <option value="WALONG">WALONG (왈롱)</option>
+      <option value="HAITAI">HAITAI (해태)</option>
+      <option value="TWO BROS">TWO BROS (투브라더스)</option>
+      <option value="K.C TRADING">K.C TRADING</option>
+      <option value="EDEN">EDEN (에덴)</option>
+      <option value="NDM">NDM (남대문)</option>
+      <option value="OCM">OCM</option>
+      <option value="KOCO">KOCO (코코)</option>
+      <option value="__other">기타 — 직접 입력…</option>
+    </select>
+    <p class="note" style="margin-top:6px">💲 벤더를 고르면 낱개 원가가 쌓여서, 매대 관리 앱 <b>벤더별 발주 목록</b>에서 같은 상품을 더 싸게 파는 벤더를 알려줍니다. 이름은 벨라포스 VENDOR 칸과 같게 맞춰 두었습니다.</p>
+  </div>
+
   <div class="card">
     <div class="ct" data-t="inv_fmt_title">📄 인보이스 형식 선택</div>
     <div class="tip" data-t="inv_fmt_tip">💡 어떤 형식이든 <b>표 형태로 미리보기</b>가 나오고, 수정 후 비교할 수 있습니다.</div>
@@ -430,6 +455,59 @@ const S={
   invData:[],  // array of {name,vendorCode,barcode,eaPrice,casePrice,qty,unit}
   results:[], curF:'changed', query:''
 };
+/* ============ 💲 인보이스 원가 누적 (costHistory) — 2026-09-18 ============
+ * 같은 상품을 여러 벤더가 공급할 때 "어디가 싼지"를 알려면 인보이스 원가가 남아 있어야
+ * 하는데, 이 앱은 비교만 하고 버렸다. 매칭된 줄(POS 바코드 확인됨)의 낱개 원가를
+ *   costHistory/{바코드(앞 0 뗌)}/{벤더} = { v, ea, cs, vc, d, br }
+ * 로 남긴다 — 벤더마다 최신 1건. 낱개(EA) 기준이라 박스 입수가 벤더마다 달라도 비교된다.
+ * 벤더 이름은 벨라포스 VENDOR 칸과 같게 써야 매대 관리 앱의 발주 목록에서 맞물린다.
+ * ⚠️ 새 경로 — Firebase 규칙에 costHistory 게시 전에는 저장이 거부된다(비교 자체는 정상).
+ */
+const INV_VENDOR_FROM_APP = {   // 인보이스 앱의 벤더 id → 벨라포스 VENDOR 이름
+  seoul_trading:'SEOULTRADING', rhee_bros:'ASSI', wismettac:'WISMETTAC', jfc:'JFC',
+  wang_global:'WANG HANMI', eastland:'EASTLAND', welluck:'WELL LUCK', walong:'WALONG',
+  haitai:'HAITAI', two_bros:'TWO BROS'
+};
+S.invVendor = (function(){ try { return localStorage.getItem('kimchi_inv_vendor') || ''; } catch(e){ return ''; } })();
+function setInvVendor(v){
+  if (v === '__other'){
+    const x = prompt('벤더 이름 (벨라포스 VENDOR 칸과 같게, 예: SKY HARVEST)', '');
+    v = (x || '').trim().toUpperCase();
+  }
+  S.invVendor = v || '';
+  try { localStorage.setItem('kimchi_inv_vendor', S.invVendor); } catch(e){}
+  const sel = document.getElementById('inv-vendor');
+  if (sel){
+    if (S.invVendor && !Array.from(sel.options).some(o => o.value === S.invVendor)){
+      const o = document.createElement('option'); o.value = S.invVendor; o.textContent = S.invVendor; sel.insertBefore(o, sel.lastElementChild);
+    }
+    sel.value = S.invVendor;
+  }
+}
+window.setInvVendor = setInvVendor;
+document.addEventListener('DOMContentLoaded', () => setInvVendor(S.invVendor));
+function saveInvoiceCosts(rows){
+  const vendor = String(S.invVendor || '').trim();
+  if (!vendor) return 0;
+  const vk = vendor.replace(/[.#$\[\]\/\s]+/g, '_');
+  const d = new Date(); const day = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  let br = ''; try { br = localStorage.getItem('km_branch') || ''; } catch(e){}
+  const patch = {};
+  (rows || []).forEach(r => {
+    const bc = String(r.posBarcode || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (bc.length < 6 || !(r.invEA > 0)) return;
+    patch[bc + '/' + vk] = { v: vendor, ea: Math.round(r.invEA * 10000) / 10000, cs: r.invCase || 0, vc: r.invVendorCode || '', d: day, br };
+  });
+  const n = Object.keys(patch).length;
+  if (!n) return 0;
+  fetch('https://kimchi-mart-order-default-rtdb.firebaseio.com/costHistory.json', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch)
+  }).then(r => {
+    if (r.ok) toast('💲 ' + vendor + ' 원가 ' + n + '건 저장 — 발주 목록에서 벤더 비교에 쓰입니다', 3500);
+    else { console.warn('[costHistory] HTTP', r.status); if (r.status === 401 || r.status === 403) toast('💲 원가 저장 권한 없음 — Firebase 규칙(costHistory) 게시가 필요합니다', 5000); }
+  }).catch(e => console.warn('[costHistory]', e && e.message));
+  return n;
+}
 // Expose state to the module script below so its Firebase subscribe can
 // write POS rows into S.posData. `const` is script-scoped and doesn't
 // land on window by default, so we bridge it explicitly.
@@ -1365,6 +1443,8 @@ function __runCmpCore(){
       const saved = BCMaster.feed(savePairs);
       if (saved) console.info('[BCMaster] 저장', saved, '건 (벤더코드→정확한 바코드)');
     } catch(_){}
+    // 💲 매칭된 줄의 낱개 원가를 벤더별로 쌓는다 (벤더를 골랐을 때만)
+    try { saveInvoiceCosts([...changed, ...same, ...review]); } catch(e){ console.warn('[costHistory]', e && e.message); }
 
     const cnt={up:0,down:0,same:same.length};
     changed.forEach(r=>cnt[r.status]=(cnt[r.status]||0)+1);
@@ -1821,6 +1901,8 @@ function fmtSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)
     renderInvGrid(S.invData);
     go(1); // invoice is step 1 now
 
+    // 인보이스 앱에서 넘어오면 벤더도 같이 온다 → 선택칸 자동 설정
+    if (payload.vendor && INV_VENDOR_FROM_APP[payload.vendor]) setInvVendor(INV_VENDOR_FROM_APP[payload.vendor]);
     const src = payload.source ? ` (출처: ${payload.source})` : '';
     if(S.posData && S.posData.length){
       toast(`✅ 인보이스 ${S.invData.length}건 자동 로드${src} — 비교 준비 완료`, 4500);
