@@ -269,6 +269,7 @@ const I18N = {
  ddDeptSum:{ko:'부서 합계',en:'Dept total',es:'Total deptos'},
  ddDaysUnit:{ko:'일',en:'d',es:'d'},
  ddDetail:{ko:'부서를 누르면 날짜별 · 전일 대비',en:'Tap a dept for day-by-day · vs prev. day',es:'Toque un depto para ver día a día'},
+ ddDaily:{ko:'일일 매출 — 모든 날짜',en:'daily sales — all dates',es:'ventas diarias — todas las fechas'},
  ddRollup:{ko:'이 달 부서별 일일 합계 → 각 지점 월 부서매출 저장',en:'Save this month’s daily dept sums as monthly dept sales',es:'Guardar sumas diarias por depto como ventas mensuales'},
  ddRollupConfirm:{ko:m=>m+' 부서별 일일 합계를 월 부서매출로 저장할까요?',en:m=>'Save '+m+' daily dept sums as monthly dept sales?',es:m=>'¿Guardar sumas diarias de '+m+' como ventas mensuales?'},
  ddRollupWarn:{ko:'괄호 안은 기록된 일수입니다 — 빠진 날이 있으면 월 합계가 그만큼 작게 잡힙니다.\n같은 달 기존 부서매출 값은 덮어씁니다.',en:'Numbers in brackets are days logged — missing days make the month smaller.\nExisting monthly dept values for this month are overwritten.',es:'Los números entre paréntesis son días registrados — días faltantes reducen el mes.\nSe sobrescriben los valores mensuales existentes.'},
@@ -1265,11 +1266,13 @@ function _renderDailyDepts(mo){
   const grand=BRANCHES.reduce((a,x)=>a+bTot[x.id],0);
   sum+='<tr><td class="mo">'+t('ddDeptSum')+'</td>'+BRANCHES.map(x=>'<td style="background:#e8f5ee;color:#1a5c3a"><b>$'+_cFmt(bTot[x.id])+'</b></td>').join('')+
        '<td style="background:#1a5c3a;color:#fff"><b>$'+_cFmt(grand)+'</b></td></tr></table>';
-  // 부서별 날짜 상세 — 전일 대비 % 는 전 지점 매출 비교와 같은 방식
-  const detail=depts.map(dk=>`<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:800;color:#1a5c3a;padding:5px 0">📦 ${esc(dk.replace(/_/g,'-'))}</summary>${_cmpTable(data[dk], t('dCols')[0])}</details>`).join('');
+  // 부서마다 총매출 표와 똑같은 모양 — 날짜 × 지점 + 합계, 맨 아래 월 합계.
+  // 2026-09-18 전무님: "총매출처럼 날짜별 지점별 한눈에" — 접어 두지 않고 다 펼친다.
+  const detail=depts.map(dk=>
+    `<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📦 ${esc(dk.replace(/_/g,'-'))} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('ddDaily')}</span></div>
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${_ddMatrix(data[dk], mo, false)}</div>`).join('');
   return head+
-    `<div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${sum}
-      <div style="font-size:.74em;color:#94a3b8;margin:8px 0 2px">${t('ddDetail')}</div>${detail}</div>
+    `<div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${sum}</div>${detail}
     <div style="margin-top:10px"><button class="btn" style="width:100%" onclick="dlyRollupDepts()">💾 ${t('ddRollup')}</button>
     <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`;
 }
@@ -1296,6 +1299,31 @@ window.dlyRollupDepts = async function(){
   }catch(e){ alert('저장 실패: '+(e.message||e)); }
 };
 // 인쇄용 부서 요약 (인쇄 창 CSS 의 th/td/td.r/td.na 를 그대로 쓴다)
+// 한 부서의 날짜 × 지점 표 — 총매출 표(전 지점 일일 매출)와 같은 모양.
+//   byBranch = {지점: {날짜: 금액}}. forPrint 면 인쇄 창 CSS(td.r / td.na / td.tot / tfoot)를 쓴다.
+function _ddMatrix(byBranch, mo, forPrint){
+  const ds=new Set(); BRANCHES.forEach(x=>Object.keys((byBranch||{})[x.id]||{}).forEach(d=>{ if(d.slice(0,7)===mo) ds.add(d); }));
+  const desc=[...ds].sort().reverse();
+  if(!desc.length) return '';
+  const v=(bid,d)=>{ const m=(byBranch||{})[bid]; return (m && m[d]!=null) ? m[d] : null; };
+  const bTot={}; BRANCHES.forEach(x=>{ bTot[x.id]=desc.reduce((a,d)=>a+(v(x.id,d)||0),0); });
+  const grand=BRANCHES.reduce((a,x)=>a+bTot[x.id],0);
+  const has=x=>desc.some(d=>v(x.id,d)!=null);
+  if(forPrint){
+    const body=desc.map(d=>{ const dt=BRANCHES.reduce((a,x)=>a+(v(x.id,d)||0),0);
+      return '<tr><td>'+d+'</td><td>'+_wkLbl(d)+'</td>'+BRANCHES.map(x=>{ const a=v(x.id,d); return a==null?'<td class="na">–</td>':'<td class="r">$'+_cFmt(a)+'</td>'; }).join('')+'<td class="r tot"><b>$'+_cFmt(dt)+'</b></td></tr>'; }).join('');
+    return '<table><tr><th>'+t('dCols')[0]+'</th><th>'+t('dCols')[1]+'</th>'+BRANCHES.map(x=>'<th>'+esc(_ddBLbl(x))+'</th>').join('')+'<th>'+t('dColTotal')+'</th></tr>'+body+
+      '<tfoot><tr><td colspan="2">'+t('dRowMonthTot')+'</td>'+BRANCHES.map(x=>'<td class="r">'+(has(x)?'$'+_cFmt(bTot[x.id]):'–')+'</td>').join('')+'<td class="r">$'+_cFmt(grand)+'</td></tr></tfoot></table>';
+  }
+  const rows=desc.map(d=>{ const dt=BRANCHES.reduce((a,x)=>a+(v(x.id,d)||0),0);
+    return `<tr><td class="mo">${d.slice(5)}</td><td style="text-align:center;color:#64748b">${_wkLbl(d)}</td>`+
+      BRANCHES.map(x=>{ const a=v(x.id,d); return a==null?'<td class="na">–</td>':`<td>$${_cFmt(a)}</td>`; }).join('')+
+      `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dt)}</b></td></tr>`; }).join('');
+  const foot=`<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
+    BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>${has(x)?'$'+_cFmt(bTot[x.id]):'–'}</b></td>`).join('')+
+    `<td style="background:#1a5c3a;color:#fff"><b>$${_cFmt(grand)}</b></td></tr>`;
+  return `<table class="cmp"><tr><th style="text-align:left">${t('dCols')[0]}</th><th style="text-align:center">${t('dCols')[1]}</th>${BRANCHES.map(x=>`<th>${esc(_ddBLbl(x))}</th>`).join('')}<th>${t('dColTotal')}</th></tr>${rows}${foot}</table>`;
+}
 function _ddPrintTable(mo){
   const data=_dailyDeptData(mo);
   const depts=Object.keys(data).sort(_ddSort);
@@ -1312,7 +1340,8 @@ function _ddPrintTable(mo){
     }).join('')+'<td class="r tot"><b>$'+_cFmt(rowTot)+'</b></td></tr>';
   });
   const grand=BRANCHES.reduce((a,x)=>a+bTot[x.id],0);
-  return h+'<tfoot><tr><td>'+t('ddDeptSum')+'</td>'+BRANCHES.map(x=>'<td class="r">$'+_cFmt(bTot[x.id])+'</td>').join('')+'<td class="r">$'+_cFmt(grand)+'</td></tr></tfoot></table>';
+  return h+'<tfoot><tr><td>'+t('ddDeptSum')+'</td>'+BRANCHES.map(x=>'<td class="r">$'+_cFmt(bTot[x.id])+'</td>').join('')+'<td class="r">$'+_cFmt(grand)+'</td></tr></tfoot></table>'+
+    depts.map(dk=>'<h1 style="margin-top:16px;font-size:15px">📦 '+esc(dk.replace(/_/g,'-'))+'</h1>'+_ddMatrix(data[dk], mo, true)).join('');
 }
 window.dlyRollupAll = async function(){
   const mo=DAILY_MONTH;
