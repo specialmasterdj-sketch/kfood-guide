@@ -186,11 +186,11 @@
 
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-  import { getDatabase, ref, get, set, push, remove, onValue } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getDatabase, ref, get, set, push, remove, onValue, update } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
   import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order", storageBucket:"kimchi-mart-order.firebasestorage.app", appId:"1:903841418321:web:5c0d9f3e6a5a1b2c3d4e5f" };
   const app = getApps().length ? getApp() : initializeApp(cfg);   // fb-auth-fetch.js 가 먼저 초기화해도 충돌 없이 재사용
-  window.__fb = { db:getDatabase(app), ref, get, set, push, remove, onValue };
+  window.__fb = { db:getDatabase(app), ref, get, set, push, remove, onValue, update };
   const auth = getAuth(app);
   onAuthStateChanged(auth, () => { try{ window.__hrBoot && window.__hrBoot(); }catch(e){} });
   setTimeout(() => { try{ window.__hrBoot && window.__hrBoot(); }catch(e){} }, 1600);
@@ -262,7 +262,18 @@ const I18N = {
  dEmpty:{ko:'이 달 기록 없음 — 위에서 하루씩 추가하세요',en:'No records this month — add a day above',es:'Sin registros este mes — agregue arriba'},
  dChart:{ko:'② 이 달 일별 추이',en:'② This month, day by day',es:'② Este mes, día a día'},
  dBulkH:{ko:'③ 일괄 붙여넣기',en:'③ Bulk paste',es:'③ Pegar en lote'},
- dBulkHint:{ko:'한 줄에: YYYY-MM-DD,금액  또는  지점,YYYY-MM-DD,금액',en:'Per line: YYYY-MM-DD,amount  or  branch,YYYY-MM-DD,amount',es:'Por línea: YYYY-MM-DD,monto  o  sucursal,YYYY-MM-DD,monto'},
+ dBulkHint:{ko:'한 줄에: [지점,][부서,]YYYY-MM-DD,금액 — 부서를 빼면 총매출 · 엑셀 복사 그대로 OK',en:'Per line: [branch,][dept,]YYYY-MM-DD,amount — no dept = total · Excel paste OK',es:'Por línea: [sucursal,][depto,]YYYY-MM-DD,monto — sin depto = total · pegar de Excel OK'},
+ ddTitle:{ko:'부서별 일일 매출',en:'Daily sales by department',es:'Ventas diarias por departamento'},
+ ddEmpty:{ko:'이 달 부서별 기록이 없어요 — 아래 일괄 붙여넣기에 "부서,날짜,금액" 으로 넣으세요 (예: PRODUCE,2026-09-16,1250)',en:'No department records this month — paste "dept,date,amount" below (e.g. PRODUCE,2026-09-16,1250)',es:'Sin registros por departamento — pegue "depto,fecha,monto" abajo (ej. PRODUCE,2026-09-16,1250)'},
+ ddDept:{ko:'부서',en:'Dept',es:'Depto'},
+ ddDeptSum:{ko:'부서 합계',en:'Dept total',es:'Total deptos'},
+ ddDaysUnit:{ko:'일',en:'d',es:'d'},
+ ddDetail:{ko:'부서를 누르면 날짜별 · 전일 대비',en:'Tap a dept for day-by-day · vs prev. day',es:'Toque un depto para ver día a día'},
+ ddRollup:{ko:'이 달 부서별 일일 합계 → 각 지점 월 부서매출 저장',en:'Save this month’s daily dept sums as monthly dept sales',es:'Guardar sumas diarias por depto como ventas mensuales'},
+ ddRollupConfirm:{ko:m=>m+' 부서별 일일 합계를 월 부서매출로 저장할까요?',en:m=>'Save '+m+' daily dept sums as monthly dept sales?',es:m=>'¿Guardar sumas diarias de '+m+' como ventas mensuales?'},
+ ddRollupWarn:{ko:'괄호 안은 기록된 일수입니다 — 빠진 날이 있으면 월 합계가 그만큼 작게 잡힙니다.\n같은 달 기존 부서매출 값은 덮어씁니다.',en:'Numbers in brackets are days logged — missing days make the month smaller.\nExisting monthly dept values for this month are overwritten.',es:'Los números entre paréntesis son días registrados — días faltantes reducen el mes.\nSe sobrescriben los valores mensuales existentes.'},
+ ddRollupDone:{ko:(n,m)=>'✅ '+m+' 부서매출 '+n+'건 저장 — 전 지점 비교에 반영',en:(n,m)=>'✅ Saved '+n+' dept values for '+m,es:(n,m)=>'✅ Guardados '+n+' valores de '+m},
+ ddBulkResult:{ko:(a,b)=>'총매출 '+a+'건 · 부서매출 '+b+'건 저장',en:(a,b)=>a+' totals · '+b+' dept values saved',es:(a,b)=>a+' totales · '+b+' valores por depto guardados'},
  dBulkBtn:{ko:'📥 일괄 추가',en:'📥 Bulk add',es:'📥 Agregar lote'},
  dRollup:{ko:'이 달 일일 합계를 월 총매출(TOTAL)로 저장',en:'Save this month’s daily sum as monthly TOTAL',es:'Guardar suma diaria como TOTAL mensual'},
  dRollupHint:{ko:'→ 전 지점 매출 비교·평가에 자동 반영',en:'→ flows into comparison & evaluations',es:'→ se refleja en comparación y evaluaciones'},
@@ -763,9 +774,9 @@ window.dsBulkAdd = async function(){
   if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
   let ok=0, bad=[];
   for (const ln of lines){
-    const p=ln.split(/[,\t]+/).map(s=>s.trim());
+    const p=_bulkCells(ln);
     if (p.length<3){ bad.push(ln); continue; }
-    const dept=p[0], mo=p[1], amt=parseFloat(String(p[2]).replace(/[^0-9.]/g,''));
+    const dept=p[0], mo=p[1], amt=_bulkAmt(p, 2).amt;
     if (!/^\d{4}-\d{2}$/.test(mo) || !(amt>=0)){ bad.push(ln); continue; }
     const dk=dsKey(dept);
     if (!(DEPT_MAP||{})[dk]) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/'+dk), {name:dept.toUpperCase(), staff:((DEPT_MAP||{})[dk]||{}).staff||''});
@@ -823,7 +834,7 @@ function _metricByBranch(all, pick){
   });
   return out;
 }
-function _cmpTable(dataByBranch){
+function _cmpTable(dataByBranch, firstCol){
   const ms=new Set();
   BRANCHES.forEach(b=>Object.keys(dataByBranch[b.id]||{}).forEach(mo=>ms.add(mo)));
   const months=[...ms].sort().reverse();
@@ -831,7 +842,7 @@ function _cmpTable(dataByBranch){
   const pctMap={};
   BRANCHES.forEach(b=>{ const mm=Object.keys(dataByBranch[b.id]||{}).sort(); pctMap[b.id]={};
     mm.forEach((mo,i)=>{ if(i>0){ const p=dataByBranch[b.id][mm[i-1]], c=dataByBranch[b.id][mo]; if(p>0) pctMap[b.id][mo]=Math.round((c-p)/p*1000)/10; } }); });
-  let h='<div style="overflow-x:auto"><table class="cmp"><tr><th>'+t('cmpMonth')+'</th>'+BRANCHES.map(b=>`<th>${esc(_bLbl(b))}</th>`).join('')+'</tr>';
+  let h='<div style="overflow-x:auto"><table class="cmp"><tr><th>'+(firstCol||t('cmpMonth'))+'</th>'+BRANCHES.map(b=>`<th>${esc(_bLbl(b))}</th>`).join('')+'</tr>';
   months.forEach(mo=>{
     h+='<tr><td class="mo">'+esc(mo)+'</td>'+BRANCHES.map(b=>{
       const v=(dataByBranch[b.id]||{})[mo];
@@ -911,7 +922,7 @@ window.dlyAddAll = async function(){
     const el=document.getElementById('dlyAll_'+b.id); if(!el) continue;
     const raw=String(el.value).replace(/[^0-9.]/g,''); if(raw==='') continue;
     const amt=parseFloat(raw); if(!(amt>=0)) continue;
-    try{ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+b.id+'/dailySales/'+dt), { amt, memo:'', by:(me()&&me().name)||'', ts:Date.now() }); ok++; changed=true; }catch(_){}
+    try{ await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+b.id+'/dailySales/'+dt), { amt, by:(me()&&me().name)||'', ts:Date.now() }); ok++; changed=true; }catch(_){}
   }
   if(!ok){ alert('입력된 금액이 없어요'); return; }
   DAILY_MONTH=dt.slice(0,7); DAILY_ALLDATE=dt;
@@ -931,30 +942,64 @@ window.dlyAdd = async function(){
   const memo=document.getElementById('dlyMemo').value.trim();
   if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||!(amt>=0)){ alert('날짜·매출을 확인하세요'); return; }
   try{
-    await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt), { amt, memo, by:(me()&&me().name)||'', ts:Date.now() });
+    await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt), { amt, memo, by:(me()&&me().name)||'', ts:Date.now() });
     DAILY_MONTH = dt.slice(0,7);
     toast('＋ '+dt+' 저장'); await dlyReload();
   }catch(e){ alert('저장 실패: '+(e.message||e)); }
 };
 window.dlyDel = async function(dt){
   if(!confirm(dt+' 매출 기록을 삭제할까요?')) return;
-  try{ await window.__fb.remove(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt)); toast('삭제됨'); await dlyReload(); }
+  try{
+    const r=window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/dailySales/'+dt);
+    if(_dDepts((DAILY||{})[dt])) await window.__fb.update(r, {amt:null, memo:null, by:null, ts:null});   // 부서 매출은 남긴다
+    else await window.__fb.remove(r);
+    toast('삭제됨'); await dlyReload(); }
   catch(e){ alert('삭제 실패: '+(e.message||e)); }
 };
 window.dlyBulk = async function(){
   const lines=document.getElementById('dlyBulk').value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
   if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
-  let ok=0, bad=[];
+  const isDate=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x||''));
+  const by=(me()&&me().name)||'';
+  let ok=0, okDept=0, bad=[];
   for(const ln of lines){
-    const p=ln.split(/[,\t]+/).map(s=>s.trim());
-    let bId=BRANCH, dt, amtRaw, memo;
-    if(/^\d{4}-\d{2}-\d{2}$/.test(p[0])){ dt=p[0]; amtRaw=p[1]; memo=p[2]||''; }        // 현재 지점
-    else { const mb=_matchBranch(p[0]); if(!mb){ bad.push(ln); continue; } bId=mb; dt=p[1]; amtRaw=p[2]; memo=p[3]||''; }  // 지점 지정
-    const amt=parseFloat(String(amtRaw||'').replace(/[^0-9.]/g,''));
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||!(amt>=0)){ bad.push(ln); continue; }
-    try{ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+bId+'/dailySales/'+dt), { amt, memo, by:(me()&&me().name)||'', ts:Date.now() }); ok++; }catch(_){ bad.push(ln); }
+    // 엑셀에서 복사하면 탭으로 온다 — 그땐 탭으로만 나눈다 ("1,234.56" 의 쉼표가 칸으로 쪼개지지 않게)
+    const p=_bulkCells(ln);
+    // 날짜 위치로 형식을 가른다:
+    //   날짜,금액           → 이 지점 총매출
+    //   지점,날짜,금액       → 그 지점 총매출
+    //   부서,날짜,금액       → 이 지점 부서매출
+    //   지점,부서,날짜,금액  → 그 지점 부서매출
+    const di=p.findIndex((x,i)=>i<3 && isDate(x));
+    if(di<0){ bad.push(ln); continue; }
+    let bId=BRANCH, dept=null;
+    if(di===1){
+      // 첫 칸이 지점인지 부서인지 — 알려진 부서명이 먼저 (지점 이름 앞글자 매칭에 부서가 먹히지 않게)
+      if(_knownDept(p[0])) dept=p[0];
+      else { const mb=_matchBranch(p[0]); if(mb) bId=mb; else dept=p[0]; }
+    } else if(di===2){
+      const mb=_matchBranch(p[0]); if(!mb){ bad.push(ln); continue; }
+      bId=mb; dept=p[1];
+    }
+    const dt=p[di];
+    const A=_bulkAmt(p, di+1), amt=A.amt;
+    if(!(amt>=0)){ bad.push(ln); continue; }
+    if(dept && _isTotalDept(dsKey(dept),null)) dept=null;   // TOTAL·총매출 줄은 일일 총매출로
+    try{
+      if(dept){
+        const upd={}; upd[dsKey(dept)]=amt;
+        await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+bId+'/dailySales/'+dt+'/depts'), upd);
+        okDept++;
+      } else {
+        const memo=p.slice(A.next).join(', ');
+        const rec={amt, by, ts:Date.now()}; if(memo) rec.memo=memo;
+        await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+bId+'/dailySales/'+dt), rec);
+        ok++;
+      }
+      DAILY_MONTH=dt.slice(0,7);   // 붙여넣은 달을 바로 보여준다
+    }catch(_){ bad.push(ln); }
   }
-  alert('✅ '+ok+'건 저장'+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
+  alert('✅ '+t('ddBulkResult')(ok, okDept)+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
   await dlyReload();
 };
 window.dlyRollup = async function(){
@@ -970,6 +1015,123 @@ window.dlyRollup = async function(){
     toast(t('dRollupDone')(mo));
   }catch(e){ alert('저장 실패: '+(e.message||e)); }
 };
+// ---- 붙여넣기 한 줄 나누기 (월·일 매출 공용) ----
+// 엑셀에서 복사하면 탭으로 온다 → 탭으로만 나눠야 "1,234.56" 의 쉼표가 칸으로 쪼개지지 않는다.
+// 쉼표로 쓴 줄에서 "$2,100" 처럼 천 단위 쉼표가 있으면 조각을 다시 붙인다.
+//   (안 붙이면 2 로 저장된다 — 오류 없이 조용히 틀린 매출이 들어가는 게 제일 위험하다)
+function _bulkCells(ln){ return (ln.indexOf('\t')>=0 ? ln.split(/\t+/) : ln.split(/,+/)).map(x=>x.trim()); }
+function _bulkAmt(p, ai){
+  let str=String(p[ai]||'');
+  while(/^\$?\d{1,3}(,\d{3})*$/.test(str) && /^\d{3}(\.\d+)?$/.test(String(p[ai+1]||''))){ str+=','+p[ai+1]; ai++; }
+  const v=parseFloat(str.replace(/[^0-9.\-]/g,''));
+  return { amt:v, next:ai+1 };
+}
+
+// ================= 📦 부서별 일일 매출 =================
+// 2026-09-18 전무님: "일일 매출도 월매출처럼 매일 붙여넣기 할게, 일일 부서별 매출도 집계해줘"
+// 저장 위치: hr/{지점}/dailySales/{날짜}/depts/{부서키} = 금액
+//   새 경로를 만들면 RTDB 규칙을 다시 게시해야 해서, 이미 쓰기가 허용된 일일 기록 안에 둔다.
+//   그래서 일일 총매출 저장은 set 이 아니라 update 여야 한다 (set 은 depts 를 통째로 지운다).
+//   부서 키는 월 부서매출(deptSales)과 같은 dsKey 를 써서, 월로 올릴 때 같은 줄에 합쳐진다.
+const DD_ORDER=['PRODUCE','MEAT','SEAFOOD','SUSHI','K_FOOD','KFOOD','GROCERY','FROZEN','BAKERY','BBQ','CASHIER'];
+function _ddSort(a,b){ const ia=DD_ORDER.indexOf(a), ib=DD_ORDER.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib) || a.localeCompare(b); }
+function _dDepts(rec){ return (rec && typeof rec==='object' && rec.depts && typeof rec.depts==='object') ? rec.depts : null; }
+function _knownDept(tok){
+  const k=dsKey(tok);
+  if(!k) return false;
+  if(DD_ORDER.indexOf(k)>=0 || _isTotalDept(k,null)) return true;
+  if(DEPT_MAP && DEPT_MAP[k]) return true;
+  return BRANCHES.some(x=>Object.values(DAILY_ALL&&DAILY_ALL[x.id]||{}).some(r=>{ const d=_dDepts(r); return d && d[k]!=null; }));
+}
+// 선택 월 → {부서: {지점: {날짜: 금액}}}  (전 지점 비교 표 _cmpTable 이 그대로 받는 모양)
+function _dailyDeptData(mo){
+  const out={};
+  BRANCHES.forEach(x=>{
+    const all=(DAILY_ALL&&DAILY_ALL[x.id])||{};
+    _dailyDates(all).forEach(d=>{
+      if(d.slice(0,7)!==mo) return;
+      const dp=_dDepts(all[d]); if(!dp) return;
+      Object.keys(dp).forEach(dk=>{
+        const v=parseFloat(dp[dk]); if(isNaN(v)) return;
+        if(!out[dk]) out[dk]={};
+        if(!out[dk][x.id]) out[dk][x.id]={};
+        out[dk][x.id][d]=v;
+      });
+    });
+  });
+  return out;
+}
+function _ddSum(m){ return m ? Object.values(m).reduce((a,v)=>a+v,0) : null; }
+function _ddBLbl(x){ return LANG==='ko'?x.ko:String(x.id).replace(/_/g,' '); }
+function _renderDailyDepts(mo){
+  const data=_dailyDeptData(mo);
+  const depts=Object.keys(data).sort(_ddSort);
+  const head=`<div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">📦 ${t('ddTitle')} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${esc(mo)}</span></div>`;
+  if(!depts.length) return head+`<div class="muted" style="background:#fff;border:1.5px dashed var(--bd);border-radius:12px;padding:12px 14px;font-size:.85em">${t('ddEmpty')}</div>`;
+  const bTot={}; BRANCHES.forEach(x=>{ bTot[x.id]=0; });
+  // 월 요약 — 부서 × 지점, 칸마다 기록된 일수(빠진 날이 있는지 한눈에)
+  let sum='<table class="cmp"><tr><th>'+t('ddDept')+'</th>'+BRANCHES.map(x=>'<th>'+esc(_ddBLbl(x))+'</th>').join('')+'<th>'+t('dColTotal')+'</th></tr>';
+  depts.forEach(dk=>{
+    let rowTot=0;
+    sum+='<tr><td class="mo">'+esc(dk.replace(/_/g,'-'))+'</td>'+BRANCHES.map(x=>{
+      const m=(data[dk]||{})[x.id]; const v=_ddSum(m);
+      if(v==null) return '<td class="na">–</td>';
+      rowTot+=v; bTot[x.id]+=v;
+      return '<td>$'+_cFmt(v)+'<span style="color:#94a3b8;font-size:.78em;margin-left:4px">'+Object.keys(m).length+t('ddDaysUnit')+'</span></td>';
+    }).join('')+'<td style="background:#e8f5ee;color:#1a5c3a"><b>$'+_cFmt(rowTot)+'</b></td></tr>';
+  });
+  const grand=BRANCHES.reduce((a,x)=>a+bTot[x.id],0);
+  sum+='<tr><td class="mo">'+t('ddDeptSum')+'</td>'+BRANCHES.map(x=>'<td style="background:#e8f5ee;color:#1a5c3a"><b>$'+_cFmt(bTot[x.id])+'</b></td>').join('')+
+       '<td style="background:#1a5c3a;color:#fff"><b>$'+_cFmt(grand)+'</b></td></tr></table>';
+  // 부서별 날짜 상세 — 전일 대비 % 는 전 지점 매출 비교와 같은 방식
+  const detail=depts.map(dk=>`<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:800;color:#1a5c3a;padding:5px 0">📦 ${esc(dk.replace(/_/g,'-'))}</summary>${_cmpTable(data[dk], t('dCols')[0])}</details>`).join('');
+  return head+
+    `<div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${sum}
+      <div style="font-size:.74em;color:#94a3b8;margin:8px 0 2px">${t('ddDetail')}</div>${detail}</div>
+    <div style="margin-top:10px"><button class="btn" style="width:100%" onclick="dlyRollupDepts()">💾 ${t('ddRollup')}</button>
+    <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`;
+}
+// 월로 올리기 — 전 지점 매출 비교(왼쪽 화면)의 부서 표에 그대로 나온다
+window.dlyRollupDepts = async function(){
+  const mo=DAILY_MONTH;
+  const data=_dailyDeptData(mo);
+  const writes=[];
+  Object.keys(data).sort(_ddSort).forEach(dk=>BRANCHES.forEach(x=>{
+    const m=(data[dk]||{})[x.id]; if(!m) return;
+    writes.push({ bid:x.id, ko:x.ko, dk, amt:Math.round(_ddSum(m)*100)/100, days:Object.keys(m).length });
+  }));
+  if(!writes.length){ alert(t('ddEmpty')); return; }
+  const lines=writes.map(w=>' · '+w.ko+' '+w.dk.replace(/_/g,'-')+': $'+_cFmt(w.amt)+' ('+w.days+t('ddDaysUnit')+')');
+  if(!confirm(t('ddRollupConfirm')(mo)+'\n\n'+lines.slice(0,30).join('\n')+(lines.length>30?'\n …':'')+'\n\n'+t('ddRollupWarn'))) return;
+  try{
+    for(const w of writes){
+      const cur=await fbGet('hr/'+w.bid+'/deptMap/'+w.dk);
+      if(!cur) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+w.bid+'/deptMap/'+w.dk), {name:w.dk, staff:''});
+      await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+w.bid+'/deptSales/'+w.dk+'/'+mo), {amt:w.amt});
+    }
+    DEPT_MAP=null; DEPT_SALES=null;   // 캐시 무효화 → 비교·평가가 새 값으로
+    toast(t('ddRollupDone')(writes.length, mo));
+  }catch(e){ alert('저장 실패: '+(e.message||e)); }
+};
+// 인쇄용 부서 요약 (인쇄 창 CSS 의 th/td/td.r/td.na 를 그대로 쓴다)
+function _ddPrintTable(mo){
+  const data=_dailyDeptData(mo);
+  const depts=Object.keys(data).sort(_ddSort);
+  if(!depts.length) return '';
+  const bTot={}; BRANCHES.forEach(x=>{ bTot[x.id]=0; });
+  let h='<h1 style="margin-top:18px">📦 '+t('ddTitle')+'</h1><table><tr><th>'+t('ddDept')+'</th>'+BRANCHES.map(x=>'<th>'+esc(_ddBLbl(x))+'</th>').join('')+'<th>'+t('dColTotal')+'</th></tr>';
+  depts.forEach(dk=>{
+    let rowTot=0;
+    h+='<tr><td>'+esc(dk.replace(/_/g,'-'))+'</td>'+BRANCHES.map(x=>{
+      const m=(data[dk]||{})[x.id]; const v=_ddSum(m);
+      if(v==null) return '<td class="na">–</td>';
+      rowTot+=v; bTot[x.id]+=v;
+      return '<td class="r">$'+_cFmt(v)+' ('+Object.keys(m).length+t('ddDaysUnit')+')</td>';
+    }).join('')+'<td class="r tot"><b>$'+_cFmt(rowTot)+'</b></td></tr>';
+  });
+  const grand=BRANCHES.reduce((a,x)=>a+bTot[x.id],0);
+  return h+'<tfoot><tr><td>'+t('ddDeptSum')+'</td>'+BRANCHES.map(x=>'<td class="r">$'+_cFmt(bTot[x.id])+'</td>').join('')+'<td class="r">$'+_cFmt(grand)+'</td></tr></tfoot></table>';
+}
 window.dlyRollupAll = async function(){
   const mo=DAILY_MONTH;
   const per={}; BRANCHES.forEach(x=>{ per[x.id]=_dailyDates(DAILY_ALL[x.id]).filter(k=>k.slice(0,7)===mo).reduce((s,k)=>s+(_cAmt(DAILY_ALL[x.id][k])||0),0); });
@@ -1002,7 +1164,7 @@ window.dlyPrint = function(){
   w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+t('dMatrix')+' '+mo+'</title><style>'+css+'</style></head><body>'+
     '<h1>📅 '+t('dMatrix')+'</h1><div class="sub">'+mo+' · '+new Date().toLocaleString()+'</div>'+
     '<table><tr><th>'+t('dCols')[0]+'</th><th>'+t('dCols')[1]+'</th>'+BRANCHES.map(x=>'<th>'+esc(bShort(x))+'</th>').join('')+'<th>'+t('dColTotal')+'</th></tr>'+body+
-    '<tfoot>'+foot+'</tfoot></table></body></html>');
+    '<tfoot>'+foot+'</tfoot></table>'+_ddPrintTable(mo)+'</body></html>');
   w.document.close(); w.focus(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 350);
 };
 function renderDaily(){
@@ -1081,8 +1243,10 @@ function renderDaily(){
     ${grandTot>0?`<div style="margin-top:12px"><button class="btn" style="width:100%" onclick="dlyRollupAll()">💾 ${t('dRollupAll')}</button>
     <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`:''}
 
+    ${_renderDailyDepts(mo)}
+
     <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">${t('dBulkH')} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('dBulkHint')}</span></div>
-    <textarea id="dlyBulk" rows="4" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="마이애미,2026-09-16,12000&#10;할리우드,2026-09-16,22000"></textarea>
+    <textarea id="dlyBulk" rows="4" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="마이애미,2026-09-16,12000&#10;할리우드,2026-09-16,22000&#10;PRODUCE,2026-09-16,1250.50&#10;할리우드,MEAT,2026-09-16,980"></textarea>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dlyBulk()">${t('dBulkBtn')}</button>
   </div>`;
 }
