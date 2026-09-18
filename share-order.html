@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>공동 오더 — 나눠 받기</title>
+<!-- fb-auth-fetch 먼저 — fetch 에 로그인 토큰 자동 부착. auth-gate 가 로그인/승인 여부 확인. -->
+<script type="module" src="./fb-auth-fetch.js?v=2"></script>
+<script src="./auth-gate.js?v=5"></script>
+<!--
+  🤝 공동 오더 (나눠 받기) — 2026-09-18
+  전무님: "지점마다 박스로 오더해 20% 팔고 나머지는 버린다. 한 박스 받아 다른 지점으로
+  나눠 팔면 좋겠다." 트럭 매일 · 발주는 지점별 각자 · 원가는 따로 기록 (전무님 답).
+
+  흐름: ① 모집 — 지점들이 "우리 N개" 입력, 1박스 차면 📦 재고 부족/과다 방에 알림
+        ② 주문 지점이 벤더에 주문 → [주문함]
+        ③ 입고 → [입고됨] → 같은 방에 🚚 LASOLAS TRUCKING 배송 목록 자동 게시(기사가 보는 곳)
+        ④ 받은 지점 [받음] → 모두 받으면 완료
+        ⑤ 💲 원가 나누기 표 — 원가는 매장에서 따로 기록하므로 복사해 가게 한다
+  저장: shareOrders/{id}  (⚠️ 새 경로 — RTDB 규칙 게시 필요)
+  후보는 유통기한 앱 손실 리포트의 "🤝 나눠 받기 후보"에서 고른다 (그 줄의 버튼으로 바로 옴).
+-->
+<style>
+:root{--g:#1a5c3a;--g2:#16a34a;--bg:#f4f6f5;--card:#fff;--ink:#1f2937;--sub:#6b7280;--line:#e5e7eb;--warn:#b45309;--bad:#dc2626}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif}
+header{background:linear-gradient(135deg,#1a5c3a,#15803d);color:#fff;padding:14px 16px 16px}
+header .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+header h1{font-size:1.15em;margin:0;flex:1}
+header .sub{font-size:.78em;opacity:.9;margin-top:4px;line-height:1.5}
+.hbtn{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:18px;padding:6px 12px;font-weight:700;cursor:pointer;font-family:inherit}
+.hbtn.on{background:#fff;color:var(--g)}
+select,input{font-family:inherit;font-size:15px}
+.hsel{background:rgba(255,255,255,.95);border:0;border-radius:10px;padding:7px 9px;font-weight:700;color:var(--g)}
+main{max-width:760px;margin:0 auto;padding:12px}
+.new{width:100%;border:0;border-radius:14px;padding:14px;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;font-weight:900;font-size:1.02em;cursor:pointer;box-shadow:0 6px 18px rgba(22,163,74,.25);font-family:inherit}
+.tabs{display:flex;gap:6px;margin:12px 0}
+.tabs button{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:9px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit}
+.tabs button.on{border-color:var(--g);color:var(--g);background:#ecfdf5}
+.card{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+.card.full{border-color:#86efac}
+.ttl{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
+.ttl b{font-size:1.02em;flex:1 1 200px}
+.chip{display:inline-block;font-size:.72em;font-weight:800;padding:2px 8px;border-radius:10px;background:#f1f5f9;color:#475569;white-space:nowrap}
+.st-open{background:#fef3c7;color:#92400e}.st-ordered{background:#dbeafe;color:#1e40af}
+.st-shipping{background:#ede9fe;color:#5b21b6}.st-done{background:#dcfce7;color:#166534}.st-cancelled{background:#fee2e2;color:#991b1b}
+.meta{font-size:.78em;color:var(--sub);margin-top:4px;line-height:1.55}
+.prog{display:flex;align-items:center;gap:8px;margin:10px 0 6px}
+.prog .bar{flex:1;height:10px;background:#f1f5f9;border-radius:6px;overflow:hidden}
+.prog .f{height:100%;background:linear-gradient(90deg,#22c55e,#15803d)}
+.prog .f.over{background:linear-gradient(90deg,#f59e0b,#b45309)}
+.prog span{font-size:.85em;font-weight:900;color:var(--g);white-space:nowrap}
+.wants{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}
+.want{font-size:.78em;font-weight:700;background:#f3f4f6;border-radius:8px;padding:3px 8px}
+.want.me{background:#ecfdf5;color:var(--g);outline:1.5px solid #86efac}
+.want.lead{background:#fff7ed;color:#9a3412}
+.want.got{background:#dcfce7;color:#166534}
+.myrow{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.myrow input{width:90px;border:1.5px solid var(--line);border-radius:10px;padding:8px 10px}
+.btn{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-weight:800;cursor:pointer;font-family:inherit;font-size:.86em;color:var(--ink)}
+.btn.g{background:var(--g2);border-color:var(--g2);color:#fff}
+.btn.b{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+.btn.p{background:#6d28d9;border-color:#6d28d9;color:#fff}
+.btn.ghost{color:var(--sub)}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.cost{margin-top:10px;background:#f9fafb;border-radius:10px;padding:8px 10px;font-size:.8em}
+.cost table{width:100%;border-collapse:collapse}
+.cost td{padding:3px 4px;border-bottom:1px solid var(--line)}
+.cost td.r{text-align:right;font-weight:800}
+.empty{text-align:center;color:var(--sub);padding:26px 10px;font-size:.9em;line-height:1.6}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;padding:16px 10px;overflow-y:auto;z-index:50}
+.modal{background:#fff;border-radius:16px;max-width:460px;width:100%;padding:16px 18px}
+.modal h3{margin:0 0 10px;color:var(--g)}
+.modal label{display:block;font-size:.8em;font-weight:800;color:#374151;margin:10px 0 4px}
+.modal input,.modal select{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;background:#fff}
+.modal .hint{font-size:.74em;color:var(--sub);margin-top:4px;line-height:1.5}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:12px;font-size:.88em;z-index:99;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <a href="./apps.html" class="hbtn" style="text-decoration:none">←</a>
+    <h1 id="tTitle">🤝 공동 오더 — 나눠 받기</h1>
+    <button class="hbtn" data-l="ko">KO</button><button class="hbtn" data-l="en">EN</button><button class="hbtn" data-l="es">ES</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span id="tMyBranch" style="font-size:.82em;font-weight:700">우리 지점</span>
+    <select id="myBranch" class="hsel"></select>
+  </div>
+  <div class="sub" id="tSub">한 박스를 여러 지점이 나눠 받아 버리는 걸 줄입니다 — 트럭은 매일 다닙니다.</div>
+</header>
+<main>
+  <button class="new" id="btnNew">＋ 새 공동 오더</button>
+  <div class="tabs"><button id="tabOpen" class="on">진행 중</button><button id="tabDone">완료</button></div>
+  <div id="list"><div class="empty">⏳</div></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+var DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+var ROOM = 'need_overstock';                       // 📦 재고 부족/과다 방 — 트럭 기사·매니저가 보는 곳
+var BRANCHES = [
+  { id:'MIAMI', ko:'마이애미', en:'Miami', es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD', ko:'할리우드', en:'Hollywood', es:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs', es:'Coral Springs' },
+  { id:'LASOLAS', ko:'라스올라스', en:'Las Olas', es:'Las Olas' }
+];
+var L = {
+  title:{ko:'🤝 공동 오더 — 나눠 받기',en:'🤝 Shared order — split a case',es:'🤝 Pedido compartido — dividir caja'},
+  sub:{ko:'한 박스를 여러 지점이 나눠 받아 버리는 걸 줄입니다 — 트럭은 매일 다닙니다.',en:'Split one case across stores instead of each store wasting a full case — the truck runs daily.',es:'Dividir una caja entre tiendas en vez de desechar — el camión pasa a diario.'},
+  myBranch:{ko:'우리 지점',en:'My store',es:'Mi tienda'},
+  newBtn:{ko:'＋ 새 공동 오더',en:'＋ New shared order',es:'＋ Nuevo pedido compartido'},
+  tabOpen:{ko:'진행 중',en:'In progress',es:'En curso'}, tabDone:{ko:'완료',en:'Done',es:'Hecho'},
+  emptyOpen:{ko:'진행 중인 공동 오더가 없습니다.<br>유통기한 앱 → 손실 리포트 → 🤝 나눠 받기 후보에서 고르거나, 위 ＋ 로 만드세요.',en:'No shared orders in progress.<br>Pick one from Expiry app → Loss report → 🤝 candidates, or tap ＋.',es:'No hay pedidos compartidos.<br>Elija desde Caducidad → Pérdidas → 🤝 candidatos, o toque ＋.'},
+  emptyDone:{ko:'완료된 공동 오더가 아직 없습니다.',en:'No finished shared orders yet.',es:'Aún no hay pedidos terminados.'},
+  st_open:{ko:'모집 중',en:'Collecting',es:'Juntando'}, st_ordered:{ko:'주문됨',en:'Ordered',es:'Pedido'},
+  st_shipping:{ko:'배송 중',en:'On the truck',es:'En camión'}, st_done:{ko:'완료',en:'Done',es:'Hecho'}, st_cancelled:{ko:'취소',en:'Cancelled',es:'Cancelado'},
+  caseOf:{ko:'1박스 {n}개',en:'case of {n}',es:'caja de {n}'}, leadIs:{ko:'주문·입고: {b}',en:'Orders & receives: {b}',es:'Pide y recibe: {b}'},
+  filled:{ko:'{a} / {n}개',en:'{a} / {n}',es:'{a} / {n}'}, over:{ko:'{n}개 초과',en:'{n} over',es:'{n} de más'}, left:{ko:'{n}개 남음',en:'{n} to go',es:'faltan {n}'},
+  myQty:{ko:'우리 지점 필요 개수',en:'My store needs',es:'Mi tienda necesita'}, save:{ko:'저장',en:'Save',es:'Guardar'},
+  btnOrdered:{ko:'📞 벤더에 주문함',en:'📞 Ordered from vendor',es:'📞 Pedido al proveedor'},
+  btnArrived:{ko:'📦 입고됨 → 트럭 배송 요청',en:'📦 Arrived → request truck',es:'📦 Llegó → pedir camión'},
+  btnGot:{ko:'✅ 우리 지점 받음',en:'✅ My store received',es:'✅ Mi tienda recibió'},
+  btnCancel:{ko:'취소',en:'Cancel',es:'Cancelar'}, btnAgain:{ko:'🔁 다음 회차 열기',en:'🔁 Open next round',es:'🔁 Abrir otra ronda'},
+  btnCopy:{ko:'📋 원가 표 복사',en:'📋 Copy cost split',es:'📋 Copiar costos'},
+  costTitle:{ko:'💲 원가 나누기',en:'💲 Cost split',es:'💲 División de costo'},
+  askOrderNotFull:{ko:'아직 {n}개가 비어 있습니다. 그래도 주문할까요?\n(남는 건 주문 지점 몫이 됩니다)',en:'{n} units still unclaimed. Order anyway?\n(Leftover stays with the ordering store)',es:'Aún faltan {n}. ¿Pedir igual?\n(Lo que sobre queda en la tienda que pide)'},
+  askCancel:{ko:'이 공동 오더를 취소할까요?',en:'Cancel this shared order?',es:'¿Cancelar este pedido?'},
+  askArrived:{ko:'입고 처리하고 📦 재고 부족/과다 방에 트럭 배송 목록을 올릴까요?\n\n{list}',en:'Mark arrived and post the truck list to the stock room?\n\n{list}',es:'¿Marcar llegada y publicar la lista del camión?\n\n{list}'},
+  nobody:{ko:'나눠 받을 다른 지점이 없습니다',en:'No other store to send to',es:'No hay otra tienda'},
+  saved:{ko:'저장됨',en:'Saved',es:'Guardado'}, fail:{ko:'저장 실패',en:'Save failed',es:'Error al guardar'},
+  noRule:{ko:'권한 없음 — Firebase 규칙(shareOrders) 게시가 필요합니다',en:'No permission — Firebase rule (shareOrders) must be published',es:'Sin permiso — falta publicar la regla shareOrders'},
+  copied:{ko:'복사됨',en:'Copied',es:'Copiado'},
+  f_title:{ko:'새 공동 오더',en:'New shared order',es:'Nuevo pedido compartido'},
+  f_name:{ko:'상품명 *',en:'Product *',es:'Producto *'}, f_bc:{ko:'바코드',en:'Barcode',es:'Código'},
+  f_case:{ko:'박스 입수 (1박스 몇 개) *',en:'Units per case *',es:'Unidades por caja *'},
+  f_lead:{ko:'주문·입고 지점 *',en:'Store that orders & receives *',es:'Tienda que pide y recibe *'},
+  f_leadHint:{ko:'벤더에 주문하고 박스를 받아 트럭으로 나눠 보내는 지점. 보통 가장 많이 파는 곳.',en:'Orders from the vendor, receives the case, sends shares by truck. Usually the store that sells most.',es:'Pide al proveedor, recibe la caja y envía por camión. Normalmente la que más vende.'},
+  f_vendor:{ko:'벤더',en:'Vendor',es:'Proveedor'}, f_cost:{ko:'낱개 원가 ($)',en:'Unit cost ($)',es:'Costo unitario ($)'},
+  f_costHint:{ko:'넣으면 지점별 원가 나누기 표가 나옵니다.',en:'If filled, a per-store cost split is shown.',es:'Si lo llena, se muestra el costo por tienda.'},
+  f_memo:{ko:'메모',en:'Memo',es:'Nota'}, f_create:{ko:'만들기',en:'Create',es:'Crear'}, f_cancel:{ko:'닫기',en:'Close',es:'Cerrar'},
+  f_need:{ko:'상품명과 박스 입수를 넣어주세요',en:'Enter product and units per case',es:'Ingrese producto y unidades por caja'},
+  by:{ko:'{n}',en:'{n}',es:'{n}'}
+};
+var lang = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; } })();
+if (['ko','en','es'].indexOf(lang) < 0) lang = 'ko';
+function t(k, v){ var o = L[k]; var s = o ? (o[lang] || o.ko) : k; if (v) for (var x in v) s = s.split('{' + x + '}').join(v[x]); return s; }
+function esc(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function bl(id){ var b = BRANCHES.filter(function(x){ return x.id === id; })[0]; return b ? (b[lang] || b.ko) : id; }
+function me(){ try { return window.__currentUser || JSON.parse(localStorage.getItem('chat.me') || '{}'); } catch(e){ return {}; } }
+function meName(){ return (me() && me().name) || ''; }
+function today(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function toast(m){ var el = document.getElementById('toast'); el.textContent = m; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(function(){ el.classList.remove('show'); }, 2600); }
+
+var MYB = (function(){
+  try { var s = localStorage.getItem('share.myBranch'); if (s) return s; } catch(e){}
+  var b = (me() && me().branch) || ''; try { b = b || localStorage.getItem('km_branch') || ''; } catch(e){}
+  return BRANCHES.some(function(x){ return x.id === b; }) ? b : 'HOLLYWOOD';
+})();
+var TAB = 'open';
+var DATA = {};
+
+async function api(path, method, body){
+  var opt = { cache:'no-store' };
+  if (method){ opt = { method: method }; if (method !== 'DELETE'){ opt.headers = { 'Content-Type':'application/json' }; opt.body = JSON.stringify(body); } }
+  var r = await fetch(DB + '/' + path + '.json', opt);
+  if (!r.ok){ var e = new Error(r.status); e.status = r.status; throw e; }
+  return method ? null : r.json();
+}
+function failToast(e){ toast((e && (e.status === 401 || e.status === 403)) ? t('noRule') : t('fail') + ' (' + ((e && e.message) || e) + ')'); }
+async function load(){
+  try { DATA = (await api('shareOrders')) || {}; render(); }
+  catch(e){ document.getElementById('list').innerHTML = '<div class="empty">' + ((e.status === 401 || e.status === 403) ? t('noRule') : t('fail')) + '</div>'; }
+}
+function wantSum(o){ var s = 0; Object.keys(o.wants || {}).forEach(function(b){ s += +(o.wants[b].qty || 0); }); return s; }
+
+// 📦 재고 부족/과다 방에 글 올리기 — 트럭 기사·매니저가 보는 곳 (매대 관리 앱과 같은 방식)
+async function postChat(text, meta){
+  var ts = Date.now(), id = 'm' + ts + Math.floor(Math.random() * 900);
+  var msg = { sender: meName(), senderBranch: MYB, senderRole: (me() && me().role) || '', isManager: !!(me() && me().isManager),
+              color: '#1D4ED8', text: text, ts: ts, photos: [], meta: meta || {} };
+  await api('chat/messages/' + ROOM + '/' + id, 'PUT', msg);
+  api('chat/rooms/' + ROOM, 'PATCH', { lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: meName() }).catch(function(){});
+}
+
+function render(){
+  var ids = Object.keys(DATA).filter(function(id){
+    var s = DATA[id] && DATA[id].status;
+    return TAB === 'open' ? (s === 'open' || s === 'ordered' || s === 'shipping') : (s === 'done' || s === 'cancelled');
+  }).sort(function(a, b){ return (DATA[b].createdAt || 0) - (DATA[a].createdAt || 0); });
+  if (TAB === 'done') ids = ids.slice(0, 40);
+  var list = document.getElementById('list');
+  if (!ids.length){ list.innerHTML = '<div class="empty">' + t(TAB === 'open' ? 'emptyOpen' : 'emptyDone') + '</div>'; return; }
+  list.innerHTML = ids.map(function(id){ return cardHtml(id, DATA[id]); }).join('');
+  list.querySelectorAll('[data-act]').forEach(function(b){
+    b.addEventListener('click', function(){ act(b.getAttribute('data-act'), b.getAttribute('data-id')); });
+  });
+}
+function cardHtml(id, o){
+  var sum = wantSum(o), cs = +o.caseSize || 0;
+  var pct = cs ? Math.min(100, Math.round(sum / cs * 100)) : 0;
+  var diff = cs - sum;
+  var prog = diff > 0 ? t('left', { n: diff }) : diff < 0 ? t('over', { n: -diff }) : '✓';
+  var wants = BRANCHES.map(function(b){
+    var w = (o.wants || {})[b.id]; var q = w ? +w.qty || 0 : 0;
+    if (!q && b.id !== o.lead && b.id !== MYB) return '';
+    var got = o.received && o.received[b.id];
+    var cls = 'want' + (b.id === MYB ? ' me' : '') + (b.id === o.lead ? ' lead' : '') + (got ? ' got' : '');
+    return '<span class="' + cls + '">' + (b.id === o.lead ? '📦 ' : '') + esc(bl(b.id)) + ' ' + q + (got ? ' ✓' : '') + '</span>';
+  }).join('');
+  var h = '<div class="card' + (o.status === 'open' && sum >= cs && cs ? ' full' : '') + '">';
+  h += '<div class="ttl"><b>' + esc(o.name) + '</b><span class="chip st-' + esc(o.status) + '">' + t('st_' + o.status) + '</span></div>';
+  h += '<div class="meta">' + t('caseOf', { n: cs }) + ' · ' + t('leadIs', { b: esc(bl(o.lead)) }) +
+       (o.vendor ? ' · 🏬 ' + esc(o.vendor) : '') + (o.barcode ? ' · 🏷 ' + esc(o.barcode) : '') +
+       (o.memo ? '<br>📝 ' + esc(o.memo) : '') + '<br>' + esc(o.createdBy || '') + ' · ' + esc(o.createdDay || '') + '</div>';
+  h += '<div class="prog"><div class="bar"><div class="f' + (diff < 0 ? ' over' : '') + '" style="width:' + pct + '%"></div></div><span>' +
+       t('filled', { a: sum, n: cs }) + ' · ' + prog + '</span></div>';
+  h += '<div class="wants">' + wants + '</div>';
+  if (o.status === 'open'){
+    var mine = ((o.wants || {})[MYB] || {}).qty || '';
+    h += '<div class="myrow"><span style="font-size:.8em;font-weight:800">' + esc(bl(MYB)) + ' — ' + t('myQty') + '</span>' +
+         '<input type="number" min="0" inputmode="numeric" id="q_' + esc(id) + '" value="' + esc(mine) + '">' +
+         '<button class="btn g" data-act="want" data-id="' + esc(id) + '">' + t('save') + '</button></div>';
+  }
+  h += '<div class="acts">';
+  if (o.status === 'open')     h += '<button class="btn b" data-act="ordered" data-id="' + esc(id) + '">' + t('btnOrdered') + '</button>';
+  if (o.status === 'ordered')  h += '<button class="btn p" data-act="arrived" data-id="' + esc(id) + '">' + t('btnArrived') + '</button>';
+  if (o.status === 'shipping' && MYB !== o.lead && ((o.wants || {})[MYB] || {}).qty > 0 && !(o.received || {})[MYB])
+                               h += '<button class="btn g" data-act="got" data-id="' + esc(id) + '">' + t('btnGot') + '</button>';
+  if (o.status === 'open' || o.status === 'ordered') h += '<button class="btn ghost" data-act="cancel" data-id="' + esc(id) + '">' + t('btnCancel') + '</button>';
+  if (o.status === 'done' || o.status === 'cancelled') h += '<button class="btn" data-act="again" data-id="' + esc(id) + '">' + t('btnAgain') + '</button>';
+  if (+o.unitCost > 0 && sum > 0) h += '<button class="btn" data-act="copy" data-id="' + esc(id) + '">' + t('btnCopy') + '</button>';
+  h += '</div>';
+  if (+o.unitCost > 0 && sum > 0){
+    h += '<div class="cost"><b>' + t('costTitle') + '</b> ($' + (+o.unitCost).toFixed(2) + ')<table>' +
+      costRows(o).map(function(r){ return '<tr><td>' + esc(bl(r.b)) + '</td><td class="r">' + r.q + ' × $' + (+o.unitCost).toFixed(2) + '</td><td class="r">$' + r.amt.toFixed(2) + '</td></tr>'; }).join('') +
+      '</table></div>';
+  }
+  return h + '</div>';
+}
+// 원가 나누기 — 박스를 다 못 채우고 주문했으면 남는 개수는 주문 지점 몫
+function costRows(o){
+  var cs = +o.caseSize || 0, c = +o.unitCost || 0, rows = [], sum = 0;
+  BRANCHES.forEach(function(b){ var q = +(((o.wants || {})[b.id] || {}).qty || 0); if (q){ rows.push({ b: b.id, q: q }); sum += q; } });
+  if (cs > sum){ var lead = rows.filter(function(r){ return r.b === o.lead; })[0]; if (lead) lead.q += cs - sum; else rows.push({ b: o.lead, q: cs - sum }); }
+  rows.forEach(function(r){ r.amt = Math.round(r.q * c * 100) / 100; });
+  return rows;
+}
+async function act(a, id){
+  var o = DATA[id]; if (!o) return;
+  try {
+    if (a === 'want'){
+      var v = Math.max(0, parseInt(document.getElementById('q_' + id).value, 10) || 0);
+      // 다른 지점이 방금 넣은 숫자까지 알아야 "1박스가 막 찼다"를 정확히 잡는다 → 서버에서 다시 읽는다
+      var fresh = await api('shareOrders/' + id);
+      if (fresh){ o = fresh; DATA[id] = fresh; }
+      var before = wantSum(o);
+      if (v) await api('shareOrders/' + id + '/wants/' + MYB, 'PUT', { qty: v, by: meName(), at: today() });
+      else   await api('shareOrders/' + id + '/wants/' + MYB, 'DELETE');
+      o.wants = o.wants || {}; if (v) o.wants[MYB] = { qty: v, by: meName(), at: today() }; else delete o.wants[MYB];
+      var after = wantSum(o), cs = +o.caseSize || 0;
+      // 1박스가 막 찼으면 주문 지점이 알 수 있게 방에 알린다 (발주는 지점별로 각자 하므로)
+      if (cs && before < cs && after >= cs){
+        postChat('🤝 공동 오더 모집 완료 — ' + bl(o.lead) + ' 지점 주문해주세요 / Shared order full — ' + bl(o.lead) + ' please order\n' +
+                 '📦 ' + o.name + ' · 1박스 ' + cs + '개' + (o.vendor ? ' · 🏬 ' + o.vendor : '') + '\n' +
+                 BRANCHES.filter(function(b){ return ((o.wants || {})[b.id] || {}).qty; }).map(function(b){ return bl(b.id) + ' ' + o.wants[b.id].qty; }).join(' · '),
+                 { kind:'share_full', id: id }).catch(function(){});
+      }
+      toast(t('saved'));
+    } else if (a === 'ordered'){
+      var left = (+o.caseSize || 0) - wantSum(o);
+      if (left > 0 && !confirm(t('askOrderNotFull', { n: left }))) return;
+      await api('shareOrders/' + id, 'PATCH', { status:'ordered', orderedBy: meName(), orderedAt: Date.now() });
+    } else if (a === 'arrived'){
+      var ship = BRANCHES.filter(function(b){ return b.id !== o.lead && +(((o.wants || {})[b.id] || {}).qty || 0) > 0; });
+      var listTxt = ship.length ? ship.map(function(b){ return '➡️ ' + bl(b.id) + ' ' + o.wants[b.id].qty; }).join('\n') : t('nobody');
+      if (!confirm(t('askArrived', { list: listTxt }))) return;
+      await api('shareOrders/' + id, 'PATCH', { status: ship.length ? 'shipping' : 'done', arrivedBy: meName(), arrivedAt: Date.now() });
+      if (ship.length){
+        // 기존 🚚 LASOLAS TRUCKING 흐름과 같은 머리말 — 기사가 늘 보던 모양 그대로
+        await postChat('🚚 LASOLAS TRUCKING — 🤝 공동 오더 배송 / Shared order delivery\n' +
+                       '📦 ' + o.name + ' (1박스 ' + o.caseSize + '개) · ' + bl(o.lead) + ' 입고 / from ' + bl(o.lead) + '\n' +
+                       ship.map(function(b){ return '• ' + bl(b.id) + ' ' + o.wants[b.id].qty + '개'; }).join('\n') +
+                       '\n— ' + meName(), { kind:'share_ship', id: id }).catch(function(e){ console.warn('[share chat]', e); });
+      }
+    } else if (a === 'got'){
+      await api('shareOrders/' + id + '/received/' + MYB, 'PUT', { by: meName(), at: Date.now() });
+      o.received = o.received || {}; o.received[MYB] = { by: meName(), at: Date.now() };
+      var need = BRANCHES.filter(function(b){ return b.id !== o.lead && +(((o.wants || {})[b.id] || {}).qty || 0) > 0; });
+      if (need.every(function(b){ return o.received[b.id]; })) await api('shareOrders/' + id, 'PATCH', { status:'done', doneAt: Date.now() });
+    } else if (a === 'cancel'){
+      if (!confirm(t('askCancel'))) return;
+      await api('shareOrders/' + id, 'PATCH', { status:'cancelled', cancelledBy: meName(), cancelledAt: Date.now() });
+    } else if (a === 'again'){
+      var nid = 's' + Date.now();
+      await api('shareOrders/' + nid, 'PUT', { name:o.name, barcode:o.barcode || '', caseSize:o.caseSize, lead:o.lead, vendor:o.vendor || '',
+        unitCost:o.unitCost || 0, memo:o.memo || '', status:'open', createdBy: meName(), createdAt: Date.now(), createdDay: today(), prevId: id });
+      TAB = 'open'; setTabs();
+    } else if (a === 'copy'){
+      var txt = '🤝 ' + o.name + ' — ' + t('costTitle') + ' ($' + (+o.unitCost).toFixed(2) + ')\n' +
+        costRows(o).map(function(r){ return bl(r.b) + '\t' + r.q + '\t$' + r.amt.toFixed(2); }).join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(function(){ toast(t('copied')); }, function(){ prompt('', txt); });
+      else prompt('', txt);
+      return;
+    }
+  } catch(e){ failToast(e); return; }
+  await load();
+}
+
+function openForm(pre){
+  pre = pre || {};
+  var ov = document.createElement('div'); ov.className = 'ov';
+  var opts = BRANCHES.map(function(b){ return '<option value="' + b.id + '"' + ((pre.lead || MYB) === b.id ? ' selected' : '') + '>' + esc(bl(b.id)) + '</option>'; }).join('');
+  ov.innerHTML = '<div class="modal"><h3>🤝 ' + t('f_title') + '</h3>' +
+    '<label>' + t('f_name') + '</label><input id="fName" value="' + esc(pre.name || '') + '">' +
+    '<label>' + t('f_bc') + '</label><input id="fBc" inputmode="numeric" value="' + esc(pre.bc || '') + '">' +
+    '<label>' + t('f_case') + '</label><input id="fCase" type="number" min="1" inputmode="numeric" value="' + esc(pre.cs || '') + '">' +
+    '<label>' + t('f_lead') + '</label><select id="fLead">' + opts + '</select><div class="hint">' + t('f_leadHint') + '</div>' +
+    '<label>' + t('f_vendor') + '</label><input id="fVendor" value="' + esc(pre.vendor || '') + '">' +
+    '<label>' + t('f_cost') + '</label><input id="fCost" type="number" step="0.01" min="0" inputmode="decimal" value="' + esc(pre.cost || '') + '"><div class="hint">' + t('f_costHint') + '</div>' +
+    '<label>' + t('f_memo') + '</label><input id="fMemo" value="' + esc(pre.memo || '') + '">' +
+    '<div class="acts" style="margin-top:14px"><button class="btn" id="fClose">' + t('f_cancel') + '</button><button class="btn g" id="fOk" style="flex:1">' + t('f_create') + '</button></div></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
+  ov.querySelector('#fClose').onclick = function(){ ov.remove(); };
+  ov.querySelector('#fOk').onclick = async function(){
+    var name = ov.querySelector('#fName').value.trim(), cs = parseInt(ov.querySelector('#fCase').value, 10) || 0;
+    if (!name || !cs){ toast(t('f_need')); return; }
+    var id = 's' + Date.now();
+    try {
+      await api('shareOrders/' + id, 'PUT', {
+        name: name, barcode: ov.querySelector('#fBc').value.trim(), caseSize: cs, lead: ov.querySelector('#fLead').value,
+        vendor: ov.querySelector('#fVendor').value.trim(), unitCost: parseFloat(ov.querySelector('#fCost').value) || 0,
+        memo: ov.querySelector('#fMemo').value.trim(), status: 'open',
+        createdBy: meName(), createdAt: Date.now(), createdDay: today()
+      });
+    } catch(e){ failToast(e); return; }
+    ov.remove(); TAB = 'open'; setTabs(); await load();
+  };
+}
+
+function setTabs(){
+  document.getElementById('tabOpen').classList.toggle('on', TAB === 'open');
+  document.getElementById('tabDone').classList.toggle('on', TAB === 'done');
+}
+function applyLang(){
+  document.documentElement.lang = lang;
+  document.getElementById('tTitle').textContent = t('title');
+  document.getElementById('tSub').textContent = t('sub');
+  document.getElementById('tMyBranch').textContent = t('myBranch');
+  document.getElementById('btnNew').textContent = t('newBtn');
+  document.getElementById('tabOpen').textContent = t('tabOpen');
+  document.getElementById('tabDone').textContent = t('tabDone');
+  document.querySelectorAll('[data-l]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-l') === lang); });
+  var sel = document.getElementById('myBranch');
+  sel.innerHTML = BRANCHES.map(function(b){ return '<option value="' + b.id + '"' + (b.id === MYB ? ' selected' : '') + '>' + esc(bl(b.id)) + '</option>'; }).join('');
+  render();
+}
+document.querySelectorAll('[data-l]').forEach(function(b){
+  b.addEventListener('click', function(){ lang = b.getAttribute('data-l'); try { localStorage.setItem('kimchi_lang', lang); } catch(e){} applyLang(); });
+});
+document.getElementById('myBranch').addEventListener('change', function(){ MYB = this.value; try { localStorage.setItem('share.myBranch', MYB); } catch(e){} render(); });
+document.getElementById('btnNew').onclick = function(){ openForm(); };
+document.getElementById('tabOpen').onclick = function(){ TAB = 'open'; setTabs(); render(); };
+document.getElementById('tabDone').onclick = function(){ TAB = 'done'; setTabs(); render(); };
+
+applyLang();
+// 유통기한 앱 "🤝 나눠 받기 후보" 에서 넘어오면 바로 만들기 창 (?new=1&name=…&bc=…)
+var qs = new URLSearchParams(location.search);
+if (qs.get('new')) openForm({ name: qs.get('name') || '', bc: qs.get('bc') || '', cost: qs.get('cost') || '' });
+load();
+window.addEventListener('fb-auth-ready', load);          // 로그인 토큰이 늦게 복원되면 다시 불러온다
+// 1분마다 다른 지점 입력을 반영 — 단, 숫자를 입력하는 중이면 지우지 않게 건너뛴다
+setInterval(function(){
+  var a = document.activeElement;
+  if (document.hidden || document.querySelector('.ov') || (a && a.tagName === 'INPUT')) return;
+  load();
+}, 60000);
+})();
+</script>
+</body>
+</html>
