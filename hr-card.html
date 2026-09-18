@@ -975,6 +975,18 @@ const POS_DEPT_MAP = [
   ['SUSHI',     'cat',   ['SUSHI']],
   ['K_FOOD',    'cat',   ['BANCHAN','READY-TO-EAT','KIMCHI','GIMBAP']], // 김밥·김치 포함
 ];
+// 복사해 온 글에는 겉보기엔 띄어쓰기인데 실제론 특수 공백(NBSP 등)·특수 하이픈이 섞여 온다.
+// 그대로 두면 "SUMMARY-SALE REPORT" 도, 줄 끝 금액도 안 맞는다 → 먼저 평범한 문자로 바꾼다.
+function _posNorm(t){
+  return String(t||'').replace(/\r\n?/g,'\n')
+    .replace(/[   -   　﻿]/g,' ')
+    .replace(/[​-‍⁠]/g,'')
+    .replace(/[‐-―−﹘﹣－]/g,'-');
+}
+const POS_TITLE=/SUMMARY[\s\-]*SALES?[\s\-]*REPORT/i;
+function _isPosText(t){
+  return POS_TITLE.test(t) || /CATEGORIES[\s\-]*SALES/i.test(t) || (/STORE\s*:/i.test(t) && /^\s*TOTALS\s*$/im.test(t));
+}
 function _posFindBranch(chunk){
   const sm=chunk.match(/STORE:\s*(.+)/i);
   if(sm){
@@ -1021,7 +1033,8 @@ function _posCategories(lines, title){
   return out;
 }
 function _parsePosReports(text){
-  const chunks=String(text).split(/(?=SUMMARY-SALE REPORT)/i).filter(c=>/SUMMARY-SALE REPORT/i.test(c));
+  let chunks=String(text).split(new RegExp('(?='+POS_TITLE.source+')','i')).filter(c=>POS_TITLE.test(c));
+  if(!chunks.length) chunks=[String(text)];   // 제목 없이 본문만 붙인 경우 — 통째로 한 보고서
   return chunks.map(c=>{
     const r={};
     const lines=c.split(/\r?\n/);
@@ -1113,8 +1126,12 @@ async function dlyBulkReports(raw){
 }
 
 window.dlyBulk = async function(){
-  const _raw=document.getElementById('dlyBulk').value;
-  if(/SUMMARY-SALE REPORT/i.test(_raw)) return dlyBulkReports(_raw);   // POS 보고서 통째 붙여넣기
+  const _raw=_posNorm(document.getElementById('dlyBulk').value);
+  if(!_raw.trim()){ alert('붙여넣은 내용이 없어요 — 칸을 한 번 누른 뒤 Ctrl+V 하세요'); return; }
+  if(_isPosText(_raw)){                                                  // POS 보고서 통째 붙여넣기
+    try{ return await dlyBulkReports(_raw); }
+    catch(e){ alert('⚠ 보고서 처리 중 오류: '+(e&&e.message||e)+'\n\n붙여넣은 내용은 그대로 두었어요. 이 창을 캡처해 보내주세요.'); return; }
+  }
   const lines=_raw.split(/\n+/).map(l=>l.trim()).filter(Boolean);
   if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
   const isDate=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x||''));
@@ -1156,6 +1173,13 @@ window.dlyBulk = async function(){
       }
       DAILY_MONTH=dt.slice(0,7);   // 붙여넣은 달을 바로 보여준다
     }catch(_){ bad.push(ln); }
+  }
+  if(!ok && !okDept){
+    // 하나도 못 넣었으면 화면을 다시 그리지 않는다 — 다시 그리면 붙여넣은 내용까지 지워져
+    // 무엇이 문제였는지 볼 수가 없다 (2026-09-18 실제로 그렇게 사라졌다).
+    alert('⚠ 한 줄도 저장하지 못했어요 ('+bad.length+'줄 형식 오류)\n\n첫 줄: «'+String(lines[0]||'').slice(0,70)+'»\n\n'+
+      'POS 보고서라면 제목 "SUMMARY-SALE REPORT" 가 포함되게 복사해 주세요.\n붙여넣은 내용은 칸에 그대로 두었어요.');
+    return;
   }
   alert('✅ '+t('ddBulkResult')(ok, okDept)+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
   await dlyReload();
