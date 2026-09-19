@@ -1023,6 +1023,10 @@ const I18N = {
   shareBadgeShare:{ko:'{n}개 지점이 버림',en:'{n} stores waste',es:'{n} tiendas desechan'},
   shareBadgeBox:{ko:'박스 과다',en:'case too big',es:'caja grande'},
   shareRate:{ko:'등록 {r}개 중 {d}개 폐기 ({p}%)',en:'{d} of {r} registered thrown away ({p}%)',es:'{d} de {r} registrados desechados ({p}%)'},
+  shareBrTitle:{ko:'지점별 기록 현황 (최근 {n}일: 폐기 건수 / 등록 건수 · 손실)',en:'Records by store (last {n} days: discards / registered · loss)',es:'Registros por tienda ({n} días: desechos / registrados · pérdida)'},
+  shareBrVal:{ko:'폐기 {d} / 등록 {r}',en:'{d} / {r}',es:'{d} / {r}'},
+  shareBrTip:{ko:'유통기한 앱에 등록·폐기 처리한 건수',en:'Items registered / discarded in this app',es:'Registrados / desechados en esta app'},
+  shareBrWarn:{ko:'⚠ 표시 지점은 폐기 기록이 없습니다 — 그 지점에서 버린 건 이 분석에 안 잡혀서, 여러 지점이 같이 버리는 상품(🤝)이 안 보일 수 있습니다. 폐기할 때 유통기한 앱에서 "폐기" 처리를 해야 잡힙니다.',en:'Stores marked ⚠ have no discard records — their waste is invisible here, so shared-waste items (🤝) may not show. Discards must be marked in this app.',es:'Las tiendas con ⚠ no registran desechos — su merma no aparece aquí. Hay que marcar "desechar" en esta app.'},
   shareMake:{ko:'공동 오더 만들기',en:'Start a shared order',es:'Crear pedido compartido'},
   shareMore:{ko:'… 외 {n}개',en:'… {n} more',es:'… {n} más'},
   shareNote:{ko:'· 지점 옆 숫자 = 폐기/등록 개수 · 유통기한 앱에 등록한 상품만 잡힙니다 · 최근 등록분은 아직 팔리는 중이라 비율이 낮게 나올 수 있습니다',en:'· Numbers = thrown away / registered · Only items registered in this app · Recent batches may still be selling, so rates can look low',es:'· Números = desechados / registrados · Solo productos registrados en esta app · Los lotes recientes aún se venden'},
@@ -3058,6 +3062,15 @@ function buildShareAnalysis(days){
   const fromMs = Date.now() - days * 86400000;
   const all = Object.values(__ALL_BRANCH_DATA || {}).flat();
   const by = {};
+  // 지점별 기록 현황 — 🤝 가 0 이면 대개 다른 지점이 폐기를 기록하지 않아서다 (그걸 보이게)
+  const brStat = {};
+  BRANCHES.forEach(b => { brStat[b.id] = { reg:0, disc:0, loss:0 }; });
+  all.forEach(p => {
+    if (!p || !(p.addedAt >= fromMs)) return;
+    const st = brStat[p._branch || BRANCH] || (brStat[p._branch || BRANCH] = { reg:0, disc:0, loss:0 });
+    st.reg++;
+    if (p.status === 'discarded'){ st.disc++; st.loss += (+(p.cost || p.price || 0)) * lossEffectiveQty(p); }
+  });
   all.forEach(p => {
     if (!p || !(p.addedAt >= fromMs)) return;                 // 기간 안에 등록된 묶음
     const key = _shareKey(p); if (!key) return;
@@ -3081,7 +3094,7 @@ function buildShareAnalysis(days){
   const totalLoss = rows.reduce((s, e) => s + e.loss, 0);
   const share = rows.filter(e => e.kind === 'share');
   const box = rows.filter(e => e.kind === 'box');
-  return { rows, totalLoss, share, box,
+  return { rows, totalLoss, share, box, brStat,
            shareLoss: share.reduce((s, e) => s + e.loss, 0),
            boxLoss: box.reduce((s, e) => s + e.loss, 0) };
 }
@@ -3109,6 +3122,15 @@ function renderShare(){
       <div class="hl"><b>$${Math.round(a.shareLoss).toLocaleString()}</b><span>🤝 ${t('shareSumShare', { n: a.share.length })}</span></div>
       <div><b>$${Math.round(a.boxLoss).toLocaleString()}</b><span>📦 ${t('shareSumBox', { n: a.box.length })}</span></div>
     </div>`;
+  // 지점별 기록 현황 — 기록이 없는 지점은 빨갛게 (그 지점 폐기는 이 분석에 안 잡힌다)
+  h += `<div class="share-sub" style="font-weight:800;margin:4px 0 4px">📍 ${t('shareBrTitle', { n: SHARE_DAYS })}</div><div class="share-brs" style="margin-bottom:8px">` +
+    BRANCHES.filter(b => b.id !== 'WEST_PALM').map(b => {
+      const st = a.brStat[b.id] || { reg:0, disc:0, loss:0 };
+      const none = st.disc === 0;
+      return `<span class="share-br ${none ? 'w' : ''}" title="${t('shareBrTip')}">${escHtml(_bLabel(b.id))} · ${t('shareBrVal', { d: st.disc, r: st.reg })} · $${Math.round(st.loss)}${none ? ' ⚠' : ''}</span>`;
+    }).join('') + `</div>`;
+  if (BRANCHES.some(b => b.id !== 'WEST_PALM' && (a.brStat[b.id] || {}).disc === 0))
+    h += `<div class="share-sub" style="color:#b45309;margin:-2px 0 8px">${t('shareBrWarn')}</div>`;
   if (!a.rows.length){ box.innerHTML = h + `<div style="color:#9ca3af;font-size:.85em;text-align:center;padding:14px">${t('noData')}</div>`; return; }
   const list = a.rows.slice(0, 40);
   h += list.map(e => {
@@ -3123,7 +3145,7 @@ function renderShare(){
         <div class="share-top"><span class="nm">${escHtml(e.name || e.bc || '')}</span>${badge}<b class="ls">$${Math.round(e.loss)}</b></div>
         <div class="share-rate"><div class="bar"><div class="f" style="width:${pct}%"></div></div><span>${t('shareRate', { d: e.disc, r: e.reg, p: pct })}</span></div>
         <div class="share-brs">${brs}</div>
-        ${e.kind === 'share' ? `<a class="share-go" href="./share-order.html?new=1&name=${encodeURIComponent(e.name||'')}&bc=${encodeURIComponent(e.bc||'')}&cost=${e.disc ? (e.loss/e.disc).toFixed(2) : ''}">🤝 ${t('shareMake')}</a>` : ''}
+        ${(e.kind === 'share' || e.kind === 'box') ? `<a class="share-go" href="./share-order.html?new=1&name=${encodeURIComponent(e.name||'')}&bc=${encodeURIComponent(e.bc||'')}&cost=${e.disc ? (e.loss/e.disc).toFixed(2) : ''}">🤝 ${t('shareMake')}</a>` : ''}
       </div>`;
   }).join('');
   if (a.rows.length > list.length) h += `<div class="share-sub" style="text-align:center">${t('shareMore', { n: a.rows.length - list.length })}</div>`;
