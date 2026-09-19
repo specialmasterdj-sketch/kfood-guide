@@ -425,6 +425,8 @@ table.rv tr:hover td{background:#fafffe}
     🔗 <span id="match-stats">-</span>
     <span style="color:#888;font-weight:400;margin-left:8px">· 비교기준: POS 원가(COST) vs 인보이스 EA Price · 매칭: 바코드 → 코드 폴백</span>
   </div>
+  <!-- 🏬 헐리우드 경유 품목을 다른 지점이 벤더에 직접 주문했으면 여기 빨간 경고 (checkHubViolations) -->
+  <div id="hub-viol" style="display:none"></div>
 
   <div class="brow">
     <button class="btn btn-o" onclick="exportXlsx()">📥 결과 엑셀 저장</button>
@@ -508,6 +510,93 @@ function saveInvoiceCosts(rows){
   }).catch(e => console.warn('[costHistory]', e && e.message));
   return n;
 }
+/* ============ 🏬 헐리우드 경유 품목 위반 적발 — 2026-09-19 ============
+ * 전무님: 선정 품목은 지점이 벤더에 직접 주문 금지 — 헐리우드가 박스로 사서 트럭으로 나눈다.
+ * 오더 앱은 막았지만 JFC·EASTLAND 는 자기 회사 앱으로 주문하고, 전화 주문도 막을 수 없다.
+ * → 헐리우드가 아닌 지점 인보이스에 경유 품목(shareOrders/_items)이 있으면
+ *   ① 결과 화면에 빨간 경고  ② shareOrders/_violations 에 기록  ③ 👔 매니저 룸에 알림.
+ * 매칭: 바코드(앞 0·체크 숫자 무시) — 벤더 상관없이. 바코드가 없으면 벤더+상품번호.
+ * 같은 날·지점·벤더·품목 조합은 한 번만 알린다(인보이스 다시 돌려도 중복 없음).
+ * 저장 경로가 shareOrders 아래라 규칙 게시 불필요(공동 오더와 같은 권한).
+ */
+const HUB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const HUB_VENDOR_INV = {   // 오더 앱 벤더 id → 이 앱의 벤더 이름(벨라포스 VENDOR)
+  rhee_full:'ASSI', seoul_trading:'SEOULTRADING', well_luck:'WELL LUCK', namdaemun:'NDM', wismettac:'WISMETTAC',
+  eden:'EDEN', wang:'WANG HANMI', jfc:'JFC', eastland:'EASTLAND'
+};
+const HUB_BR_KO = { MIAMI:'마이애미', PEMBROKE_PINES:'펨브로크 파인즈', HOLLYWOOD:'할리우드', CORAL_SPRINGS:'코럴 스프링스', LASOLAS:'라스올라스' };
+function _hubBcKeys(v){ const d = String(v || '').replace(/\D/g, '').replace(/^0+/, ''); return d.length < 7 ? [] : [d, d.slice(0, -1)]; }
+function _hubCode(v){ return String(v || '').toUpperCase().replace(/\s+/g, '').replace(/^0+/, ''); }
+function _hubUser(){ try { return window.__currentUser || JSON.parse(localStorage.getItem('chat.me') || '{}') || {}; } catch(e){ return {}; } }
+function _hubEsc(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function checkHubViolations(rows){
+  const box = document.getElementById('hub-viol');
+  if (box){ box.style.display = 'none'; box.innerHTML = ''; }
+  let br = ''; try { br = String(localStorage.getItem('km_branch') || '').toUpperCase(); } catch(e){}
+  if (!br || br === 'HOLLYWOOD') return;                 // 헐리우드는 원래 주문하는 곳
+  let items = {};
+  try { const r = await fetch(HUB_DB + '/shareOrders/_items.json', { cache:'no-store' }); if (!r.ok) return; items = (await r.json()) || {}; }
+  catch(e){ console.warn('[hub-viol]', e && e.message); return; }
+  const bcIdx = {}, codeIdx = {};
+  Object.keys(items).forEach(k => {
+    const it = items[k]; if (!it || it.active === false) return;
+    _hubBcKeys(it.barcode).forEach(x => { bcIdx[x] = k; });
+    const inv = HUB_VENDOR_INV[it.vendor] || String(it.vendorName || '').toUpperCase();
+    const c = _hubCode(it.pid); if (c && inv) codeIdx[inv + '|' + c] = k;
+  });
+  const invV = String(S.invVendor || '').toUpperCase();
+  const hits = {};
+  (rows || []).forEach(r => {
+    let k = '';
+    [r.posBarcode, r.invBarcode].forEach(b => _hubBcKeys(b).forEach(x => { if (!k && bcIdx[x]) k = bcIdx[x]; }));
+    if (!k && invV){ const c = _hubCode(r.invVendorCode); if (c && codeIdx[invV + '|' + c]) k = codeIdx[invV + '|' + c]; }
+    if (k && !hits[k]){
+      const it = items[k];
+      const inv = (S.invData || []).find(d => (r.invVendorCode && _hubCode(d.vendorCode) === _hubCode(r.invVendorCode)) ||
+                                              (r.invBarcode && String(d.barcode || '').replace(/\D/g, '') === r.invBarcode));
+      hits[k] = { key: k, name: it.name || r.name || r.invName || '', nameKr: it.nameKr || '', code: r.invVendorCode || '',
+                  bc: r.posBarcode || r.invBarcode || '', qty: (inv && inv.qty) || '', hubVendor: it.vendorName || it.vendor || '' };
+    }
+  });
+  const list = Object.values(hits);
+  if (!list.length) return;
+  const brKo = HUB_BR_KO[br] || br;
+  if (box){
+    box.innerHTML = '<div style="background:#fef2f2;border:2px solid #dc2626;border-radius:12px;padding:12px 14px;margin-bottom:12px;color:#7f1d1d">' +
+      '<div style="font-weight:900;font-size:14px">🚨 헐리우드 경유 품목 ' + list.length + '개가 이 인보이스에 있습니다 — ' + _hubEsc(brKo) + '</div>' +
+      '<div style="font-size:12px;margin:4px 0 8px;line-height:1.5">이 품목들은 벤더에 직접 주문하면 안 되고 <b>헐리우드에 요청</b>해야 합니다. 👔 매니저 룸에 알림이 갔습니다.</div>' +
+      list.map(h => '<div style="font-size:12.5px;padding:4px 0;border-top:1px solid #fecaca">• <b>' + _hubEsc(h.name) + '</b>' +
+        (h.nameKr ? ' <span style="color:#991b1b">' + _hubEsc(h.nameKr) + '</span>' : '') +
+        (h.code ? ' · #' + _hubEsc(h.code) : '') + (h.qty ? ' · ' + _hubEsc(h.qty) + '개' : '') + '</div>').join('') +
+      '<a href="./share-order.html?from=' + encodeURIComponent(br) + '" style="display:inline-block;margin-top:8px;background:#16a34a;color:#fff;border-radius:9px;padding:7px 12px;font-weight:800;font-size:12px;text-decoration:none">🏬 공동 오더 앱 — 헐리우드에 요청하기 →</a></div>';
+    box.style.display = '';
+  }
+  // 기록 + 매니저 룸 알림 — 같은 날·지점·벤더·품목 조합은 한 번만
+  const d = new Date(), day = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  const sig = day + '|' + br + '|' + invV + '|' + list.map(h => h.key).sort().join(',');
+  let hash = 0; for (let i = 0; i < sig.length; i++) hash = (hash * 31 + sig.charCodeAt(i)) >>> 0;
+  const vid = day + '_' + br + '_' + hash.toString(36);
+  try {
+    const ex = await fetch(HUB_DB + '/shareOrders/_violations/' + vid + '.json', { cache:'no-store' }).then(r => r.ok ? r.json() : null);
+    if (ex) return;
+    const u = _hubUser(), ts = Date.now();
+    const rec = { day, ts, branch: br, vendor: invV, by: u.name || '', items: list };
+    const w = await fetch(HUB_DB + '/shareOrders/_violations/' + vid + '.json', { method:'PUT', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(rec) });
+    if (!w.ok){ console.warn('[hub-viol] 기록 실패', w.status); return; }
+    const text = '🚨 헐리우드 경유 품목 직접 주문 — ' + brKo + '\nHub item ordered directly — ' + br + '\n' +
+      list.map(h => '• ' + h.name + (h.code ? ' #' + h.code : '') + (h.qty ? ' × ' + h.qty : '')).join('\n') + '\n' +
+      '벤더 / Vendor: ' + (invV || '?') + ' · 인보이스 올린 사람: ' + (u.name || '?') + '\n' +
+      '→ 이 품목은 공동 오더 앱에서 헐리우드에 요청해야 합니다';
+    const mid = 'm' + ts + Math.floor(Math.random() * 900);
+    const msg = { sender: '🏬 경유 품목 점검', senderBranch: br, senderRole: '', isManager: false, color: '#b91c1c',
+                  text, ts, photos: [], meta: { kind: 'hub_violation', vid, branch: br } };
+    const m = await fetch(HUB_DB + '/chat/messages/managers/' + mid + '.json', { method:'PUT', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(msg) });
+    if (m.ok) fetch(HUB_DB + '/chat/rooms/managers.json', { method:'PATCH', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: msg.sender }) }).catch(() => {});
+  } catch(e){ console.warn('[hub-viol]', e && e.message); }
+}
+window.checkHubViolations = checkHubViolations;
+
 // Expose state to the module script below so its Firebase subscribe can
 // write POS rows into S.posData. `const` is script-scoped and doesn't
 // land on window by default, so we bridge it explicitly.
@@ -1445,6 +1534,8 @@ function __runCmpCore(){
     } catch(_){}
     // 💲 매칭된 줄의 낱개 원가를 벤더별로 쌓는다 (벤더를 골랐을 때만)
     try { saveInvoiceCosts([...changed, ...same, ...review]); } catch(e){ console.warn('[costHistory]', e && e.message); }
+    // 🏬 헐리우드 경유 품목을 이 지점이 직접 주문했는지 (미매칭 줄 포함)
+    try { checkHubViolations(results); } catch(e){ console.warn('[hub-viol]', e && e.message); }
 
     const cnt={up:0,down:0,same:same.length};
     changed.forEach(r=>cnt[r.status]=(cnt[r.status]||0)+1);
