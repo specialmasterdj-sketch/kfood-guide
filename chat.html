@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_08_30_push_ready';   // 🔔 FCM 웹푸시 클라이언트 연결 (키 설정 전 무동작) + 오너 알림 세트
+    var BUST = 'chat_2026_09_19_photo_many';   // 📸 사진 여러 장 업로드 안정화 (메모리 해제·실패분만 재전송)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1726,12 +1726,8 @@ function openHRInquiryModal(){
 }
 async function handleHRFiles(ev){
   const files = Array.from(ev.target.files || []);
-  for (const f of files) {
-    if (!f.type.startsWith('image/')) continue;
-    const compressed = await compressImage(f);
-    HR_ATTACH.push(compressed);
-  }
   ev.target.value = '';
+  await preparePhotos(files, c => HR_ATTACH.push(c), renderHRPreviews);
   renderHRPreviews();
 }
 function renderHRPreviews(){
@@ -1749,6 +1745,7 @@ async function submitHRInquiry(){
   const anon = document.getElementById('hrAnonymous').checked;
   if (!text && HR_ATTACH.length === 0){ alert(_hrT('hr_need_msg')); return; }
   if (!me || !me.name){ alert(_hrT('hr_need_login')); return; }
+  if (_photoPrepWait()) return;
   const ts = Date.now();
   const msgId = 'hr' + ts + Math.floor(Math.random()*900);
   const anonLabel = _hrT('hr_anon_label') || '(익명)';
@@ -3869,16 +3866,15 @@ document.addEventListener('paste', function(e){
 
 async function handleFiles(ev){
   const files = Array.from(ev.target.files || []);
+  ev.target.value = '';
   for (const f of files) {
-    if (f.type.startsWith('image/')) {
-      const compressed = await compressImage(f);
-      ATTACH.push(compressed);
-    } else {
+    if (!f.type.startsWith('image/')) {
       // 일반 파일 (PDF, Word, Excel 등) — 압축 없이 원본 그대로
       ATTACH.push({ type:'file', file:f, name:f.name, size:f.size, mime:f.type || 'application/octet-stream' });
     }
   }
-  ev.target.value = '';
+  renderPreviews();
+  await preparePhotos(files, c => ATTACH.push(c), renderPreviews);
   renderPreviews();
 }
 function renderPreviews(){
@@ -3900,32 +3896,96 @@ function removeAttach(i){ ATTACH.splice(i, 1); renderPreviews(); }
 
 // Client-side image compression. Returns the original file too so we can
 // recompress smaller for the base64-RTDB fallback if Storage is unavailable.
-function compressImage(file, maxDim, quality){
+// 📸 2026-09-19 전무님 신고 "사진이 많으면 잘 안 올라감":
+//   옛 방식은 사진마다 원본 해상도(1200만화소 ≈ 48MB)를 통째로 디코드하고 캔버스를 안 풀어줘서
+//   여러 장 고르면 iOS 캔버스 메모리 한도 초과 → toBlob 이 null → readAsDataURL(null) 예외로
+//   Promise 가 영영 안 끝나 "사진 준비"에서 멈추거나 0바이트 사진이 올라감.
+//   → tasks.html 과 같은 방식: createImageBitmap 으로 '디코드하면서 축소' + close() + 캔버스 0 으로 즉시 해제,
+//     실패·시간초과는 blob:null 로 반환해 호출부가 건너뛰게 함.
+function _blobToDataUrl(blob){
+  return new Promise(res => {
+    if (!blob) return res('');
+    const r = new FileReader();
+    r.onload = () => res(r.result || '');
+    r.onerror = () => res('');
+    try { r.readAsDataURL(blob); } catch(e){ res(''); }
+  });
+}
+function _canvasToJpeg(c, quality){
+  return new Promise(res => {
+    const t = setTimeout(() => res(null), 15000);
+    try { c.toBlob(b => { clearTimeout(t); res(b && b.size > 0 ? b : null); }, 'image/jpeg', quality); }
+    catch(e){ clearTimeout(t); res(null); }
+  });
+}
+async function compressImage(file, maxDim, quality){
   // Storage 활성화됨 — 화질 우선 (1280px / 0.78). 폰 사진 평균 ~300KB 로 압축됨.
   maxDim = maxDim || 1280;
   quality = quality || 0.78;
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
+  let blob = null;
+  if (typeof createImageBitmap === 'function') {
+    let bmp = null, c = null;
+    try {
+      bmp = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: maxDim, resizeQuality: 'medium' });
+      let w = bmp.width, h = bmp.height;
+      if (h > maxDim * 1.5) { const r = (maxDim * 1.5) / h; w = Math.round(w * r); h = Math.round(h * r); }  // 아주 긴 세로 캡처 방지
+      c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      blob = await _canvasToJpeg(c, quality);
+    } catch(e) { console.warn('[compress] createImageBitmap 실패 → img 폴백', e); blob = null; }
+    finally {
+      try { if (bmp) bmp.close(); } catch(_){}
+      try { if (c) { c.width = 0; c.height = 0; } } catch(_){}
+    }
+  }
+  if (!blob) {
+    let url = null, img = null, c = null;
+    try {
+      url = URL.createObjectURL(file);
+      img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
       let w = img.naturalWidth, h = img.naturalHeight;
-      if (w > maxDim || h > maxDim) {
-        const r = Math.min(maxDim/w, maxDim/h);
-        w = Math.round(w*r); h = Math.round(h*r);
-      }
-      const c = document.createElement('canvas');
+      if (w > maxDim || h > maxDim) { const r = Math.min(maxDim/w, maxDim/h); w = Math.round(w*r); h = Math.round(h*r); }
+      c = document.createElement('canvas');
       c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h);
-      c.toBlob(blob => {
-        const reader = new FileReader();
-        reader.onload = () => resolve({ dataUrl: reader.result, blob, file });
-        reader.readAsDataURL(blob);
-      }, 'image/jpeg', quality);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve({ dataUrl: '', blob: null, file }); };
-    img.src = url;
-  });
+      blob = await _canvasToJpeg(c, quality);
+    } catch(e) { console.warn('[compress] img 폴백도 실패', e); blob = null; }
+    finally {
+      try { if (url) URL.revokeObjectURL(url); } catch(_){}
+      try { if (img) { img.onload = null; img.onerror = null; img.src = ''; } } catch(_){}
+      try { if (c) { c.width = 0; c.height = 0; } } catch(_){}
+    }
+  }
+  const dataUrl = await _blobToDataUrl(blob);
+  return { dataUrl, blob: dataUrl ? blob : null, file };
+}
+
+// 여러 장 고를 때 공통 처리: 한 장씩 준비하며 진행률 표시 + 미리보기 즉시 갱신,
+//   준비 실패한 사진은 빼고 몇 장 빠졌는지 알림. 준비 중에는 전송 버튼이 기다리게 함(_photoPrepBusy).
+let _photoPrepBusy = 0;
+async function preparePhotos(files, push, render){
+  const imgs = files.filter(f => f && f.type && f.type.startsWith('image/'));
+  if (!imgs.length) return 0;
+  _photoPrepBusy++;
+  let fail = 0;
+  try {
+    for (let i = 0; i < imgs.length; i++) {
+      if (imgs.length > 1) showStatus(`📷 사진 준비 중... ${i+1} / ${imgs.length}`);
+      const c = await compressImage(imgs[i]);
+      if (c && c.blob && c.dataUrl) { push(c); if (render) render(); }
+      else fail++;
+    }
+  } finally { _photoPrepBusy--; }
+  if (fail) { showStatus(`⚠️ 사진 ${fail}장은 처리하지 못했습니다 — 그 사진만 다시 골라주세요`); setTimeout(hideStatus, 6000); }
+  else if (imgs.length > 1) hideStatus();
+  return imgs.length - fail;
+}
+function _photoPrepWait(){
+  if (!_photoPrepBusy) return false;
+  showStatus('📷 사진 준비가 끝나면 보내주세요...');
+  setTimeout(hideStatus, 2500);
+  return true;
 }
 
 // Try Firebase Storage REST first; if it 404s (Storage not enabled in
@@ -3949,18 +4009,21 @@ function _fetchTimeout(url, opts, ms){
   return fetch(url, Object.assign({}, opts, { signal: ctl.signal })).finally(() => clearTimeout(t));
 }
 async function uploadPhoto(att, roomId, msgId, idx){
+  // 이미 올라간 사진(전송 재시도) — 다시 안 올림
+  if (att._url) return att._url;
   const path = `chat/${roomId}/${msgId}/${idx}.jpg`;
   const url = `${FB_STORAGE_URL}?name=${encodeURIComponent(path)}&uploadType=media`;
-  let lastErr = '';
-  // Storage 5회 재시도 (모바일 네트워크 일시 끊김 대응)
-  for (let attempt = 0; attempt < 5; attempt++) {
+  let lastErr = att.blob ? '' : 'blob 없음';
+  // Storage 5회 재시도 (모바일 네트워크 일시 끊김 대응). blob 이 없으면 0바이트 사진이 올라가므로 건너뜀.
+  for (let attempt = 0; att.blob && attempt < 5; attempt++) {
     try {
       console.log('[uploadPhoto] attempt', attempt+1, 'idx=', idx);
       const r = await _fetchTimeout(url, { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: att.blob }, 25000);
       if (r.ok) {
         __storageActive = true;
         const meta = await r.json();
-        return `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+        att._url = `${FB_STORAGE_URL}/${encodeURIComponent(meta.name)}?alt=media&token=${meta.downloadTokens || ''}`;
+        return att._url;
       }
       lastErr = 'HTTP ' + r.status;
       // 404 = Storage 미활성, 403 = 권한/요금제 거부(Blaze 미전환) → 둘 다 즉시 base64 fallback
@@ -3978,7 +4041,8 @@ async function uploadPhoto(att, roomId, msgId, idx){
   console.warn('[uploadPhoto] Storage 실패, base64 fallback. 마지막 오류:', lastErr);
   const small = att.file ? await compressImage(att.file, 480, 0.45) : att;
   if (!small || !small.dataUrl) throw new Error('사진 처리 실패: ' + lastErr);
-  return small.dataUrl;
+  att._url = small.dataUrl;
+  return att._url;
 }
 
 // 일반 파일(PDF/Word 등) 업로드 — 원본 mime 으로 Storage 에 PUT.
@@ -4180,6 +4244,7 @@ async function sendMessage(){
   if (_dmBlockedRoom(ACTIVE_ROOM)) { _showDmBlockedNotice(); return; }
   const text = document.getElementById('msgInput').value.trim();
   if (!text && ATTACH.length === 0) return;
+  if (_photoPrepWait()) return;   // 사진 준비 중에 누르면 일부만 가던 문제 방지
   // 2026-05-01: Storage 활성화됨 (kimchi-mart-order). 수량 경고 제거.
   // uploadPhoto() 가 자체 retry 3회 + base64 fallback + sequential 업로드로 안전.
   // 모든 방(managers/produce/closing/...)에서 동일한 chat/{roomId}/{msgId}/{idx}.jpg 경로.
@@ -4217,7 +4282,7 @@ async function sendMessage(){
       //   3장 동시 병렬로 (순서는 인덱스로 보존). 폰 LTE 에서 체감 3배↑.
       showStatus(`업로드 중... 0 / ${total}`);
       const photoUrls = new Array(imgs.length);
-      let nextImg = 0;
+      let nextImg = 0, failed = 0;
       const workers = [];
       const workerCount = Math.min(3, imgs.length);
       for (let w = 0; w < workerCount; w++) {
@@ -4225,13 +4290,17 @@ async function sendMessage(){
           while (true) {
             const i = nextImg++;
             if (i >= imgs.length) break;
-            photoUrls[i] = await uploadPhoto(imgs[i], ACTIVE_ROOM, msgId, i);
+            // 📸 2026-09-19: 한 장 실패가 나머지를 멈추지 않게 — 실패는 세고 계속 진행.
+            //   올라간 사진은 att._url 에 기억돼서, 다시 보내기 누르면 실패한 사진만 다시 올림.
+            try { photoUrls[i] = await uploadPhoto(imgs[i], ACTIVE_ROOM, msgId, i); }
+            catch(e) { failed++; console.warn('[sendMessage] 사진', i+1, '실패', e); }
             done++;
-            showStatus(`업로드 중... ${done} / ${total}`);
+            showStatus(`업로드 중... ${done} / ${total}` + (failed ? ` (실패 ${failed})` : ''));
           }
         })());
       }
       await Promise.all(workers);
+      if (failed) throw new Error(`사진 ${failed}장 업로드 실패 (${imgs.length - failed}장은 올라감) — 전송을 다시 누르면 실패한 사진만 다시 올립니다`);
       msg.photos = photoUrls.filter(Boolean);
       for (let i = 0; i < fls.length; i++) {
         showStatus(`파일 업로드 중... ${done} / ${total}`);
@@ -4408,11 +4477,7 @@ async function handleReplyFiles(ev, parentMsgId){
   if (!files.length) return;
   ev.target.value = '';
   REPLY_ATTACH[parentMsgId] = REPLY_ATTACH[parentMsgId] || [];
-  for (const f of files) {
-    if (!f.type.startsWith('image/')) continue;
-    const compressed = await compressImage(f);
-    REPLY_ATTACH[parentMsgId].push(compressed);
-  }
+  await preparePhotos(files, c => REPLY_ATTACH[parentMsgId].push(c), () => renderReplyPreviews(parentMsgId));
   renderReplyPreviews(parentMsgId);
 }
 function renderReplyPreviews(parentMsgId){
@@ -4439,6 +4504,7 @@ async function sendReply(parentMsgId){
   const text = inp.value.trim();
   const attached = REPLY_ATTACH[parentMsgId] || [];
   if (!text && attached.length === 0) return;
+  if (_photoPrepWait()) return;
   inp.disabled = true;
   // 🧹 2026-08-08 사장님 신고: 보낸 댓글이 입력창에 그대로 남음(+글이 넘쳐 스크롤 화살표 표시).
   //   원인 = 전송 대기 중 서버 에코가 _patchMsgReplies 로 입력창을 재생성하며 옛 값(보낸 글)을
