@@ -93,7 +93,7 @@ main{max-width:760px;margin:0 auto;padding:12px}
 </header>
 <main>
   <button class="new" id="btnNew">＋ 새 공동 오더</button>
-  <div class="tabs"><button id="tabOpen" class="on">진행 중</button><button id="tabDone">완료</button></div>
+  <div class="tabs"><button id="tabHub">🏬 경유 품목</button><button id="tabOpen" class="on">진행 중</button><button id="tabDone">완료</button></div>
   <div id="list"><div class="empty">⏳</div></div>
 </main>
 <div class="toast" id="toast"></div>
@@ -144,7 +144,20 @@ var L = {
   f_costHint:{ko:'넣으면 지점별 원가 나누기 표가 나옵니다.',en:'If filled, a per-store cost split is shown.',es:'Si lo llena, se muestra el costo por tienda.'},
   f_memo:{ko:'메모',en:'Memo',es:'Nota'}, f_create:{ko:'만들기',en:'Create',es:'Crear'}, f_cancel:{ko:'닫기',en:'Close',es:'Cerrar'},
   f_need:{ko:'상품명과 박스 입수를 넣어주세요',en:'Enter product and units per case',es:'Ingrese producto y unidades por caja'},
-  by:{ko:'{n}',en:'{n}',es:'{n}'}
+  by:{ko:'{n}',en:'{n}',es:'{n}'},
+  // 🏬 헐리우드 경유 품목 (2026-09-19)
+  tabHub:{ko:'🏬 경유 품목',en:'🏬 Hub items',es:'🏬 Vía Hollywood'},
+  hubEmpty:{ko:'아직 경유 품목이 없습니다.<br>주문 앱에서 상품의 <b>[🏬 경유 지정]</b>을 누르면 여기에 나옵니다 (오너·임원).',en:'No hub items yet.<br>Owners mark items with <b>[🏬 Route via Hollywood]</b> in the order app.',es:'Aún no hay productos.<br>Se marcan con <b>[🏬 Vía Hollywood]</b> en la app de pedidos.'},
+  hubIntro:{ko:'이 품목들은 벤더에 직접 주문하지 않습니다. 필요한 <b>개수</b>를 요청하면 헐리우드가 박스로 사서 트럭으로 보냅니다.',en:'Do not order these from the vendor. Request the <b>units</b> you need — Hollywood buys by the case and sends them by truck.',es:'No los pida al proveedor. Pida las <b>unidades</b> — Hollywood compra la caja y envía en camión.'},
+  hubReq:{ko:'요청',en:'Request',es:'Pedir'}, hubNeedQty:{ko:'개수를 넣어주세요',en:'Enter a quantity',es:'Ingrese cantidad'},
+  hubRequested:{ko:'요청됨 — 헐리우드가 확인합니다',en:'Requested — Hollywood will handle it',es:'Pedido — Hollywood lo gestiona'},
+  hubNow:{ko:'지금 모인 요청',en:'Requests so far',es:'Pedidos hasta ahora'},
+  hubOwner:{ko:'헐리우드 담당',en:'Hollywood lead',es:'Encargado Hollywood'},
+  hubOwnerSet:{ko:'담당자 지정',en:'Set lead',es:'Asignar'},
+  hubOwnerAsk:{ko:'헐리우드 경유 담당자 이름 (모아서 주문하고 나눠 보내는 사람)',en:'Name of the Hollywood lead (orders and ships hub items)',es:'Nombre del encargado en Hollywood'},
+  hubChip:{ko:'🏬 경유',en:'🏬 Hub',es:'🏬 Hub'},
+  costSet:{ko:'💲 낱개 원가',en:'💲 Unit cost',es:'💲 Costo unitario'},
+  costAsk:{ko:'낱개 원가 ($) — 지점별 원가 나누기에 씁니다',en:'Unit cost ($) — used for the per-store cost split',es:'Costo unitario ($)'}
 };
 var lang = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; } })();
 if (['ko','en','es'].indexOf(lang) < 0) lang = 'ko';
@@ -163,6 +176,14 @@ var MYB = (function(){
 })();
 var TAB = 'open';
 var DATA = {};
+// 🏬 헐리우드 경유 품목 — 주문 앱(kimchi-mart-order)에서 오너·임원이 [🏬 경유 지정]한 상품.
+//   shareOrders/_items/{벤더}__{품번} = { vendor, vendorName, pid, name, nameKr, size, image, caseSize, … }
+//   _config.hubOwner = 헐리우드 담당자 이름. 밑줄(_)로 시작하는 키는 회차(round)가 아니다.
+var HUB = {}, HUB_CFG = {}, FOCUS = '';
+function isExec(){
+  var m = me() || {}, r = String(m.role || '').toUpperCase(), n = String(m.name || '').toUpperCase().replace(/[\s.]/g, '');
+  return /OWNER|EXECUTIVE|오너|전무|사장/.test(r) || ['DJ','BHK','SUNKIM'].indexOf(n) >= 0;
+}
 
 async function api(path, method, body){
   var opt = { cache:'no-store' };
@@ -173,7 +194,12 @@ async function api(path, method, body){
 }
 function failToast(e){ toast((e && (e.status === 401 || e.status === 403)) ? t('noRule') : t('fail') + ' (' + ((e && e.message) || e) + ')'); }
 async function load(){
-  try { DATA = (await api('shareOrders')) || {}; render(); }
+  try {
+    var all = (await api('shareOrders')) || {};
+    HUB = all._items || {}; HUB_CFG = all._config || {};
+    DATA = {}; Object.keys(all).forEach(function(k){ if (k.charAt(0) !== '_') DATA[k] = all[k]; });
+    render();
+  }
   catch(e){ document.getElementById('list').innerHTML = '<div class="empty">' + ((e.status === 401 || e.status === 403) ? t('noRule') : t('fail')) + '</div>'; }
 }
 function wantSum(o){ var s = 0; Object.keys(o.wants || {}).forEach(function(b){ s += +(o.wants[b].qty || 0); }); return s; }
@@ -187,7 +213,76 @@ async function postChat(text, meta){
   api('chat/rooms/' + ROOM, 'PATCH', { lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: meName() }).catch(function(){});
 }
 
+// 🏬 경유 품목 목록 — 지점은 개수만 넣고 [요청]. 그 품목의 열린 회차에 합쳐진다(없으면 새로 연다).
+function renderHub(){
+  var list = document.getElementById('list');
+  var keys = Object.keys(HUB).filter(function(k){ return HUB[k] && HUB[k].active !== false; })
+    .sort(function(a, b){ var x = HUB[a], y = HUB[b]; return String(x.vendorName || '').localeCompare(String(y.vendorName || '')) || String(x.name || '').localeCompare(String(y.name || '')); });
+  var h = '<div class="meta" style="margin:0 2px 10px;font-size:.84em">' + t('hubIntro') + '</div>';
+  h += '<div class="meta" style="margin:0 2px 12px">👤 ' + t('hubOwner') + ': <b>' + esc(HUB_CFG.hubOwner || '—') + '</b>' +
+       (isExec() ? ' <button class="btn" data-hub="owner" style="padding:3px 9px;margin-left:6px">' + t('hubOwnerSet') + '</button>' : '') + '</div>';
+  if (!keys.length){ list.innerHTML = h + '<div class="empty">' + t('hubEmpty') + '</div>'; wireHub(list); return; }
+  h += keys.map(function(k){
+    var it = HUB[k];
+    var rid = openRoundFor(k), o = rid ? DATA[rid] : null, sum = o ? wantSum(o) : 0, cs = +it.caseSize || 0;
+    var mine = o && o.wants && o.wants[MYB] ? o.wants[MYB].qty : '';
+    var now = o ? '<div class="prog"><div class="bar"><div class="f" style="width:' + (cs ? Math.min(100, Math.round(sum / cs * 100)) : 0) + '%"></div></div><span>' +
+      t('hubNow') + ' ' + sum + (cs ? ' / ' + cs : '') + '</span></div><div class="wants">' +
+      BRANCHES.map(function(b){ var w = o.wants && o.wants[b.id]; return w && w.qty ? '<span class="want' + (b.id === MYB ? ' me' : '') + '">' + esc(bl(b.id)) + ' ' + w.qty + '</span>' : ''; }).join('') + '</div>' : '';
+    return '<div class="card' + (k === FOCUS ? ' full' : '') + '" id="hub_' + esc(k) + '">' +
+      '<div style="display:flex;gap:10px;align-items:flex-start">' +
+        (it.image ? '<img src="' + esc(it.image) + '" alt="" loading="lazy" style="width:64px;height:64px;object-fit:contain;border-radius:10px;background:#f8fafc;border:1px solid var(--line);flex:none" onerror="this.style.display=\'none\'">' : '') +
+        '<div style="min-width:0;flex:1"><b>' + esc(it.name) + '</b>' + (it.nameKr && it.nameKr !== it.name ? '<div class="meta">' + esc(it.nameKr) + '</div>' : '') +
+        '<div class="meta">🏬 ' + esc(it.vendorName || it.vendor) + ' · #' + esc(it.pid) + (it.size ? ' · ' + esc(it.size) : '') + (cs ? ' · ' + t('caseOf', { n: cs }) : '') + '</div></div>' +
+      '</div>' + now +
+      '<div class="myrow"><span style="font-size:.8em;font-weight:800">' + esc(bl(MYB)) + ' — ' + t('myQty') + '</span>' +
+        '<input type="number" min="0" inputmode="numeric" id="hq_' + esc(k) + '" value="' + esc(mine) + '">' +
+        '<button class="btn g" data-hub="req" data-key="' + esc(k) + '">' + t('hubReq') + '</button></div>' +
+    '</div>';
+  }).join('');
+  list.innerHTML = h;
+  wireHub(list);
+  if (FOCUS){
+    var el = document.getElementById('hub_' + FOCUS);
+    if (el){ el.scrollIntoView({ block:'center' }); var inp = document.getElementById('hq_' + FOCUS); if (inp) setTimeout(function(){ inp.focus(); }, 300); }
+    FOCUS = '';
+  }
+}
+function openRoundFor(k){
+  return Object.keys(DATA).filter(function(id){ return DATA[id] && DATA[id].itemKey === k && DATA[id].status === 'open'; })
+    .sort(function(a, b){ return (DATA[b].createdAt || 0) - (DATA[a].createdAt || 0); })[0] || '';
+}
+function wireHub(list){
+  list.querySelectorAll('[data-hub]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      var kind = b.getAttribute('data-hub');
+      if (kind === 'owner'){
+        var nm = prompt(t('hubOwnerAsk'), HUB_CFG.hubOwner || '');
+        if (nm === null) return;
+        try { await api('shareOrders/_config/hubOwner', 'PUT', nm.trim()); } catch(e){ failToast(e); return; }
+        await load(); return;
+      }
+      var k = b.getAttribute('data-key'), it = HUB[k]; if (!it) return;
+      var v = Math.max(0, parseInt(document.getElementById('hq_' + k).value, 10) || 0);
+      var rid = openRoundFor(k);
+      try {
+        if (!rid){
+          if (!v){ toast(t('hubNeedQty')); return; }
+          rid = 's' + Date.now();
+          var o = { name: it.name, nameKr: it.nameKr || '', barcode: it.barcode || '', caseSize: +it.caseSize || 0, lead: 'HOLLYWOOD',
+                    vendor: it.vendorName || it.vendor || '', vendorCode: it.pid || '', image: it.image || '', itemKey: k, hub: true,
+                    unitCost: 0, memo: '', status: 'open', createdBy: meName(), createdAt: Date.now(), createdDay: today() };
+          await api('shareOrders/' + rid, 'PUT', o);
+          DATA[rid] = o;
+        }
+      } catch(e){ failToast(e); return; }
+      await act('want', rid, v);
+      toast(t('hubRequested'));
+    });
+  });
+}
 function render(){
+  if (TAB === 'hub'){ renderHub(); return; }
   var ids = Object.keys(DATA).filter(function(id){
     var s = DATA[id] && DATA[id].status;
     return TAB === 'open' ? (s === 'open' || s === 'ordered' || s === 'shipping') : (s === 'done' || s === 'cancelled');
@@ -213,7 +308,10 @@ function cardHtml(id, o){
     return '<span class="' + cls + '">' + (b.id === o.lead ? '📦 ' : '') + esc(bl(b.id)) + ' ' + q + (got ? ' ✓' : '') + '</span>';
   }).join('');
   var h = '<div class="card' + (o.status === 'open' && sum >= cs && cs ? ' full' : '') + '">';
-  h += '<div class="ttl"><b>' + esc(o.name) + '</b><span class="chip st-' + esc(o.status) + '">' + t('st_' + o.status) + '</span></div>';
+  h += '<div class="ttl">' +
+       (o.image ? '<img src="' + esc(o.image) + '" alt="" loading="lazy" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8fafc;border:1px solid var(--line);flex:none" onerror="this.style.display=\'none\'">' : '') +
+       '<b>' + esc(o.name) + '</b>' + (o.hub ? '<span class="chip st-open" style="background:#ecfdf5;color:#166534">' + t('hubChip') + '</span>' : '') +
+       '<span class="chip st-' + esc(o.status) + '">' + t('st_' + o.status) + '</span></div>';
   h += '<div class="meta">' + t('caseOf', { n: cs }) + ' · ' + t('leadIs', { b: esc(bl(o.lead)) }) +
        (o.vendor ? ' · 🏬 ' + esc(o.vendor) : '') + (o.barcode ? ' · 🏷 ' + esc(o.barcode) : '') +
        (o.memo ? '<br>📝 ' + esc(o.memo) : '') + '<br>' + esc(o.createdBy || '') + ' · ' + esc(o.createdDay || '') + '</div>';
@@ -234,6 +332,9 @@ function cardHtml(id, o){
   if (o.status === 'open' || o.status === 'ordered') h += '<button class="btn ghost" data-act="cancel" data-id="' + esc(id) + '">' + t('btnCancel') + '</button>';
   if (o.status === 'done' || o.status === 'cancelled') h += '<button class="btn" data-act="again" data-id="' + esc(id) + '">' + t('btnAgain') + '</button>';
   if (+o.unitCost > 0 && sum > 0) h += '<button class="btn" data-act="copy" data-id="' + esc(id) + '">' + t('btnCopy') + '</button>';
+  // 낱개 원가 — 경유 품목은 주문 앱 가격만으론 낱개 원가를 알 수 없어, 헐리우드(주문 지점)나 임원이 넣는다
+  if ((isExec() || MYB === o.lead) && o.status !== 'cancelled')
+    h += '<button class="btn" data-act="cost" data-id="' + esc(id) + '">' + t('costSet') + (+o.unitCost > 0 ? ' $' + (+o.unitCost).toFixed(2) : '') + '</button>';
   h += '</div>';
   if (+o.unitCost > 0 && sum > 0){
     h += '<div class="cost"><b>' + t('costTitle') + '</b> ($' + (+o.unitCost).toFixed(2) + ')<table>' +
@@ -250,22 +351,33 @@ function costRows(o){
   rows.forEach(function(r){ r.amt = Math.round(r.q * c * 100) / 100; });
   return rows;
 }
-async function act(a, id){
+async function act(a, id, val){
   var o = DATA[id]; if (!o) return;
   try {
     if (a === 'want'){
-      var v = Math.max(0, parseInt(document.getElementById('q_' + id).value, 10) || 0);
+      // val = 🏬 경유 품목 탭에서 넘어온 개수 / 없으면 회차 카드의 입력칸
+      var v = (val != null) ? Math.max(0, parseInt(val, 10) || 0) : Math.max(0, parseInt(document.getElementById('q_' + id).value, 10) || 0);
       // 다른 지점이 방금 넣은 숫자까지 알아야 "1박스가 막 찼다"를 정확히 잡는다 → 서버에서 다시 읽는다
       var fresh = await api('shareOrders/' + id);
       if (fresh){ o = fresh; DATA[id] = fresh; }
       var before = wantSum(o);
+      var hadMine = !!(((o.wants || {})[MYB] || {}).qty);
       if (v) await api('shareOrders/' + id + '/wants/' + MYB, 'PUT', { qty: v, by: meName(), at: today() });
       else   await api('shareOrders/' + id + '/wants/' + MYB, 'DELETE');
       o.wants = o.wants || {}; if (v) o.wants[MYB] = { qty: v, by: meName(), at: today() }; else delete o.wants[MYB];
+      // 🏬 경유 품목은 박스가 안 차도 헐리우드가 수시로 주문한다 → 새 요청이 들어올 때마다 담당자에게 알린다
+      if (o.hub && v && !hadMine && MYB !== o.lead){
+        var owner = HUB_CFG.hubOwner ? ' @' + HUB_CFG.hubOwner : '';
+        postChat('🏬 헐리우드 경유 요청 / Hub request — ' + bl(MYB) + ' ' + v + '개' + owner + '\n' +
+                 '📦 ' + o.name + (o.vendor ? ' · 🏬 ' + o.vendor : '') + (o.vendorCode ? ' #' + o.vendorCode : '') + '\n' +
+                 '지금 합계 / total ' + wantSum(o) + (+o.caseSize ? ' / ' + o.caseSize : '') + ' — ' + meName(),
+                 { kind:'hub_request', id: id }).catch(function(){});
+      }
       var after = wantSum(o), cs = +o.caseSize || 0;
       // 1박스가 막 찼으면 주문 지점이 알 수 있게 방에 알린다 (발주는 지점별로 각자 하므로)
       if (cs && before < cs && after >= cs){
-        postChat('🤝 공동 오더 모집 완료 — ' + bl(o.lead) + ' 지점 주문해주세요 / Shared order full — ' + bl(o.lead) + ' please order\n' +
+        postChat('🤝 공동 오더 모집 완료 — ' + bl(o.lead) + ' 지점 주문해주세요 / Shared order full — ' + bl(o.lead) + ' please order' +
+                 (o.hub && HUB_CFG.hubOwner ? ' @' + HUB_CFG.hubOwner : '') + '\n' +
                  '📦 ' + o.name + ' · 1박스 ' + cs + '개' + (o.vendor ? ' · 🏬 ' + o.vendor : '') + '\n' +
                  BRANCHES.filter(function(b){ return ((o.wants || {})[b.id] || {}).qty; }).map(function(b){ return bl(b.id) + ' ' + o.wants[b.id].qty; }).join(' · '),
                  { kind:'share_full', id: id }).catch(function(){});
@@ -300,6 +412,10 @@ async function act(a, id){
       await api('shareOrders/' + nid, 'PUT', { name:o.name, barcode:o.barcode || '', caseSize:o.caseSize, lead:o.lead, vendor:o.vendor || '',
         unitCost:o.unitCost || 0, memo:o.memo || '', status:'open', createdBy: meName(), createdAt: Date.now(), createdDay: today(), prevId: id });
       TAB = 'open'; setTabs();
+    } else if (a === 'cost'){
+      var c = prompt(t('costAsk'), o.unitCost ? String(o.unitCost) : '');
+      if (c === null) return;
+      await api('shareOrders/' + id, 'PATCH', { unitCost: Math.max(0, parseFloat(c) || 0) });
     } else if (a === 'copy'){
       var txt = '🤝 ' + o.name + ' — ' + t('costTitle') + ' ($' + (+o.unitCost).toFixed(2) + ')\n' +
         costRows(o).map(function(r){ return bl(r.b) + '\t' + r.q + '\t$' + r.amt.toFixed(2); }).join('\n');
@@ -344,6 +460,7 @@ function openForm(pre){
 }
 
 function setTabs(){
+  document.getElementById('tabHub').classList.toggle('on', TAB === 'hub');
   document.getElementById('tabOpen').classList.toggle('on', TAB === 'open');
   document.getElementById('tabDone').classList.toggle('on', TAB === 'done');
 }
@@ -353,6 +470,7 @@ function applyLang(){
   document.getElementById('tSub').textContent = t('sub');
   document.getElementById('tMyBranch').textContent = t('myBranch');
   document.getElementById('btnNew').textContent = t('newBtn');
+  document.getElementById('tabHub').textContent = t('tabHub');
   document.getElementById('tabOpen').textContent = t('tabOpen');
   document.getElementById('tabDone').textContent = t('tabDone');
   document.querySelectorAll('[data-l]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-l') === lang); });
@@ -365,12 +483,19 @@ document.querySelectorAll('[data-l]').forEach(function(b){
 });
 document.getElementById('myBranch').addEventListener('change', function(){ MYB = this.value; try { localStorage.setItem('share.myBranch', MYB); } catch(e){} render(); });
 document.getElementById('btnNew').onclick = function(){ openForm(); };
+document.getElementById('tabHub').onclick = function(){ TAB = 'hub'; setTabs(); render(); };
 document.getElementById('tabOpen').onclick = function(){ TAB = 'open'; setTabs(); render(); };
 document.getElementById('tabDone').onclick = function(){ TAB = 'done'; setTabs(); render(); };
 
+// 주문 앱의 [🏬 헐리우드에 요청]에서 오면 (?hub=벤더__품번&from=지점) 그 품목을 연 채로
+var qs = new URLSearchParams(location.search);
+if (qs.get('from') && BRANCHES.some(function(b){ return b.id === qs.get('from'); })){
+  MYB = qs.get('from'); try { localStorage.setItem('share.myBranch', MYB); } catch(e){}
+}
+if (qs.get('hub')){ TAB = 'hub'; FOCUS = qs.get('hub'); }
+setTabs();
 applyLang();
 // 유통기한 앱 "🤝 나눠 받기 후보" 에서 넘어오면 바로 만들기 창 (?new=1&name=…&bc=…)
-var qs = new URLSearchParams(location.search);
 if (qs.get('new')) openForm({ name: qs.get('name') || '', bc: qs.get('bc') || '', cost: qs.get('cost') || '' });
 load();
 window.addEventListener('fb-auth-ready', load);          // 로그인 토큰이 늦게 복원되면 다시 불러온다
