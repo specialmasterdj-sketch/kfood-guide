@@ -554,7 +554,8 @@ async function posRows(db, branch){
 }
 function bcCore(v){ return String(v || '').replace(/\D/g, '').replace(/^0+/, ''); }
 function money(n){ const x = +n; return x > 0 ? '$' + (Math.round(x * 100) / 100).toFixed(2) : '?'; }
-async function costInfo(db, branch, terms){
+// mgr=false 면 판매가만 (원가·벤더·인보이스 원가는 아예 읽지도 넣지도 않는다)
+async function costInfo(db, branch, terms, mgr){
   const res = { hits: null, more: 0, date: '' };
   if (!terms.length) return res;
   try {
@@ -578,6 +579,11 @@ async function costInfo(db, branch, terms){
     const top = scored.slice(0, 8).map((x) => x[1]);
     res.more = Math.max(0, scored.length - top.length);
     // 인보이스 원가·경유 품목은 걸린 상품 것만 읽는다
+    if (!mgr) {
+      res.hits = top.map((r) => '- ' + String(r.NAME).slice(0, 60) + ' | selling price ' + money(r.PRICE) +
+        (r.FULL_BARCODE ? ' | barcode ' + r.FULL_BARCODE : ''));
+      return res;
+    }
     let hub = {};
     try { hub = (await db.ref('shareOrders/_items').get()).val() || {}; } catch (e) {}
     const hubBc = {};
@@ -623,7 +629,7 @@ async function gatherExtra(db, branch, q, mgr){
     oosInfo(db, branch, terms),
     countsInfo(db, branch, terms),
     bayItemInfo(db, branch, terms),
-    mgr ? costInfo(db, branch, terms) : Promise.resolve(null),
+    costInfo(db, branch, terms, !!mgr),     // 판매가는 모두, 원가·벤더는 매니저 이상만
   ]);
   return { branch, terms, exp, oos, cnt, shelf, cost, mgr: !!mgr };
 }
@@ -698,6 +704,15 @@ function buildContext(profile, shifts, tasks, extra){
     parts.push(cnt.hits.join('\n'));
   }
 
+  // 🏷️ 판매가 — 모든 직원 (원가·벤더는 아래 매니저 절에만)
+  if (!e.mgr && e.cost && e.cost.hits) {
+    parts.push('');
+    parts.push('## Selling prices (VelaPOS export for ' + (e.branch || '') + ' dated ' + (e.cost.date || '?') + ')');
+    parts.push(e.cost.hits.join('\n'));
+    if (e.cost.more) parts.push('(' + e.cost.more + ' more products also matched — if the one they meant is not above, ask for a more specific name.)');
+    parts.push('This is the regular shelf price from the POS export. Sales or recent changes may differ —');
+    parts.push('say the export date and that the shelf tag or register is the final word.');
+  }
   // 💲 원가·벤더 — 매니저 이상일 때만 이 절이 생긴다
   if (e.mgr) {
     const cost = e.cost || {};
@@ -724,10 +739,11 @@ function buildContext(profile, shifts, tasks, extra){
     parts.push('You do NOT have: discounts, return/exchange policy, other people\'s schedules,');
     parts.push('or cost/vendor for any product that is not listed above.');
   } else {
-    parts.push('You do NOT have: prices, costs, vendors, discounts, return/exchange policy, other people\'s');
+    parts.push('You do NOT have: costs, vendors, discounts, return/exchange policy, other people\'s');
     parts.push('schedules, other stores\' data, or any product that is not listed above.');
-    parts.push('Cost and vendor information is for managers only. If they ask what something costs or');
-    parts.push('which vendor it comes from, say that is manager-only information.');
+    parts.push('You MAY give the selling price of products listed above. But COST (what the store pays)');
+    parts.push('and which VENDOR it comes from are for managers only — if asked, say that is');
+    parts.push('manager-only information.');
   }
   parts.push('Shelf locations come ONLY from the two lists above (expiry app registrations and');
   parts.push('shelf photos). If an item is in neither, you do not know where it is. Say so and');
