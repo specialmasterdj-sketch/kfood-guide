@@ -344,12 +344,20 @@ const ASK_STOP = new Set([
   'location','shelf','expire','expiry','date','today','tomorrow','my','me','do','does',
   'donde','esta','estan','cuanto','cuantos','hay','que','el','la','los','las','de','en',
   'fecha','caducidad','ubicacion','estante','hoy','manana',
+  // 💲 원가·벤더 질문 낱말 (2026-09-19)
+  '얼마','얼마야','얼마에','원가','원가가','원가는','가격','가격은','벤더','밴더','벤더는','밴더는','어디서','어느',
+  '들어와','들어오','들어오는지','들어와요','들어오나','들어','와','사와','사','들여와','공급','싼','싸','싸게','제일',
+  'cost','price','vendor','from','who','sells','supplier','cheapest','cheaper','buy','which',
+  'precio','costo','proveedor','quien','vende','barato','mas',
 ]);
+const ASK_STOP_KO = Array.from(ASK_STOP).filter((w) => w.length >= 2 && /[가-힣]/.test(w));
 function askTerms(q){
   const raw = String(q || '').toLowerCase().split(/[^0-9a-z가-힣]+/).filter(Boolean);
   const out = [];
   for (const w of raw) {
     if (w.length < 2 || ASK_STOP.has(w)) continue;
+    // 한국어는 조사가 붙는다(벤더에서·원가는) — 멈춤말로 시작하면 같은 멈춤말로 본다
+    if (/[가-힣]/.test(w) && ASK_STOP_KO.some((sw) => w.indexOf(sw) === 0)) continue;
     if (out.indexOf(w) < 0) out.push(w);
     if (out.length >= 6) break;
   }
@@ -511,17 +519,113 @@ async function countsInfo(db, branch, terms){
   return res;
 }
 
-// 네 가지를 한꺼번에 — 서로 독립이라 같이 읽는다.
-async function gatherExtra(db, branch, q){
+// ---- 💲 원가·벤더 — 매니저 이상만 (2026-09-19 전무님 지시) --------------------
+// "여기서 매니저 급들에게만 제품을 물어보면 어느 벤더에서 얼마에 들어오는지."
+// 원가는 돈이 걸린 민감 정보라 **서버에서** 거른다 — 매니저가 아니면 원가 자료를
+// 컨텍스트에 아예 넣지 않는다(프롬프트로 "말하지 마"라고만 하면 새어 나갈 수 있다).
+// 매니저 판정은 채팅 매니저 룸과 같은 기준(슈퍼바이저·직원 제외, 임원 이름 인정).
+//   근거 ① products/{지점} — pos-cost-filter 가 올린 벨라포스 스냅샷(VENDOR·COST·PRICE)
+//        ② costHistory/{바코드}/{벤더} — 가격 비교 앱이 인보이스에서 쌓은 벤더별 낱개 원가
+//        ③ shareOrders/_items — 🏬 헐리우드 경유 품목이면 알려 준다(벤더 직접 주문 금지)
+const MGR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
+  'EXECUTIVE','전무','상무','이사','DIRECTOR','VICE PRESIDENT',
+  'MANAGER','GERENTE','매니저','점장','부매니저'];
+const STAFF_ROLE_TOKENS = ['SUPERVISOR','STAFF','EMPLOYEE','STOCKER','CASHIER','직원','스태프','캐셔','스토커'];
+const EXEC_NAMES = ['BHK','SUNKIM','DJ'];
+function isManagerUp(profile){
+  const nm = String((profile && profile.name) || '').toUpperCase().replace(/[\s.]/g, '');
+  if (EXEC_NAMES.indexOf(nm) >= 0) return true;
+  const r = String((profile && profile.role) || '').toUpperCase().trim();
+  if (!r) return false;
+  if (STAFF_ROLE_TOKENS.some((t) => r === t)) return false;
+  return MGR_ROLE_TOKENS.some((t) => r.indexOf(t) >= 0);
+}
+// 벨라포스 스냅샷은 지점당 수천 줄 — 질문마다 읽지 않게 함수 인스턴스에 10분 캐시.
+const _posCache = {};
+async function posRows(db, branch){
+  const c = _posCache[branch];
+  if (c && Date.now() - c.at < 10 * 60 * 1000) return c;
+  const d = (await db.ref('products/' + branch).get()).val() || {};
+  let rows = d.rows || [];
+  if (!Array.isArray(rows)) rows = Object.values(rows);
+  const out = { at: Date.now(), date: d.date || '', rows };
+  _posCache[branch] = out;
+  return out;
+}
+function bcCore(v){ return String(v || '').replace(/\D/g, '').replace(/^0+/, ''); }
+function money(n){ const x = +n; return x > 0 ? '$' + (Math.round(x * 100) / 100).toFixed(2) : '?'; }
+async function costInfo(db, branch, terms){
+  const res = { hits: null, more: 0, date: '' };
+  if (!terms.length) return res;
+  try {
+    const pos = await posRows(db, branch);
+    res.date = pos.date;
+    const nums = terms.filter((t) => /^\d{4,}$/.test(t));
+    const scored = [];
+    for (const r of pos.rows) {
+      if (!r || !r.NAME) continue;
+      const n = String(r.NAME).toLowerCase();
+      let sc = 0;
+      for (const t of terms) if (n.indexOf(t) >= 0) sc++;
+      for (const d of nums) {
+        if (bcCore(r.FULL_BARCODE).indexOf(d.replace(/^0+/, '')) >= 0) sc += 3;
+        if ([r.CODE, r.VENDOR_CODE, r.ITEM_NUMBER].some((x) => String(x || '').toLowerCase() === d)) sc += 3;
+      }
+      if (sc) scored.push([sc, r]);
+    }
+    if (!scored.length) return res;
+    scored.sort((a, b) => b[0] - a[0]);
+    const top = scored.slice(0, 8).map((x) => x[1]);
+    res.more = Math.max(0, scored.length - top.length);
+    // 인보이스 원가·경유 품목은 걸린 상품 것만 읽는다
+    let hub = {};
+    try { hub = (await db.ref('shareOrders/_items').get()).val() || {}; } catch (e) {}
+    const hubBc = {};
+    for (const k of Object.keys(hub)) {
+      const it = hub[k]; if (!it || it.active === false) continue;
+      const b = bcCore(it.barcode); if (b.length >= 7) { hubBc[b] = it; hubBc[b.slice(0, -1)] = it; }
+    }
+    const lines = await Promise.all(top.map(async (r) => {
+      const bc = bcCore(r.FULL_BARCODE);
+      const bits = [String(r.NAME).slice(0, 60)];
+      bits.push('POS vendor ' + (r.VENDOR || '(blank)'));
+      bits.push('POS cost ' + money(r.COST) + ' each');
+      if (+r.PRICE > 0) bits.push('selling price ' + money(r.PRICE));
+      if (r.VENDOR_CODE || r.ITEM_NUMBER) bits.push('vendor item# ' + (r.VENDOR_CODE || r.ITEM_NUMBER));
+      if (bc) bits.push('barcode ' + r.FULL_BARCODE);
+      let line = '- ' + bits.join(' | ');
+      if (bc.length >= 6) {
+        try {
+          const ch = (await db.ref('costHistory/' + bc).get()).val();
+          if (ch) {
+            const inv = Object.keys(ch).map((v) => ch[v]).filter((x) => x && x.ea > 0)
+              .sort((a, b) => a.ea - b.ea)
+              .map((x) => (x.v || '?') + ' ' + money(x.ea) + ' each (invoice ' + (x.d || '?') + (x.cs ? ', case ' + money(x.cs) : '') + ')');
+            if (inv.length) line += '\n    invoice costs, cheapest first: ' + inv.join('; ');
+          }
+        } catch (e) {}
+      }
+      const h = hubBc[bc] || hubBc[bc.slice(0, -1)];
+      if (h) line += '\n    HUB ITEM: stores other than Hollywood must NOT order this from the vendor — request it from Hollywood in the shared-order app (case of ' + (h.caseSize || '?') + ').';
+      return line;
+    }));
+    res.hits = lines;
+  } catch (e) { console.warn('[ask] costInfo', e && e.message); }
+  return res;
+}
+
+// 네 가지를 한꺼번에 — 서로 독립이라 같이 읽는다. (매니저 이상이면 원가·벤더까지)
+async function gatherExtra(db, branch, q, mgr){
   const base = askTerms(q);
   const terms = await expandTerms(db, base);
-  const [exp, oos, cnt, shelf] = await Promise.all([
+  const [exp, oos, cnt, shelf, cost] = await Promise.all([
     expiryInfo(db, branch, terms),
     oosInfo(db, branch, terms),
     countsInfo(db, branch, terms),
     bayItemInfo(db, branch, terms),
+    mgr ? costInfo(db, branch, terms) : Promise.resolve(null),
   ]);
-  return { branch, terms, exp, oos, cnt, shelf };
+  return { branch, terms, exp, oos, cnt, shelf, cost, mgr: !!mgr };
 }
 
 function buildContext(profile, shifts, tasks, extra){
@@ -594,13 +698,37 @@ function buildContext(profile, shifts, tasks, extra){
     parts.push(cnt.hits.join('\n'));
   }
 
+  // 💲 원가·벤더 — 매니저 이상일 때만 이 절이 생긴다
+  if (e.mgr) {
+    const cost = e.cost || {};
+    parts.push('');
+    parts.push('## Cost and vendor (manager-only — the person asking IS a manager)');
+    if (cost.hits) {
+      parts.push('From the VelaPOS product export for ' + (e.branch || '') + ' dated ' + (cost.date || '?') + '. POS cost is per unit (each).');
+      parts.push(cost.hits.join('\n'));
+      if (cost.more) parts.push('(' + cost.more + ' more products also matched — if the one they meant is not above, ask them for a more specific name or the barcode.)');
+      parts.push('Invoice costs come from vendor invoices uploaded in the price-compare app, per unit, with the invoice date.');
+      parts.push('When more than one vendor is listed, say which is cheapest. Always say the POS export date or invoice date.');
+      parts.push('If POS vendor is blank, say the vendor is not filled in VelaPOS.');
+    } else {
+      parts.push('(no product in the POS export matched their question — say you could not find it and ask for the exact name or barcode)');
+    }
+  }
+
   parts.push('');
   parts.push('## Which app does what');
   parts.push(APP_GUIDE.map((a) => '- ' + a[0] + ' — ' + a[1]).join('\n'));
   parts.push('');
   parts.push('## Not available');
-  parts.push('You do NOT have: prices, discounts, return/exchange policy, other people\'s');
-  parts.push('schedules, other stores\' data, or any product that is not listed above.');
+  if (e.mgr) {
+    parts.push('You do NOT have: discounts, return/exchange policy, other people\'s schedules,');
+    parts.push('or cost/vendor for any product that is not listed above.');
+  } else {
+    parts.push('You do NOT have: prices, costs, vendors, discounts, return/exchange policy, other people\'s');
+    parts.push('schedules, other stores\' data, or any product that is not listed above.');
+    parts.push('Cost and vendor information is for managers only. If they ask what something costs or');
+    parts.push('which vendor it comes from, say that is manager-only information.');
+  }
   parts.push('Shelf locations come ONLY from the two lists above (expiry app registrations and');
   parts.push('shelf photos). If an item is in neither, you do not know where it is. Say so and');
   parts.push('tell them to ask a manager. Never guess an aisle or bay code.');
@@ -673,7 +801,7 @@ exports.aiAskAnswer = onValueCreated(
       const [shifts, tasks, extra] = await Promise.all([
         myShifts(db, profile.branch, profile.name),
         myTasks(db, profile.branch, profile.name),
-        gatherExtra(db, branch, q),          // 유통기한·매대 위치·품절·마지막 재고
+        gatherExtra(db, branch, q, isManagerUp(profile)),   // 유통기한·매대 위치·품절·마지막 재고 (+매니저면 원가·벤더)
       ]);
       context = buildContext(profile, shifts, tasks, extra);
       console.log('[ask] 4 context', context.length, 'chars');
