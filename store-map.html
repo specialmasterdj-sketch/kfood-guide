@@ -321,6 +321,8 @@ body.fixmode .door:hover{outline:2px solid var(--accent); outline-offset:-2px;}
 .ord-ok{background:#dcfce7; color:#166534;}
 .ord-back{background:#dbeafe; color:#1e40af;}
 .ord-done{background:#ede9fe; color:#5b21b6;}
+.ord-slow{background:#fef9c3; color:#854d0e;}
+.ord-slowbox{border-color:#fde68a;}
 .ord-row.done{opacity:.55;}
 .ord-row.done .ord-cost, .ord-row.done .ord-alts{display:none;}
 .oos-hits{max-height:190px; overflow:auto; margin-top:6px;}
@@ -519,6 +521,10 @@ var I18N = {
     ordUnchecked: '창고 확인 전', ordConfirmed: '발주 필요', ordBackroom: '창고에 있음',
     ordBackroomBtn: '창고에 있음', ordOrderBtn: '발주 필요', ordNoCode: '품번 없음', ordPicked: '벤더 지정됨',
     ordOrderedBtn: '발주함', ordOrdered: '발주함', ordUndoOrdered: '발주 취소', ordLeft: '남음',
+    ordEnoughBtn: '충분함', ordEnough: '충분함', ordSlowTag: '천천히 나감',
+    ordEnoughAsk: '이 상품은 며칠쯤 더 버틸까요?\n(그날까지 발주 목록에서 숨깁니다)',
+    ordEnoughBox: '🐢 충분함 — 지금 발주 안 함', ordBackOn: '{d} 에 다시', ordNeedNow: '지금 발주',
+    ordSlowHint: '지난번에도 천천히 나간다고 표시한 상품',
     ordCheaper: '{p}% 더 쌈 (지금 {v} {c})', ordMoveThere: '이 벤더로', ordOnlyOther: '다른 벤더 인보이스만 있음',
     ordOtherVendors: '다른 벤더:', ordChangeVendor: '벤더 바꾸기', ordResetPos: 'POS 기본 벤더로',
     ordNoVendor: '벤더 모름 — 벤더 바꾸기로 지정하면 다음부터 기억', ordCopy: '복사', ordCopied: '복사됨',
@@ -624,6 +630,10 @@ var I18N = {
     ordUnchecked: 'backroom not checked', ordConfirmed: 'order', ordBackroom: 'in backroom',
     ordBackroomBtn: 'In backroom', ordOrderBtn: 'Need to order', ordNoCode: 'no item #', ordPicked: 'vendor set',
     ordOrderedBtn: 'Ordered', ordOrdered: 'ordered', ordUndoOrdered: 'Undo order', ordLeft: 'left',
+    ordEnoughBtn: 'Enough for now', ordEnough: 'enough', ordSlowTag: 'slow seller',
+    ordEnoughAsk: 'About how many days will this last?\n(Hidden from the order list until then)',
+    ordEnoughBox: '🐢 Enough for now — not ordering', ordBackOn: 'back on {d}', ordNeedNow: 'Order now',
+    ordSlowHint: 'marked as a slow seller before',
     ordCheaper: '{p}% cheaper (now {v} {c})', ordMoveThere: 'Use this vendor', ordOnlyOther: 'only another vendor\'s invoice',
     ordOtherVendors: 'Other vendors:', ordChangeVendor: 'Change vendor', ordResetPos: 'POS default vendor',
     ordNoVendor: 'Unknown vendor — set one and it is remembered', ordCopy: 'Copy', ordCopied: 'copied',
@@ -731,6 +741,10 @@ var I18N = {
     ordUnchecked: 'bodega sin revisar', ordConfirmed: 'pedir', ordBackroom: 'en bodega',
     ordBackroomBtn: 'Hay en bodega', ordOrderBtn: 'Hay que pedir', ordNoCode: 'sin nº', ordPicked: 'proveedor fijado',
     ordOrderedBtn: 'Pedido hecho', ordOrdered: 'pedido', ordUndoOrdered: 'Deshacer', ordLeft: 'faltan',
+    ordEnoughBtn: 'Hay suficiente', ordEnough: 'suficiente', ordSlowTag: 'se vende lento',
+    ordEnoughAsk: '¿Cuántos días alcanza?\n(Se oculta de la lista hasta esa fecha)',
+    ordEnoughBox: '🐢 Suficiente — no se pide ahora', ordBackOn: 'vuelve el {d}', ordNeedNow: 'Pedir ahora',
+    ordSlowHint: 'marcado antes como de venta lenta',
     ordCheaper: '{p}% más barato (ahora {v} {c})', ordMoveThere: 'Usar este', ordOnlyOther: 'solo factura de otro proveedor',
     ordOtherVendors: 'Otros proveedores:', ordChangeVendor: 'Cambiar proveedor', ordResetPos: 'Proveedor del POS',
     ordNoVendor: 'Proveedor desconocido — elija uno y se recuerda', ordCopy: 'Copiar', ordCopied: 'copiado',
@@ -1831,6 +1845,8 @@ function _buildVendorMaster(text){
 async function loadOrderData(force){
   if (VM_STATE !== 'ready' || force){
     try {
+      fetch(rtdbPath('slowItems'), { cache:'no-store' }).then(function(x){ return x.ok ? x.json() : null; })
+        .then(function(j){ if (j) slowItems = j; }).catch(function(){});
       var r = await fetch(rtdbPath('vendorMaster'), { cache:'no-store' });
       if (!r.ok) throw new Error(r.status);
       var o = await r.json();
@@ -1895,10 +1911,34 @@ function orderInfo(r){
     cur: cur, cheapest: costs[0] || null
   };
 }
+// 🐢 며칠 뒤 다시 — 천천히 나가는 상품은 4개 남아도 한 달을 간다. 그런 건 지금 발주하면 안 된다.
+//   floorplan/…/slowItems/{바코드} 에 기억해 두고, 다음에 또 뜨면 🐢 표시를 붙인다.
+var slowItems = {};
+function _dayAdd(n){ var d = new Date(); d.setDate(d.getDate() + n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function _snoozed(r){ return r.stock === 'enough' && r.snoozeUntil && r.snoozeUntil > todayStr(); }
+async function setOosEnough(key){
+  var rec = oosMap[key]; if (!rec) return;
+  var ans = prompt(t('ordEnoughAsk'), '30');
+  if (ans === null) return;
+  var days = Math.max(1, Math.min(365, parseInt(ans, 10) || 30));
+  var until = _dayAdd(days);
+  var patch = { stock:'enough', stockBy: meName() || '', stockAt: todayStr(), snoozeUntil: until };
+  Object.assign(rec, patch);
+  try {
+    await fetch(rtdbPath('outOfStock/' + key), { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(patch) });
+    if (rec.code){
+      var sl = { days: days, by: meName() || '', at: todayStr() };
+      slowItems[rec.code] = sl;
+      fetch(rtdbPath('slowItems/' + encodeURIComponent(rec.code)), { method:'PUT', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(sl) }).catch(function(){});
+    }
+    showToast('🐢 ' + t('ordEnough') + ' · ' + until);
+  } catch(e){ showToast('⚠️ ' + e.message); }
+}
 async function setOosStock(key, state){
   var rec = oosMap[key]; if (!rec) return;
   var prev = Object.assign({}, rec);
-  var patch = { stock: state || null, stockBy: state ? (meName() || '') : null, stockAt: state ? todayStr() : null };
+  var patch = { stock: state || null, stockBy: state ? (meName() || '') : null, stockAt: state ? todayStr() : null, snoozeUntil: null };
+  delete rec.snoozeUntil;
   if (state){ rec.stock = state; rec.stockBy = patch.stockBy; rec.stockAt = patch.stockAt; }
   else { delete rec.stock; delete rec.stockBy; delete rec.stockAt; }
   try {
@@ -1940,6 +1980,8 @@ function uploadVelaCsv(){
 }
 function _money(n){ return '$' + Number(n).toFixed(2); }
 function _stockChip(r){
+  if (_snoozed(r)) return '<span class="ord-chip ord-slow">🐢 ' + t('ordEnough') + ' · ' + t('ordBackOn').replace('{d}', escapeHtml(r.snoozeUntil)) +
+    (r.stockBy ? ' · ' + escapeHtml(r.stockBy) : '') + '</span>';
   // 📦 발주함 — 누가 언제 주문했는지까지 보여야 "했는지 안 했는지"가 분명해진다
   if (r.stock === 'ordered')  return '<span class="ord-chip ord-done">📦 ' + t('ordOrdered') +
     (r.stockBy ? ' · ' + escapeHtml(r.stockBy) : '') + (r.stockAt ? ' · ' + escapeHtml(r.stockAt) : '') + '</span>';
@@ -1954,6 +1996,7 @@ function _orderRowHtml(r){
   h += '<div class="ord-top"><b class="ord-code">' + (o.vcode ? escapeHtml(o.vcode) : '<span style="color:var(--sub)">' + t('ordNoCode') + '</span>') + '</b> ' +
        '<span>' + escapeHtml(r.name || r.code) + '</span> ' + _qtyTxt(r) + '</div>';
   h += '<div class="ord-sub">🏷 ' + escapeHtml(r.code) + ' · 📍 ' + escapeHtml(r.bay) + ' · ' + _stockChip(r) +
+       (slowItems[r.code] && !_snoozed(r) ? ' · <span class="ord-chip ord-slow" title="' + escapeHtml(t('ordSlowHint')) + '">🐢 ' + t('ordSlowTag') + '</span>' : '') +
        (o.picked ? ' · <span style="color:#7c3aed">📌 ' + t('ordPicked') + '</span>' : '') + '</div>';
   // 💲 원가
   if (o.cheapest && o.cur && _vnorm(o.cheapest.v) !== _vnorm(o.vendor) && o.cheapest.ea < o.cur.ea - 0.004){
@@ -1983,6 +2026,8 @@ function _orderRowHtml(r){
     if (r.stock !== 'backroom') h += '<button type="button" class="addbtn" data-stock="backroom" data-key="' + escapeHtml(r._key) + '">🏠 ' + t('ordBackroomBtn') + '</button>';
     if (r.stock !== 'order')    h += '<button type="button" class="addbtn" data-stock="order" data-key="' + escapeHtml(r._key) + '" style="color:var(--ok);border-color:var(--ok)">🛒 ' + t('ordOrderBtn') + '</button>';
     h += '<button type="button" class="addbtn" data-stock="ordered" data-key="' + escapeHtml(r._key) + '" style="color:#5b21b6;border-color:#a78bfa">📦 ' + t('ordOrderedBtn') + '</button>';
+    // 🐢 천천히 나가는 상품 — 지금 발주 안 하고 며칠 뒤 다시 본다
+    h += '<button type="button" class="addbtn" data-enough="' + escapeHtml(r._key) + '" style="color:#854d0e;border-color:#fcd34d">🐢 ' + t('ordEnoughBtn') + '</button>';
   }
   var opts = '<option value="">🔀 ' + t('ordChangeVendor') + '</option>';
   if (o.picked && o.primary) opts += '<option value="__reset">↺ ' + t('ordResetPos') + ' (' + escapeHtml(o.primary) + ')</option>';
@@ -2013,7 +2058,8 @@ async function openOrderByVendor(skipLoad){
   var all = Object.keys(oosMap).filter(function(k){ return oosMap[k]; })
     .map(function(k){ return Object.assign({ _key: k }, oosMap[k]); });
   var backroom = all.filter(function(r){ return r.stock === 'backroom'; });
-  var need = all.filter(function(r){ return r.stock !== 'backroom'; });
+  var snoozed = all.filter(function(r){ return r.stock !== 'backroom' && _snoozed(r); });
+  var need = all.filter(function(r){ return r.stock !== 'backroom' && !_snoozed(r); });
   var groups = {};
   need.forEach(function(r){ r._o = orderInfo(r); var g = r._o.vendor || '__none'; (groups[g] = groups[g] || []).push(r); });
   // 이미 발주한 것은 아래로 내린다 — 위에 남은 것이 "아직 안 한 것"
@@ -2054,6 +2100,15 @@ async function openOrderByVendor(skipLoad){
   });
   if (!need.length) h += '<div style="font-size:13px;color:var(--sub);padding:6px 2px">' + t('oosNone') + '</div>';
 
+  if (snoozed.length){
+    snoozed.sort(function(a, b){ return String(a.snoozeUntil).localeCompare(String(b.snoozeUntil)); });
+    h += '<div class="ord-vendor ord-slowbox"><div class="ord-vhead"><b>' + t('ordEnoughBox') + '</b> <span>(' + snoozed.length + ')</span></div>' +
+      snoozed.map(function(r){
+        return '<div class="ord-row"><div class="ord-top"><span>' + escapeHtml(r.name || r.code) + '</span> ' + _qtyTxt(r) + '</div>' +
+          '<div class="ord-sub">📍 ' + escapeHtml(r.bay) + ' · 🏷 ' + escapeHtml(r.code) + ' · ' + _stockChip(r) + '</div>' +
+          '<div class="ord-btns"><button type="button" class="addbtn" data-stock="order" data-key="' + escapeHtml(r._key) + '" style="color:var(--ok);border-color:var(--ok)">🛒 ' + t('ordNeedNow') + '</button></div></div>';
+      }).join('') + '</div>';
+  }
   if (backroom.length){
     h += '<div class="ord-vendor ord-backbox"><div class="ord-vhead"><b>🏠 ' + t('ordBackTitle') + '</b> <span>(' + backroom.length + ')</span></div>' +
       backroom.map(function(r){
@@ -2074,6 +2129,9 @@ async function openOrderByVendor(skipLoad){
   document.getElementById('ordUpload').onclick = uploadVelaCsv;
   body.querySelectorAll('[data-stock]').forEach(function(b){
     b.addEventListener('click', keepScroll(async function(){ await setOosStock(b.getAttribute('data-key'), b.getAttribute('data-stock')); }));
+  });
+  body.querySelectorAll('[data-enough]').forEach(function(b){
+    b.addEventListener('click', keepScroll(async function(){ await setOosEnough(b.getAttribute('data-enough')); }));
   });
   body.querySelectorAll('[data-pick]').forEach(function(b){
     b.addEventListener('click', keepScroll(async function(){
