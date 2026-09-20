@@ -525,6 +525,9 @@ var I18N = {
     ordEnoughAsk: '이 상품은 며칠쯤 더 버틸까요?\n(그날까지 발주 목록에서 숨깁니다)',
     ordEnoughBox: '🐢 충분함 — 지금 발주 안 함', ordBackOn: '{d} 에 다시', ordNeedNow: '지금 발주',
     ordSlowHint: '지난번에도 천천히 나간다고 표시한 상품',
+    oosAlreadyOrdered: '📦 이미 발주한 상품입니다 ({b} · {d}) — 수량만 갱신했어요',
+    oosAlreadySnoozed: '🐢 충분하다고 표시된 상품입니다 ({d} 에 다시 봐요) — 수량만 갱신했어요',
+    oosAlreadyBack: '🏠 창고에 있다고 표시된 상품입니다 — 수량만 갱신했어요',
     ordCheaper: '{p}% 더 쌈 (지금 {v} {c})', ordMoveThere: '이 벤더로', ordOnlyOther: '다른 벤더 인보이스만 있음',
     ordOtherVendors: '다른 벤더:', ordChangeVendor: '벤더 바꾸기', ordResetPos: 'POS 기본 벤더로',
     ordNoVendor: '벤더 모름 — 벤더 바꾸기로 지정하면 다음부터 기억', ordCopy: '복사', ordCopied: '복사됨',
@@ -634,6 +637,9 @@ var I18N = {
     ordEnoughAsk: 'About how many days will this last?\n(Hidden from the order list until then)',
     ordEnoughBox: '🐢 Enough for now — not ordering', ordBackOn: 'back on {d}', ordNeedNow: 'Order now',
     ordSlowHint: 'marked as a slow seller before',
+    oosAlreadyOrdered: '📦 Already ordered ({b} · {d}) — quantity updated',
+    oosAlreadySnoozed: '🐢 Marked as enough (back on {d}) — quantity updated',
+    oosAlreadyBack: '🏠 Marked as in the backroom — quantity updated',
     ordCheaper: '{p}% cheaper (now {v} {c})', ordMoveThere: 'Use this vendor', ordOnlyOther: 'only another vendor\'s invoice',
     ordOtherVendors: 'Other vendors:', ordChangeVendor: 'Change vendor', ordResetPos: 'POS default vendor',
     ordNoVendor: 'Unknown vendor — set one and it is remembered', ordCopy: 'Copy', ordCopied: 'copied',
@@ -745,6 +751,9 @@ var I18N = {
     ordEnoughAsk: '¿Cuántos días alcanza?\n(Se oculta de la lista hasta esa fecha)',
     ordEnoughBox: '🐢 Suficiente — no se pide ahora', ordBackOn: 'vuelve el {d}', ordNeedNow: 'Pedir ahora',
     ordSlowHint: 'marcado antes como de venta lenta',
+    oosAlreadyOrdered: '📦 Ya fue pedido ({b} · {d}) — solo se actualizó la cantidad',
+    oosAlreadySnoozed: '🐢 Marcado como suficiente (vuelve el {d}) — solo se actualizó la cantidad',
+    oosAlreadyBack: '🏠 Marcado como en bodega — solo se actualizó la cantidad',
     ordCheaper: '{p}% más barato (ahora {v} {c})', ordMoveThere: 'Usar este', ordOnlyOther: 'solo factura de otro proveedor',
     ordOtherVendors: 'Otros proveedores:', ordChangeVendor: 'Cambiar proveedor', ordResetPos: 'Proveedor del POS',
     ordNoVendor: 'Proveedor desconocido — elija uno y se recuerda', ordCopy: 'Copiar', ordCopied: 'copiado',
@@ -1615,6 +1624,21 @@ function openOosEntry(bayId){
   function refreshName(){
     var c = codeEl.value.trim();
     if (!c){ nameEl.textContent = t('oosNameWait'); nameEl.className = 'oos-name'; return; }
+    // 이 자리에서 이미 보고된 상품이면 지금 상태를 먼저 알려준다
+    try {
+      var _p = oosMap[oosKey(bayId, c)];
+      if (_p && _p.stock){
+        var _msg = _p.stock === 'ordered' ? t('oosAlreadyOrdered').replace('{b}', _p.stockBy || '').replace('{d}', _p.stockAt || '')
+                 : (_p.stock === 'enough' && _p.snoozeUntil && _p.snoozeUntil > todayStr()) ? t('oosAlreadySnoozed').replace('{d}', _p.snoozeUntil)
+                 : _p.stock === 'backroom' ? t('oosAlreadyBack') : '';
+        if (_msg){ nameEl.textContent = _msg.split(' —')[0]; nameEl.className = 'oos-name found'; setTimeout(function(){ _realName(); }, 2200); return; }
+      }
+    } catch(e){}
+    _realName();
+  }
+  function _realName(){
+    var c = codeEl.value.trim();
+    if (!c){ nameEl.textContent = t('oosNameWait'); nameEl.className = 'oos-name'; return; }
     var nm = '';
     try { nm = lookupProductName(c) || ''; } catch(e){}
     if (nm){
@@ -1676,10 +1700,20 @@ function openOosEntry(bayId){
     try { name = lookupProductName(code) || ''; } catch(e){}
     var memo = (ov.querySelector('#oosMemo').value || '').trim();
     var vcode = vendorCodeFor(code);
+    var key = oosKey(bayId, code);
+    // 같은 자리·같은 상품을 다시 보고하는 경우(매일 순찰) — 📦 발주함 / 🐢 충분함 / 🏠 창고에 있음
+    // 표시는 그대로 두고 수량·시각만 갱신한다. 덮어쓰면 발주한 것을 또 발주하게 된다.
+    var prev = oosMap[key] || null;
     var rec = { bay: bayId, code: code, name: name, qty: qty, memo: memo || null,
                 vendorCode: vcode || null,
                 by: meName(), at: todayStr(), ts: Date.now() };
-    var key = oosKey(bayId, code);
+    if (prev && prev.stock){
+      rec.stock = prev.stock;
+      rec.stockBy = prev.stockBy || null;
+      rec.stockAt = prev.stockAt || null;
+      if (prev.snoozeUntil) rec.snoozeUntil = prev.snoozeUntil;
+      rec.firstAt = prev.firstAt || prev.at || null;     // 처음 보고한 날은 남긴다
+    }
     oosMap[key] = rec;                                 // 화면 먼저
     try {
       await fetch(rtdbPath('outOfStock/' + key), {
@@ -1694,6 +1728,13 @@ function openOosEntry(bayId){
     renderBayCheckBox(bayId);
     render();
     var shown = name || (t('oosUnknown') + code);
+    if (prev && prev.stock === 'ordered'){
+      showToast(t('oosAlreadyOrdered').replace('{b}', prev.stockBy || '').replace('{d}', prev.stockAt || ''));
+    } else if (prev && prev.stock === 'enough' && prev.snoozeUntil && prev.snoozeUntil > todayStr()){
+      showToast(t('oosAlreadySnoozed').replace('{d}', prev.snoozeUntil));
+    } else if (prev && prev.stock === 'backroom'){
+      showToast(t('oosAlreadyBack'));
+    }
     try {
       await postOosToChat(rec, null);
       showToast(t('oosSaved') + shown);
