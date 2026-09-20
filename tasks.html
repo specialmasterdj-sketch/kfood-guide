@@ -1630,6 +1630,17 @@ button{font-family:inherit;cursor:pointer}
     .idea-filter button{border:1.5px solid #cbd5e1;background:#fff;color:#64748b;border-radius:20px;
       padding:5px 13px;font-size:.8em;font-weight:700;cursor:pointer;transition:.15s}
     .idea-filter button.active{border-color:#4f46e5;background:#4f46e5;color:#fff}
+    /* 📷 사진 첨부 (2026-09-20) */
+    .idea-pic{background:#fff;border:1.5px dashed #a5b4fc;color:#4f46e5;border-radius:12px;padding:0 14px;
+      font-weight:800;font-size:.9em;cursor:pointer;min-height:64px}
+    .idea-pic:disabled{opacity:.5;cursor:default}
+    .idea-prev{display:flex;gap:6px;flex-wrap:wrap;width:100%;margin:-4px 0 10px}
+    .idea-prev .pw{position:relative;width:62px;height:62px}
+    .idea-prev img{width:62px;height:62px;object-fit:cover;border-radius:9px;border:1px solid #c7d2fe}
+    .idea-prev .x{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;
+      background:#1f2937;color:#fff;font-size:.72em;cursor:pointer;line-height:1}
+    .idea-shots{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px}
+    .idea-shots img{width:74px;height:74px;object-fit:cover;border-radius:10px;border:1px solid #e2e8f0;cursor:zoom-in}
   </style>
 
   <script>
@@ -1680,6 +1691,10 @@ button{font-family:inherit;cursor:pointer}
     askReply:{ ko:'직원에게 보여줄 답변을 적어주세요', en:'Reply shown to the employee', es:'Respuesta mostrada al empleado' },
     awarded: { ko:'반영 처리 + 요청자에게 {n}점 지급했습니다.', en:'Marked fixed — {n} pts awarded to the requester.', es:'Marcado como resuelto — {n} pts otorgados.' }
   };
+  KM_IDEA_I18N.photo   = { ko:'📷 사진', en:'📷 Photo', es:'📷 Foto' };
+  KM_IDEA_I18N.photoMax= { ko:'사진은 3장까지 올릴 수 있어요.', en:'Up to 3 photos.', es:'Hasta 3 fotos.' };
+  KM_IDEA_I18N.photoUp = { ko:'사진 올리는 중…', en:'Uploading photo…', es:'Subiendo foto…' };
+  KM_IDEA_I18N.photoFail={ ko:'사진 처리 실패 — 글만 보낼까요?', en:'Photo failed — send text only?', es:'Foto falló — ¿enviar solo texto?' };
   function kmIdeaT(k){ const m = KM_IDEA_I18N[k]; if(!m) return k; const l = (typeof LANG==='string' && m[LANG]) ? LANG : 'ko'; return m[l]; }
 
   function kmIdeaMe(){ return (typeof me === 'object' && me && me.name) ? me : null; }
@@ -1738,7 +1753,9 @@ button{font-family:inherit;cursor:pointer}
       + '<div class="idea-body">'
       +   '<div class="idea-write">'
       +     '<textarea class="idea-text" maxlength="300"></textarea>'
+      +     '<button class="idea-pic" onclick="kmIdeaPickPhoto(this)"></button>'
       +     '<button class="idea-send" onclick="kmIdeaSend(this)"></button>'
+      +     '<div class="idea-prev"></div>'
       +   '</div>'
       +   '<div class="idea-hint"></div>'
       +   '<div class="idea-filter"></div>'
@@ -1760,6 +1777,7 @@ button{font-family:inherit;cursor:pointer}
       if (q('.idea-send'))       q('.idea-send').textContent       = kmIdeaT('send');
       if (q('.idea-hint'))       q('.idea-hint').innerHTML         = kmIdeaT('hint');
       if (q('.idea-text'))       q('.idea-text').placeholder       = kmIdeaT('ph');
+      if (q('.idea-pic'))        q('.idea-pic').textContent        = kmIdeaT('photo');
     });
   }
   window.addEventListener('km-lang-changed', function(){ kmIdeaApplyI18n(); if (KM_IDEA_LOADED) kmIdeaRender(); });
@@ -1882,6 +1900,10 @@ button{font-family:inherit;cursor:pointer}
           +   (body.canToggle ? '<button class="idea-src" onclick="kmIdeaToggleSrc(\''+it.branch+'\',\''+it.id+'\')">'
                                 + (body.showingSrc ? kmIdeaT('showTr') : kmIdeaT('showSrc')) + '</button>' : '')
           + '</div>'
+          + (Array.isArray(it.photos) && it.photos.length
+              ? '<div class="idea-shots">' + it.photos.slice(0, 3).map(function(u){
+                  return '<img loading="lazy" src="'+esc(u)+'" onclick="openLb(this.src)" alt="">'; }).join('') + '</div>'
+              : '')
           + (it.reply ? '<div class="idea-reply"><b>'+kmIdeaT('replyBy')+' — '+esc(it.replyBy||'')+'</b>'+esc(it.reply)+'</div>' : '')
           + (admin ? '<div class="idea-admin">'
           +   '<button onclick="kmIdeaStatus(\''+it.branch+'\',\''+it.id+'\',\'reviewing\')">👀 '+kmIdeaT('stRev')+'</button>'
@@ -1906,6 +1928,49 @@ button{font-family:inherit;cursor:pointer}
     });
   }
 
+  // 📷 사진 — 폰 카메라/갤러리에서 고르면 작게 줄여 들고 있다가 글 보낼 때 같이 올린다.
+  //   compressImage·_uploadPhotoSmart 는 업무 사진과 같은 것을 쓴다(640px·Storage).
+  let KM_IDEA_PHOTOS = [];              // [{file, dataUrl}]
+  const KM_IDEA_PHOTO_MAX = 3;
+  function kmIdeaPreview(){
+    const html = KM_IDEA_PHOTOS.map(function(p, i){
+      return '<div class="pw"><img src="'+p.dataUrl+'" alt=""><button class="x" onclick="kmIdeaRmPhoto('+i+')">✕</button></div>';
+    }).join('');
+    document.querySelectorAll('.idea-prev').forEach(function(el){ el.innerHTML = html; });
+  }
+  function kmIdeaRmPhoto(i){ KM_IDEA_PHOTOS.splice(i, 1); kmIdeaPreview(); }
+  function kmIdeaPickPhoto(btn){
+    if (KM_IDEA_PHOTOS.length >= KM_IDEA_PHOTO_MAX) { alert(kmIdeaT('photoMax')); return; }
+    let inp = document.getElementById('__ideaPhotoPicker');
+    if (!inp){
+      inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.id = '__ideaPhotoPicker';
+      inp.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0';
+      document.body.appendChild(inp);
+    }
+    inp.value = '';
+    inp.onchange = async function(){
+      const files = Array.from(inp.files || []);
+      if (!files.length) return;
+      btn.disabled = true;
+      const old = btn.textContent;
+      try {
+        for (const file of files){
+          if (KM_IDEA_PHOTOS.length >= KM_IDEA_PHOTO_MAX) { alert(kmIdeaT('photoMax')); break; }
+          btn.textContent = '⏳';
+          try {
+            const small = (typeof compressImage === 'function') ? await compressImage(file) : file;
+            const url = await (typeof readDataUrl === 'function' ? readDataUrl(small)
+              : new Promise(function(res, rej){ const fr = new FileReader(); fr.onload = function(){ res(fr.result); }; fr.onerror = rej; fr.readAsDataURL(small); }));
+            KM_IDEA_PHOTOS.push({ file: small, dataUrl: url });
+            kmIdeaPreview();
+          } catch(e){ console.warn('[idea] photo', e); alert(kmIdeaT('photoFail')); }
+        }
+      } finally { btn.disabled = false; btn.textContent = old; }
+    };
+    inp.click();
+  }
+
   async function kmIdeaSend(btn){
     const m = kmIdeaMe();
     if (!m) { alert(kmIdeaT('noName')); if (typeof goSetName === 'function') goSetName(); return; }
@@ -1918,8 +1983,32 @@ button{font-family:inherit;cursor:pointer}
     if (!br) { alert(kmIdeaT('failed')); return; }
     btn.disabled = true;
     try {
+      // 📷 사진 먼저 Storage 로 (실패하면 그 사진만 빼고 글은 보낸다)
+      const photos = [];
+      if (KM_IDEA_PHOTOS.length && typeof _uploadPhotoSmart === 'function'){
+        const old = btn.textContent;
+        for (let i = 0; i < KM_IDEA_PHOTOS.length; i++){
+          btn.textContent = kmIdeaT('photoUp') + ' (' + (i+1) + '/' + KM_IDEA_PHOTOS.length + ')';
+          try {
+            const path = 'ideas/' + br + '/' + Date.now() + '_' + i + '.jpg';
+            const u = await _uploadPhotoSmart(KM_IDEA_PHOTOS[i].file, path);
+            if (u) photos.push(u);
+            else {
+              // Storage 규칙이 이 경로를 막는 등 실패하면 작게 줄여 글에 직접 담는다(사진을 잃지 않게)
+              console.warn('[idea] storage 실패 → 작게 담기', i);
+              try {
+                const small = (typeof compressImage === 'function') ? await compressImage(KM_IDEA_PHOTOS[i].file, 640, 0.5) : KM_IDEA_PHOTOS[i].file;
+                const dataUrl = (typeof readDataUrl === 'function') ? await readDataUrl(small) : KM_IDEA_PHOTOS[i].dataUrl;
+                if (dataUrl) photos.push(dataUrl);
+              } catch(e2){ console.warn('[idea] fallback', e2); }
+            }
+          } catch(e){ console.warn('[idea] upload', e); }
+        }
+        btn.textContent = old;
+      }
       const rec = { text: txt, by: m.name, branch: br, lang: (typeof LANG==='string'?LANG:'ko'),
                     ts: Date.now(), status: 'new', votes: {} };
+      if (photos.length) rec.photos = photos;
       const r = await fetch(FB_DB_URL+'/'+KM_IDEA_PATH+'/'+br+'.json', {
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rec) });
       if (!r.ok) throw new Error('HTTP '+r.status);
@@ -1928,6 +2017,7 @@ button{font-family:inherit;cursor:pointer}
       KM_IDEA_LOADED = true;
       // 두 마운트의 입력창을 모두 비운다 (같은 사람이 양쪽을 오갈 수 있음)
       document.querySelectorAll('.idea-text').forEach(function(t){ t.value = ''; });
+      KM_IDEA_PHOTOS = []; kmIdeaPreview();
       KM_IDEA_FILTER = 'open';
       kmIdeaRender();
       if (typeof showToast === 'function') showToast('💡', kmIdeaT('sent')); else alert(kmIdeaT('sent'));
