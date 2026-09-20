@@ -165,6 +165,20 @@ if (_isIOS || _isStandalone) {
   }, 4 * 60 * 1000);
 }
 
+// 🖐 마지막 조작 시각 — "사용 중이면 리로드 미루기" 판정의 근거.
+//   2026-09-20: 이 값을 chat.html 만 기록하고 있었다 → 다른 앱(업무지시·스케줄·매대…)에서는
+//   userBusy() 가 늘 false 라, 새 버전이 올라오는 즉시 작업 중에도 화면이 리로드됐다
+//   (전무님 신고: "저장됐다고 떴다 사라진다", "스케줄 화면이 자꾸 바뀐다").
+//   공통으로 실리는 이 파일에서 기록해 전 앱에 적용한다.
+try {
+  if (typeof window !== 'undefined') {
+    window.__kmLastActivity = Date.now();
+    ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input', 'change'].forEach((ev) => {
+      window.addEventListener(ev, () => { window.__kmLastActivity = Date.now(); }, { passive: true, capture: true });
+    });
+  }
+} catch (_) {}
+
 // When the service worker activates a new version it posts {type:'sw-updated'}
 // to every open client. Reload the page once so the user sees the new HTML/JS
 // immediately instead of having to close + reopen the PWA. Guarded with a
