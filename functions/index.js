@@ -1134,3 +1134,136 @@ exports.bayAlias = onValueCreated(
     console.log('[bayAlias] done — bays updated', touched);
   }
 );
+
+// =============================================================================
+// 🧹 업무 사진 정리 — 기록에 박힌 base64 사진을 Storage 로 옮긴다 (2026-09-20)
+//
+// fb-auth-fetch.js 에 storageBucket 이 빠져 있어서 getStorage(app) 가 죽었고,
+// 사진이 전부 base64 로 tasks/{지점}/{날짜} 안에 박혔다(9/17~19 사진 1,004장 전부).
+// 코럴 하루치 44MB · 헐리우드 23MB — 폰이 그 날짜를 열 때마다 통째로 내려받아
+// 느려지고 멈췄다. 업로드는 고쳤지만(507c1b2) 이미 박힌 사진은 그대로 남는다.
+//
+// 이 함수는 하루·한 지점씩 처리한다: base64 → Storage 업로드 → 다운로드 URL 이
+// 실제로 열리는지 확인 → 그 뒤에만 DB 의 사진 문자열을 URL 로 바꾼다.
+// 확인 전에는 절대 지우지 않는다(사진이 유일본이라 날리면 복구 불가).
+//
+// 실행: photoMigrate/{jobId} 에 { branch, date, dry } 쓰기 → 같은 노드 result 에 결과.
+//   dry:true 면 세어만 보고 아무것도 바꾸지 않는다.
+// =============================================================================
+const MIG_BUCKET = 'kimchi-mart-order.firebasestorage.app';
+
+function _migDataUrlToBuf(u){
+  const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(String(u || ''));
+  if (!m) return null;
+  const type = m[1] || 'image/jpeg';
+  const buf = m[2] ? Buffer.from(m[3], 'base64') : Buffer.from(decodeURIComponent(m[3]), 'binary');
+  if (!buf.length) return null;
+  return { buf, type };
+}
+async function _migUpload(bucket, path, buf, type){
+  const token = require('crypto').randomUUID();
+  const file = bucket.file(path);
+  await file.save(buf, { resumable: false, contentType: type,
+    metadata: { contentType: type, cacheControl: 'public, max-age=31536000',
+                metadata: { firebaseStorageDownloadTokens: token, migratedFrom: 'rtdb-base64' } } });
+  const url = 'https://firebasestorage.googleapis.com/v0/b/' + MIG_BUCKET +
+              '/o/' + encodeURIComponent(path) + '?alt=media&token=' + token;
+  // 정말 열리는지 확인한 뒤에만 DB 를 바꾼다
+  const r = await fetch(url, { method: 'GET' });
+  if (!r.ok) throw new Error('verify ' + r.status);
+  const got = Buffer.from(await r.arrayBuffer());
+  if (got.length !== buf.length) throw new Error('verify size ' + got.length + '/' + buf.length);
+  return url;
+}
+
+// 하루·한 지점 처리 — 옮긴 장수·바이트를 돌려준다
+async function _migOneDay(db, bucket, branch, date, dry, errs){
+  const dayRef = db.ref('tasks/' + branch + '/' + date);
+  const day = (await dayRef.get()).val();
+  const st = { tasks: 0, found: 0, moved: 0, failed: 0, bytes: 0 };
+  if (!day) return st;
+  for (const taskId of Object.keys(day)) {
+    const t = day[taskId];
+    if (!t || typeof t !== 'object') continue;
+    st.tasks++;
+    const updates = {};
+    let n = 0;
+    // 사진이 들어 있는 자리: task.photos / checklist[i].photos / checklist[i].entries[j].photos
+    const spots = [];
+    if (Array.isArray(t.photos)) spots.push({ arr: t.photos, key: 'photos' });
+    (Array.isArray(t.checklist) ? t.checklist : []).forEach((c, ci) => {
+      if (!c) return;
+      if (Array.isArray(c.photos)) spots.push({ arr: c.photos, key: 'checklist/' + ci + '/photos' });
+      (Array.isArray(c.entries) ? c.entries : []).forEach((e, ei) => {
+        if (e && Array.isArray(e.photos)) spots.push({ arr: e.photos, key: 'checklist/' + ci + '/entries/' + ei + '/photos' });
+      });
+    });
+    for (const sp of spots) {
+      let changed = false;
+      const out = sp.arr.slice();
+      for (let i = 0; i < out.length; i++) {
+        const v = out[i];
+        if (typeof v !== 'string' || v.indexOf('data:') !== 0) continue;
+        st.found++;
+        const d = _migDataUrlToBuf(v);
+        if (!d) { st.failed++; if (errs.length < 20) errs.push(date + ' ' + taskId + ' bad data url'); continue; }
+        if (dry) { st.bytes += d.buf.length; continue; }
+        const ext = d.type.indexOf('png') >= 0 ? '.png' : '.jpg';
+        const path = 'tasks-migrated/' + branch + '/' + date + '/' + taskId + '/' + sp.key.replace(/\//g, '_') + '_' + i + ext;
+        try {
+          out[i] = await _migUpload(bucket, path, d.buf, d.type);   // 열리는지 확인까지 하고 URL 반환
+          st.moved++; st.bytes += d.buf.length; changed = true; n++;
+        } catch (e) {
+          st.failed++;
+          if (errs.length < 20) errs.push(date + ' ' + taskId + ' ' + ((e && e.message) || e));
+        }
+      }
+      if (changed) updates[sp.key] = out;
+    }
+    // 올리고 열리는 것까지 확인한 뒤에만 DB 의 base64 를 URL 로 바꾼다
+    if (!dry && n) {
+      try { await dayRef.child(taskId).update(updates); }
+      catch (e) { if (errs.length < 20) errs.push(date + ' ' + taskId + ' db ' + ((e && e.message) || e)); }
+    }
+  }
+  return st;
+}
+
+// 여러 날을 이어서 — 시간이 모자라면 남은 날짜로 다음 작업을 스스로 만든다(체인).
+exports.photoMigrate = onValueCreated(
+  { ref: '/photoMigrate/{jobId}', region: 'us-central1', timeoutSeconds: 540, memory: '2GiB' },
+  async (event) => {
+    const jobId = event.params.jobId;
+    const job = event.data.val();
+    if (!job || job.result || !job.branch || (!job.date && !job.dates)) return;
+    const db = admin.database();
+    const node = db.ref('photoMigrate/' + jobId);
+    const branch = String(job.branch), dry = !!job.dry;
+    const dates = job.dates ? String(job.dates).split(',').map((x) => x.trim()).filter(Boolean) : [String(job.date)];
+    const bucket = admin.storage().bucket(MIG_BUCKET);
+    const t0 = Date.now();
+    const tot = { days: 0, tasks: 0, found: 0, moved: 0, failed: 0, bytes: 0 };
+    const errs = [];
+    let i = 0;
+    for (; i < dates.length; i++) {
+      if (i > 0 && Date.now() - t0 > 400000) break;          // 400초 넘으면 나머지는 다음 작업으로
+      try {
+        const st = await _migOneDay(db, bucket, branch, dates[i], dry, errs);
+        tot.days++; tot.tasks += st.tasks; tot.found += st.found; tot.moved += st.moved;
+        tot.failed += st.failed; tot.bytes += st.bytes;
+      } catch (e) {
+        errs.push(dates[i] + ' DAY FAIL ' + ((e && e.message) || e));
+      }
+    }
+    const rest = dates.slice(i);
+    const result = { branch, days: tot.days, tasks: tot.tasks, found: tot.found, moved: tot.moved,
+                     failed: tot.failed, mb: Math.round(tot.bytes / 1048576 * 10) / 10, dry,
+                     left: rest.length, at: Date.now(), secs: Math.round((Date.now() - t0) / 1000),
+                     errs: errs.slice(0, 20) };
+    console.log('[mig] ' + branch + ' ' + JSON.stringify(result));
+    await node.child('result').set(result).catch(() => {});
+    if (rest.length) {
+      await db.ref('photoMigrate/' + jobId + 'x').set({ branch, dates: rest.join(','), dry, by: 'chain' }).catch(() => {});
+    }
+  }
+);
