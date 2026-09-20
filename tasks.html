@@ -8098,7 +8098,32 @@ function _normAssignName(s){
 //   aka 는 한 개(문자열) 또는 여러 개(배열/쉼표) 다 된다.
 let NAME_ALIAS = {};         // 정규화 이름 → 대표 정규화 이름
 let USERS_CACHE = null;      // [{name, aka, branch, status}] — 발송 경고에도 쓴다
+// 내 uid — 로그인 토큰(JWT) 안에 들어 있다. 일반 직원은 /users 전체를 못 읽고
+// 본인 것(users/)만 읽을 수 있어서, 별명도 본인 기록에서 가져온다.
+function _uidFromToken(tok){
+  try {
+    const p = String(tok || '').split('.')[1];
+    if (!p) return '';
+    const j = JSON.parse(decodeURIComponent(escape(atob(p.replace(/-/g,'+').replace(/_/g,'/')))));
+    return j.user_id || j.sub || '';
+  } catch(e){ return ''; }
+}
+async function loadMyAlias(){
+  try {
+    const tok = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
+    const uid = _uidFromToken(tok);
+    if (!uid) return;
+    const x = await fetch(FB_DB_URL + '/users/' + uid + '.json', { cache:'no-store' }).then(r => r.ok ? r.json() : null);
+    if (!x || !x.name) return;
+    const canon = _normAssignName(x.name);
+    const akas = Array.isArray(x.aka) ? x.aka : (typeof x.aka === 'string' ? x.aka.split(',') : []);
+    let added = 0;
+    akas.forEach(a => { const n = _normAssignName(a); if (n && n !== canon && !NAME_ALIAS[n]) { NAME_ALIAS[n] = canon; added++; } });
+    if (added) { try { if (typeof renderAll === 'function') renderAll(); } catch(_){} }
+  } catch(e){ console.warn('[alias:me]', e && e.message); }
+}
 async function loadNameAliases(){
+  loadMyAlias();                       // 직원도 본인 별명은 언제나 읽을 수 있다
   try {
     const u = await fetch(FB_DB_URL + '/users.json', { cache:'no-store' }).then(r => r.ok ? r.json() : null);
     if (!u) return;
