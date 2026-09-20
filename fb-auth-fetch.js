@@ -18,7 +18,11 @@ const cfg = {
   apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
   authDomain: "kimchi-mart-order.firebaseapp.com",
   databaseURL: "https://kimchi-mart-order-default-rtdb.firebaseio.com",
-  projectId: "kimchi-mart-order"
+  projectId: "kimchi-mart-order",
+  // 🔴 2026-09-20 필수 — 이 파일이 페이지보다 먼저 앱을 초기화하는데 버킷이 빠져 있어서
+  //   tasks.html 등의 getStorage(app) 가 storage/no-default-bucket 으로 죽었다.
+  //   그래서 사진이 전부 base64 로 RTDB 에 박혀 하루치 노드가 30~45MB (폰이 못 버팀).
+  storageBucket: "kimchi-mart-order.firebasestorage.app"
 };
 const app = getApps().length ? getApp() : initializeApp(cfg);
 const auth = getAuth(app);

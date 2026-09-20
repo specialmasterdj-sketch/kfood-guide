@@ -61,7 +61,7 @@
     window.addEventListener('focus', pollBust);
   })();
 </script>
-<script type="module" src="./fb-auth-fetch.js?v=1"></script>
+<script type="module" src="./fb-auth-fetch.js?v=3"></script>
 <script type="module" src="./auth-gate.js?v=5"></script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
@@ -81,7 +81,8 @@
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order", storageBucket:"kimchi-mart-order.firebasestorage.app", appId:"1:903841418321:web:5c0d9f3e6a5a1b2c3d4e5f" };
   const app = getApps().length ? getApp() : initializeApp(cfg);
   const db = getDatabase(app);
-  const st = getStorage(app);
+  // 버킷 명시 — 다른 스크립트가 버킷 없이 앱을 먼저 만들어도 안전 (2026-09-20)
+  const st = getStorage(app, "gs://kimchi-mart-order.firebasestorage.app");
   window.__fb = { db, ref, onValue, set, update, push, remove, st, sRef, uploadBytes, getDownloadURL };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
@@ -9410,14 +9411,12 @@ async function uploadLocPhotos(taskId){
   const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
   const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
   // Auth token if available — Firebase Storage rules typically require auth
+  // 🔴 2026-09-20 window.__fb.auth 는 없던 값이라 토큰이 늘 비었다 → Storage 401 → base64 폴백.
+  //   fb-auth-fetch.js 가 노출하는 __getAuthToken 을 쓴다.
   let authHeader = {};
   try {
-    const auth = window.__fb && window.__fb.auth;
-    const u = auth && auth.currentUser;
-    if (u) {
-      const tok = await u.getIdToken();
-      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
-    }
+    const tok = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
+    if (tok) authHeader = { Authorization: 'Firebase ' + tok };
   } catch(_){}
   // Helper — read a Blob/File as base64 dataURL (used for fallback path)
   const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
@@ -9669,13 +9668,12 @@ async function finishTask(){
   const btn = document.getElementById('doneBtn');
   btn.disabled = true; btn.textContent = '업로드 중…';
   // Auth token if available — Storage rules likely require auth!=null
+  // 🔴 2026-09-20 window.__fb.auth 는 없던 값이라 토큰이 늘 비었다 → Storage 401 → base64 폴백.
+  //   fb-auth-fetch.js 가 노출하는 __getAuthToken 을 쓴다.
   let authHeader = {};
   try {
-    const u = window.__fb && window.__fb.auth && window.__fb.auth.currentUser;
-    if (u) {
-      const tok = await u.getIdToken();
-      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
-    }
+    const tok = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
+    if (tok) authHeader = { Authorization: 'Firebase ' + tok };
   } catch(_){}
   let stage = 'init';
   try {
@@ -11173,14 +11171,12 @@ async function adminAddPhotos(t){
   const compressed = await Promise.all(files.map(f => compressImage(f, 1024, 0.78)));
   const FB_STORAGE_BUCKET = 'kimchi-mart-order.firebasestorage.app';
   const FB_STORAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/' + FB_STORAGE_BUCKET + '/o';
+  // 🔴 2026-09-20 window.__fb.auth 는 없던 값이라 토큰이 늘 비었다 → Storage 401 → base64 폴백.
+  //   fb-auth-fetch.js 가 노출하는 __getAuthToken 을 쓴다.
   let authHeader = {};
   try {
-    const auth = window.__fb && window.__fb.auth;
-    const u = auth && auth.currentUser;
-    if (u) {
-      const tok = await u.getIdToken();
-      if (tok) authHeader = { Authorization: 'Firebase ' + tok };
-    }
+    const tok = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null;
+    if (tok) authHeader = { Authorization: 'Firebase ' + tok };
   } catch(_){}
   const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
     const fr = new FileReader();
