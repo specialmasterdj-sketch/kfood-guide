@@ -8,7 +8,7 @@
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
 <script>
 (function(){
-  var BUST='dispatch_2026_07_27_v9';
+  var BUST='dispatch_2026_09_20_v10';
   try{
     var KEY='dispatch.bust'; if(localStorage.getItem(KEY)!==BUST) localStorage.setItem(KEY,BUST);
     var last=Date.now();
@@ -21,11 +21,11 @@
 </script>
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-  import { getDatabase, ref, onValue, set, update, remove, push, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getDatabase, ref, onValue, set, update, remove, push, get, query, orderByKey, limitToLast } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order" };
   const app = getApps().length ? getApp() : initializeApp(cfg);
   const db = getDatabase(app);
-  window.__fb = { db, ref, onValue, set, update, remove, push, get };
+  window.__fb = { db, ref, onValue, set, update, remove, push, get, query, orderByKey, limitToLast };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 <script src="./lang-sync.js?v=1"></script>
@@ -210,6 +210,8 @@
 
 <script>
 var FB=null, ORDERS={}, FILTER='all', LANG='ko', PICK_TYPE='meat';
+// 폰에서 한 번에 그리는 건수 — 730건을 통째로 그리면 화면이 멎는다 (2026-09-20)
+var SHOW_STEP=50, SHOW_N=50, LOAD_STATE='loading', SUB_TRIES=0;
 var PHOTO_TARGET=null, PHOTO_STAGE='send', PENDING_PICS=[], LB_PICS=[], LB_I=0;
 var BRANCHES=['HOLLYWOOD','MIAMI','CORAL SPRINGS','PEMBROKE PINES','LAS OLAS','PALM BEACH'];
 /* 보고 방 라우팅 — 2026-07-26 수정: 키워드 '평가'가 이름에 '평가' 들어간 모든 방과
@@ -220,9 +222,9 @@ var REPORT_ROOM_IDS={ meat:['meat_evalution_room'], fish:['seafood_evalution_roo
 var REPORT_KW={ meat:['정육','고기','meat','carn'], fish:['해산물','수산','생선','seafood','fish','marisco','pescado'], other:['그로서리','grocery','grocer'] };
 
 var I18N={
- ko:{title:'헐리우드 발송 주문',meLbl:'내 지점',newOrder:'새 주문 넣기',printRoom:'작업실 인쇄',formTitle:'발송 주문서',fType:'제품 종류',tMeat:'고기',tFish:'생선',tOther:'기타',fItem:'품목 (무엇을 보낼까요)',fQty:'수량 / 무게',fNeed:'필요 날짜',fBranch:'요청 지점 (받는 곳)',fNote:'메모 (선택)',fPhoto:'사진 (선택)',addPic:'사진 찍기/추가',btnSubmit:'주문 넣기',btnCancel:'취소',fAll:'전체',fReq:'요청됨',fProg:'진행중',fPrep:'준비완료',fSent:'발송완료',phItem:'예: LA갈비, 삼겹살, 고등어…',phQty:'예: 10 lb, 5팩',phNote:'손질 방법·포장 요청 등',btnProg:'진행중(확인)',btnPrepared:'준비완료',btnSent:'발송완료',photo:'사진',addPhoto:'사진 추가',print:'인쇄',undo:'되돌리기',del:'삭제',by:'요청',need:'필요',progBy:'확인',preparedBy:'준비',sentBy:'발송',viewPics:'사진 보기',reqAt:'요청',reported:'채팅방 보고됨',overdue:'기한 지남',dueToday:'오늘까지',delayBtn:'기한 내 불가',delayClear:'지연 해제',delayTitle:'기한 내 발송 어려움',delayPrompt:'기한 내 어려운 사유를 적어주세요 (선택)',emptyT:'아직 주문이 없어요',emptyD:'위 "새 주문 넣기"로 첫 주문을 넣어보세요.',needItem:'품목을 입력하세요',delConfirm:'이 주문을 삭제할까요?',compressing:'사진 준비 중…',uploading:'사진 올리는 중…',saving:'저장 중…',mustLogin:'로그인이 필요해요.',sgOrder:'🛒 주문',sgProgress:'👀 진행',sgPrepare:'👨‍🍳 준비',sgSend:'📤 발송',tapRemove:'탭하면 삭제',repMsg:'발송완료',noPrint:'인쇄할 주문이 없어요',popupBlock:'팝업 차단을 해제해주세요',printTitle:'발송 작업 지시서',pDone:'준비완료',pSent:'발송완료',pReq:'요청',pFor:'받는곳',fDelay:'기한불가',stampDone:'완료'},
- en:{title:'Hollywood Dispatch',meLbl:'My branch',newOrder:'New order',printRoom:'Print for prep',formTitle:'Dispatch order',fType:'Product type',tMeat:'Meat',tFish:'Fish',tOther:'Other',fItem:'Item (what to send)',fQty:'Qty / Weight',fNeed:'Needed by',fBranch:'Requesting branch',fNote:'Note (optional)',fPhoto:'Photo (optional)',addPic:'Take/add photo',btnSubmit:'Place order',btnCancel:'Cancel',fAll:'All',fReq:'Requested',fProg:'In progress',fPrep:'Prepared',fSent:'Sent',phItem:'e.g. LA galbi, pork belly, mackerel…',phQty:'e.g. 10 lb, 5 packs',phNote:'Cutting/packing requests…',btnProg:'In progress',btnPrepared:'Mark prepared',btnSent:'Mark sent',photo:'Photo',addPhoto:'Add photo',print:'Print',undo:'Undo',del:'Delete',by:'By',need:'Need',progBy:'Ack',preparedBy:'Prepared',sentBy:'Sent',viewPics:'View photos',reqAt:'Requested',reported:'Reported to chat',overdue:'OVERDUE',dueToday:'DUE TODAY',delayBtn:"Can't meet date",delayClear:'Clear delay',delayTitle:'May miss the deadline',delayPrompt:"Why can't it be met by the date? (optional)",emptyT:'No orders yet',emptyD:'Tap "New order" above to add the first one.',needItem:'Please enter an item',delConfirm:'Delete this order?',compressing:'Preparing photo…',uploading:'Uploading photo…',saving:'Saving…',mustLogin:'Please log in.',sgOrder:'🛒 Order',sgProgress:'👀 In progress',sgPrepare:'👨‍🍳 Prepared',sgSend:'📤 Sent',tapRemove:'tap to remove',repMsg:'Dispatched',noPrint:'No orders to print',popupBlock:'Please allow popups',printTitle:'Dispatch Work Sheet',pDone:'PREPARED',pSent:'SENT',pReq:'By',pFor:'To',fDelay:'Delayed',stampDone:'DONE'},
- es:{title:'Envíos Hollywood',meLbl:'Mi tienda',newOrder:'Nuevo pedido',printRoom:'Imprimir',formTitle:'Pedido de envío',fType:'Tipo de producto',tMeat:'Carne',tFish:'Pescado',tOther:'Otro',fItem:'Artículo (qué enviar)',fQty:'Cant. / Peso',fNeed:'Para cuándo',fBranch:'Tienda que pide',fNote:'Nota (opcional)',fPhoto:'Foto (opcional)',addPic:'Tomar/agregar foto',btnSubmit:'Hacer pedido',btnCancel:'Cancelar',fAll:'Todos',fReq:'Solicitado',fProg:'En progreso',fPrep:'Preparado',fSent:'Enviado',phItem:'ej: LA galbi, panceta, caballa…',phQty:'ej: 10 lb, 5 paq.',phNote:'Cortes/empaque…',btnProg:'En progreso',btnPrepared:'Marcar preparado',btnSent:'Marcar enviado',photo:'Foto',addPhoto:'Agregar foto',print:'Imprimir',undo:'Deshacer',del:'Eliminar',by:'Pide',need:'Para',progBy:'Confirm.',preparedBy:'Preparado',sentBy:'Enviado',viewPics:'Ver fotos',reqAt:'Solicitado',reported:'Reportado al chat',overdue:'ATRASADO',dueToday:'HOY',delayBtn:'No llega a tiempo',delayClear:'Quitar retraso',delayTitle:'Puede no llegar a tiempo',delayPrompt:'¿Por qué no llega a tiempo? (opcional)',emptyT:'Aún no hay pedidos',emptyD:'Toca "Nuevo pedido" arriba para agregar el primero.',needItem:'Ingresa un artículo',delConfirm:'¿Eliminar este pedido?',compressing:'Preparando foto…',uploading:'Subiendo foto…',saving:'Guardando…',mustLogin:'Inicia sesión.',sgOrder:'🛒 Pedido',sgProgress:'👀 En progreso',sgPrepare:'👨‍🍳 Preparado',sgSend:'📤 Enviado',tapRemove:'toca para quitar',repMsg:'Enviado',noPrint:'No hay pedidos para imprimir',popupBlock:'Permite ventanas emergentes',printTitle:'Hoja de trabajo de envío',pDone:'PREPARADO',pSent:'ENVIADO',pReq:'Pide',pFor:'Para',fDelay:'Atrasado',stampDone:'HECHO'}
+ ko:{loadingT:'주문을 불러오는 중…',loadFailT:'주문을 불러오지 못했어요',loadFailD:'인터넷이 느리거나 로그인이 끊겼을 수 있어요. 잠시 뒤 자동으로 다시 시도합니다.',retry:'다시 불러오기',more:'더 보기',title:'헐리우드 발송 주문',meLbl:'내 지점',newOrder:'새 주문 넣기',printRoom:'작업실 인쇄',formTitle:'발송 주문서',fType:'제품 종류',tMeat:'고기',tFish:'생선',tOther:'기타',fItem:'품목 (무엇을 보낼까요)',fQty:'수량 / 무게',fNeed:'필요 날짜',fBranch:'요청 지점 (받는 곳)',fNote:'메모 (선택)',fPhoto:'사진 (선택)',addPic:'사진 찍기/추가',btnSubmit:'주문 넣기',btnCancel:'취소',fAll:'전체',fReq:'요청됨',fProg:'진행중',fPrep:'준비완료',fSent:'발송완료',phItem:'예: LA갈비, 삼겹살, 고등어…',phQty:'예: 10 lb, 5팩',phNote:'손질 방법·포장 요청 등',btnProg:'진행중(확인)',btnPrepared:'준비완료',btnSent:'발송완료',photo:'사진',addPhoto:'사진 추가',print:'인쇄',undo:'되돌리기',del:'삭제',by:'요청',need:'필요',progBy:'확인',preparedBy:'준비',sentBy:'발송',viewPics:'사진 보기',reqAt:'요청',reported:'채팅방 보고됨',overdue:'기한 지남',dueToday:'오늘까지',delayBtn:'기한 내 불가',delayClear:'지연 해제',delayTitle:'기한 내 발송 어려움',delayPrompt:'기한 내 어려운 사유를 적어주세요 (선택)',emptyT:'아직 주문이 없어요',emptyD:'위 "새 주문 넣기"로 첫 주문을 넣어보세요.',needItem:'품목을 입력하세요',delConfirm:'이 주문을 삭제할까요?',compressing:'사진 준비 중…',uploading:'사진 올리는 중…',saving:'저장 중…',mustLogin:'로그인이 필요해요.',sgOrder:'🛒 주문',sgProgress:'👀 진행',sgPrepare:'👨‍🍳 준비',sgSend:'📤 발송',tapRemove:'탭하면 삭제',repMsg:'발송완료',noPrint:'인쇄할 주문이 없어요',popupBlock:'팝업 차단을 해제해주세요',printTitle:'발송 작업 지시서',pDone:'준비완료',pSent:'발송완료',pReq:'요청',pFor:'받는곳',fDelay:'기한불가',stampDone:'완료'},
+ en:{loadingT:'Loading orders…',loadFailT:'Could not load orders',loadFailD:'Slow connection or login expired. Retrying automatically.',retry:'Reload',more:'Show more',title:'Hollywood Dispatch',meLbl:'My branch',newOrder:'New order',printRoom:'Print for prep',formTitle:'Dispatch order',fType:'Product type',tMeat:'Meat',tFish:'Fish',tOther:'Other',fItem:'Item (what to send)',fQty:'Qty / Weight',fNeed:'Needed by',fBranch:'Requesting branch',fNote:'Note (optional)',fPhoto:'Photo (optional)',addPic:'Take/add photo',btnSubmit:'Place order',btnCancel:'Cancel',fAll:'All',fReq:'Requested',fProg:'In progress',fPrep:'Prepared',fSent:'Sent',phItem:'e.g. LA galbi, pork belly, mackerel…',phQty:'e.g. 10 lb, 5 packs',phNote:'Cutting/packing requests…',btnProg:'In progress',btnPrepared:'Mark prepared',btnSent:'Mark sent',photo:'Photo',addPhoto:'Add photo',print:'Print',undo:'Undo',del:'Delete',by:'By',need:'Need',progBy:'Ack',preparedBy:'Prepared',sentBy:'Sent',viewPics:'View photos',reqAt:'Requested',reported:'Reported to chat',overdue:'OVERDUE',dueToday:'DUE TODAY',delayBtn:"Can't meet date",delayClear:'Clear delay',delayTitle:'May miss the deadline',delayPrompt:"Why can't it be met by the date? (optional)",emptyT:'No orders yet',emptyD:'Tap "New order" above to add the first one.',needItem:'Please enter an item',delConfirm:'Delete this order?',compressing:'Preparing photo…',uploading:'Uploading photo…',saving:'Saving…',mustLogin:'Please log in.',sgOrder:'🛒 Order',sgProgress:'👀 In progress',sgPrepare:'👨‍🍳 Prepared',sgSend:'📤 Sent',tapRemove:'tap to remove',repMsg:'Dispatched',noPrint:'No orders to print',popupBlock:'Please allow popups',printTitle:'Dispatch Work Sheet',pDone:'PREPARED',pSent:'SENT',pReq:'By',pFor:'To',fDelay:'Delayed',stampDone:'DONE'},
+ es:{loadingT:'Cargando pedidos…',loadFailT:'No se pudieron cargar los pedidos',loadFailD:'Conexión lenta o sesión expirada. Reintentando.',retry:'Recargar',more:'Ver más',title:'Envíos Hollywood',meLbl:'Mi tienda',newOrder:'Nuevo pedido',printRoom:'Imprimir',formTitle:'Pedido de envío',fType:'Tipo de producto',tMeat:'Carne',tFish:'Pescado',tOther:'Otro',fItem:'Artículo (qué enviar)',fQty:'Cant. / Peso',fNeed:'Para cuándo',fBranch:'Tienda que pide',fNote:'Nota (opcional)',fPhoto:'Foto (opcional)',addPic:'Tomar/agregar foto',btnSubmit:'Hacer pedido',btnCancel:'Cancelar',fAll:'Todos',fReq:'Solicitado',fProg:'En progreso',fPrep:'Preparado',fSent:'Enviado',phItem:'ej: LA galbi, panceta, caballa…',phQty:'ej: 10 lb, 5 paq.',phNote:'Cortes/empaque…',btnProg:'En progreso',btnPrepared:'Marcar preparado',btnSent:'Marcar enviado',photo:'Foto',addPhoto:'Agregar foto',print:'Imprimir',undo:'Deshacer',del:'Eliminar',by:'Pide',need:'Para',progBy:'Confirm.',preparedBy:'Preparado',sentBy:'Enviado',viewPics:'Ver fotos',reqAt:'Solicitado',reported:'Reportado al chat',overdue:'ATRASADO',dueToday:'HOY',delayBtn:'No llega a tiempo',delayClear:'Quitar retraso',delayTitle:'Puede no llegar a tiempo',delayPrompt:'¿Por qué no llega a tiempo? (opcional)',emptyT:'Aún no hay pedidos',emptyD:'Toca "Nuevo pedido" arriba para agregar el primero.',needItem:'Ingresa un artículo',delConfirm:'¿Eliminar este pedido?',compressing:'Preparando foto…',uploading:'Subiendo foto…',saving:'Guardando…',mustLogin:'Inicia sesión.',sgOrder:'🛒 Pedido',sgProgress:'👀 En progreso',sgPrepare:'👨‍🍳 Preparado',sgSend:'📤 Enviado',tapRemove:'toca para quitar',repMsg:'Enviado',noPrint:'No hay pedidos para imprimir',popupBlock:'Permite ventanas emergentes',printTitle:'Hoja de trabajo de envío',pDone:'PREPARADO',pSent:'ENVIADO',pReq:'Pide',pFor:'Para',fDelay:'Atrasado',stampDone:'HECHO'}
 };
 function t(k){ return (I18N[LANG]&&I18N[LANG][k])||I18N.ko[k]||k; }
 function esc(s){ return (s==null?'':''+s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
@@ -393,7 +395,14 @@ function render(){
   if(FILTER==='delayed') arr=arr.filter(function(o){ return o.delayed&&o.status!=='sent'; });
   else if(FILTER!=='all') arr=arr.filter(function(o){ return o.status===FILTER; });
   var list=document.getElementById('list');
-  if(!arr.length){ list.innerHTML='<div class="empty"><div class="ico">📭</div><b>'+t('emptyT')+'</b><br>'+t('emptyD')+'</div>'; return; }
+  if(!arr.length){
+    if(LOAD_STATE==='loading'){ list.innerHTML='<div class="empty"><div class="ico">⏳</div><b>'+t('loadingT')+'</b></div>'; return; }
+    if(LOAD_STATE==='error'){ list.innerHTML='<div class="empty"><div class="ico">⚠️</div><b>'+t('loadFailT')+'</b><br>'+t('loadFailD')+
+      '<br><br><button class="a-prog" onclick="reloadNow()" style="padding:10px 16px">🔄 '+t('retry')+'</button></div>'; return; }
+    list.innerHTML='<div class="empty"><div class="ico">📭</div><b>'+t('emptyT')+'</b><br>'+t('emptyD')+'</div>'; return;
+  }
+  var total=arr.length;
+  if(arr.length>SHOW_N) arr=arr.slice(0,SHOW_N);     // 나머지는 [더 보기] 로
   list.innerHTML=arr.map(function(o){
     var id=o._id; var badge=t(o.status==='requested'?'fReq':o.status==='inprogress'?'fProg':o.status==='prepared'?'fPrep':'fSent');
     var over=(dueState(o)==='over')?' overdue':'';
@@ -422,14 +431,36 @@ function render(){
       ((o.delayed&&o.status!=='sent')?('<div class="delaybox">⚠️ '+t('delayTitle')+(o.delayNote?(' — '+esc(o.delayNote)):'')+' ('+esc(o.delayBy||'')+')</div>'):'')+
       (o.reported?('<div class="rep">📣 '+t('reported')+(o.reportedRoom?(' · '+esc(o.reportedRoom)):'')+'</div>'):'')+
       pics+a+'</div>';
-  }).join('');
+  }).join('') + (total>SHOW_N
+    ? '<button class="a-prog" style="width:100%;padding:12px;margin-top:6px" onclick="showMore()">⬇ '+t('more')+' ('+SHOW_N+'/'+total+')</button>'
+    : '');
 }
+function showMore(){ SHOW_N+=SHOW_STEP; render(); }
+function reloadNow(){ SUB_TRIES=0; LOAD_STATE='loading'; render(); subscribe(); }
 
 function boot(){ try{ LANG=localStorage.getItem('km.lang')||'ko'; }catch(e){} document.getElementById('myBranchLbl').textContent=meBranch(); fillBranchSelect(); applyLang(); pickType('meat'); if(window.__fb){ FB=window.__fb; subscribe(); } }
-function subscribe(){ if(!FB) return; FB.onValue(FB.ref(FB.db,'dispatch/orders'), function(snap){ ORDERS=snap.val()||{}; render(); }, function(){}); }
+// 전체(730건+)를 받으면 폰에서 오래 걸리고 자주 끊긴다 → 최근 300건만.
+// 실패를 조용히 넘기면 빈 화면이 되어 "주문이 안 보인다"가 된다 → 상태를 보여주고 재시도.
+function subscribe(){
+  if(!FB) return;
+  var node=FB.ref(FB.db,'dispatch/orders');
+  var q=node;
+  try { if(FB.query&&FB.orderByKey&&FB.limitToLast) q=FB.query(node, FB.orderByKey(), FB.limitToLast(300)); } catch(e){}
+  FB.onValue(q, function(snap){
+    ORDERS=snap.val()||{}; LOAD_STATE='ok'; SUB_TRIES=0; render();
+  }, function(err){
+    console.warn('[dispatch] read fail', err && err.message);
+    LOAD_STATE='error'; render();
+    if(SUB_TRIES++ < 3) setTimeout(subscribe, 2000*SUB_TRIES);   // 로그인 토큰이 늦게 오는 경우
+  });
+}
 window.addEventListener('fb-ready', boot);
 if(window.__fb){ boot(); }
-window.addEventListener('fb-auth-ready', function(){ document.getElementById('myBranchLbl').textContent=meBranch(); fillBranchSelect(); });
+window.addEventListener('fb-auth-ready', function(){
+  document.getElementById('myBranchLbl').textContent=meBranch(); fillBranchSelect();
+  if(LOAD_STATE!=='ok') subscribe();        // 토큰이 늦게 복원된 폰 — 다시 읽는다
+});
+window.showMore=showMore; window.reloadNow=reloadNow;
 </script>
 </body>
 </html>
