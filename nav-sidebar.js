@@ -81,7 +81,8 @@
     { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: './lookup.html' },
     // 🛡 2026-07-15 사장님 사건 — 별도 앱인데 같은 창에서 열려 매니저앱을 통째로 뺏어가고,
     //    그 앱이 뒤로가기를 가로채 복귀 불가였음. 외부 앱은 반드시 새 창(_blank).
-    { ic: '📋', lbl: { ko:'일일 평가',     en:'Daily Review',   es:'Evaluación Diaria' }, href: 'https://specialmasterdj-sketch.github.io/kimchi-opening-control/', target: '_blank' },
+    // 🗑️ 2026-09-18 사장님 지시: 일일 평가(kimchi-opening-control) 폐기 — 실사용 0,
+    //    부서별 일일 보고는 메인 앱(tasks/채팅)으로 통일.
     { ic: '📄', lbl: { ko:'인보이스',       en:'Invoices',       es:'Facturas' },         href: './invoice-to-excel.html' },
     { ic: '💸', lbl: { ko:'지점 지출',      en:'Branch Expenses', es:'Gastos de Sucursal' }, href: './expense-log.html', mgr: true },
 
