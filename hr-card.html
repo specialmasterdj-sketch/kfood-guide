@@ -1124,7 +1124,78 @@ async function dlyBulkReports(raw){
     (skipped.length?'\n\n⚠ 부서매출 안 넣음 (보고서 잘림): '+skipped.join(', '):'')+(bad.length?'\n\n⚠ '+bad.join('\n'):''));
   const ta=document.getElementById('dlyBulk'); if(ta && ok) ta.value='';
   await dlyReload();
+  dlySaveShow(ok>0, ok+'개 지점 저장됨 ('+good.map(r=>lbl(r.branch)+' '+r.date.slice(5)).join(', ')+')');
 }
+
+// 🔔 짧은 소리 — 붙여넣기·저장이 됐는지 화면을 안 봐도 알 수 있게 (소리 파일 없이 브라우저로 만든다)
+function dlyBeep(ok){
+  try {
+    const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+    const ctx = dlyBeep._c || (dlyBeep._c = new C());
+    const tones = ok ? [880, 1320] : [300, 220];
+    tones.forEach((hz, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = hz; o.type = 'sine';
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + i * 0.13);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + i * 0.13 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.13 + 0.12);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + i * 0.13); o.stop(ctx.currentTime + i * 0.13 + 0.13);
+    });
+  } catch(e){}
+}
+// 📋 붙여넣자마자 무엇이 들어왔는지 칸 아래에 보여준다 — 창이 작아 내용이 안 보여도 알 수 있게
+function dlyPasteCheck(ta, pasted){
+  const box = document.getElementById('dlyPasteStatus'); if (!box) return;
+  // 내용 길이만큼 칸을 늘린다 (최대 340px, 그 이상은 칸 안에서 스크롤)
+  try { ta.style.height = 'auto'; ta.style.height = Math.min(340, Math.max(96, ta.scrollHeight + 4)) + 'px'; } catch(e){}
+  const raw = _posNorm(ta.value || '');
+  if (!raw.trim()){ box.style.display = 'none'; ta.style.borderColor = ''; ta.style.boxShadow = ''; return; }
+  const lbl = id => { const x = BRANCHES.find(b => b.id === id); return x ? x.ko : id; };
+  let ok = false, html = '';
+  if (_isPosText(raw)){
+    let reps = [];
+    try { reps = _parsePosReports(raw) || []; } catch(e){}
+    const good = reps.filter(r => r.date && r.branch && r.total >= 0);
+    ok = good.length > 0;
+    html = ok
+      ? '📋 <b>POS 보고서 ' + good.length + '개 인식</b>' + (reps.length > good.length ? ' <span style="color:#b45309">(못 읽은 것 ' + (reps.length - good.length) + '개)</span>' : '') + '<br>' +
+        good.map(r => '• ' + lbl(r.branch) + ' ' + r.date.slice(5) + ' — $' + Number(r.total).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) +
+          (r.depts ? ' · 부서 ' + Object.keys(r.depts).length + '개' : '')).join('<br>') +
+        '<br><span style="color:#166534">아래 <b>📥 일괄 추가</b>를 누르면 저장됩니다.</span>'
+      : '⚠ <b>POS 보고서처럼 보이는데 읽지 못했어요.</b> 제목 "SUMMARY-SALE REPORT" 부터 끝까지 통째로 복사해 주세요.';
+  } else {
+    const lines = raw.split(/\n+/).map(l => l.trim()).filter(Boolean);
+    const good = lines.filter(l => /\d{4}-\d{2}-\d{2}/.test(l));
+    ok = good.length > 0;
+    html = ok
+      ? '📋 <b>' + good.length + '줄 인식</b>' + (lines.length > good.length ? ' <span style="color:#b45309">(날짜 없는 줄 ' + (lines.length - good.length) + '개)</span>' : '') +
+        '<br><span style="color:#166534">아래 <b>📥 일괄 추가</b>를 누르면 저장됩니다.</span>'
+      : '⚠ <b>형식을 알아보지 못했어요.</b> POS 보고서 전체나 "지점,YYYY-MM-DD,금액" 줄로 붙여넣어 주세요.';
+  }
+  box.innerHTML = html;
+  box.style.display = '';
+  box.style.background = ok ? '#ecfdf5' : '#fef2f2';
+  box.style.border = '1.5px solid ' + (ok ? '#86efac' : '#fecaca');
+  box.style.color = ok ? '#14532d' : '#991b1b';
+  ta.style.borderColor = ok ? '#16a34a' : '#dc2626';
+  ta.style.boxShadow = '0 0 0 3px ' + (ok ? 'rgba(22,163,74,.18)' : 'rgba(220,38,38,.15)');
+  if (pasted){ dlyBeep(ok); try { box.scrollIntoView({ block:'nearest', behavior:'smooth' }); } catch(e){} }
+}
+// 저장 결과를 버튼 바로 아래에도 남긴다 (알림창을 닫아도 무엇이 저장됐는지 보이게)
+function dlySaveShow(ok, text){
+  dlyBeep(ok);
+  setTimeout(() => {
+    const b = document.getElementById('dlySaveStatus'); if (!b) return;
+    b.textContent = (ok ? '✅ ' : '⚠ ') + text + ' · ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+    b.style.display = '';
+    b.style.background = ok ? '#dcfce7' : '#fef2f2';
+    b.style.border = '1.5px solid ' + (ok ? '#4ade80' : '#fca5a5');
+    b.style.color = ok ? '#14532d' : '#991b1b';
+    try { b.scrollIntoView({ block:'center', behavior:'smooth' }); } catch(e){}
+  }, 250);
+}
+window.dlyPasteCheck = dlyPasteCheck;
 
 window.dlyBulk = async function(){
   const _raw=_posNorm(document.getElementById('dlyBulk').value);
@@ -1184,6 +1255,7 @@ window.dlyBulk = async function(){
   }
   alert('✅ '+t('ddBulkResult')(ok, okDept)+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
   await dlyReload();
+  dlySaveShow(true, '총매출 '+ok+'건 · 부서 '+okDept+'건 저장됨'+(bad.length?' (형식 오류 '+bad.length+'건)':''));
 };
 window.dlyRollup = async function(){
   const mo=DAILY_MONTH;
@@ -1457,8 +1529,10 @@ function renderDaily(){
     ${_renderDailyDepts(mo)}
 
     <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">${t('dBulkH')} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('dBulkHint')}</span></div>
-    <textarea id="dlyBulk" rows="4" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="마이애미,2026-09-16,12000&#10;할리우드,2026-09-16,22000&#10;PRODUCE,2026-09-16,1250.50&#10;할리우드,MEAT,2026-09-16,980"></textarea>
+    <textarea id="dlyBulk" rows="4" oninput="dlyPasteCheck(this)" onpaste="setTimeout(()=>dlyPasteCheck(this,true),30)" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace;min-height:96px;max-height:340px;transition:border-color .2s,box-shadow .2s" placeholder="마이애미,2026-09-16,12000&#10;할리우드,2026-09-16,22000&#10;PRODUCE,2026-09-16,1250.50&#10;할리우드,MEAT,2026-09-16,980"></textarea>
+    <div id="dlyPasteStatus" style="display:none;margin-top:6px;border-radius:8px;padding:9px 11px;font-size:.86em;line-height:1.5"></div>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dlyBulk()">${t('dBulkBtn')}</button>
+    <div id="dlySaveStatus" style="display:none;margin-top:8px;border-radius:8px;padding:10px 12px;font-size:.9em;font-weight:700;line-height:1.5"></div>
   </div>`;
 }
 
