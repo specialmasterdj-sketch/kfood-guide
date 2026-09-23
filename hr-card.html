@@ -948,6 +948,23 @@ window.dlyAdd = async function(){
     toast('＋ '+dt+' 저장'); await dlyReload();
   }catch(e){ alert('저장 실패: '+(e.message||e)); }
 };
+// 🗑 전 지점 표에서 한 칸(지점×날짜) 지우기 — 부서 매출은 남긴다(총매출만 지움)
+window.dlyCellDel = async function(bid, dt){
+  const b = BRANCHES.find(x=>x.id===bid);
+  const rec = (DAILY_ALL[bid]||{})[dt];
+  const v = _cAmt(rec);
+  if (v == null) return;
+  const dep = _dDepts(rec);
+  if (!confirm((b?b.ko:bid) + ' ' + dt + ' 매출 $' + _cFmt(v) + ' 을(를) 지울까요?' +
+      (dep ? '\n\n(부서별 매출 ' + Object.keys(dep).length + '개는 그대로 둡니다)' : ''))) return;
+  try{
+    const r = window.__fb.ref(window.__fb.db, 'hr/' + bid + '/dailySales/' + dt);
+    if (dep) await window.__fb.update(r, { amt:null, memo:null, by:null, ts:null });
+    else await window.__fb.remove(r);
+    toast('🗑 ' + (b?b.ko:bid) + ' ' + dt.slice(5) + ' 지웠어요');
+    await dlyReload();
+  }catch(e){ alert('삭제 실패: ' + (e.message||e)); }
+};
 window.dlyDel = async function(dt){
   if(!confirm(dt+' 매출 기록을 삭제할까요?')) return;
   try{
@@ -1465,9 +1482,15 @@ function renderDaily(){
   const grandTot=BRANCHES.reduce((s,x)=>s+bMonthTot[x.id],0);
   const matRows = mDesc.length ? mDesc.map(d=>{
     return `<tr><td class="mo">${d.slice(5)}</td><td style="text-align:center;color:#64748b">${_wkLbl(d)}</td>`+
-      BRANCHES.map(x=>{ const v=_dv(x.id,d); return v==null?'<td class="na">–</td>':`<td>$${_cFmt(v)}</td>`; }).join('')+
+      BRANCHES.map(x=>{ const v=_dv(x.id,d);
+        // 값이 있는 칸은 누르면 지울 수 있다 — 잘못 넣은 날(아직 안 끝난 오늘 등)을 바로 지우려고
+        return v==null?'<td class="na">–</td>'
+          :`<td onclick="dlyCellDel('${x.id}','${d}')" title="${esc(LANG==='ko'?'누르면 이 값을 지웁니다':'Tap to delete this entry')}" style="cursor:pointer">$${_cFmt(v)}</td>`; }).join('')+
       `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dayTotOf(d))}</b></td></tr>`;
   }).join('') : `<tr><td colspan="${BRANCHES.length+3}" class="muted">${t('dNoAny')}</td></tr>`;
+  const matHint = '<div style="font-size:.72em;color:#94a3b8;margin:2px 0 6px">' +
+    (LANG==='ko' ? '숫자를 누르면 그 지점·그 날짜 매출을 지울 수 있어요 (부서 매출은 남습니다)'
+                 : 'Tap an amount to delete that store\'s entry for that day') + '</div>';
   const matFoot = mDesc.length ? `<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
       BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(bMonthTot[x.id])}</b></td>`).join('')+
       `<td style="background:#1a5c3a;color:#fff"><b>$${_cFmt(grandTot)}</b></td></tr>` : '';
@@ -1517,6 +1540,7 @@ function renderDaily(){
 
     <div style="font-weight:900;color:#1a5c3a;margin:2px 0 6px">🏬 ${t('dMatrix')}</div>
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">
+      ${matHint}
       <table class="cmp"><tr><th style="text-align:left">${t('dCols')[0]}</th><th style="text-align:center">${t('dCols')[1]}</th>${BRANCHES.map(x=>`<th>${esc(bShort(x))}</th>`).join('')}<th>${t('dColTotal')}</th></tr>${matRows}${matFoot}</table>
     </div>
 
