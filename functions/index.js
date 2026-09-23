@@ -1267,3 +1267,62 @@ exports.photoMigrate = onValueCreated(
     }
   }
 );
+
+// =============================================================================
+// 📋 매일 저녁 업무 요약 — 👔 매니저 룸에 자동 게시 (2026-09-23)
+// 전무님: "업무 지시를 잘 수행 안 하는데 효율적인 방법?"
+//   안 해도 조용히 지나가는 게 문제다. 사람이 잔소리하지 않아도 매일 같은 시각에
+//   지점별 완료율과 남은 업무·담당자가 매니저 룸에 뜨면, 드러나는 것만으로 올라간다.
+// 밤 9시(뉴욕) 기준 — 마감 전 아니라 하루가 끝난 뒤 사실만 적는다.
+// 점수에는 반영하지 않는다(meta.kind='task_daily' → 활동순위 채팅 점수 제외).
+// =============================================================================
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+
+const RPT_BRANCHES = [
+  { id: 'HOLLYWOOD', ko: '할리우드' }, { id: 'MIAMI', ko: '마이애미' },
+  { id: 'PEMBROKE_PINES', ko: '펨브로크 파인즈' }, { id: 'CORAL_SPRINGS', ko: '코럴 스프링스' },
+  { id: 'LASOLAS', ko: '라스올라스' },
+];
+function rptDay(){
+  // 뉴욕 날짜 (서버는 UTC)
+  const s = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' });
+  return s.slice(0, 10);
+}
+exports.dailyTaskReport = onSchedule(
+  { schedule: '0 21 * * *', timeZone: 'America/New_York', region: 'us-central1', memory: '512MiB' },
+  async () => {
+    const db = admin.database();
+    const day = rptDay();
+    const lines = [], slow = [];
+    let totAll = 0, doneAll = 0;
+    for (const b of RPT_BRANCHES){
+      let node = null;
+      try { node = (await db.ref('tasks/' + b.id + '/' + day).get()).val(); } catch (e) { console.warn('[rpt]', b.id, e && e.message); }
+      const tasks = Object.keys(node || {}).map(k => node[k]).filter(t => t && typeof t === 'object' && t.name);
+      if (!tasks.length){ lines.push('• ' + b.ko + ' — 오늘 등록된 업무 없음'); continue; }
+      const done = tasks.filter(t => t.completedAt);
+      const open = tasks.filter(t => !t.completedAt);
+      totAll += tasks.length; doneAll += done.length;
+      const pct = Math.round(done.length / tasks.length * 100);
+      lines.push('• ' + b.ko + ' — ' + done.length + '/' + tasks.length + ' (' + pct + '%)' + (pct >= 90 ? ' 👍' : (pct < 60 ? ' ⚠️' : '')));
+      // 남은 업무는 담당자까지 — 누가 무엇을 안 했는지가 분명해야 움직인다
+      open.slice(0, 6).forEach(t => {
+        const who = t.assignedTo === '*' ? '(전체)' : (t.assignedTo || t.assignedToRole || '미지정');
+        slow.push('   – ' + b.ko + ' · ' + String(t.name).slice(0, 34) + ' → ' + who);
+      });
+      if (open.length > 6) slow.push('   – ' + b.ko + ' 외 ' + (open.length - 6) + '건 더');
+    }
+    const pctAll = totAll ? Math.round(doneAll / totAll * 100) : 0;
+    const text = '📋 오늘 업무 마감 현황 — ' + day + '\n' +
+      '전체 ' + doneAll + '/' + totAll + ' (' + pctAll + '%)\n\n' + lines.join('\n') +
+      (slow.length ? ('\n\n남은 업무\n' + slow.join('\n')) : '\n\n✅ 남은 업무 없음') +
+      '\n\n(매일 밤 9시 자동 집계 — 내일 아침 지점별로 확인해 주세요)';
+    const ts = Date.now(), id = 'm' + ts + Math.floor(Math.random() * 900);
+    await db.ref('chat/messages/managers/' + id).set({
+      sender: '📋 업무 마감 집계', senderBranch: '', senderRole: '', isManager: false, color: '#1d4ed8',
+      text, ts, photos: [], meta: { kind: 'task_daily', day },
+    });
+    await db.ref('chat/rooms/managers').update({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: '📋 업무 마감 집계' }).catch(() => {});
+    console.log('[rpt] posted', day, doneAll + '/' + totAll);
+  }
+);
