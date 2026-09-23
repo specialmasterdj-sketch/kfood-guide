@@ -73,6 +73,8 @@
      2026-05-16 사건 (토큰 만료 / 401 silent fail) 영구 해결책.
      모든 chat post 가 큐 경유 → 페이지 로드 / 5분 / 토큰 갱신 시 자동 retry. -->
 <script src="./km-chat-queue.js?v=1"></script>
+<!-- 📷 사진 업로드 대기열 — 보고는 먼저 저장하고 사진은 연결될 때 자동으로 (2026-09-23) -->
+<script src="./km-photo-queue.js?v=1"></script>
 
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
@@ -84,6 +86,7 @@
   // 버킷 명시 — 다른 스크립트가 버킷 없이 앱을 먼저 만들어도 안전 (2026-09-20)
   const st = getStorage(app, "gs://kimchi-mart-order.firebasestorage.app");
   window.__fb = { db, ref, onValue, set, update, push, remove, st, sRef, uploadBytes, getDownloadURL };
+  try { if (window.kmPhotoQ) window.kmPhotoQ.init({ st, sRef, uploadBytes, getDownloadURL }); } catch(e){ console.warn('[photoQ] init', e); }
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 
@@ -9847,6 +9850,7 @@ async function finishTask(){
   let stage = 'init';
   try {
     const photoUrls = [];
+    let queuedN = 0;                 // 지금 못 올려 대기열로 보낸 장수
     for (let i = 0; i < DONE_PHOTOS.length; i++) {
       const p = DONE_PHOTOS[i];
       btn.textContent = '사진 업로드 중… (' + (i+1) + '/' + DONE_PHOTOS.length + ')';
@@ -9855,16 +9859,29 @@ async function finishTask(){
       // 1) Firebase Storage SDK 업로드 — 로그인 토큰 자동 첨부 + 재시도 내장 + 25초 타임아웃.
       //   수동 REST(인증헤더 누락/만료로 실패)보다 안정적. 실패하면 아래 base64 폴백.
       stage = 'storage-upload';
-      url = await _uploadPhotoSmart(p.file, path);
-      // 2) Fallback: re-compress smaller and embed as base64 dataURL in RTDB
-      if (!url) {
-        stage = 'fallback-compress';
+      // 🆕 2026-09-23 — 8초만 기다린다. 매장 와이파이가 약해 25초를 끌다 실패하면
+      //   직원이 완료 보고 자체를 못 하고 "사진이 안 올라가요" 로 끝났다.
+      //   못 올린 사진은 폰(IndexedDB)에 넣어 두고 연결될 때 자동으로 올린다.
+      url = await _uploadPhotoSmart(p.file, path, 8000);
+      if (url) { photoUrls.push(url); continue; }
+      if (window.kmPhotoQ){
+        stage = 'queue';
         try {
-          const small = await compressImage(p.file, 720, 0.55);
-          url = await readDataUrl(small);
-        } catch(e) { console.error('[doneUpload] fallback fail', e); throw new Error('사진 ' + (i+1) + ' 압축/읽기 실패: ' + (e && e.message || e)); }
+          await window.kmPhotoQ.enqueue({
+            branch: CURRENT_TASK.branchId, date: todayStr(), taskId: CURRENT_TASK.id,
+            field: 'photos', file: p.file, by: (me && me.name) || '', name: CURRENT_TASK.name || ''
+          });
+          queuedN++;
+          continue;
+        } catch(e){ console.warn('[photoQ] enqueue', e); }
       }
-      if (!url) throw new Error('사진 ' + (i+1) + ' 업로드 실패 (Storage + Fallback 모두 실패)');
+      // 대기열도 못 쓰면 예전처럼 작게 줄여 담는다 (사진을 잃지 않는 마지막 수단)
+      stage = 'fallback-compress';
+      try {
+        const small = await compressImage(p.file, 720, 0.55);
+        url = await readDataUrl(small);
+      } catch(e) { console.error('[doneUpload] fallback fail', e); throw new Error('사진 ' + (i+1) + ' 압축/읽기 실패: ' + (e && e.message || e)); }
+      if (!url) throw new Error('사진 ' + (i+1) + ' 업로드 실패');
       photoUrls.push(url);
     }
     btn.textContent = '저장 중…';
@@ -9873,6 +9890,7 @@ async function finishTask(){
     stage = 'rtdb-write';
     const path = 'tasks/'+CURRENT_TASK.branchId+'/'+todayStr()+'/'+CURRENT_TASK.id;
     const upd = { completedAt: Date.now(), completedBy: me.name, photos: [...(CURRENT_TASK.photos||[]), ...photoUrls], memo: memoText, memoTr: memoTr };
+    if (queuedN) upd.photoQueued = queuedN;        // 사진 N장은 뒤에서 올라오는 중
     if (!CURRENT_TASK.startedAt) upd.startedAt = Date.now();
     // 🆕 2026-05-20 — 1시간 이내 완료는 무조건 1점 다운그레이드.
     // 매니저가 3점 남발해도 실제 작업 시간이 짧으면 점수 자동 조정.
@@ -9900,6 +9918,11 @@ async function finishTask(){
     //   백그라운드(await 안 함)로 돌려 "사진 올라간 뒤 화면 멈춤·종료 버튼 안 먹음" 방지.
     //   업무는 이미 저장됐고 채팅 전송 실패는 비치명적. CURRENT_TASK 등은 캡처해 안전하게 사용.
     const _doneTask = CURRENT_TASK, _donePhotoUrls = photoUrls.slice(), _doneMemo = memoText;
+    if (queuedN){
+      // 보고는 이미 저장됐다 — 사진만 뒤에서 올라온다는 걸 분명히 알려 준다
+      try { showToast('📷 사진 ' + queuedN + '장은 연결되면 자동으로 올라갑니다', '보고는 저장됐어요'); } catch(e){}
+      try { window.kmPhotoQ && window.kmPhotoQ.flush(true); } catch(e){}
+    }
     closeOv('doneOv');
     DONE_PHOTOS = [];
     try { renderDonePreviews(); } catch(_){}
