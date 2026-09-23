@@ -1326,3 +1326,129 @@ exports.dailyTaskReport = onSchedule(
     console.log('[rpt] posted', day, doneAll + '/' + totAll);
   }
 );
+
+// =============================================================================
+// 🏅 주간 완료율 보너스 — 잘한 사람에게 자동으로 점수 (2026-09-23)
+// 전무님: "수행을 잘 안 한다" → 드러내기(매일 집계)만으로는 부족하다.
+//   잘한 쪽이 보상을 받아야 나머지가 따라온다. 매주 일요일 밤, 지난 7일 동안
+//   자기한테 지정된 업무를 90% 이상 끝낸 사람에게 +3점(mgrBonus)을 자동 지급하고,
+//   지점 순위와 함께 👔 매니저 룸에 올린다. 이유가 남으므로 나중에 확인할 수 있다.
+//
+// 지급 기준 (너무 쉬우면 의미가 없고, 너무 빡빡하면 아무도 못 받는다):
+//   · 그 주에 본인 이름으로 지정된 업무가 5건 이상
+//   · 그중 90% 이상 완료
+// 테스트: weeklyBonusRun/{id} 에 { dry:true } 를 쓰면 지급 없이 결과만 계산해 돌려준다.
+// =============================================================================
+const WB_MIN_TASKS = 5, WB_RATE = 0.9, WB_POINTS = 3;
+
+function wbNorm(s){ return String(s || '').toLowerCase().replace(/[^a-z0-9가-힣]+/g, ''); }
+function wbTokens(s){
+  return String(s || '').toLowerCase().split(/[\s\-_.,/()]+/)
+    .map(x => x.replace(/[^a-z0-9가-힣]+/g, '')).filter(x => x.length >= 2);
+}
+function wbSame(a, b){
+  const na = wbNorm(a), nb = wbNorm(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const ta = wbTokens(a), tb = wbTokens(b);
+  if (!ta.length || !tb.length) return false;
+  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  const set = new Set(long);
+  return short.every(x => set.has(x));
+}
+async function wbCompute(db, days){
+  const out = { branches: [], people: [], days };
+  for (const b of RPT_BRANCHES){
+    const per = {};                      // 이름 → {assigned, done}
+    let tot = 0, done = 0;
+    for (const day of days){
+      let node = null;
+      try { node = (await db.ref('tasks/' + b.id + '/' + day).get()).val(); } catch(e){ continue; }
+      const tasks = Object.keys(node || {}).map(k => node[k]).filter(t => t && typeof t === 'object' && t.name);
+      tot += tasks.length;
+      done += tasks.filter(t => t.completedAt).length;
+      tasks.forEach(t => {
+        const who = t.assignedTo;
+        if (!who || who === '*') return;                     // 전체 업무는 개인 집계에서 뺀다
+        const key = String(who).trim();
+        per[key] = per[key] || { assigned: 0, done: 0 };
+        per[key].assigned++;
+        if (t.completedAt && (wbSame(t.completedBy, key) || !t.completedBy)) per[key].done++;
+      });
+    }
+    out.branches.push({ id: b.id, ko: b.ko, total: tot, done: done, pct: tot ? Math.round(done / tot * 100) : 0 });
+    Object.keys(per).forEach(name => {
+      const p = per[name];
+      out.people.push({ branch: b.id, branchKo: b.ko, name,
+        assigned: p.assigned, done: p.done, pct: p.assigned ? Math.round(p.done / p.assigned * 100) : 0 });
+    });
+  }
+  out.winners = out.people.filter(p => p.assigned >= WB_MIN_TASKS && p.done / p.assigned >= WB_RATE)
+                          .sort((a, b) => b.done - a.done);
+  out.branches.sort((a, b) => b.pct - a.pct);
+  return out;
+}
+function wbLastDays(n){
+  const out = [];
+  for (let i = 1; i <= n; i++){
+    const d = new Date(Date.now() - i * 86400000);
+    out.push(d.toLocaleString('en-CA', { timeZone: 'America/New_York' }).slice(0, 10));
+  }
+  return out;
+}
+async function wbAwardAndPost(db, res, dry){
+  const ts = Date.now();
+  let paid = 0;
+  if (!dry){
+    for (const w of res.winners){
+      try {
+        await db.ref('mgrBonus/' + w.branch).push({
+          to: w.name, points: WB_POINTS,
+          reason: '🏅 주간 업무 완료율 ' + w.pct + '% (' + w.done + '/' + w.assigned + ')',
+          by: '자동 집계', byRole: 'SYSTEM', branch: w.branch, ts: Date.now(),
+        });
+        paid++;
+      } catch(e){ console.warn('[wb] award', w.name, e && e.message); }
+    }
+  }
+  const text = '🏅 주간 업무 완료율 — ' + res.days[res.days.length - 1] + ' ~ ' + res.days[0] + '\n\n' +
+    res.branches.map((b, i) => (i + 1) + '. ' + b.ko + ' ' + b.pct + '% (' + b.done + '/' + b.total + ')').join('\n') +
+    '\n\n🏅 보너스 +' + WB_POINTS + '점 (본인 지정 업무 ' + WB_MIN_TASKS + '건 이상, ' + Math.round(WB_RATE * 100) + '% 이상 완료)\n' +
+    (res.winners.length
+      ? res.winners.slice(0, 15).map(w => '• ' + w.name + ' (' + w.branchKo + ') ' + w.done + '/' + w.assigned).join('\n')
+      : '• 이번 주는 대상자가 없습니다') +
+    '\n\n(매주 일요일 밤 자동 집계 — 점수는 활동순위에 반영됩니다)';
+  if (!dry){
+    const id = 'm' + ts + Math.floor(Math.random() * 900);
+    await db.ref('chat/messages/managers/' + id).set({
+      sender: '🏅 주간 집계', senderBranch: '', senderRole: '', isManager: false, color: '#b45309',
+      text, ts, photos: [], meta: { kind: 'task_weekly' },
+    });
+    await db.ref('chat/rooms/managers').update({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: '🏅 주간 집계' }).catch(() => {});
+  }
+  return { paid, text };
+}
+exports.weeklyTaskBonus = onSchedule(
+  { schedule: '30 21 * * 0', timeZone: 'America/New_York', region: 'us-central1', memory: '512MiB', timeoutSeconds: 540 },
+  async () => {
+    const db = admin.database();
+    const res = await wbCompute(db, wbLastDays(7));
+    const r = await wbAwardAndPost(db, res, false);
+    console.log('[wb] paid', r.paid, 'winners', res.winners.length);
+  }
+);
+// 테스트·수동 실행용 — weeklyBonusRun/{id} 에 { dry:true, days:7 }
+exports.weeklyBonusRun = onValueCreated(
+  { ref: '/weeklyBonusRun/{id}', region: 'us-central1', memory: '512MiB', timeoutSeconds: 540 },
+  async (event) => {
+    const job = event.data.val();
+    if (!job || job.result) return;
+    const db = admin.database();
+    const res = await wbCompute(db, wbLastDays(+job.days || 7));
+    const r = await wbAwardAndPost(db, res, job.dry !== false);
+    await event.data.ref.child('result').set({
+      dry: job.dry !== false, paid: r.paid, winners: res.winners.length,
+      branches: res.branches, top: res.winners.slice(0, 15), text: r.text, at: Date.now(),
+    });
+  }
+);
