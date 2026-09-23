@@ -8760,7 +8760,7 @@ function addClEntryPhoto(taskId, branchId, idx, entryId){
       const urls = [];
       for (let i = 0; i < files.length; i++) {
         try {
-          urls.push(await uploadOnePhoto(files[i], basePath));
+          { const _r = await uploadOnePhoto(files[i], basePath); if (_r && _r.url) urls.push(_r.url); }
           // iOS PWA 메모리 GC 시간 — 다음 사진 시작 전 500ms 양보 (200→500 강화).
           // canvas/blob 해제가 안 끝난 채 다음 사진을 처리하려다 페이지가
           // reload 되는 케이스 (특히 3장째부터) 완전 방지.
@@ -9139,14 +9139,22 @@ async function _uploadPhotoSmart(file, path, ms){
   }
   return null;
 }
-async function uploadOnePhoto(file, basePath){
+// 🆕 2026-09-23 — 8초만 기다린다. 못 올리면 폰에 넣어 두고 연결될 때 자동으로 올린다.
+//   반환: { url } 이면 지금 올라간 것, { queued:true } 면 나중에 붙는 것.
+async function uploadOnePhoto(file, basePath, queueInfo){
   const compressed = await compressImage(file);
   const path = basePath + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7) + '.jpg';
-  const url = await _uploadPhotoSmart(compressed, path);
-  if (url) return url;
-  // 폴백 — Storage 실패 시에만 base64 (더 작게)
+  const url = await _uploadPhotoSmart(compressed, path, 8000);
+  if (url) return { url };
+  if (queueInfo && window.kmPhotoQ){
+    try {
+      await window.kmPhotoQ.enqueue(Object.assign({ file: compressed, by: (me && me.name) || '' }, queueInfo));
+      return { queued: true };
+    } catch(e){ console.warn('[photoQ] cl enqueue', e); }
+  }
+  // 마지막 수단 — 대기열을 못 쓸 때만 작게 줄여 기록에 담는다
   const small = await compressImage(compressed, 720, 0.55);
-  return await readDataUrl(small);
+  return { url: await readDataUrl(small) };
 }
 function pickChecklistPhoto(taskId, branchId, idx){
   if (!me) { alert('이름 먼저 등록해 주세요.'); return; }
@@ -9173,19 +9181,27 @@ function pickChecklistPhoto(taskId, branchId, idx){
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/cl'+idx;
       const urls = [];
+      let queuedN = 0;
+      const qInfo = { branch: branchId, date: todayStr(), taskId: taskId,
+                      field: 'checklist/'+idx+'/photos', name: '체크리스트 '+(idx+1) };
       for (let i = 0; i < files.length; i++) {
         try {
-          const u = await uploadOnePhoto(files[i], basePath);
-          urls.push(u);
+          const r = await uploadOnePhoto(files[i], basePath, qInfo);
+          if (r && r.url) urls.push(r.url);
+          else if (r && r.queued) queuedN++;
           _photoTick();
-          if (i < files.length - 1) await new Promise(r => setTimeout(r, 500));
+          if (i < files.length - 1) await new Promise(r2 => setTimeout(r2, 500));
         } catch(perErr) {
           console.error('[pickChecklistPhoto]', i, perErr);
           if (typeof showToast === 'function') showToast('⚠️ 사진 '+(i+1)+'장 실패', String(perErr.message||perErr).slice(0,60));
         }
       }
       if (urls.length === 0) {
-        if (typeof showToast === 'function') showToast('❌ 사진 업로드 실패', '네트워크 확인 후 다시 시도');
+        if (queuedN){
+          // 지금은 못 올렸지만 잃어버리지 않는다 — 연결되면 이 항목에 자동으로 붙는다
+          if (typeof showToast === 'function') showToast('📷 사진 '+queuedN+'장 대기', '연결되면 자동으로 올라갑니다');
+          try { window.kmPhotoQ && window.kmPhotoQ.flush(true); } catch(e){}
+        } else if (typeof showToast === 'function') showToast('❌ 사진 업로드 실패', '네트워크 확인 후 다시 시도');
         return;
       }
       const itemPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/checklist/'+idx;
@@ -9199,7 +9215,8 @@ function pickChecklistPhoto(taskId, branchId, idx){
         photoAt: Date.now(),
         photo: null,
       });
-      if (typeof showToast === 'function') showToast('✅ 사진 추가됨', urls.length + '장');
+      if (typeof showToast === 'function') showToast('✅ 사진 추가됨', urls.length + '장' + (queuedN ? ' (+'+queuedN+'장은 연결되면 자동)' : ''));
+      if (queuedN){ try { window.kmPhotoQ && window.kmPhotoQ.flush(true); } catch(e){} }
     } catch(e) {
       console.error('[pickChecklistPhoto]', e);
       if (typeof showToast === 'function') showToast('⚠️ 업로드 실패', String(e.message||e).slice(0,80));
@@ -9265,10 +9282,12 @@ function pickTaskPhotos(taskId, branchId){
     try {
       const basePath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId+'/overall';
       const urls = [];
+      let queuedN = 0;
+      const qInfo = { branch: branchId, date: todayStr(), taskId: taskId, field: 'photos', name: '전체 진열 사진' };
       for (let i = 0; i < files.length; i++) {
         try {
-          const u = await uploadOnePhoto(files[i], basePath);
-          urls.push(u);
+          const u = await uploadOnePhoto(files[i], basePath, qInfo);
+          if (u && u.url) urls.push(u.url); else if (u && u.queued) queuedN++;
           _photoTick();
           if (i < files.length - 1) await new Promise(r => setTimeout(r, 500));
         } catch(perErr) {
@@ -9276,7 +9295,10 @@ function pickTaskPhotos(taskId, branchId){
           if (typeof showToast === 'function') showToast('⚠️ 사진 '+(i+1)+'장 실패', String(perErr.message||perErr).slice(0,60));
         }
       }
-      if (urls.length === 0) return;
+      if (urls.length === 0){
+        if (queuedN){ if (typeof showToast === 'function') showToast('📷 사진 '+queuedN+'장 대기', '연결되면 자동으로 올라갑니다'); try { window.kmPhotoQ && window.kmPhotoQ.flush(true); } catch(e){} }
+        return;
+      }
       const taskPath = 'tasks/'+branchId+'/'+todayStr()+'/'+taskId;
       const task = TASKS.find(t => t.id === taskId && t.branchId === branchId);
       const existing = (task && Array.isArray(task.photos)) ? task.photos : [];
