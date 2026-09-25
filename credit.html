@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>🧾 유통기한 크레딧 — 김치마트</title>
+<link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
+<!-- fb-auth-fetch 먼저 — fetch 에 로그인 토큰 자동 부착. auth-gate 가 로그인/승인 확인. -->
+<script type="module" src="./fb-auth-fetch.js?v=4"></script>
+<script src="./auth-gate.js?v=5"></script>
+<script src="./km-back-button.js?v=1"></script>
+<!--
+  🧾 유통기한 크레딧 요청 (2026-09-25)
+  전무님: "유통기한 지난 제품들 사진 찍어서 벤더들에게 크레딧 요청해야 해서
+          사진 찍어 보관하는 앱" · "원가 말고 사진·날짜·수량만 — 벤더 회사에 보여주는 것"
+
+  흐름: 📷 사진 → (바코드 찍으면 상품명·벤더 자동) → 유통기한·수량 → 저장
+        → 벤더별로 모아 보여주고 [인쇄]·[복사]·[메일] 로 그 벤더에 요청
+        → 크레딧 받으면 ✅ 표시 (누가 언제)
+  저장: expiry/{지점}/credits/{id} — expiry 규칙(승인 직원 읽기/쓰기)을 그대로 써서
+        Firebase 규칙을 새로 게시하지 않아도 된다.
+  사진: Storage tasks 아닌 credits/{지점}/... 에 올리고 URL 만 기록에 남긴다.
+        (사진을 기록에 통째로 박으면 하루치가 수십 MB 가 된다 — 2026-09-20 사고)
+-->
+<style>
+:root{--g:#1a5c3a;--g2:#16a34a;--bg:#f4f6f5;--card:#fff;--ink:#1f2937;--sub:#6b7280;--line:#e5e7eb;--bad:#dc2626;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;font-size:15px}
+header{background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;padding:14px 16px 16px;position:sticky;top:0;z-index:20}
+header .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+header h1{font-size:1.12em;margin:0;flex:1}
+.hbtn{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:18px;padding:6px 12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;font-size:.88em}
+.hbtn.on{background:#fff;color:#b91c1c}
+.hsel{background:rgba(255,255,255,.95);border:0;border-radius:10px;padding:7px 9px;font-weight:700;color:#b91c1c;font-family:inherit;font-size:.92em}
+.sub{font-size:.78em;opacity:.92;margin-top:6px;line-height:1.5}
+main{max-width:760px;margin:0 auto;padding:12px 12px 90px}
+.card{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:.8em;font-weight:800;color:#374151;margin:10px 0 4px}
+input,select,textarea{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit;background:#fff;color:var(--ink)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--g2);box-shadow:0 0 0 3px rgba(22,163,74,.15)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn{border:1.5px solid var(--line);background:#fff;border-radius:11px;padding:11px 13px;font-weight:800;cursor:pointer;font-family:inherit;font-size:.92em;color:var(--ink)}
+.btn.g{background:var(--g2);border-color:var(--g2);color:#fff}
+.btn.r{background:#dc2626;border-color:#dc2626;color:#fff}
+.btn.big{width:100%;padding:14px;font-size:1em}
+.btn.sm{padding:6px 10px;font-size:.8em;border-radius:9px}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.shots{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.shot{position:relative;width:76px;height:76px}
+.shot img{width:76px;height:76px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:#f1f5f9}
+.shot .x{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:#111827;color:#fff;font-size:.72em;cursor:pointer;line-height:1}
+.vend{background:#fff;border:1.5px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
+.vhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fef2f2;border-bottom:1.5px solid #fecaca;padding:10px 13px}
+.vhead b{flex:1 1 140px;color:#991b1b}
+.item{border-top:1px solid var(--line);padding:11px 13px}
+.item:first-child{border-top:0}
+.meta{font-size:.8em;color:var(--sub);line-height:1.6;margin-top:3px}
+.chip{display:inline-block;font-size:.72em;font-weight:800;padding:2px 8px;border-radius:10px;background:#f1f5f9;color:#475569}
+.chip.sent{background:#dbeafe;color:#1e40af}.chip.ok{background:#dcfce7;color:#166534}.chip.no{background:#fee2e2;color:#991b1b}
+.thumbs{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.thumbs img{width:62px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:zoom-in}
+.empty{text-align:center;color:var(--sub);padding:28px 10px;font-size:.9em;line-height:1.7}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#111827;color:#fff;padding:11px 16px;border-radius:12px;font-size:.9em;z-index:99;opacity:0;transition:.2s;pointer-events:none;max-width:92vw;text-align:center}
+.toast.show{opacity:1}
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;z-index:100;padding:12px}
+.lb img{max-width:100%;max-height:86vh;border-radius:10px}
+.lb .close{position:absolute;top:14px;right:16px;background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:50%;width:38px;height:38px;font-size:1.2em;cursor:pointer}
+#scanBox{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:100;padding:14px}
+#scanBox video{width:100%;max-width:460px;border-radius:12px;background:#000}
+#scanBox .hint{color:#fff;font-size:.86em;margin-top:10px;text-align:center;line-height:1.6}
+.filters{display:flex;gap:6px;margin:4px 0 12px;flex-wrap:wrap}
+.filters button{border:1.5px solid var(--line);background:#fff;color:var(--sub);border-radius:20px;padding:6px 13px;font-size:.82em;font-weight:800;cursor:pointer;font-family:inherit}
+.filters button.on{border-color:#b91c1c;background:#b91c1c;color:#fff}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <a href="./apps.html" class="hbtn" style="text-decoration:none">←</a>
+    <h1 id="tTitle">🧾 유통기한 크레딧</h1>
+    <button class="hbtn" data-l="ko">KO</button><button class="hbtn" data-l="en">EN</button><button class="hbtn" data-l="es">ES</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span id="tBranch" style="font-size:.84em;font-weight:700">지점</span>
+    <select id="branchSel" class="hsel"></select>
+  </div>
+  <div class="sub" id="tSub">유통기한 지난 상품을 사진으로 남겨 벤더에 크레딧을 요청합니다.</div>
+</header>
+
+<main>
+  <div class="card">
+    <div style="font-weight:900;color:#b91c1c;margin-bottom:6px" id="tNew">➕ 새로 기록</div>
+
+    <button class="btn big" id="btnShot" style="border-color:#b91c1c;color:#b91c1c">📷 사진 찍기</button>
+    <div class="shots" id="shots"></div>
+
+    <div class="acts" style="margin-top:12px">
+      <button class="btn" id="btnScan" style="flex:1">📠 바코드 스캔</button>
+      <button class="btn" id="btnManual" style="flex:1">⌨️ 직접 입력</button>
+    </div>
+
+    <div id="prodBox" style="display:none">
+      <label id="tName">상품명</label>
+      <input id="fName" placeholder="예: ASSI 김치 2.5kg">
+      <label id="tVendor">벤더 (크레딧 요청할 회사)</label>
+      <input id="fVendor" list="vendorList" placeholder="예: ASSI">
+      <datalist id="vendorList"></datalist>
+      <div class="row2">
+        <div><label id="tShotD">찍은 날짜</label><input id="fShotD" type="date"></div>
+        <div><label id="tExp">유통기한 날짜</label><input id="fExp" type="date"></div>
+      </div>
+      <label id="tQty">수량</label><input id="fQty" type="number" min="1" inputmode="numeric" value="1">
+      <label id="tMemo">메모 (선택)</label>
+      <input id="fMemo" placeholder="예: 박스 5개 중 3개 부풀어 있음">
+      <button class="btn g big" id="btnSave" style="margin-top:12px">💾 저장</button>
+      <div style="font-size:.74em;color:var(--sub);margin-top:6px;text-align:center" id="tHint">사진은 필수입니다 — 벤더에 보여줄 증거입니다</div>
+    </div>
+  </div>
+
+  <div class="filters" id="filters"></div>
+  <div id="list"><div class="empty">⏳</div></div>
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="lb" id="lb"><button class="close" id="lbClose">&times;</button><img id="lbImg" alt=""></div>
+<div id="scanBox">
+  <video id="scanVideo" playsinline muted autoplay></video>
+  <div class="hint" id="scanHint">상품 바코드를 화면 안에 맞춰 주세요</div>
+  <button class="btn" id="scanClose" style="margin-top:12px">닫기</button>
+</div>
+
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, push, set, update, remove, onValue, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com",
+                databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order",
+                storageBucket:"kimchi-mart-order.firebasestorage.app" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  // 버킷을 명시한다 — 다른 스크립트가 버킷 없이 앱을 먼저 만들어도 안전 (2026-09-20 사고)
+  window.__fb = { db: getDatabase(app), ref, push, set, update, remove, onValue, get,
+                  st: getStorage(app, 'gs://kimchi-mart-order.firebasestorage.app'), sRef, uploadBytes, getDownloadURL };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<script>
+const FB_DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BRANCHES = [
+  { id:'HOLLYWOOD', ko:'할리우드', en:'Hollywood' },
+  { id:'MIAMI', ko:'마이애미', en:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs' },
+  { id:'LASOLAS', ko:'라스올라스', en:'Las Olas' },
+];
+const L = {
+  title:{ko:'🧾 유통기한 크레딧',en:'🧾 Expired — Vendor Credit',es:'🧾 Vencidos — Crédito'},
+  sub:{ko:'유통기한 지난 상품을 사진으로 남겨 벤더에 크레딧을 요청합니다.',en:'Photograph expired items and claim credit from the vendor.',es:'Fotografíe productos vencidos y reclame crédito al proveedor.'},
+  branch:{ko:'지점',en:'Store',es:'Tienda'},
+  newRec:{ko:'➕ 새로 기록',en:'➕ New record',es:'➕ Nuevo registro'},
+  shot:{ko:'📷 사진 찍기',en:'📷 Take photo',es:'📷 Tomar foto'},
+  scan:{ko:'📠 바코드 스캔',en:'📠 Scan barcode',es:'📠 Escanear'},
+  manual:{ko:'⌨️ 직접 입력',en:'⌨️ Type it in',es:'⌨️ Escribir'},
+  name:{ko:'상품명',en:'Product',es:'Producto'},
+  vendor:{ko:'벤더 (크레딧 요청할 회사)',en:'Vendor (who gives the credit)',es:'Proveedor'},
+  exp:{ko:'유통기한 날짜',en:'Expiry date',es:'Fecha de vencimiento'},
+  shotD:{ko:'찍은 날짜',en:'Photo date',es:'Fecha de la foto'},
+  qty:{ko:'수량',en:'Qty',es:'Cantidad'},
+  memo:{ko:'메모 (선택)',en:'Note (optional)',es:'Nota (opcional)'},
+  save:{ko:'💾 저장',en:'💾 Save',es:'💾 Guardar'},
+  hint:{ko:'사진은 필수입니다 — 벤더에 보여줄 증거입니다',en:'A photo is required — it is the proof you show the vendor.',es:'La foto es obligatoria — es la prueba para el proveedor.'},
+  needPhoto:{ko:'사진을 먼저 찍어주세요',en:'Take a photo first',es:'Tome una foto primero'},
+  needVendor:{ko:'벤더를 적어주세요 — 어느 회사에 요청할지 알아야 합니다',en:'Enter the vendor',es:'Indique el proveedor'},
+  saved:{ko:'저장됐습니다',en:'Saved',es:'Guardado'},
+  fPend:{ko:'요청 대기',en:'To claim',es:'Por reclamar'}, fSent:{ko:'요청함',en:'Claimed',es:'Reclamado'},
+  fDone:{ko:'받음',en:'Credited',es:'Acreditado'}, fAll:{ko:'전체',en:'All',es:'Todo'},
+  stPend:{ko:'요청 대기',en:'to claim',es:'por reclamar'}, stSent:{ko:'요청함',en:'claimed',es:'reclamado'},
+  stDone:{ko:'✅ 크레딧 받음',en:'✅ credited',es:'✅ acreditado'}, stNo:{ko:'거절됨',en:'rejected',es:'rechazado'},
+  btnSent:{ko:'📤 요청함',en:'📤 Claimed',es:'📤 Reclamado'},
+  btnDone:{ko:'✅ 받음',en:'✅ Credited',es:'✅ Credited'},
+  btnNo:{ko:'✕ 거절',en:'✕ Rejected',es:'✕ Rechazado'},
+  btnUndo:{ko:'↩ 되돌리기',en:'↩ Undo',es:'↩ Deshacer'},
+  btnDel:{ko:'🗑 삭제',en:'🗑 Delete',es:'🗑 Borrar'},
+  print:{ko:'🖨 요청서 인쇄',en:'🖨 Print claim',es:'🖨 Imprimir'},
+  copy:{ko:'📋 복사',en:'📋 Copy',es:'📋 Copiar'},
+  copied:{ko:'복사됨',en:'Copied',es:'Copiado'},
+  askDel:{ko:'이 기록을 지울까요?',en:'Delete this record?',es:'¿Borrar este registro?'},
+  empty:{ko:'아직 기록이 없습니다.<br>유통기한 지난 상품을 발견하면 사진부터 찍어 주세요.',en:'No records yet.<br>Photograph expired items as you find them.',es:'Sin registros.<br>Fotografíe los productos vencidos.'},
+  totalLbl:{ko:'{n}건 · {q}개',en:'{n} items · {q} pcs',es:'{n} · {q} pzs'},
+  uploading:{ko:'사진 올리는 중…',en:'Uploading…',es:'Subiendo…'},
+  scanFail:{ko:'카메라를 열 수 없습니다 — 직접 입력해 주세요',en:'Camera unavailable — type it in',es:'Sin cámara — escriba'},
+  notFound:{ko:'등록되지 않은 바코드입니다 — 이름·벤더를 적어주세요',en:'Barcode not in POS — type name and vendor',es:'Código no encontrado'},
+  found:{ko:'찾았습니다',en:'Found',es:'Encontrado'},
+};
+let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; } })();
+if (['ko','en','es'].indexOf(LANG) < 0) LANG = 'ko';
+function t(k, v){ const o = L[k]; let s = o ? (o[LANG] || o.ko) : k; if (v) for (const x in v) s = s.split('{'+x+'}').join(v[x]); return s; }
+function esc(x){ return String(x==null?'':x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function me(){ try { return window.__currentUser || JSON.parse(localStorage.getItem('chat.me')||'{}'); } catch(e){ return {}; } }
+function today(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function toast(m){ const el=document.getElementById('toast'); el.textContent=m; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),2600); }
+function bname(id){ const b=BRANCHES.find(x=>x.id===id); return b ? (LANG==='ko'?b.ko:b.en) : id; }
+
+let BRANCH = (function(){
+  try { const b = localStorage.getItem('km_branch'); if (BRANCHES.some(x=>x.id===b)) return b; } catch(e){}
+  const m = me(); return (m && BRANCHES.some(x=>x.id===m.branch)) ? m.branch : 'HOLLYWOOD';
+})();
+let DATA = {}, FILTER = 'pending', SHOTS = [], VENDORS = [];
+
+/* ---------- 사진 ---------- */
+// 폰 사진은 4천만 화소라 그대로 올리면 느리고 메모리도 터진다 → 1000px 로 줄여 올린다.
+async function shrink(file){
+  try {
+    if (typeof createImageBitmap === 'function'){
+      const bmp = await createImageBitmap(file, { imageOrientation:'from-image', resizeWidth:1000, resizeQuality:'medium' });
+      const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+      c.getContext('2d').drawImage(bmp, 0, 0);
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.8));
+      try { bmp.close(); } catch(e){}
+      c.width = c.height = 0;
+      if (blob && blob.size) return blob;
+    }
+  } catch(e){ console.warn('[shrink]', e); }
+  return file;
+}
+function readUrl(b){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(b); }); }
+function paintShots(){
+  document.getElementById('shots').innerHTML = SHOTS.map((s,i) =>
+    '<div class="shot"><img src="'+s.url+'" alt=""><button class="x" onclick="rmShot('+i+')">✕</button></div>').join('');
+}
+window.rmShot = (i) => { SHOTS.splice(i,1); paintShots(); };
+document.getElementById('btnShot').onclick = () => {
+  let inp = document.getElementById('__pick');
+  if (!inp){
+    inp = document.createElement('input');
+    inp.type='file'; inp.accept='image/*'; inp.capture='environment'; inp.multiple=true; inp.id='__pick';
+    inp.style.cssText='position:fixed;left:-9999px;width:1px;height:1px;opacity:0';
+    document.body.appendChild(inp);
+  }
+  inp.value='';
+  inp.onchange = async () => {
+    const files = Array.from(inp.files||[]); if (!files.length) return;
+    const btn = document.getElementById('btnShot'); const old = btn.textContent;
+    btn.disabled = true;
+    try {
+      for (const f of files){
+        btn.textContent = '⏳ ' + (SHOTS.length+1);
+        const small = await shrink(f);
+        SHOTS.push({ blob: small, url: await readUrl(small) });
+        paintShots();
+      }
+      document.getElementById('prodBox').style.display = '';   // 사진이 있으면 나머지 칸을 연다
+    } finally { btn.disabled = false; btn.textContent = old; }
+  };
+  inp.click();
+};
+
+/* ---------- 바코드 ---------- */
+// 상품 색인(expiry/_pos/{지점}) 에서 한 건만 읽어 이름·벤더를 채운다 — 폰에서 가볍다.
+async function lookup(bc){
+  const digits = String(bc||'').replace(/\D/g,'');
+  const tries = [digits, digits.replace(/^0+/,''), digits.padStart(12,'0'), digits.padStart(13,'0')];
+  for (const k of [...new Set(tries)].filter(Boolean)){
+    try {
+      const r = await fetch(FB_DB + '/expiry/_pos/' + BRANCH + '/' + k + '.json?t=' + Date.now(), { cache:'no-store' });
+      if (!r.ok) continue;
+      const v = await r.json();
+      if (v && v.n) return v;
+    } catch(e){}
+  }
+  return null;
+}
+async function fillFrom(bc){
+  document.getElementById('prodBox').style.display = '';
+  const v = await lookup(bc);
+  const nm = document.getElementById('fName'), vd = document.getElementById('fVendor');
+  if (v){ nm.value = v.n || ''; if (v.v) vd.value = v.v; toast('✅ ' + t('found') + ' — ' + (v.n||'')); }
+  else { toast(t('notFound')); nm.focus(); }
+  nm.dataset.bc = bc;
+}
+document.getElementById('btnManual').onclick = () => {
+  document.getElementById('prodBox').style.display = '';
+  document.getElementById('fName').focus();
+};
+document.getElementById('btnScan').onclick = () => startScan();
+document.getElementById('scanClose').onclick = () => stopScan();
+let scanStream = null, scanStop = false;
+async function startScan(){
+  const box = document.getElementById('scanBox'), vid = document.getElementById('scanVideo');
+  box.style.display = 'flex'; scanStop = false;
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+    vid.srcObject = scanStream; await vid.play();
+  } catch(e){ stopScan(); toast(t('scanFail')); document.getElementById('prodBox').style.display=''; return; }
+  // 브라우저 기본 인식기(안드로이드 크롬)가 있으면 그걸 쓰고, 없으면 ZXing 을 불러온다 (아이폰)
+  if ('BarcodeDetector' in window){
+    const det = new window.BarcodeDetector({ formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39'] });
+    const tick = async () => {
+      if (scanStop) return;
+      try { const got = await det.detect(vid); if (got && got.length){ const v = got[0].rawValue; stopScan(); fillFrom(v); return; } } catch(e){}
+      requestAnimationFrame(tick);
+    };
+    tick();
+  } else {
+    if (!window.ZXing){
+      await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); }).catch(()=>{});
+    }
+    if (window.ZXing){
+      const reader = new window.ZXing.BrowserMultiFormatReader();
+      reader.decodeFromVideoElement(vid, (result) => {
+        if (result && !scanStop){ const v = result.getText(); try { reader.reset(); } catch(e){} stopScan(); fillFrom(v); }
+      });
+    } else { stopScan(); toast(t('scanFail')); }
+  }
+}
+function stopScan(){
+  scanStop = true;
+  document.getElementById('scanBox').style.display = 'none';
+  try { if (scanStream) scanStream.getTracks().forEach(tr => tr.stop()); } catch(e){}
+  scanStream = null;
+}
+
+/* ---------- 저장 ---------- */
+document.getElementById('btnSave').onclick = async function(){
+  const btn = this;
+  if (!SHOTS.length){ toast(t('needPhoto')); return; }
+  const vendor = document.getElementById('fVendor').value.trim();
+  if (!vendor){ toast(t('needVendor')); document.getElementById('fVendor').focus(); return; }
+  const name = document.getElementById('fName').value.trim();
+  const exp = document.getElementById('fExp').value || today();
+  const shot = document.getElementById('fShotD').value || today();   // 사진 찍은 날 (벤더가 확인하는 근거)
+  const qty = Math.max(1, parseInt(document.getElementById('fQty').value,10) || 1);
+  const memo = document.getElementById('fMemo').value.trim();
+  const bc = document.getElementById('fName').dataset.bc || '';
+  btn.disabled = true;
+  const old = btn.textContent;
+  try {
+    // 1) 사진 먼저 올린다 (URL 만 기록에 남긴다)
+    const urls = [];
+    for (let i = 0; i < SHOTS.length; i++){
+      btn.textContent = t('uploading') + ' (' + (i+1) + '/' + SHOTS.length + ')';
+      const path = 'credits/' + BRANCH + '/' + Date.now() + '_' + i + '.jpg';
+      try {
+        const r = window.__fb.sRef(window.__fb.st, path);
+        const snap = await window.__fb.uploadBytes(r, SHOTS[i].blob, { contentType:'image/jpeg' });
+        urls.push(await window.__fb.getDownloadURL(snap.ref));
+      } catch(e){
+        console.warn('[credit] upload', e);
+        urls.push(SHOTS[i].url);      // 못 올리면 사진을 잃지 않게 기록에 담는다
+      }
+    }
+    btn.textContent = '💾 …';
+    const rec = { vendor, name, barcode: bc, exp, shot, qty, memo, photos: urls,
+                  by: (me().name||''), at: today(), ts: Date.now(), status:'pending', branch: BRANCH };
+    const r = window.__fb.push(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/credits'));
+    await window.__fb.set(r, rec);
+    SHOTS = []; paintShots();
+    document.getElementById('fName').value=''; document.getElementById('fMemo').value='';
+    document.getElementById('fQty').value='1'; document.getElementById('fName').dataset.bc='';
+    document.getElementById('prodBox').style.display='none';
+    toast('✅ ' + t('saved'));
+  } catch(e){ alert('저장 실패: ' + (e.message||e)); }
+  finally { btn.disabled=false; btn.textContent=old; }
+};
+
+/* ---------- 목록 ---------- */
+function subscribe(){
+  const el = document.getElementById('list');
+  el.innerHTML = '<div class="empty">⏳</div>';
+  window.__fb.onValue(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/credits'), snap => {
+    DATA = snap.val() || {}; render();
+  }, err => { el.innerHTML = '<div class="empty">' + esc(err && err.message || 'error') + '</div>'; });
+}
+function rows(){
+  return Object.keys(DATA).map(id => Object.assign({ id }, DATA[id]))
+    .filter(r => r && r.vendor)
+    .filter(r => FILTER==='all' ? true : (FILTER==='pending' ? (r.status||'pending')==='pending'
+             : FILTER==='sent' ? r.status==='sent' : r.status==='done'))
+    .sort((a,b) => (b.ts||0)-(a.ts||0));
+}
+function render(){
+  document.getElementById('filters').innerHTML =
+    [['pending','fPend'],['sent','fSent'],['done','fDone'],['all','fAll']]
+      .map(([k,lbl]) => '<button class="'+(FILTER===k?'on':'')+'" onclick="setFilter(\''+k+'\')">'+t(lbl)+'</button>').join('');
+  const list = rows(), el = document.getElementById('list');
+  if (!list.length){ el.innerHTML = '<div class="empty">'+t('empty')+'</div>'; return; }
+  const byV = {};
+  list.forEach(r => { (byV[r.vendor] = byV[r.vendor] || []).push(r); });
+  el.innerHTML = Object.keys(byV).sort().map(v => {
+    const items = byV[v], q = items.reduce((s,r)=>s+(+r.qty||0),0);
+    return '<div class="vend">' +
+      '<div class="vhead"><b>🏢 '+esc(v)+'</b><span class="chip">'+t('totalLbl',{n:items.length,q:q})+'</span>' +
+        '<button class="btn sm" onclick="printClaim(\''+esc(v).replace(/'/g,"\\'")+'\')">'+t('print')+'</button>' +
+        '<button class="btn sm" onclick="copyClaim(\''+esc(v).replace(/'/g,"\\'")+'\')">'+t('copy')+'</button></div>' +
+      items.map(itemHtml).join('') + '</div>';
+  }).join('');
+}
+function statusChip(r){
+  const s = r.status || 'pending';
+  if (s === 'done') return '<span class="chip ok">'+t('stDone')+(r.doneBy?' · '+esc(r.doneBy):'')+'</span>';
+  if (s === 'sent') return '<span class="chip sent">📤 '+t('stSent')+(r.sentAt?' '+esc(r.sentAt):'')+'</span>';
+  if (s === 'rejected') return '<span class="chip no">'+t('stNo')+'</span>';
+  return '<span class="chip">'+t('stPend')+'</span>';
+}
+function itemHtml(r){
+  const ph = (r.photos||[]).map(u => '<img loading="lazy" src="'+esc(u)+'" onclick="openLb(this.src)" alt="">').join('');
+  const s = r.status || 'pending';
+  return '<div class="item">' +
+    '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">' +
+      '<b style="flex:1 1 150px">'+esc(r.name || r.barcode || '(이름 없음)')+'</b>' +
+      '<span style="font-weight:900;color:#b91c1c">×'+(+r.qty||1)+'</span></div>' +
+    '<div class="meta">📅 '+t('exp')+' '+esc(r.exp||'')+' · 📷 '+t('shotD')+' '+esc(r.shot||r.at||'')+'<br>'+statusChip(r) +
+      (r.barcode ? ' · 🏷 '+esc(r.barcode) : '') +
+      (r.by ? ' · '+esc(r.by) : '') + (r.at ? ' · '+esc(r.at) : '') +
+      (r.memo ? '<br>📝 '+esc(r.memo) : '') + '</div>' +
+    (ph ? '<div class="thumbs">'+ph+'</div>' : '') +
+    '<div class="acts">' +
+      (s==='pending' ? '<button class="btn sm" onclick="setStatus(\''+r.id+'\',\'sent\')">'+t('btnSent')+'</button>' : '') +
+      (s!=='done' ? '<button class="btn sm g" onclick="setStatus(\''+r.id+'\',\'done\')">'+t('btnDone')+'</button>' : '') +
+      (s!=='rejected' && s!=='pending' ? '<button class="btn sm" onclick="setStatus(\''+r.id+'\',\'rejected\')">'+t('btnNo')+'</button>' : '') +
+      (s!=='pending' ? '<button class="btn sm" onclick="setStatus(\''+r.id+'\',\'pending\')">'+t('btnUndo')+'</button>' : '') +
+      '<button class="btn sm" style="color:#b91c1c" onclick="delRec(\''+r.id+'\')">'+t('btnDel')+'</button>' +
+    '</div></div>';
+}
+window.setFilter = (k) => { FILTER = k; render(); };
+window.setStatus = async (id, st) => {
+  const upd = { status: st };
+  if (st === 'sent'){ upd.sentAt = today(); upd.sentBy = me().name || ''; }
+  if (st === 'done'){ upd.doneAt = today(); upd.doneBy = me().name || ''; }
+  try { await window.__fb.update(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/credits/'+id), upd); }
+  catch(e){ alert('저장 실패: ' + (e.message||e)); }
+};
+window.delRec = async (id) => {
+  if (!confirm(t('askDel'))) return;
+  try { await window.__fb.remove(window.__fb.ref(window.__fb.db, 'expiry/'+BRANCH+'/credits/'+id)); }
+  catch(e){ alert('삭제 실패: ' + (e.message||e)); }
+};
+window.openLb = (src) => { document.getElementById('lbImg').src = src; document.getElementById('lb').style.display='flex'; };
+document.getElementById('lbClose').onclick = () => { document.getElementById('lb').style.display='none'; };
+document.getElementById('lb').onclick = (e) => { if (e.target.id === 'lb') document.getElementById('lb').style.display='none'; };
+
+/* ---------- 벤더에 보낼 요청서 ---------- */
+function claimRows(v){ return rows().filter(r => r.vendor === v); }
+window.copyClaim = (v) => {
+  const list = claimRows(v);
+  const lines = ['[' + bname(BRANCH) + '] EXPIRED PRODUCT CREDIT REQUEST — ' + v + ' (' + today() + ')', ''];
+  list.forEach((r,i) => lines.push((i+1) + '. ' + (r.name || r.barcode || '') + (r.barcode ? '  #' + r.barcode : '') +
+    '  —  QTY ' + (+r.qty||1) + '  /  EXP ' + (r.exp||'') + '  /  PHOTO ' + (r.shot||r.at||'') + (r.memo ? '  (' + r.memo + ')' : '')));
+  lines.push('', 'Total ' + list.length + ' items / ' + list.reduce((s,r)=>s+(+r.qty||0),0) + ' pcs',
+    'Photos available on request.');
+  const txt = lines.join('\n');
+  (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(()=>toast(t('copied')))
+    .catch(()=>{ prompt('복사하세요 / Copy:', txt); });
+};
+window.printClaim = (v) => {
+  const list = claimRows(v);
+  if (!list.length) return;
+  const rowsHtml = list.map((r,i) =>
+    '<tr><td class="n">'+(i+1)+'</td>' +
+    '<td><b>'+esc(r.name || r.barcode || '')+'</b>' + (r.barcode ? '<div class="bc">#'+esc(r.barcode)+'</div>' : '') +
+      (r.memo ? '<div class="bc">'+esc(r.memo)+'</div>' : '') + '</td>' +
+    '<td class="c">'+esc(r.exp||'')+'</td><td class="c">'+esc(r.shot||r.at||'')+'</td><td class="q">'+(+r.qty||1)+'</td>' +
+    '<td class="ph">' + (r.photos||[]).slice(0,3).map(u=>'<img src="'+esc(u)+'">').join('') + '</td></tr>').join('');
+  const html = '<!doctype html><html><head><meta charset="utf-8"><title>Credit Request — '+esc(v)+'</title><style>' +
+    '@page{size:A4;margin:12mm}body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",Arial,sans-serif;color:#111;margin:0}' +
+    'h1{font-size:19px;margin:0 0 2px}.sub{font-size:12px;color:#555;margin-bottom:12px}' +
+    'table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #999;padding:6px;vertical-align:top}' +
+    'th{background:#f1f1f1;font-size:11px}td.n{width:26px;text-align:center;color:#666}td.c{width:92px;text-align:center}' +
+    'td.q{width:44px;text-align:center;font-weight:800;font-size:14px}td.ph{width:210px}' +
+    'td.ph img{width:64px;height:64px;object-fit:cover;border-radius:4px;margin-right:3px}' +
+    '.bc{color:#666;font-size:10.5px;margin-top:2px}tr{break-inside:avoid}' +
+    '.foot{margin-top:12px;font-size:12px;display:flex;justify-content:space-between}</style></head><body>' +
+    '<h1>EXPIRED PRODUCT — CREDIT REQUEST</h1>' +
+    '<div class="sub">Vendor: <b>'+esc(v)+'</b> · Store: '+esc(bname(BRANCH))+' · Date: '+today() +
+      ' · '+list.length+' items / '+list.reduce((s,r)=>s+(+r.qty||0),0)+' pcs</div>' +
+    '<table><thead><tr><th>#</th><th>Item</th><th>Expiry<br>유통기한</th><th>Photo date<br>찍은 날짜</th><th>Qty</th><th>Photo</th></tr></thead><tbody>' +
+    rowsHtml + '</tbody></table>' +
+    '<div class="foot"><span>Submitted by: '+esc(me().name||'____________')+'</span><span>Vendor rep: ____________</span></div>' +
+    '</body></html>';
+  const w = window.open('', '_blank');
+  if (!w){ alert('팝업이 막혀 있습니다 — 팝업 허용 후 다시 눌러주세요.'); return; }
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(()=>{ try { w.print(); } catch(e){} }, 400);
+};
+
+/* ---------- 시작 ---------- */
+function applyLang(){
+  document.documentElement.lang = LANG;
+  document.getElementById('tTitle').textContent = t('title');
+  document.getElementById('tSub').textContent = t('sub');
+  document.getElementById('tBranch').textContent = t('branch');
+  document.getElementById('tNew').textContent = t('newRec');
+  document.getElementById('btnShot').textContent = t('shot');
+  document.getElementById('btnScan').textContent = t('scan');
+  document.getElementById('btnManual').textContent = t('manual');
+  document.getElementById('tName').textContent = t('name');
+  document.getElementById('tVendor').textContent = t('vendor');
+  document.getElementById('tExp').textContent = t('exp');
+  document.getElementById('tShotD').textContent = t('shotD');
+  document.getElementById('tQty').textContent = t('qty');
+  document.getElementById('tMemo').textContent = t('memo');
+  document.getElementById('btnSave').textContent = t('save');
+  document.getElementById('tHint').textContent = t('hint');
+  document.querySelectorAll('[data-l]').forEach(b => b.classList.toggle('on', b.getAttribute('data-l')===LANG));
+  const sel = document.getElementById('branchSel');
+  sel.innerHTML = BRANCHES.map(b => '<option value="'+b.id+'"'+(b.id===BRANCH?' selected':'')+'>'+esc(LANG==='ko'?b.ko:b.en)+'</option>').join('');
+  render();
+}
+document.querySelectorAll('[data-l]').forEach(b => b.addEventListener('click', () => {
+  LANG = b.getAttribute('data-l'); try { localStorage.setItem('kimchi_lang', LANG); } catch(e){} applyLang();
+}));
+document.getElementById('branchSel').addEventListener('change', function(){
+  BRANCH = this.value; try { localStorage.setItem('km_branch', BRANCH); } catch(e){}
+  loadVendors(); subscribe();
+});
+// 벤더 목록 — 매대 발주 목록이 쓰는 벨라포스 대조표에서 이름만 가져온다
+async function loadVendors(){
+  try {
+    const r = await fetch(FB_DB + '/floorplan/matdae-hollywood/vendorMaster/vendors.json', { cache:'no-store' });
+    if (!r.ok) return;
+    VENDORS = (await r.json()) || [];
+    document.getElementById('vendorList').innerHTML = VENDORS.map(v => '<option value="'+esc(v)+'">').join('');
+  } catch(e){}
+}
+document.getElementById('fExp').value = today();
+document.getElementById('fShotD').value = today();
+function boot(){ applyLang(); loadVendors(); subscribe(); }
+if (window.__fb) boot(); else window.addEventListener('fb-ready', boot);
+window.addEventListener('fb-auth-ready', () => { loadVendors(); subscribe(); });
+</script>
+</body>
+</html>
