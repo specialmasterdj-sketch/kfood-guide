@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_09_27_board_print2';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
+    var BUST = 'tasks_2026_09_27_board_es';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -11927,7 +11927,7 @@ function _boardRankTable(all, meBr){
     const col = r.wk.pct >= 80 ? '#15803d' : r.wk.pct >= 60 ? '#ca8a04' : '#dc2626';
     const medal = i === 0 ? '🥇 ' : i === 1 ? '🥈 ' : i === 2 ? '🥉 ' : '';
     return '<tr' + (mine ? ' style="background:#ecfdf5"' : '') + '>' +
-      '<td class="nm"' + (mine ? ' style="color:#166534"' : '') + '>' + medal + escHtml(r.ko) + (mine ? ' ◀ 우리 매장' : '') + '</td>' +
+      '<td class="nm"' + (mine ? ' style="color:#166534"' : '') + '>' + medal + escHtml(r.ko) + (mine ? ' ◀ NUESTRA TIENDA' : '') + '</td>' +
       '<td class="bar"><div class="track"><div class="fill" style="width:' + Math.max(2, r.wk.pct) + '%;background:' + col + '"></div></div></td>' +
       '<td class="pc" style="color:' + col + '">' + r.wk.pct + '%</td>' +
       '<td class="ct">' + r.wk.done + '/' + r.wk.total + '</td></tr>';
@@ -11950,7 +11950,7 @@ async function printBoardReport(allBranches){
     const all = [];
     for (const b of (BRANCHES || [])){
       const r = await _boardLoad(b.id, days);
-      all.push({ id: b.id, ko: b.ko || b.id, y: r.y, wk: r.wk });
+      all.push({ id: b.id, ko: b.en || b.ko || b.id, y: r.y, wk: r.wk });   // 인쇄물은 영어 매장명
     }
     const sheetsFor = allBranches ? all : all.filter(x => x.id === one);
     if (!sheetsFor.length){ throw new Error('매장 자료를 찾지 못했습니다'); }
@@ -11968,15 +11968,20 @@ async function printBoardReport(allBranches){
   }
 }
 function _boardDoc(sheets, yDay){
-  return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>업무 수행 현황 ' + yDay + '</title><style>' +
+  return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>Cumplimiento de Tareas ' + yDay + '</title><style>' +
   '@page{size:A4 portrait;margin:12mm}' +
-  'body{font-family:"Malgun Gothic",AppleGothic,Arial,sans-serif;color:#111;margin:0}' +
-  'h1{font-size:26px;margin:0 0 2px}.sub{font-size:13px;color:#4b5563;margin-bottom:10px}' +
+  'body{font-family:"Malgun Gothic",AppleGothic,Arial,sans-serif;color:#111;margin:0;padding:14px}' +
+  '@media print{body{padding:0}}' +
+  'h1{font-size:25px;margin:0 0 1px}h1 .en{font-size:16px;color:#374151;font-weight:800}' +
+  '.ko{font-size:11px;color:#9ca3af;font-weight:700}' +          // 한국어는 작게 (직원 대부분이 스페인어)
+  '.sub{font-size:12.5px;color:#4b5563;margin-bottom:10px}' +
   '.hd{border-bottom:4px solid #1a5c3a;padding-bottom:8px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;gap:10px}' +
   '.kpis{display:flex;gap:10px;margin-bottom:16px}' +
   '.kpi{flex:1;border:2px solid #d1d5db;border-radius:10px;padding:10px 12px;text-align:center}' +
-  '.kpi .v{font-size:28px;font-weight:900;line-height:1}.kpi .l{font-size:11px;color:#6b7280;margin-top:3px;font-weight:700}' +
+  '.kpi .v{font-size:28px;font-weight:900;line-height:1}.kpi .l{font-size:11.5px;color:#374151;margin-top:3px;font-weight:800}' +
+  '.kpi .l small{display:block;font-size:9.5px;color:#9ca3af;font-weight:700}' +
   'h2{font-size:17px;margin:16px 0 6px;color:#1a5c3a;border-left:6px solid #1a5c3a;padding-left:8px}' +
+  'h2 .en{font-size:13px;color:#4b5563;font-weight:800}h2 .ko{margin-left:4px}' +
   'table{width:100%;border-collapse:collapse;font-size:14px}' +
   'td{padding:5px 4px;border-bottom:1px solid #eef2f7;vertical-align:middle}' +
   'td.nm{width:38%;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px}' +
@@ -11990,28 +11995,29 @@ function _boardDoc(sheets, yDay){
   '.sheet{page-break-after:always}.sheet:last-child{page-break-after:auto}' +
   '@media print{.noprint{display:none}}' +
   '</style></head><body>' + sheets.join('') +
-  '<div class="noprint" style="margin-top:16px"><button onclick="window.print()">🖨 인쇄</button></div>' +
+  '<div class="noprint" style="margin-top:16px"><button onclick="window.print()">🖨 Imprimir · Print</button></div>' +
   '</body></html>';
 }
 function _boardSheet(d){
   const rows = (arr) => arr.length ? arr.map(_boardBar).join('')
-    : '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:18px">지정된 업무가 없습니다</td></tr>';
+    : '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:18px">Sin tareas asignadas · No assigned tasks</td></tr>';
   const big = (v, l, c) => '<div class="kpi"><div class="v" style="color:' + c + '">' + v + '</div><div class="l">' + l + '</div></div>';
   return '<div class="sheet">' +
-  '<div class="hd"><div><h1>📋 ' + escHtml(d.brName) + ' — 업무 수행 현황</h1>' +
-  '<div class="sub">어제 <b>' + d.yDay + ' (' + d.dow + ')</b> · 최근 7일 ' + d.wFrom + ' ~ ' + d.wTo + '</div></div>' +
-  '<div style="font-size:12px;color:#6b7280;text-align:right;white-space:nowrap">Cumplimiento de tareas<br>Task completion</div></div>' +
+  '<div class="hd"><div><h1>📋 ' + escHtml(d.brName) + ' — Cumplimiento de Tareas <span class="en">· Task Completion</span></h1>' +
+  '<div class="sub"><b>AYER / Yesterday: ' + d.yDay + '</b> &nbsp;·&nbsp; 7 días / 7 days: ' + d.wFrom + ' ~ ' + d.wTo +
+  ' <span class="ko">어제 · 최근 7일</span></div></div>' +
+  '<div style="font-size:11px;color:#9ca3af;text-align:right;white-space:nowrap">KIMCHI MART<br>' + d.yDay + ' (' + d.dow + ')</div></div>' +
   '<div class="kpis">' +
-    big(d.y.done + '/' + d.y.total, '어제 완료 · Ayer', '#111') +
-    big(d.y.pct + '%', '어제 수행률', d.y.pct >= 80 ? '#15803d' : d.y.pct >= 60 ? '#ca8a04' : '#dc2626') +
-    big(d.wk.done + '/' + d.wk.total, '7일 완료 · Semana', '#111') +
-    big(d.wk.pct + '%', '7일 수행률', d.wk.pct >= 80 ? '#15803d' : d.wk.pct >= 60 ? '#ca8a04' : '#dc2626') +
+    big(d.y.done + '/' + d.y.total, 'AYER · Yesterday<small>어제 완료</small>', '#111') +
+    big(d.y.pct + '%', '% AYER · Yesterday<small>어제 수행률</small>', d.y.pct >= 80 ? '#15803d' : d.y.pct >= 60 ? '#ca8a04' : '#dc2626') +
+    big(d.wk.done + '/' + d.wk.total, '7 DÍAS · 7 days<small>7일 완료</small>', '#111') +
+    big(d.wk.pct + '%', '% 7 DÍAS · 7 days<small>7일 수행률</small>', d.wk.pct >= 80 ? '#15803d' : d.wk.pct >= 60 ? '#ca8a04' : '#dc2626') +
   '</div>' +
-  (d.top.length ? '<div class="top">🏆 이번 주 잘한 사람 · Excelente trabajo — ' + d.top.map(p => escHtml(p.name) + ' (' + p.pct + '%)').join(' · ') + '</div>' : '') +
-  '<h2>어제 · Ayer (' + d.yDay.slice(5) + ')</h2><table>' + rows(d.y.people) + '</table>' +
-  '<h2>최근 7일 누적 · Últimos 7 días</h2><table>' + rows(d.wk.people) + '</table>' +
-  '<h2>지점 순위 · Ranking de tiendas (최근 7일)</h2><table>' + d.rankRows + '</table>' +
-  '<div class="ft"><span>출력 ' + new Date().toLocaleString('ko-KR') + '</span><span>KIMCHI MART · 매니저</span></div>' +
+  (d.top.length ? '<div class="top">🏆 ¡EXCELENTE TRABAJO! · Great job — ' + d.top.map(p => escHtml(p.name) + ' (' + p.pct + '%)').join(' · ') + '</div>' : '') +
+  '<h2>AYER <span class="en">· Yesterday</span> (' + d.yDay.slice(5) + ') <span class="ko">어제</span></h2><table>' + rows(d.y.people) + '</table>' +
+  '<h2>ÚLTIMOS 7 DÍAS <span class="en">· Last 7 days</span> <span class="ko">최근 7일 누적</span></h2><table>' + rows(d.wk.people) + '</table>' +
+  '<h2>RANKING DE TIENDAS <span class="en">· Store ranking (7 días)</span> <span class="ko">지점 순위</span></h2><table>' + d.rankRows + '</table>' +
+  '<div class="ft"><span>Impreso / Printed: ' + new Date().toLocaleString('es-US') + '</span><span>KIMCHI MART · Gerente</span></div>' +
   '</div>';
 }
 window.printBoardReport = printBoardReport;
