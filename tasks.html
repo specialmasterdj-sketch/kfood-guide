@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_08_29_merit_chips';   // ⭐ 상점 이유 칩 토글화(중복추가 제거·선택표시) + 구글리뷰 칩→+50 자동 + +50 버튼
+    var BUST = 'tasks_2026_09_27_board_print';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2191,6 +2191,17 @@ button{font-family:inherit;cursor:pointer}
 
 <!-- ============= REPORT VIEW ============= -->
 <div class="page" id="page-rep">
+  <!-- 📊 게시판 인쇄 (2026-09-27) — 매일 뽑아 회사 게시판에 붙이는 종이 -->
+  <div class="report-card" style="border:2px solid #1a5c3a;background:#f0fdf4">
+    <h3 style="margin-bottom:4px">📊 게시판 인쇄 — 어제 &amp; 최근 7일</h3>
+    <div style="font-size:.82em;color:#4b5563;margin-bottom:10px">개인별 업무 수행률을 막대그래프로 뽑습니다. 매일 아침 뽑아 게시판에 붙이세요.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="boardBranch" style="padding:9px 11px;border:1.5px solid #cbd5e1;border-radius:9px;font-weight:600"></select>
+      <button class="btn" style="padding:10px 18px" onclick="printBoardReport()">🖨 인쇄하기</button>
+      <span id="boardBusy" style="font-size:.82em;color:#6b7280"></span>
+    </div>
+  </div>
+
   <div class="kpi-row">
     <div class="kpi ok"><div class="v" id="kpiCompletion">0%</div><div class="l">이번주 완료율</div></div>
     <div class="kpi warn"><div class="v" id="kpiMissed">0</div><div class="l">누락 업무</div></div>
@@ -11857,7 +11868,132 @@ window.printCompletedReport = function(){
   w.document.write(html); w.document.close();
 };
 
+// ===== 📊 게시판 인쇄 (2026-09-27 전무님) =====
+// "업무지시를 해도 잘 수행을 안 한다" → 매일 아침 어제 성적표를 게시판에 붙인다.
+//   어제 성적 + 최근 7일 누적을 개인별 막대그래프 한 장으로. 종이에 그대로 나오게 CSS 만 쓴다.
+function _boardDays(n){                       // 어제부터 거꾸로 n일 (매장 시간 기준)
+  const out = [];
+  for (let i = 1; i <= n; i++){
+    const d = new Date(Date.now() - i * 86400000);
+    out.push(d.toLocaleString('en-CA', { timeZone: 'America/New_York' }).slice(0, 10));
+  }
+  return out;
+}
+function _boardAgg(dayNodes){                 // 날짜별 tasks 묶음 → 이름별 {assigned, done}
+  const per = {}; let tot = 0, done = 0;
+  dayNodes.forEach(node => {
+    const tasks = Object.keys(node || {}).map(k => node[k]).filter(t => t && typeof t === 'object' && t.name);
+    tot += tasks.length;
+    done += tasks.filter(t => t.completedAt).length;
+    tasks.forEach(t => {
+      const who = t.assignedTo;
+      if (!who || who === '*') return;        // 전체 공지성 업무는 개인 성적에서 뺀다
+      const key = _canonName(who) || String(who).trim();
+      per[key] = per[key] || { name: String(who).trim(), assigned: 0, done: 0 };
+      per[key].assigned++;
+      if (t.completedAt && (!t.completedBy || _namesMatch(t.completedBy, who))) per[key].done++;
+    });
+  });
+  const people = Object.keys(per).map(k => {
+    const p = per[k];
+    return { name: p.name, assigned: p.assigned, done: p.done, pct: p.assigned ? Math.round(p.done / p.assigned * 100) : 0 };
+  }).sort((a, b) => b.pct - a.pct || b.done - a.done || a.name.localeCompare(b.name));
+  return { people, total: tot, done: done, pct: tot ? Math.round(done / tot * 100) : 0 };
+}
+function _boardBar(p){                        // 이름 + 막대 한 줄
+  const col = p.pct >= 100 ? '#15803d' : p.pct >= 80 ? '#16a34a' : p.pct >= 60 ? '#ca8a04' : '#dc2626';
+  const medal = p.pct >= 100 ? '🏆 ' : '';
+  return '<tr>' +
+    '<td class="nm">' + medal + escHtml(p.name) + '</td>' +
+    '<td class="bar"><div class="track"><div class="fill" style="width:' + Math.max(2, p.pct) + '%;background:' + col + '"></div></div></td>' +
+    '<td class="pc" style="color:' + col + '">' + p.pct + '%</td>' +
+    '<td class="ct">' + p.done + '/' + p.assigned + '</td></tr>';
+}
+async function printBoardReport(){
+  const sel = document.getElementById('boardBranch');
+  const br = (sel && sel.value) || (typeof MGR_BRANCH === 'string' && MGR_BRANCH) || (me && me.branch) || '';
+  if (!br || br === '*'){ alert('매장을 먼저 고르세요.'); return; }
+  const bo = (BRANCHES || []).find(b => b.id === br);
+  const brName = bo ? (bo.ko || bo.id) : br;
+  const busy = document.getElementById('boardBusy');
+  const w = window.open('', '_blank');         // 팝업 차단 피하려고 누르자마자 창부터 연다
+  if (!w){ alert('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return; }
+  w.document.write('<p style="font-family:sans-serif;padding:20px">불러오는 중…</p>');
+  if (busy) busy.textContent = '불러오는 중…';
+  try {
+    const days = _boardDays(7);                // [어제, 그제, …]
+    const nodes = [];
+    for (const d of days){
+      let v = null;
+      try { const r = await fetch(FB_DB_URL + '/tasks/' + br + '/' + d + '.json', { cache: 'no-store' }); if (r.ok) v = await r.json(); } catch(e){}
+      nodes.push(v);
+    }
+    const y = _boardAgg([nodes[0]]);           // 어제
+    const wk = _boardAgg(nodes);               // 최근 7일
+    const yDay = days[0], wFrom = days[6], wTo = days[0];
+    const dow = ['일','월','화','수','목','금','토'][new Date(yDay + 'T12:00:00').getDay()];
+    const top = wk.people.filter(p => p.assigned >= 3 && p.pct >= 90).slice(0, 3);
+    const html = _boardHtml({ brName, yDay, dow, y, wk, wFrom, wTo, top });
+    w.document.open(); w.document.write(html); w.document.close(); w.focus();
+    setTimeout(() => { try { w.print(); } catch(e){} }, 600);
+    if (busy) busy.textContent = '';
+  } catch(e){
+    if (busy) busy.textContent = '';
+    try { w.document.body.innerHTML = '<p style="font-family:sans-serif;padding:20px;color:#b91c1c">불러오지 못했습니다: ' + escHtml(String(e.message || e)) + '</p>'; } catch(_){}
+  }
+}
+function _boardHtml(d){
+  const rows = (arr) => arr.length ? arr.map(_boardBar).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:18px">지정된 업무가 없습니다</td></tr>';
+  const big = (v, l, c) => '<div class="kpi"><div class="v" style="color:' + c + '">' + v + '</div><div class="l">' + l + '</div></div>';
+  return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>' + escHtml(d.brName) + ' 업무 수행 현황 ' + d.yDay + '</title><style>' +
+  '@page{size:A4 portrait;margin:12mm}' +
+  'body{font-family:"Malgun Gothic",AppleGothic,Arial,sans-serif;color:#111;margin:0}' +
+  'h1{font-size:26px;margin:0 0 2px}.sub{font-size:13px;color:#4b5563;margin-bottom:10px}' +
+  '.hd{border-bottom:4px solid #1a5c3a;padding-bottom:8px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;gap:10px}' +
+  '.kpis{display:flex;gap:10px;margin-bottom:16px}' +
+  '.kpi{flex:1;border:2px solid #d1d5db;border-radius:10px;padding:10px 12px;text-align:center}' +
+  '.kpi .v{font-size:28px;font-weight:900;line-height:1}.kpi .l{font-size:11px;color:#6b7280;margin-top:3px;font-weight:700}' +
+  'h2{font-size:17px;margin:16px 0 6px;color:#1a5c3a;border-left:6px solid #1a5c3a;padding-left:8px}' +
+  'table{width:100%;border-collapse:collapse;font-size:14px}' +
+  'td{padding:5px 4px;border-bottom:1px solid #eef2f7;vertical-align:middle}' +
+  'td.nm{width:31%;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+  'td.bar{width:47%}td.pc{width:11%;text-align:right;font-weight:900;font-size:15px}' +
+  'td.ct{width:11%;text-align:right;color:#6b7280;font-size:12px;font-weight:700;white-space:nowrap}' +
+  '.track{background:#eef2f7;border-radius:6px;height:16px;overflow:hidden}' +
+  '.fill{height:100%;border-radius:6px}' +
+  '.top{background:#fffbeb;border:2px solid #fcd34d;border-radius:10px;padding:9px 12px;margin:10px 0 4px;font-size:14px;font-weight:800;color:#92400e}' +
+  '.ft{margin-top:16px;border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280;display:flex;justify-content:space-between}' +
+  '.noprint button{padding:11px 22px;font-size:14px;font-weight:800;background:#1a5c3a;color:#fff;border:0;border-radius:8px;cursor:pointer}' +
+  '@media print{.noprint{display:none}}' +
+  '</style></head><body>' +
+  '<div class="hd"><div><h1>📋 ' + escHtml(d.brName) + ' — 업무 수행 현황</h1>' +
+  '<div class="sub">어제 <b>' + d.yDay + ' (' + d.dow + ')</b> · 최근 7일 ' + d.wFrom + ' ~ ' + d.wTo + '</div></div>' +
+  '<div style="font-size:12px;color:#6b7280;text-align:right;white-space:nowrap">Cumplimiento de tareas<br>Task completion</div></div>' +
+  '<div class="kpis">' +
+    big(d.y.done + '/' + d.y.total, '어제 완료 · Ayer', '#111') +
+    big(d.y.pct + '%', '어제 수행률', d.y.pct >= 80 ? '#15803d' : d.y.pct >= 60 ? '#ca8a04' : '#dc2626') +
+    big(d.wk.done + '/' + d.wk.total, '7일 완료 · Semana', '#111') +
+    big(d.wk.pct + '%', '7일 수행률', d.wk.pct >= 80 ? '#15803d' : d.wk.pct >= 60 ? '#ca8a04' : '#dc2626') +
+  '</div>' +
+  (d.top.length ? '<div class="top">🏆 이번 주 잘한 사람 · Excelente trabajo — ' + d.top.map(p => escHtml(p.name) + ' (' + p.pct + '%)').join(' · ') + '</div>' : '') +
+  '<h2>어제 · Ayer (' + d.yDay.slice(5) + ')</h2><table>' + rows(d.y.people) + '</table>' +
+  '<h2>최근 7일 누적 · Últimos 7 días</h2><table>' + rows(d.wk.people) + '</table>' +
+  '<div class="ft"><span>출력 ' + new Date().toLocaleString('ko-KR') + '</span><span>KIMCHI MART · 매니저</span></div>' +
+  '<div class="noprint" style="margin-top:16px"><button onclick="window.print()">🖨 인쇄</button></div>' +
+  '</body></html>';
+}
+window.printBoardReport = printBoardReport;
+function _boardFillBranches(){
+  const sel = document.getElementById('boardBranch');
+  if (!sel || sel.options.length) return;
+  sel.innerHTML = (BRANCHES || []).map(b => '<option value="' + b.id + '">' + escHtml(b.ko || b.id) + '</option>').join('');
+  const def = (typeof MGR_BRANCH === 'string' && MGR_BRANCH) || (me && me.branch) || '';
+  if (def && def !== '*') sel.value = def;
+}
+
 function renderReport(){
+  _boardFillBranches();
   const all = TASKS;
   const total = all.length;
   const done = all.filter(t => t.completedAt).length;
