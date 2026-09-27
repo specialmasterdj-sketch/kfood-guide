@@ -288,6 +288,7 @@ const I18N = {
  dMatrix:{ko:'전 지점 일일 매출 — 모든 날짜',en:'All branches, every day',es:'Todas las sucursales, cada día'},
  dColTotal:{ko:'합계',en:'Total',es:'Total'},
  dRowMonthTot:{ko:'월 합계',en:'Month total',es:'Total mes'},
+ dRowWeekTot:{ko:'주간 합계',en:'Week total',es:'Total semana'},
  dChartAll:{ko:'전 지점 합계 · 일별 추이',en:'All-branch total · daily trend',es:'Total · tendencia diaria'},
  dNoAny:{ko:'이 달 전 지점 기록이 없어요 — 위에서 입력하세요',en:'No records this month — enter above',es:'Sin registros este mes'},
  dRollupAll:{ko:'이 달 일일 합계 → 각 지점 월 총매출(TOTAL) 저장',en:'This month’s daily sums → each branch monthly TOTAL',es:'Sumas diarias → TOTAL mensual de cada sucursal'},
@@ -1335,6 +1336,29 @@ function _dailyDeptData(mo){
 }
 function _ddSum(m){ return m ? Object.values(m).reduce((a,v)=>a+v,0) : null; }
 function _ddBLbl(x){ return LANG==='ko'?x.ko:String(x.id).replace(/_/g,' '); }
+// 📅 주간 합계 줄 (2026-09-27) — 한 주(일~토)가 끝나는 자리마다 지점별·전체 합계를 끼워 넣는다.
+//   desc = 최신 날짜부터 내려오는 목록 · v(지점,날짜) = 금액 · dayRow(날짜) = 그 날짜 줄 HTML
+function _rowsWithWeek(desc, v, dayRow){
+  const out=[]; let acc={}, days=[];
+  const flush=()=>{
+    if(days.length>1){
+      const to=days[0], from=days[days.length-1];
+      const tot=BRANCHES.reduce((a,x)=>a+(acc[x.id]||0),0);
+      out.push(`<tr style="background:#f1f7f3"><td class="mo" colspan="2" style="text-align:left;font-size:.8em;line-height:1.3;color:#1a5c3a"><b>${t('dRowWeekTot')}</b><br><span style="color:#64748b;font-weight:600">${from.slice(5)}~${to.slice(5)}</span></td>`+
+        BRANCHES.map(x=>`<td style="color:#1a5c3a"><b>$${_cFmt(acc[x.id]||0)}</b></td>`).join('')+
+        `<td style="background:#cfe9da;color:#14532d"><b>$${_cFmt(tot)}</b></td></tr>`);
+    }
+    acc={}; days=[];
+  };
+  desc.forEach(d=>{
+    out.push(dayRow(d));
+    days.push(d);
+    BRANCHES.forEach(x=>{ acc[x.id]=(acc[x.id]||0)+(v(x.id,d)||0); });
+    if(new Date(d+'T12:00:00').getDay()===0) flush();   // 일요일 = 그 주가 끝난 자리
+  });
+  flush();
+  return out.join('');
+}
 function _renderDailyDepts(mo){
   const data=_dailyDeptData(mo);
   const depts=Object.keys(data).sort(_ddSort);
@@ -1404,10 +1428,10 @@ function _ddMatrix(byBranch, mo, forPrint){
     return '<table><tr><th>'+t('dCols')[0]+'</th><th>'+t('dCols')[1]+'</th>'+BRANCHES.map(x=>'<th>'+esc(_ddBLbl(x))+'</th>').join('')+'<th>'+t('dColTotal')+'</th></tr>'+body+
       '<tfoot><tr><td colspan="2">'+t('dRowMonthTot')+'</td>'+BRANCHES.map(x=>'<td class="r">'+(has(x)?'$'+_cFmt(bTot[x.id]):'–')+'</td>').join('')+'<td class="r">$'+_cFmt(grand)+'</td></tr></tfoot></table>';
   }
-  const rows=desc.map(d=>{ const dt=BRANCHES.reduce((a,x)=>a+(v(x.id,d)||0),0);
+  const rows=_rowsWithWeek(desc, v, d=>{ const dt=BRANCHES.reduce((a,x)=>a+(v(x.id,d)||0),0);
     return `<tr><td class="mo">${d.slice(5)}</td><td style="text-align:center;color:#64748b">${_wkLbl(d)}</td>`+
       BRANCHES.map(x=>{ const a=v(x.id,d); return a==null?'<td class="na">–</td>':`<td>$${_cFmt(a)}</td>`; }).join('')+
-      `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dt)}</b></td></tr>`; }).join('');
+      `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dt)}</b></td></tr>`; });
   const foot=`<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
     BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>${has(x)?'$'+_cFmt(bTot[x.id]):'–'}</b></td>`).join('')+
     `<td style="background:#1a5c3a;color:#fff"><b>$${_cFmt(grand)}</b></td></tr>`;
@@ -1480,14 +1504,14 @@ function renderDaily(){
   const dayTotOf=d=>BRANCHES.reduce((s,x)=>s+(_dv(x.id,d)||0),0);
   const bMonthTot={}; BRANCHES.forEach(x=>{ bMonthTot[x.id]=mAsc.reduce((s,d)=>s+(_dv(x.id,d)||0),0); });
   const grandTot=BRANCHES.reduce((s,x)=>s+bMonthTot[x.id],0);
-  const matRows = mDesc.length ? mDesc.map(d=>{
+  const matRows = mDesc.length ? _rowsWithWeek(mDesc, _dv, d=>{
     return `<tr><td class="mo">${d.slice(5)}</td><td style="text-align:center;color:#64748b">${_wkLbl(d)}</td>`+
       BRANCHES.map(x=>{ const v=_dv(x.id,d);
         // 값이 있는 칸은 누르면 지울 수 있다 — 잘못 넣은 날(아직 안 끝난 오늘 등)을 바로 지우려고
         return v==null?'<td class="na">–</td>'
           :`<td onclick="dlyCellDel('${x.id}','${d}')" title="${esc(LANG==='ko'?'누르면 이 값을 지웁니다':'Tap to delete this entry')}" style="cursor:pointer">$${_cFmt(v)}</td>`; }).join('')+
       `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dayTotOf(d))}</b></td></tr>`;
-  }).join('') : `<tr><td colspan="${BRANCHES.length+3}" class="muted">${t('dNoAny')}</td></tr>`;
+  }) : `<tr><td colspan="${BRANCHES.length+3}" class="muted">${t('dNoAny')}</td></tr>`;
   const matHint = '<div style="font-size:.72em;color:#94a3b8;margin:2px 0 6px">' +
     (LANG==='ko' ? '숫자를 누르면 그 지점·그 날짜 매출을 지울 수 있어요 (부서 매출은 남습니다)'
                  : 'Tap an amount to delete that store\'s entry for that day') + '</div>';
