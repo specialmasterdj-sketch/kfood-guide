@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_09_27_board_print';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
+    var BUST = 'tasks_2026_09_27_board_print2';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2194,10 +2194,12 @@ button{font-family:inherit;cursor:pointer}
   <!-- 📊 게시판 인쇄 (2026-09-27) — 매일 뽑아 회사 게시판에 붙이는 종이 -->
   <div class="report-card" style="border:2px solid #1a5c3a;background:#f0fdf4">
     <h3 style="margin-bottom:4px">📊 게시판 인쇄 — 어제 &amp; 최근 7일</h3>
-    <div style="font-size:.82em;color:#4b5563;margin-bottom:10px">개인별 업무 수행률을 막대그래프로 뽑습니다. 매일 아침 뽑아 게시판에 붙이세요.</div>
+    <div style="font-size:.82em;color:#4b5563;margin-bottom:10px">개인별 업무 수행률을 막대그래프로 뽑습니다. 매일 아침 뽑아 게시판에 붙이세요.<br>
+      <b>직원 이름은 그 매장 사람만</b> 나오고, <b>지점 순위는 모든 장에 같이</b> 들어갑니다. [전 지점]은 매장마다 장이 나뉘어 나오니 잘라서 각 매장에 붙이면 됩니다.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <select id="boardBranch" style="padding:9px 11px;border:1.5px solid #cbd5e1;border-radius:9px;font-weight:600"></select>
-      <button class="btn" style="padding:10px 18px" onclick="printBoardReport()">🖨 인쇄하기</button>
+      <button class="btn" style="padding:10px 18px" onclick="printBoardReport()">🖨 이 매장만</button>
+      <button class="btn" style="padding:10px 18px;background:#0f172a" onclick="printBoardReport(true)">🖨 전 지점 (매장별 장 나눔)</button>
       <span id="boardBusy" style="font-size:.82em;color:#6b7280"></span>
     </div>
   </div>
@@ -11909,44 +11911,64 @@ function _boardBar(p){                        // 이름 + 막대 한 줄
     '<td class="pc" style="color:' + col + '">' + p.pct + '%</td>' +
     '<td class="ct">' + p.done + '/' + p.assigned + '</td></tr>';
 }
-async function printBoardReport(){
+// 한 매장의 7일치를 읽어 어제·주간으로 집계
+async function _boardLoad(br, days){
+  const nodes = await Promise.all(days.map(async d => {
+    try { const r = await fetch(FB_DB_URL + '/tasks/' + br + '/' + d + '.json', { cache: 'no-store' }); return r.ok ? await r.json() : null; }
+    catch(e){ return null; }
+  }));
+  return { y: _boardAgg([nodes[0]]), wk: _boardAgg(nodes) };
+}
+// 지점 순위 — 이름은 안 나오고 매장 이름만. 다른 매장 직원은 누가 누군지 모르니까.
+function _boardRankTable(all, meBr){
+  const rank = all.slice().sort((a, b) => b.wk.pct - a.wk.pct || b.wk.done - a.wk.done);
+  return rank.map((r, i) => {
+    const mine = r.id === meBr;
+    const col = r.wk.pct >= 80 ? '#15803d' : r.wk.pct >= 60 ? '#ca8a04' : '#dc2626';
+    const medal = i === 0 ? '🥇 ' : i === 1 ? '🥈 ' : i === 2 ? '🥉 ' : '';
+    return '<tr' + (mine ? ' style="background:#ecfdf5"' : '') + '>' +
+      '<td class="nm"' + (mine ? ' style="color:#166534"' : '') + '>' + medal + escHtml(r.ko) + (mine ? ' ◀ 우리 매장' : '') + '</td>' +
+      '<td class="bar"><div class="track"><div class="fill" style="width:' + Math.max(2, r.wk.pct) + '%;background:' + col + '"></div></div></td>' +
+      '<td class="pc" style="color:' + col + '">' + r.wk.pct + '%</td>' +
+      '<td class="ct">' + r.wk.done + '/' + r.wk.total + '</td></tr>';
+  }).join('');
+}
+async function printBoardReport(allBranches){
   const sel = document.getElementById('boardBranch');
-  const br = (sel && sel.value) || (typeof MGR_BRANCH === 'string' && MGR_BRANCH) || (me && me.branch) || '';
-  if (!br || br === '*'){ alert('매장을 먼저 고르세요.'); return; }
-  const bo = (BRANCHES || []).find(b => b.id === br);
-  const brName = bo ? (bo.ko || bo.id) : br;
+  const one = (sel && sel.value) || (typeof MGR_BRANCH === 'string' && MGR_BRANCH) || (me && me.branch) || '';
+  if (!allBranches && (!one || one === '*')){ alert('매장을 먼저 고르세요.'); return; }
   const busy = document.getElementById('boardBusy');
   const w = window.open('', '_blank');         // 팝업 차단 피하려고 누르자마자 창부터 연다
   if (!w){ alert('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return; }
-  w.document.write('<p style="font-family:sans-serif;padding:20px">불러오는 중…</p>');
+  w.document.write('<p style="font-family:sans-serif;padding:20px">불러오는 중… 잠시만요</p>');
   if (busy) busy.textContent = '불러오는 중…';
   try {
-    const days = _boardDays(7);                // [어제, 그제, …]
-    const nodes = [];
-    for (const d of days){
-      let v = null;
-      try { const r = await fetch(FB_DB_URL + '/tasks/' + br + '/' + d + '.json', { cache: 'no-store' }); if (r.ok) v = await r.json(); } catch(e){}
-      nodes.push(v);
-    }
-    const y = _boardAgg([nodes[0]]);           // 어제
-    const wk = _boardAgg(nodes);               // 최근 7일
+    const days = _boardDays(7);                       // [어제, 그제, …]
     const yDay = days[0], wFrom = days[6], wTo = days[0];
     const dow = ['일','월','화','수','목','금','토'][new Date(yDay + 'T12:00:00').getDay()];
-    const top = wk.people.filter(p => p.assigned >= 3 && p.pct >= 90).slice(0, 3);
-    const html = _boardHtml({ brName, yDay, dow, y, wk, wFrom, wTo, top });
-    w.document.open(); w.document.write(html); w.document.close(); w.focus();
-    setTimeout(() => { try { w.print(); } catch(e){} }, 600);
+    // 지점 순위는 어느 장에나 들어가므로 전 지점을 항상 읽는다
+    const all = [];
+    for (const b of (BRANCHES || [])){
+      const r = await _boardLoad(b.id, days);
+      all.push({ id: b.id, ko: b.ko || b.id, y: r.y, wk: r.wk });
+    }
+    const sheetsFor = allBranches ? all : all.filter(x => x.id === one);
+    if (!sheetsFor.length){ throw new Error('매장 자료를 찾지 못했습니다'); }
+    const sheets = sheetsFor.map(x => _boardSheet({
+      brName: x.ko, brId: x.id, yDay, dow, wFrom, wTo, y: x.y, wk: x.wk,
+      top: x.wk.people.filter(p => p.assigned >= 3 && p.pct >= 90).slice(0, 3),
+      rankRows: _boardRankTable(all, x.id),
+    }));
+    w.document.open(); w.document.write(_boardDoc(sheets, yDay)); w.document.close(); w.focus();
+    setTimeout(() => { try { w.print(); } catch(e){} }, 700);
     if (busy) busy.textContent = '';
   } catch(e){
     if (busy) busy.textContent = '';
     try { w.document.body.innerHTML = '<p style="font-family:sans-serif;padding:20px;color:#b91c1c">불러오지 못했습니다: ' + escHtml(String(e.message || e)) + '</p>'; } catch(_){}
   }
 }
-function _boardHtml(d){
-  const rows = (arr) => arr.length ? arr.map(_boardBar).join('')
-    : '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:18px">지정된 업무가 없습니다</td></tr>';
-  const big = (v, l, c) => '<div class="kpi"><div class="v" style="color:' + c + '">' + v + '</div><div class="l">' + l + '</div></div>';
-  return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>' + escHtml(d.brName) + ' 업무 수행 현황 ' + d.yDay + '</title><style>' +
+function _boardDoc(sheets, yDay){
+  return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>업무 수행 현황 ' + yDay + '</title><style>' +
   '@page{size:A4 portrait;margin:12mm}' +
   'body{font-family:"Malgun Gothic",AppleGothic,Arial,sans-serif;color:#111;margin:0}' +
   'h1{font-size:26px;margin:0 0 2px}.sub{font-size:13px;color:#4b5563;margin-bottom:10px}' +
@@ -11957,16 +11979,25 @@ function _boardHtml(d){
   'h2{font-size:17px;margin:16px 0 6px;color:#1a5c3a;border-left:6px solid #1a5c3a;padding-left:8px}' +
   'table{width:100%;border-collapse:collapse;font-size:14px}' +
   'td{padding:5px 4px;border-bottom:1px solid #eef2f7;vertical-align:middle}' +
-  'td.nm{width:31%;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-  'td.bar{width:47%}td.pc{width:11%;text-align:right;font-weight:900;font-size:15px}' +
+  'td.nm{width:38%;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px}' +
+  'td.bar{width:40%}td.pc{width:11%;text-align:right;font-weight:900;font-size:15px}' +
   'td.ct{width:11%;text-align:right;color:#6b7280;font-size:12px;font-weight:700;white-space:nowrap}' +
   '.track{background:#eef2f7;border-radius:6px;height:16px;overflow:hidden}' +
   '.fill{height:100%;border-radius:6px}' +
   '.top{background:#fffbeb;border:2px solid #fcd34d;border-radius:10px;padding:9px 12px;margin:10px 0 4px;font-size:14px;font-weight:800;color:#92400e}' +
   '.ft{margin-top:16px;border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280;display:flex;justify-content:space-between}' +
   '.noprint button{padding:11px 22px;font-size:14px;font-weight:800;background:#1a5c3a;color:#fff;border:0;border-radius:8px;cursor:pointer}' +
+  '.sheet{page-break-after:always}.sheet:last-child{page-break-after:auto}' +
   '@media print{.noprint{display:none}}' +
-  '</style></head><body>' +
+  '</style></head><body>' + sheets.join('') +
+  '<div class="noprint" style="margin-top:16px"><button onclick="window.print()">🖨 인쇄</button></div>' +
+  '</body></html>';
+}
+function _boardSheet(d){
+  const rows = (arr) => arr.length ? arr.map(_boardBar).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:18px">지정된 업무가 없습니다</td></tr>';
+  const big = (v, l, c) => '<div class="kpi"><div class="v" style="color:' + c + '">' + v + '</div><div class="l">' + l + '</div></div>';
+  return '<div class="sheet">' +
   '<div class="hd"><div><h1>📋 ' + escHtml(d.brName) + ' — 업무 수행 현황</h1>' +
   '<div class="sub">어제 <b>' + d.yDay + ' (' + d.dow + ')</b> · 최근 7일 ' + d.wFrom + ' ~ ' + d.wTo + '</div></div>' +
   '<div style="font-size:12px;color:#6b7280;text-align:right;white-space:nowrap">Cumplimiento de tareas<br>Task completion</div></div>' +
@@ -11979,9 +12010,9 @@ function _boardHtml(d){
   (d.top.length ? '<div class="top">🏆 이번 주 잘한 사람 · Excelente trabajo — ' + d.top.map(p => escHtml(p.name) + ' (' + p.pct + '%)').join(' · ') + '</div>' : '') +
   '<h2>어제 · Ayer (' + d.yDay.slice(5) + ')</h2><table>' + rows(d.y.people) + '</table>' +
   '<h2>최근 7일 누적 · Últimos 7 días</h2><table>' + rows(d.wk.people) + '</table>' +
+  '<h2>지점 순위 · Ranking de tiendas (최근 7일)</h2><table>' + d.rankRows + '</table>' +
   '<div class="ft"><span>출력 ' + new Date().toLocaleString('ko-KR') + '</span><span>KIMCHI MART · 매니저</span></div>' +
-  '<div class="noprint" style="margin-top:16px"><button onclick="window.print()">🖨 인쇄</button></div>' +
-  '</body></html>';
+  '</div>';
 }
 window.printBoardReport = printBoardReport;
 function _boardFillBranches(){
