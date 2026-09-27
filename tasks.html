@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_09_27_board_skip2';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
+    var BUST = 'tasks_2026_09_27_routine_auto';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2134,6 +2134,7 @@ button{font-family:inherit;cursor:pointer}
       <button class="chip" data-f="delayed" onclick="setMgrFilter('delayed',this)">⚠️ 지연</button>
     </div>
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
+    <button class="btn sec" onclick="openRoutineSetup()" title="부서 일일 체크리스트를 매일 아침 자동으로 내보냅니다" style="background:#eef6ff;color:#1d4ed8;border-color:#bfdbfe">⏰ 자동 발송</button>
     <button class="btn sec" id="hrPersonaBtn" style="display:none" onclick="toggleHrPersona()" title="켜면 지시가 'HR MANAGER' 명의로 발송됩니다 (오너/임원/지정 인물 전용)">🎭 HR 모드 OFF</button>
     <button class="btn sec" onclick="openAssignModal('정육')" title="정육 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 발송</button>
     <button class="btn sec" onclick="openAssignModal('스시')" title="스시 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#fae8ff;border-color:#c026d3;color:#86198f;font-weight:700">🍣 스시 발송</button>
@@ -6742,6 +6743,191 @@ async function sendMeatDailyAll(){
   alert(_hdr + branchKo + '\n' + (created?_sent:'') + (skipped?_skip:'') + (failed?_fail:''));
 }
 window.sendMeatDailyAll = sendMeatDailyAll;
+
+// =============================================================================
+// ⏰ 부서 일일 체크리스트 자동 발송 (2026-09-27 전무님)
+//   매니저가 매일 눌러야만 내려가던 부서 체크리스트를, 설정해 두면 아침에 저절로
+//   내려가게 한다. ("지시를 안 주면 아무도 안 움직인다" 를 구조로 없앤다.)
+//   · 설정 위치: taskTemplates/_routines/{지점}  (규칙 게시 불필요 — taskTemplates 하위)
+//   · 같은 taskId 로 PUT 하고, 이미 있으면 건드리지 않는다 → 몇 번 돌아도 안전.
+//   · 서버 없이 앱이 열릴 때 확인한다. 매장에서 누구든 앱을 열면 그날 것이 만들어진다.
+// =============================================================================
+const ROUTINE_DEFS = {
+  meat: {
+    ko: '정육', icon: '🥩', taskId: 'auto_meat_daily_',
+    build: () => ({
+      name: '🥩 정육 일일 작업 보고',
+      nameTr: { ko:'🥩 정육 일일 작업 보고', en:'🥩 Daily Meat Department Report', es:'🥩 Reporte Diario de Carnicería' },
+      deadline: '18:00', category: '정육', requirePhoto: true, place: '정육 작업장',
+      locationNote: '하루 작업한 BEEF / PORK / CHICKEN / 마리네이드 / 청소 — 각 항목에 사진+간단 메모',
+      checklist: _MEAT_TPL_2026.map(t => Object.assign({}, t)),
+      autoMeatDaily: true, noAutoChat: true, points: 3,
+    }),
+  },
+  kfood: {
+    ko: 'K-Food', icon: '🍙', taskId: 'auto_kfood_daily_',
+    build: () => ({
+      name: '🍙 K-Food 일일 작업 보고',
+      nameTr: { ko:'🍙 K-Food 일일 작업 보고', en:'🍙 Daily K-Food Production Report', es:'🍙 Reporte Diario de K-Food' },
+      deadline: '18:00', category: 'K-Food', requirePhoto: true, place: 'K-Food 작업장',
+      locationNote: '오늘 만든 김밥 / 삼각김밥 / 잡채 / 기타 메뉴 — 각 항목에 만든 개수와 사진 첨부.',
+      checklist: _KFOOD_TPL_2026.map(t => Object.assign({}, t)),
+      autoKfoodDaily: true, points: 3,
+    }),
+  },
+  seafood: {
+    ko: '해산물', icon: '🐟', taskId: 'auto_seafood_daily_',
+    build: () => ({
+      name: '🐟 해산물 일일 작업 보고',
+      nameTr: { ko:'🐟 해산물 일일 작업 보고', en:'🐟 Daily Seafood Department Report', es:'🐟 Reporte Diario de Mariscos' },
+      deadline: '18:00', category: 'Seafood', requirePhoto: true, place: '해산물 작업장',
+      locationNote: '오늘 작업한 생선·해산물 — 각 항목에 작업 수량과 사진 첨부.',
+      checklist: _SEAFOOD_TPL_2026.map(t => Object.assign({}, t)),
+      autoSeafoodDaily: true, points: 3,
+    }),
+  },
+  produce: {
+    ko: '농산물', icon: '🥬', taskId: 'auto_produce_daily_',
+    build: () => ({
+      name: '🥬 농산물 일일 작업 보고',
+      nameTr: { ko:'🥬 농산물 일일 작업 보고', en:'🥬 Daily Produce Department Report', es:'🥬 Reporte Diario de Productos Frescos' },
+      deadline: '18:00', category: 'Produce', requirePhoto: true, place: '농산물 작업장',
+      locationNote: '오늘 진열·정리한 농산물 — 각 항목에 수량·상태와 사진 첨부.',
+      checklist: _PRODUCE_TPL_2026.map(t => Object.assign({}, t)),
+      autoProduceDaily: true, points: 3,
+    }),
+  },
+  frozen: {
+    ko: '냉동 진열', icon: '🧊', taskId: 'auto_frozen_daily_',
+    build: () => ({
+      name: '🧊 냉동고 전체 진열 보고',
+      nameTr: { ko:'🧊 냉동고 전체 진열 보고', en:'🧊 Daily Frozen Display Report', es:'🧊 Reporte Diario de Congelados' },
+      deadline: '12:00', category: 'Frozen', requirePhoto: true, place: '냉동 지역',
+      locationNote: '오늘 아침 냉동고 전체 진열 상태 — 각 구역별 사진 첨부 + 보충 필요한 품목 메모.',
+      checklist: _FROZEN_TPL_2026.map(t => Object.assign({}, t)),
+      autoFrozenDaily: true, points: 2,
+    }),
+  },
+};
+const ROUTINE_PATH = (br) => 'taskTemplates/_routines/' + br;
+
+async function loadRoutineCfg(branchId){
+  if (!branchId) return {};
+  try {
+    const r = await fetch(FB_DB_URL + '/' + ROUTINE_PATH(branchId) + '.json?t=' + Date.now(), { cache:'no-store' });
+    return (r.ok && await r.json()) || {};
+  } catch(e){ return {}; }
+}
+// 그날 치가 없으면 만든다. 이미 있으면 절대 덮지 않는다(직원이 하던 작업을 날리면 안 되니까).
+async function runDailyRoutines(branchId){
+  if (!branchId || branchId === '*') return { created: 0 };
+  const cfg = await loadRoutineCfg(branchId);
+  const on = Object.keys(ROUTINE_DEFS).filter(k => cfg[k] && cfg[k].on);
+  if (!on.length) return { created: 0 };
+  const now = new Date();
+  const hhmm = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  const today = todayStr();
+  let aq = '';
+  try { const u = window.__fb?.auth?.currentUser; if (u){ const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } } catch(_){}
+  let created = 0;
+  for (const kind of on){
+    const c = cfg[kind] || {}, def = ROUTINE_DEFS[kind];
+    if (!def) continue;
+    if ((c.at || '05:00') > hhmm) continue;                       // 아직 발송 시각 전
+    if (Array.isArray(c.days) && c.days.length && !c.days.includes(now.getDay())) continue;   // 그 요일엔 안 보냄
+    const who = c.who || '*';
+    const userKey = who === '*' ? 'all' : (typeof slug === 'function' ? slug(who) : String(who).replace(/W+/g,'_'));
+    const url = FB_DB_URL + '/tasks/' + branchId + '/' + today + '/' + def.taskId + userKey + '.json';
+    try {
+      const r = await fetch(url + (aq || '') + (aq ? '&' : '?') + 'cb=' + Date.now(), { cache:'no-store' });
+      if (r.ok){ const ex = await r.json(); if (ex && ex.name) continue; }   // 이미 있음
+      const payload = Object.assign(def.build(), {
+        assignedTo: who, assignedToId: who === '*' ? null : who,
+        from: '⏰ 자동 발송 (매일 ' + (c.at || '05:00') + ')',
+        fromRole: 'SYSTEM', createdAt: Date.now(), routineAuto: true, routineKind: kind,
+      });
+      const w = await fetch(url + (aq || ''), { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      if (w.ok) created++;
+    } catch(e){ console.warn('[routine]', kind, e && e.message); }
+  }
+  if (created) console.log('[routine] 자동 발송', created, '건 —', branchId);
+  return { created };
+}
+// 앱이 열릴 때 + 화면으로 돌아올 때 한 번씩만 확인 (하루 한 번이면 충분)
+let __routineCheckedOn = '';
+async function maybeRunRoutines(){
+  try {
+    if (!me || !me.branch || me.branch === '*') return;
+    const key = me.branch + '|' + todayStr();
+    if (__routineCheckedOn === key) return;
+    __routineCheckedOn = key;
+    await runDailyRoutines(me.branch);
+  } catch(e){ console.warn('[routine] check', e && e.message); }
+}
+// ⏰ 자동 발송 설정 창 — 부서별 on/off · 시각 · 담당자
+async function openRoutineSetup(){
+  if (!me){ alert('이름 먼저 등록해 주세요.'); return; }
+  if (!canAssignTask()){ alert('매니저 권한 필요'); return; }
+  const allowed = isOwner() ? BRANCHES : BRANCHES.filter(b => b.id === me.branch);
+  if (!allowed.length){ alert('지점 정보 없음'); return; }
+  let br = allowed.length === 1 ? allowed[0].id
+    : await pickBranchModal('⏰', '자동 발송 설정 — 어느 매장?', allowed);
+  if (!br) return;
+  const cfg = await loadRoutineCfg(br);
+  const brKo = (BRANCHES.find(b => b.id === br) || {}).ko || br;
+  const rows = Object.keys(ROUTINE_DEFS).map(k => {
+    const d = ROUTINE_DEFS[k], c = cfg[k] || {};
+    return '<div style="display:flex;align-items:center;gap:8px;padding:9px 4px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap">' +
+      '<label style="display:flex;align-items:center;gap:7px;min-width:130px;font-weight:700;cursor:pointer">' +
+        '<input type="checkbox" id="rt_on_' + k + '"' + (c.on ? ' checked' : '') + ' style="width:18px;height:18px">' +
+        d.icon + ' ' + d.ko + '</label>' +
+      '<input type="time" id="rt_at_' + k + '" value="' + (c.at || '05:00') + '" style="padding:6px 8px;border:1.5px solid #e5e7eb;border-radius:8px">' +
+      '<input id="rt_who_' + k + '" value="' + escHtml(c.who && c.who !== '*' ? c.who : '') + '" placeholder="담당자 이름 (비우면 전체)" ' +
+        'style="flex:1;min-width:150px;padding:6px 9px;border:1.5px solid #e5e7eb;border-radius:8px">' +
+    '</div>';
+  }).join('');
+  const ov = document.createElement('div');
+  ov.id = 'routineOv';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px';
+  ov.innerHTML =
+    '<div style="background:#fff;border-radius:16px;max-width:620px;width:100%;padding:20px;margin:auto 0">' +
+      '<h3 style="margin-bottom:4px">⏰ 매일 자동 발송 — ' + escHtml(brKo) + '</h3>' +
+      '<div style="font-size:.84em;color:#6b7280;margin-bottom:12px">켜 둔 부서는 <b>매일 그 시각이 지나면 저절로</b> 체크리스트가 내려갑니다. ' +
+        '매니저가 아무것도 안 눌러도 됩니다. 이미 그날 것이 있으면 다시 만들지 않습니다.</div>' +
+      rows +
+      '<div style="display:flex;gap:8px;margin-top:16px">' +
+        '<button class="btn" style="flex:1" onclick="saveRoutineSetup(\'' + br + '\')">저장</button>' +
+        '<button class="btn sec" onclick="document.getElementById(\'routineOv\').remove()">닫기</button>' +
+      '</div>' +
+      '<div id="rtMsg" style="font-size:.82em;color:#16a34a;margin-top:10px"></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+}
+async function saveRoutineSetup(br){
+  const cfg = {};
+  Object.keys(ROUTINE_DEFS).forEach(k => {
+    const on = document.getElementById('rt_on_' + k).checked;
+    const at = document.getElementById('rt_at_' + k).value || '05:00';
+    const who = (document.getElementById('rt_who_' + k).value || '').trim();
+    cfg[k] = { on: !!on, at: at, who: who || '*' };
+  });
+  let aq = '';
+  try { const u = window.__fb?.auth?.currentUser; if (u){ const tok = await u.getIdToken(); if (tok) aq = '?auth=' + encodeURIComponent(tok); } } catch(_){}
+  const msg = document.getElementById('rtMsg');
+  try {
+    const w = await fetch(FB_DB_URL + '/' + ROUTINE_PATH(br) + '.json' + aq,
+      { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg) });
+    if (!w.ok) throw new Error('HTTP ' + w.status);
+    __routineCheckedOn = '';                       // 저장 직후 바로 한 번 돌려 본다
+    const r = await runDailyRoutines(br);
+    if (msg) msg.textContent = '✅ 저장됨' + (r.created ? (' · 오늘 것 ' + r.created + '건 바로 발송') : '');
+  } catch(e){ if (msg){ msg.style.color = '#dc2626'; msg.textContent = '저장 실패: ' + (e.message || e); } }
+}
+window.openRoutineSetup = openRoutineSetup;
+window.saveRoutineSetup = saveRoutineSetup;
+window.runDailyRoutines = runDailyRoutines;
+window.maybeRunRoutines = maybeRunRoutines;
+document.addEventListener('visibilitychange', () => { if (!document.hidden) maybeRunRoutines(); });
 
 // K-Food 일일 보고 일괄 발송 — 정육과 같은 패턴이지만 다른 점:
 // 1) checklist 는 _KFOOD_TPL_2026 (김밥/삼각김밥/잡채/기타)
@@ -13165,6 +13351,7 @@ function bootFb(){
   if (__bootedFb) return;
   __bootedFb = true;
   subscribeTasks();
+  maybeRunRoutines();          // ⏰ 그날 부서 루틴이 없으면 여기서 만들어진다
   subscribeBranchGeo();
   subscribeMyAttendance();
   tickLocation();
