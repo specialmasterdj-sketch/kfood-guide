@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_09_27_board_es';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
+    var BUST = 'tasks_2026_09_27_board_fix';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -11881,7 +11881,20 @@ function _boardDays(n){                       // 어제부터 거꾸로 n일 (�
   }
   return out;
 }
-function _boardAgg(dayNodes){                 // 날짜별 tasks 묶음 → 이름별 {assigned, done}
+// 게시판 인쇄에서 빼는 사람 — 매니저는 업무지시 말고도 하는 일이 많아 이 성적표로 재면 안 된다.
+//   (2026-09-27 전무님) 다른 매장 매니저도 여기에 이름만 한 줄 넣으면 된다.
+const BOARD_SKIP = {
+  HOLLYWOOD:       ['Shreya Shrestha'],
+  MIAMI:           [],
+  PEMBROKE_PINES:  [],
+  CORAL_SPRINGS:   [],
+  LASOLAS:         [],
+};
+function _boardSkipped(br, who){
+  const list = BOARD_SKIP[br] || [];
+  return list.some(n => _namesMatch(n, who));
+}
+function _boardAgg(dayNodes, br){             // 날짜별 tasks 묶음 → 이름별 {assigned, done}
   const per = {}; let tot = 0, done = 0;
   dayNodes.forEach(node => {
     const tasks = Object.keys(node || {}).map(k => node[k]).filter(t => t && typeof t === 'object' && t.name);
@@ -11890,6 +11903,7 @@ function _boardAgg(dayNodes){                 // 날짜별 tasks 묶음 → 이�
     tasks.forEach(t => {
       const who = t.assignedTo;
       if (!who || who === '*') return;        // 전체 공지성 업무는 개인 성적에서 뺀다
+      if (_boardSkipped(br, who)) return;     // 매니저는 이 표에서 뺀다
       const key = _canonName(who) || String(who).trim();
       per[key] = per[key] || { name: String(who).trim(), assigned: 0, done: 0 };
       per[key].assigned++;
@@ -11917,7 +11931,7 @@ async function _boardLoad(br, days){
     try { const r = await fetch(FB_DB_URL + '/tasks/' + br + '/' + d + '.json', { cache: 'no-store' }); return r.ok ? await r.json() : null; }
     catch(e){ return null; }
   }));
-  return { y: _boardAgg([nodes[0]]), wk: _boardAgg(nodes) };
+  return { y: _boardAgg([nodes[0]], br), wk: _boardAgg(nodes, br) };
 }
 // 지점 순위 — 이름은 안 나오고 매장 이름만. 다른 매장 직원은 누가 누군지 모르니까.
 function _boardRankTable(all, meBr){
@@ -11969,9 +11983,11 @@ async function printBoardReport(allBranches){
 }
 function _boardDoc(sheets, yDay){
   return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>Cumplimiento de Tareas ' + yDay + '</title><style>' +
-  '@page{size:A4 portrait;margin:12mm}' +
+  '@page{size:auto;margin:10mm}' +
+  // 색 막대가 인쇄에서 사라지지 않게 (크롬 기본은 배경 안 찍음)
+  '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
   'body{font-family:"Malgun Gothic",AppleGothic,Arial,sans-serif;color:#111;margin:0;padding:14px}' +
-  '@media print{body{padding:0}}' +
+  '@media print{body{padding:0}.sheet{padding:0 4mm}}' +
   'h1{font-size:25px;margin:0 0 1px}h1 .en{font-size:16px;color:#374151;font-weight:800}' +
   '.ko{font-size:11px;color:#9ca3af;font-weight:700}' +          // 한국어는 작게 (직원 대부분이 스페인어)
   '.sub{font-size:12.5px;color:#4b5563;margin-bottom:10px}' +
@@ -11982,7 +11998,7 @@ function _boardDoc(sheets, yDay){
   '.kpi .l small{display:block;font-size:9.5px;color:#9ca3af;font-weight:700}' +
   'h2{font-size:17px;margin:16px 0 6px;color:#1a5c3a;border-left:6px solid #1a5c3a;padding-left:8px}' +
   'h2 .en{font-size:13px;color:#4b5563;font-weight:800}h2 .ko{margin-left:4px}' +
-  'table{width:100%;border-collapse:collapse;font-size:14px}' +
+  'table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:14px}' +
   'td{padding:5px 4px;border-bottom:1px solid #eef2f7;vertical-align:middle}' +
   'td.nm{width:38%;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px}' +
   'td.bar{width:40%}td.pc{width:11%;text-align:right;font-weight:900;font-size:15px}' +
