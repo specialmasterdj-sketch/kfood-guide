@@ -962,6 +962,8 @@ function _metricByBranch(all, pick){
   });
   return out;
 }
+function _cmpAllLabel(){ return LANG==='en'?'ALL STORES':LANG==='es'?'TODAS':'전체 합계'; }
+function _chainTitle(){ return LANG==='en'?'ALL STORES COMBINED (5 stores)':LANG==='es'?'TODAS LAS TIENDAS (5 tiendas)':'김치마트 전체 합계 (5개 매장)'; }
 function _cmpTable(dataByBranch, firstCol){
   const ms=new Set();
   BRANCHES.forEach(b=>Object.keys(dataByBranch[b.id]||{}).forEach(mo=>ms.add(mo)));
@@ -970,7 +972,12 @@ function _cmpTable(dataByBranch, firstCol){
   const pctMap={};
   BRANCHES.forEach(b=>{ const mm=Object.keys(dataByBranch[b.id]||{}).sort(); pctMap[b.id]={};
     mm.forEach((mo,i)=>{ if(i>0){ const p=dataByBranch[b.id][mm[i-1]], c=dataByBranch[b.id][mo]; if(p>0) pctMap[b.id][mo]=Math.round((c-p)/p*1000)/10; } }); });
-  let h='<div style="overflow-x:auto"><table class="cmp"><tr><th>'+(firstCol||t('cmpMonth'))+'</th>'+BRANCHES.map(b=>`<th>${esc(_bLbl(b))}</th>`).join('')+'</tr>';
+  // 🏬 전체 합계 칸 — 그 달 다섯 매장을 더한 값 (김치마트 전체를 한 칸에서 보려고)
+  const sumOf=(mo)=>{ let n=null; BRANCHES.forEach(b=>{ const v=(dataByBranch[b.id]||{})[mo]; if(v!=null) n=(n||0)+v; }); return n; };
+  const sumPct={}; const msAsc=[...ms].sort();
+  msAsc.forEach((mo,i)=>{ if(i>0){ const p=sumOf(msAsc[i-1]), c=sumOf(mo); if(p>0&&c!=null) sumPct[mo]=Math.round((c-p)/p*1000)/10; } });
+  let h='<div style="overflow-x:auto"><table class="cmp"><tr><th>'+(firstCol||t('cmpMonth'))+'</th>'+BRANCHES.map(b=>`<th>${esc(_bLbl(b))}</th>`).join('')+
+    '<th style="background:#0f3d28">'+esc(_cmpAllLabel())+'</th></tr>';
   months.forEach(mo=>{
     h+='<tr><td class="mo">'+esc(mo)+'</td>'+BRANCHES.map(b=>{
       const v=(dataByBranch[b.id]||{})[mo];
@@ -978,19 +985,27 @@ function _cmpTable(dataByBranch, firstCol){
       const pct=pctMap[b.id][mo];
       const ps=(pct==null)?'':`<span class="pct ${pct>=0?'up':'dn'}">${pct>0?'▲':pct<0?'▼':''}${Math.abs(pct)}%</span>`;
       return `<td>$${_cFmt(v)}${ps}</td>`;
-    }).join('')+'</tr>';
+    }).join('');
+    const sv=sumOf(mo), sp=sumPct[mo];
+    const sps=(sp==null)?'':`<span class="pct ${sp>=0?'up':'dn'}">${sp>0?'▲':sp<0?'▼':''}${Math.abs(sp)}%</span>`;
+    h+=(sv==null)?'<td class="na">–</td>':`<td style="background:#e8f5ee;color:#14532d;font-weight:800">$${_cFmt(sv)}${sps}</td>`;
+    h+='</tr>';
   });
   return h+'</table></div>';
 }
 // 📈 지점별 월 추이 꺾은선 — 화면에서도 인쇄에서도 같은 SVG 를 쓴다
 const CMP_COLORS = { MIAMI:'#0ea5e9', PEMBROKE_PINES:'#f59e0b', HOLLYWOOD:'#16a34a', CORAL_SPRINGS:'#dc2626', LASOLAS:'#7c3aed', WEST_PALM:'#0f766e' };
 function _cmpChart(dataByBranch){
+  return _cmpChartSeries(BRANCHES.map(b => ({ name: _bLbl(b), color: CMP_COLORS[b.id] || '#64748b', data: dataByBranch[b.id] || {} })));
+}
+// series = [{ name:'보일 이름', color:'#…', data:{ '2026-01': 금액, … } }, …]
+function _cmpChartSeries(series){
   const ms = new Set();
-  BRANCHES.forEach(b => Object.keys(dataByBranch[b.id] || {}).forEach(mo => ms.add(mo)));
+  series.forEach(sx => Object.keys(sx.data || {}).forEach(mo => ms.add(mo)));
   const months = [...ms].sort();
   if (months.length < 2) return '';                       // 한 달치뿐이면 그래프가 의미 없다
   let max = 0;
-  BRANCHES.forEach(b => months.forEach(mo => { const v = (dataByBranch[b.id] || {})[mo]; if (v > max) max = v; }));
+  series.forEach(sx => months.forEach(mo => { const v = (sx.data || {})[mo]; if (v > max) max = v; }));
   if (!(max > 0)) return '';
   // 눈금은 보기 좋은 단위로 올림
   const step = Math.pow(10, Math.floor(Math.log10(max))) / 2;
@@ -1009,20 +1024,57 @@ function _cmpChart(dataByBranch){
     g += '<text x="' + px(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#6b7280">' + esc(mo.slice(5)) + '</text>';
   });
   let lines = '', legend = '';
-  BRANCHES.forEach(b => {
-    const col = CMP_COLORS[b.id] || '#64748b';
+  series.forEach(sx => {
+    const col = sx.color || '#64748b';
     const pts = [];
-    months.forEach((mo, i) => { const v = (dataByBranch[b.id] || {})[mo]; if (v != null) pts.push([px(i), py(v), v, mo]); });
+    months.forEach((mo, i) => { const v = (sx.data || {})[mo]; if (v != null) pts.push([px(i), py(v), v, mo]); });
     if (!pts.length) return;
     lines += '<polyline fill="none" stroke="' + col + '" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" points="' +
              pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '"/>';
     pts.forEach(p => { lines += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="' + col + '"><title>' +
-      esc(_bLbl(b)) + ' ' + esc(p[3]) + ' — ' + money(p[2]) + '</title></circle>'; });
+      esc(sx.name) + ' ' + esc(p[3]) + ' — ' + money(p[2]) + '</title></circle>'; });
     legend += '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:.78em;font-weight:700;color:#374151">' +
-              '<span style="width:14px;height:3px;background:' + col + ';border-radius:2px;display:inline-block"></span>' + esc(_bLbl(b)) + '</span>';
+              '<span style="width:14px;height:3px;background:' + col + ';border-radius:2px;display:inline-block"></span>' + esc(sx.name) + '</span>';
   });
   return '<div class="cmp-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">' +
          g + lines + '</svg><div style="margin-top:4px">' + legend + '</div></div>';
+}
+// 🏬 다섯 매장을 한 줄로 더한다
+const CHAIN_C = { PRODUCE:'#16a34a', MEAT:'#dc2626', SEAFOOD:'#0ea5e9', SUSHI:'#7c3aed', 'K-FOOD':'#f59e0b', K_FOOD:'#f59e0b', KFOOD:'#f59e0b', GROCERY:'#0f766e', FROZEN:'#2563eb', BAKERY:'#b45309', BBQ:'#be185d', CASHIER:'#64748b' };
+function _chainSum(dataByBranch){
+  const o = {};
+  BRANCHES.forEach(b => Object.entries(dataByBranch[b.id] || {}).forEach(([mo, v]) => { if (v != null) o[mo] = (o[mo] || 0) + v; }));
+  return o;
+}
+// 월 = 줄, 칸 = 총매출·부서별 (전체 합계만 모아 놓은 표)
+function _chainTable(series){
+  const ms = new Set(); series.forEach(sx => Object.keys(sx.data || {}).forEach(mo => ms.add(mo)));
+  const months = [...ms].sort().reverse();
+  if (!months.length) return '';
+  const pct = {};
+  series.forEach((sx, si) => { const mm = Object.keys(sx.data || {}).sort(); pct[si] = {};
+    mm.forEach((mo, i) => { if (i > 0){ const p = sx.data[mm[i-1]], c = sx.data[mo]; if (p > 0) pct[si][mo] = Math.round((c - p) / p * 1000) / 10; } }); });
+  let h = '<div style="overflow-x:auto"><table class="cmp"><tr><th>' + t('cmpMonth') + '</th>' +
+    series.map(sx => '<th' + (sx.head ? ' style="background:#0f3d28"' : '') + '>' + esc(sx.name) + '</th>').join('') + '</tr>';
+  months.forEach(mo => {
+    h += '<tr><td class="mo">' + esc(mo) + '</td>' + series.map((sx, si) => {
+      const v = (sx.data || {})[mo];
+      if (v == null) return '<td class="na">–</td>';
+      const p = pct[si][mo];
+      const ps = (p == null) ? '' : '<span class="pct ' + (p >= 0 ? 'up' : 'dn') + '">' + (p > 0 ? '▲' : p < 0 ? '▼' : '') + Math.abs(p) + '%</span>';
+      return '<td' + (sx.head ? ' style="background:#e8f5ee;color:#14532d;font-weight:800"' : '') + '>$' + _cFmt(v) + ps + '</td>';
+    }).join('') + '</tr>';
+  });
+  return h + '</table></div>';
+}
+function _chainSection(all, totalData, depts){
+  const totS = [{ name: t('cmpTotal'), color: '#0f3d28', data: _chainSum(totalData), head: true }];
+  const dS = depts.map(d => ({ name: d.replace(/_/g, '-'), color: CHAIN_C[d.toUpperCase()] || '#64748b',
+    data: _chainSum(_metricByBranch(all, dk => !_isTotalDept(dk, null) && dk.toUpperCase() === d)) }));
+  if (!Object.keys(totS[0].data).length && !dS.some(x => Object.keys(x.data).length)) return '';
+  return '<div class="cmp-sec" style="border:2px solid #cfe8d9;border-radius:14px;padding:10px 12px;background:#f4fbf7">' +
+    '<h4>🏬 ' + esc(_chainTitle()) + '</h4>' +
+    _cmpChartSeries(totS) + _cmpChartSeries(dS) + _chainTable(totS.concat(dS)) + '</div>';
 }
 function compareSections(all){
   const totalData=_metricByBranch(all, dk=>_isTotalDept(dk,null));
@@ -1039,7 +1091,7 @@ function compareSections(all){
     snap=`<div class="cmp-sec"><h4>🏆 ${t('cmpLatest')} (${esc(latest)})</h4>`+
       (rows.length? rows.map(r=>`<div class="rankrow"><div class="bn">${esc(_bLbl(r.b))}</div><div class="rankbar"><span style="width:${max>0?Math.round(r.v/max*100):0}%"></span></div><div class="amt">$${_cFmt(r.v)}</div></div>`).join('') : '<div class="muted">'+t('cmpNoTotal')+'</div>')+'</div>';
   }
-  return snap+
+  return snap+_chainSection(all, totalData, depts)+
     `<div class="cmp-sec"><h4>💰 ${t('cmpTotal')}</h4>${_cmpChart(totalData)}${_cmpTable(totalData)}</div>`+
     depts.map(d=>{ const data=_metricByBranch(all, dk=>!_isTotalDept(dk,null) && dk.toUpperCase()===d); return `<div class="cmp-sec"><h4>📦 ${esc(d.replace(/_/g,'-'))}</h4>${_cmpChart(data)}${_cmpTable(data)}</div>`; }).join('');
 }
