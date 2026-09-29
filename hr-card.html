@@ -788,13 +788,14 @@ window.dsDelSale = async function(dk,mo){
 function _posNum(x){ var n = parseFloat(String(x || '').replace(/[\[\]$,\s]/g, '')); return isFinite(n) ? n : null; }
 function _posDept(group, item){
   var g = String(group || '').toUpperCase(), i = String(item || '').toUpperCase();
-  if (g.indexOf('PRODUCE') === 0) return 'PRODUCE';
-  if (g.indexOf('MEAT') === 0){
+  // 매장마다 그룹 이름 표기가 조금씩 달라 '어디에 들어 있든' 알아보게 한다
+  if (/PRODUCE/.test(g)) return 'PRODUCE';
+  if (/MEAT|SEAFOOD/.test(g)){
     if (/SEAFOOD/.test(i)) return 'SEAFOOD';
     if (/UNDEFINED/.test(i)) return null;              // 분류 안 된 잔돈은 제외 (기존 4~8월 기준과 일치)
     return 'MEAT';
   }
-  if (g.indexOf('DELI') === 0){
+  if (/DELI|PREPARED/.test(g)){
     if (/SUSHI/.test(i)) return 'SUSHI';
     if (/BANCHAN|READY|GIMBAP/.test(i)) return 'K-FOOD';   // 김치는 K-FOOD 에 넣지 않는다 (기존 기준)
     return null;
@@ -859,6 +860,15 @@ window.dsBulkAdd = async function(){
       return { r:r, ko:((bo&&bo.ko)||r.branch), rows:rows };
     }).filter(x=>x.rows.length);
     if (!blocks.length){ alert('부서 매출을 못 찾았습니다.'); return; }
+    // ⚠️ 총매출만 읽히고 부서가 하나도 안 읽힌 장이 있으면 그냥 넘어가지 않는다 (할리우드 3월 사례)
+    const thin = blocks.filter(x => x.rows.filter(y => y[0] !== 'TOTAL').length === 0);
+    if (thin.length){
+      const NL = String.fromCharCode(10);
+      if (!confirm('⚠️ 부서 항목을 못 읽은 리포트가 ' + thin.length + '장 있습니다' + NL +
+        thin.map(x=>'  · '+x.ko+' '+x.r.month).join(NL) + NL + NL +
+        '리포트의 CATEGORIES-SALES 부분까지 같이 복사됐는지 확인해 주세요.' + NL +
+        '이대로 두면 총매출만 저장됩니다.' + NL + NL + '그래도 계속할까요?')) return;
+    }
     const preview = blocks.map(x=>'▶ '+x.ko+' · '+x.r.month+'\n'+
       x.rows.map(y=>'   · '+y[0]+'  $'+Number(y[1]).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join('\n')).join('\n\n');
     if (!confirm('🧾 POS 리포트 '+blocks.length+'장을 읽었습니다\n\n'+preview+'\n\n이대로 저장할까요?')) return;
