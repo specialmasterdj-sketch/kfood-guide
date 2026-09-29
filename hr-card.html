@@ -982,6 +982,48 @@ function _cmpTable(dataByBranch, firstCol){
   });
   return h+'</table></div>';
 }
+// 📈 지점별 월 추이 꺾은선 — 화면에서도 인쇄에서도 같은 SVG 를 쓴다
+const CMP_COLORS = { MIAMI:'#0ea5e9', PEMBROKE_PINES:'#f59e0b', HOLLYWOOD:'#16a34a', CORAL_SPRINGS:'#dc2626', LASOLAS:'#7c3aed', WEST_PALM:'#0f766e' };
+function _cmpChart(dataByBranch){
+  const ms = new Set();
+  BRANCHES.forEach(b => Object.keys(dataByBranch[b.id] || {}).forEach(mo => ms.add(mo)));
+  const months = [...ms].sort();
+  if (months.length < 2) return '';                       // 한 달치뿐이면 그래프가 의미 없다
+  let max = 0;
+  BRANCHES.forEach(b => months.forEach(mo => { const v = (dataByBranch[b.id] || {})[mo]; if (v > max) max = v; }));
+  if (!(max > 0)) return '';
+  // 눈금은 보기 좋은 단위로 올림
+  const step = Math.pow(10, Math.floor(Math.log10(max))) / 2;
+  const top = Math.ceil(max / step) * step;
+  const W = 820, H = 250, L = 62, R = 12, T = 14, B = 26;
+  const px = i => L + (months.length === 1 ? 0 : i * (W - L - R) / (months.length - 1));
+  const py = v => T + (1 - v / top) * (H - T - B);
+  const money = n => '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  let g = '';
+  for (let k = 0; k <= 4; k++){
+    const v = top * k / 4, y = py(v);
+    g += '<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#e5e7eb" stroke-width="1"/>' +
+         '<text x="' + (L - 6) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end" font-size="10" fill="#9ca3af">' + money(v) + '</text>';
+  }
+  months.forEach((mo, i) => {
+    g += '<text x="' + px(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#6b7280">' + esc(mo.slice(5)) + '</text>';
+  });
+  let lines = '', legend = '';
+  BRANCHES.forEach(b => {
+    const col = CMP_COLORS[b.id] || '#64748b';
+    const pts = [];
+    months.forEach((mo, i) => { const v = (dataByBranch[b.id] || {})[mo]; if (v != null) pts.push([px(i), py(v), v, mo]); });
+    if (!pts.length) return;
+    lines += '<polyline fill="none" stroke="' + col + '" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" points="' +
+             pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '"/>';
+    pts.forEach(p => { lines += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="' + col + '"><title>' +
+      esc(_bLbl(b)) + ' ' + esc(p[3]) + ' — ' + money(p[2]) + '</title></circle>'; });
+    legend += '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:.78em;font-weight:700;color:#374151">' +
+              '<span style="width:14px;height:3px;background:' + col + ';border-radius:2px;display:inline-block"></span>' + esc(_bLbl(b)) + '</span>';
+  });
+  return '<div class="cmp-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">' +
+         g + lines + '</svg><div style="margin-top:4px">' + legend + '</div></div>';
+}
 function compareSections(all){
   const totalData=_metricByBranch(all, dk=>_isTotalDept(dk,null));
   const deptSet=new Set();
@@ -998,8 +1040,8 @@ function compareSections(all){
       (rows.length? rows.map(r=>`<div class="rankrow"><div class="bn">${esc(_bLbl(r.b))}</div><div class="rankbar"><span style="width:${max>0?Math.round(r.v/max*100):0}%"></span></div><div class="amt">$${_cFmt(r.v)}</div></div>`).join('') : '<div class="muted">'+t('cmpNoTotal')+'</div>')+'</div>';
   }
   return snap+
-    `<div class="cmp-sec"><h4>💰 ${t('cmpTotal')}</h4>${_cmpTable(totalData)}</div>`+
-    depts.map(d=>{ const data=_metricByBranch(all, dk=>!_isTotalDept(dk,null) && dk.toUpperCase()===d); return `<div class="cmp-sec"><h4>📦 ${esc(d.replace(/_/g,'-'))}</h4>${_cmpTable(data)}</div>`; }).join('');
+    `<div class="cmp-sec"><h4>💰 ${t('cmpTotal')}</h4>${_cmpChart(totalData)}${_cmpTable(totalData)}</div>`+
+    depts.map(d=>{ const data=_metricByBranch(all, dk=>!_isTotalDept(dk,null) && dk.toUpperCase()===d); return `<div class="cmp-sec"><h4>📦 ${esc(d.replace(/_/g,'-'))}</h4>${_cmpChart(data)}${_cmpTable(data)}</div>`; }).join('');
 }
 function renderSalesCompare(all){
   return `<div style="background:#f6f8f7;border-radius:16px;max-width:1040px;width:100%;padding:16px 18px;margin:auto 0">
