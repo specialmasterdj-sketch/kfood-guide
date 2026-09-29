@@ -837,28 +837,42 @@ function parsePosReport(text){
   return out;
 }
 window.parsePosReport = parsePosReport;
+// 리포트 여러 장을 한 번에 붙여넣는 경우 (전무님이 1·2월을 같이 보내심)
+function parsePosReports(text){
+  var parts = String(text || '').split(/(?=SUMMARY-SALE REPORT)/i).filter(function(x){ return /CATEGORIES-SALES/i.test(x); });
+  if (!parts.length) parts = [text];
+  return parts.map(parsePosReport).filter(function(r){ return r.month && r.branch; });
+}
+window.parsePosReports = parsePosReports;
 
 window.dsBulkAdd = async function(){
   const raw=document.getElementById('dsBulk').value;
   // 🧾 POS 월간 리포트를 통째로 붙여넣었으면 여기서 읽어 준다
   if (/SUMMARY-SALE REPORT/i.test(raw) || /CATEGORIES-SALES/i.test(raw)){
-    const r = parsePosReport(raw);
-    const bo = BRANCHES.find(b=>b.id===r.branch);
-    if (!r.month || !r.branch){ alert('POS 리포트는 읽었는데 매장 또는 기간을 못 찾았습니다.\n\n매장: '+(r.branch||'?')+'\n기간: '+(r.month||'?')); return; }
-    const rows=[]; Object.keys(r.depts).forEach(d=>rows.push([d, Math.round(r.depts[d]*100)/100]));
-    if (r.total!=null) rows.push(['TOTAL', r.total]);
-    if (!rows.length){ alert('부서 매출을 못 찾았습니다.'); return; }
-    const preview = rows.map(x=>'  · '+x[0]+'  $'+Number(x[1]).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join('\n');
-    if (!confirm('🧾 POS 리포트를 읽었습니다\n\n'+((bo&&bo.ko)||r.branch)+' · '+r.month+'\n\n'+preview+'\n\n이대로 저장할까요? (반품은 뺀 순매출)')) return;
+    // 여러 장을 한 번에 붙여넣어도 각각 저장한다
+    const reports = parsePosReports(raw);
+    if (!reports.length){ alert('POS 리포트는 읽었는데 매장 또는 기간을 못 찾았습니다.'); return; }
+    const blocks = reports.map(function(r){
+      const bo = BRANCHES.find(b=>b.id===r.branch);
+      const rows=[]; Object.keys(r.depts).forEach(d=>rows.push([d, Math.round(r.depts[d]*100)/100]));
+      if (r.total!=null) rows.push(['TOTAL', r.total]);
+      return { r:r, ko:((bo&&bo.ko)||r.branch), rows:rows };
+    }).filter(x=>x.rows.length);
+    if (!blocks.length){ alert('부서 매출을 못 찾았습니다.'); return; }
+    const preview = blocks.map(x=>'▶ '+x.ko+' · '+x.r.month+'\n'+
+      x.rows.map(y=>'   · '+y[0]+'  $'+Number(y[1]).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join('\n')).join('\n\n');
+    if (!confirm('🧾 POS 리포트 '+blocks.length+'장을 읽었습니다\n\n'+preview+'\n\n이대로 저장할까요?')) return;
     let n=0;
-    for (const [dept, amt] of rows){
-      const dk=dsKey(dept);
-      let map; try { map = await fbGet('hr/'+r.branch+'/deptMap') || {}; } catch(_){ map = {}; }
-      if (!map[dk]) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/deptMap/'+dk), {name:dept.toUpperCase(), staff:''});
-      await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/deptSales/'+dk+'/'+r.month), {amt});
-      n++;
+    for (const blk of blocks){
+      let map; try { map = await fbGet('hr/'+blk.r.branch+'/deptMap') || {}; } catch(_){ map = {}; }
+      for (const [dept, amt] of blk.rows){
+        const dk=dsKey(dept);
+        if (!map[dk]){ await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+blk.r.branch+'/deptMap/'+dk), {name:dept.toUpperCase(), staff:''}); map[dk]={name:dept}; }
+        await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+blk.r.branch+'/deptSales/'+dk+'/'+blk.r.month), {amt});
+        n++;
+      }
     }
-    alert('✅ '+((bo&&bo.ko)||r.branch)+' '+r.month+' — '+n+'건 저장');
+    alert('✅ '+blocks.length+'장 · '+n+'건 저장\n'+blocks.map(x=>'  · '+x.ko+' '+x.r.month).join('\n'));
     document.getElementById('dsBulk').value='';
     openDeptSales();
     return;
