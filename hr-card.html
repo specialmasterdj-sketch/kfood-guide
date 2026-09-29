@@ -782,17 +782,21 @@ window.dsDelSale = async function(dk,mo){
 //   MEAT     = MEAT/SEAFOOD 그룹에서 SEAFOOD 를 뺀 나머지 (정육·마리네이드·소매)
 //   SEAFOOD  = SEAFOOD 항목만
 //   SUSHI    = SUSHI 항목만
-//   K-FOOD   = 반찬 + 즉석식품(READY-TO-EAT) + 김치 + 김밥
+//   K-FOOD   = 반찬 + 즉석식품(READY-TO-EAT) + 김밥   ※ 김치는 뺀다
 //   TOTAL    = SALES TOTAL (세금 포함)
-// 반품(CATEGORIES-RETURNS)은 빼고 순매출로 넣는다.
+// 반품은 빼지 않는다 (2026-04 코럴 리포트와 저장값이 정확히 일치하는 기준).
 function _posNum(x){ var n = parseFloat(String(x || '').replace(/[\[\]$,\s]/g, '')); return isFinite(n) ? n : null; }
 function _posDept(group, item){
   var g = String(group || '').toUpperCase(), i = String(item || '').toUpperCase();
   if (g.indexOf('PRODUCE') === 0) return 'PRODUCE';
-  if (g.indexOf('MEAT') === 0){ return /SEAFOOD/.test(i) ? 'SEAFOOD' : 'MEAT'; }
+  if (g.indexOf('MEAT') === 0){
+    if (/SEAFOOD/.test(i)) return 'SEAFOOD';
+    if (/UNDEFINED/.test(i)) return null;              // 분류 안 된 잔돈은 제외 (기존 4~8월 기준과 일치)
+    return 'MEAT';
+  }
   if (g.indexOf('DELI') === 0){
     if (/SUSHI/.test(i)) return 'SUSHI';
-    if (/BANCHAN|READY|KIMCHI|GIMBAP|UNDEFINED/.test(i)) return 'K-FOOD';
+    if (/BANCHAN|READY|GIMBAP/.test(i)) return 'K-FOOD';   // 김치는 K-FOOD 에 넣지 않는다 (기존 기준)
     return null;
   }
   return null;                       // 그 밖의 그룹(그로서리·냉동·음료·생활)은 부서 매출로 안 잡는다
@@ -818,7 +822,7 @@ function parsePosReport(text){
     }
     if (/^SALES\s+TOTAL/i.test(t)){ var v = _posNum(t.replace(/^SALES\s+TOTAL/i, '')); if (v != null) out.total = v; continue; }
     if (/^CATEGORIES-SALES/i.test(t)){ sec = 'sales'; sign = 1; group = ''; continue; }
-    if (/^CATEGORIES-RETURNS/i.test(t)){ sec = 'ret'; sign = -1; group = ''; continue; }
+    if (/^CATEGORIES-RETURNS/i.test(t)){ sec = ''; group = ''; continue; }   // 반품은 빼지 않는다 — 기존 4~8월이 총매출 기준
     if (/^-{5,}$/.test(t)){ if (sec) sec = ''; continue; }
     if (!sec) continue;
     if (/^\[?TOTAL\]?/i.test(t)) continue;                      // 그룹 소계는 건너뛴다 (항목을 직접 더한다)
