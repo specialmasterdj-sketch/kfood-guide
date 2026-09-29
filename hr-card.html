@@ -724,9 +724,12 @@ window.openDeptSales = async function(){
       <input id="dsAmt" placeholder="매출 $" style="width:120px">
       <button class="btn" onclick="dsAddSale()">＋ 추가</button>
     </div>
-    <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">③ 일괄 붙여넣기 <span style="font-weight:600;color:#94a3b8;font-size:.8em">한 줄에: 부서,YYYY-MM,금액</span></div>
-    <textarea id="dsBulk" rows="5" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="PRODUCE,2026-04,29659.84
-MEAT,2026-04,14931.83"></textarea>
+    <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">③ 일괄 붙여넣기 <span style="font-weight:600;color:#94a3b8;font-size:.8em">한 줄에: 부서,YYYY-MM,금액 &nbsp;·&nbsp; 앞에 지점을 붙이면 여러 지점 한꺼번에 → 지점,부서,YYYY-MM,금액</span></div>
+    <div style="font-size:.78em;color:#6b7280;margin:-2px 0 6px">지난 달·지난 해 자료도 그냥 넣으면 됩니다 (월을 2026-01 처럼 적으면 그 달로 들어갑니다). 엑셀에서 복사해 붙여넣어도 됩니다.</div>
+    <textarea id="dsBulk" rows="5" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="PRODUCE,2026-01,29659.84
+MEAT,2026-01,14931.83
+마이애미,SUSHI,2026-02,10464
+할리우드,K-FOOD,2026-03,16752"></textarea>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dsBulkAdd()">📥 일괄 추가</button>
     <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">④ 총매출 · 나머지 확인 <span style="font-weight:600;color:#94a3b8;font-size:.8em">위 ②에 부서 이름을 "TOTAL"로 넣으면 총매출로 잡혀요 · 나머지 = 총매출 − 부서합계 (자동)</span></div>
     <table><tr><th style="width:90px">월</th><th>총매출</th><th>나머지 (자동)</th></tr>${tRows||'<tr><td colspan="3" class="muted">아직 TOTAL(총매출) 입력이 없어요 — ②에서 부서를 TOTAL 로 추가하세요</td></tr>'}</table>
@@ -774,18 +777,29 @@ window.dsDelSale = async function(dk,mo){
 window.dsBulkAdd = async function(){
   const lines=document.getElementById('dsBulk').value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
   if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
-  let ok=0, bad=[];
+  let ok=0, bad=[]; const perBr={};
+  const otherMaps={};      // 다른 지점 deptMap 은 필요할 때만 읽어 온다
   for (const ln of lines){
-    const p=_bulkCells(ln);
+    let p=_bulkCells(ln);
     if (p.length<3){ bad.push(ln); continue; }
+    // 첫 칸이 지점이면 그 지점에 넣는다 — 여러 지점을 한 번에 붙여넣을 수 있게 (2026-09-29)
+    let br = BRANCH;
+    const maybe = _brFromText(p[0]);
+    if (maybe && p.length>=4){ br = maybe; p = p.slice(1); }
     const dept=p[0], mo=p[1], amt=_bulkAmt(p, 2).amt;
     if (!/^\d{4}-\d{2}$/.test(mo) || !(amt>=0)){ bad.push(ln); continue; }
     const dk=dsKey(dept);
-    if (!(DEPT_MAP||{})[dk]) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptMap/'+dk), {name:dept.toUpperCase(), staff:((DEPT_MAP||{})[dk]||{}).staff||''});
-    await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptSales/'+dk+'/'+mo), {amt});
-    ok++;
+    let map = (br===BRANCH) ? (DEPT_MAP||{}) : otherMaps[br];
+    if (map===undefined){ try { map = await fbGet('hr/'+br+'/deptMap') || {}; } catch(_){ map = {}; } otherMaps[br]=map; }
+    if (!map[dk]){
+      await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+br+'/deptMap/'+dk), {name:dept.toUpperCase(), staff:(map[dk]||{}).staff||''});
+      map[dk]={name:dept.toUpperCase()};
+    }
+    await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+br+'/deptSales/'+dk+'/'+mo), {amt});
+    perBr[br]=(perBr[br]||0)+1; ok++;
   }
-  alert('✅ '+ok+'건 저장'+(bad.length?('\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
+  const brLine = Object.keys(perBr).map(b=>{ const o=BRANCHES.find(x=>x.id===b); return '  · '+((o&&o.ko)||b)+' '+perBr[b]+'건'; }).join('\n');
+  alert('✅ '+ok+'건 저장'+(brLine?('\n'+brLine):'')+(bad.length?('\n\n⚠ 형식 오류 '+bad.length+'건:\n'+bad.slice(0,5).join('\n')):''));
   openDeptSales();
 };
 
@@ -1292,6 +1306,23 @@ window.dlyRollup = async function(){
 // 엑셀에서 복사하면 탭으로 온다 → 탭으로만 나눠야 "1,234.56" 의 쉼표가 칸으로 쪼개지지 않는다.
 // 쉼표로 쓴 줄에서 "$2,100" 처럼 천 단위 쉼표가 있으면 조각을 다시 붙인다.
 //   (안 붙이면 2 로 저장된다 — 오류 없이 조용히 틀린 매출이 들어가는 게 제일 위험하다)
+// 붙여넣은 첫 칸이 지점 이름이면 그 지점 id 를 돌려준다 (아니면 null)
+//   "마이애미" "MIAMI" "miami" "펨브로크" "Pembroke Pines" "헐리우드" 다 알아본다
+const _BR_ALIAS = {
+  MIAMI:['마이애미','miami','mia'],
+  PEMBROKE_PINES:['펨브로크 파인즈','펨브로크','펨브룩','pembroke pines','pembroke','pp'],
+  HOLLYWOOD:['할리우드','헐리우드','hollywood','hw'],
+  CORAL_SPRINGS:['코럴 스프링스','코랄 스프링스','코럴','코랄','coral springs','coral','cs'],
+  LASOLAS:['라스올라스','라스 올라스','las olas','lasolas','lo'],
+};
+function _brNorm(x){ return String(x||'').toLowerCase().replace(/[\s_\-.]+/g,''); }
+function _brFromText(x){
+  const n = _brNorm(x);
+  if (!n) return null;
+  for (const b of BRANCHES){ if (_brNorm(b.id) === n || _brNorm(b.ko) === n) return b.id; }
+  for (const id in _BR_ALIAS){ if (_BR_ALIAS[id].some(a => _brNorm(a) === n)) return id; }
+  return null;
+}
 function _bulkCells(ln){ return (ln.indexOf('\t')>=0 ? ln.split(/\t+/) : ln.split(/,+/)).map(x=>x.trim()); }
 function _bulkAmt(p, ai){
   let str=String(p[ai]||'');
