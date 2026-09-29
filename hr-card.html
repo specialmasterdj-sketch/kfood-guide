@@ -290,6 +290,7 @@ const I18N = {
  dRowMonthTot:{ko:'월 합계',en:'Month total',es:'Total mes'},
  dRowWeekTot:{ko:'주간 합계',en:'Week total',es:'Total semana'},
  dChartAll:{ko:'전 지점 합계 · 일별 추이',en:'All-branch total · daily trend',es:'Total · tendencia diaria'},
+ dChartBr:{ko:'지점별 일별 추이 (꼭지점 = 그 달 최고 매출일)',en:'Daily trend by store (marker = best day)',es:'Tendencia diaria por tienda (punto = mejor día)'},
  dNoAny:{ko:'이 달 전 지점 기록이 없어요 — 위에서 입력하세요',en:'No records this month — enter above',es:'Sin registros este mes'},
  dRollupAll:{ko:'이 달 일일 합계 → 각 지점 월 총매출(TOTAL) 저장',en:'This month’s daily sums → each branch monthly TOTAL',es:'Sumas diarias → TOTAL mensual de cada sucursal'},
  p_warn:{ko:'⚠ 경고',en:'⚠ Warning',es:'⚠ Advertencia'}, p_rev:{ko:'📸 리뷰',en:'📸 Review',es:'📸 Reseña'}, p_star:{ko:'⭐ 상점',en:'⭐ Merit',es:'⭐ Mérito'},
@@ -999,7 +1000,8 @@ function _cmpChart(dataByBranch){
   return _cmpChartSeries(BRANCHES.map(b => ({ name: _bLbl(b), color: CMP_COLORS[b.id] || '#64748b', data: dataByBranch[b.id] || {} })));
 }
 // series = [{ name:'보일 이름', color:'#…', data:{ '2026-01': 금액, … } }, …]
-function _cmpChartSeries(series){
+function _cmpChartSeries(series, opt){
+  opt = opt || {};
   const ms = new Set();
   series.forEach(sx => Object.keys(sx.data || {}).forEach(mo => ms.add(mo)));
   const months = [...ms].sort();
@@ -1020,9 +1022,13 @@ function _cmpChartSeries(series){
     g += '<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#e5e7eb" stroke-width="1"/>' +
          '<text x="' + (L - 6) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end" font-size="10" fill="#9ca3af">' + money(v) + '</text>';
   }
+  const xLab = opt.xLab || (mo => mo.slice(5));
+  const skip = Math.ceil(months.length / 16);            // 날짜가 많으면 이름표를 솎아낸다
   months.forEach((mo, i) => {
-    g += '<text x="' + px(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#6b7280">' + esc(mo.slice(5)) + '</text>';
+    if (i % skip !== 0 && i !== months.length - 1) return;
+    g += '<text x="' + px(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#6b7280">' + esc(xLab(mo)) + '</text>';
   });
+  const dotR = months.length > 20 ? 2 : 3;               // 점이 빽빽하면 작게
   let lines = '', peaks = '', legend = '';
   series.forEach(sx => {
     const col = sx.color || '#64748b';
@@ -1031,7 +1037,7 @@ function _cmpChartSeries(series){
     if (!pts.length) return;
     lines += '<polyline fill="none" stroke="' + col + '" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" points="' +
              pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '"/>';
-    pts.forEach(p => { lines += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="' + col + '"><title>' +
+    pts.forEach(p => { lines += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="' + dotR + '" fill="' + col + '"><title>' +
       esc(sx.name) + ' ' + esc(p[3]) + ' — ' + money(p[2]) + '</title></circle>'; });
     // 🔝 그 줄의 최고점에만 금액을 적는다 (점마다 다 적으면 복잡해서)
     let pk = pts[0]; pts.forEach(p => { if (p[2] > pk[2]) pk = p; });
@@ -1764,12 +1770,20 @@ function renderDaily(){
   const matFoot = mDesc.length ? `<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
       BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(bMonthTot[x.id])}</b></td>`).join('')+
       `<td style="background:#1a5c3a;color:#fff"><b>$${_cFmt(grandTot)}</b></td></tr>` : '';
-  // 전 지점 합계 일별 차트
+  // 전 지점 합계 일별 차트 — 제일 높은 날만 금액을 적는다
   const gvals=mAsc.map(d=>({d, v:dayTotOf(d)}));
   const gmx=Math.max(1,...gvals.map(r=>r.v));
-  const gChart = gvals.length ? gvals.map(r=>{ const h=Math.round(r.v/gmx*100);
-    return `<div title="${r.d}: $${_cFmt(r.v)}" style="flex:1;min-width:7px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px"><div style="width:72%;max-width:22px;height:${h}%;background:linear-gradient(180deg,#2e8b57,#1a5c3a);border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:.58em;color:#94a3b8">${r.d.slice(8)}</div></div>`;
+  const gpk=Math.max(0,...gvals.map(r=>r.v));
+  const gChart = gvals.length ? gvals.map(r=>{ const h=Math.round(r.v/gmx*100); const pk=(r.v===gpk&&gpk>0);
+    return `<div title="${r.d}: $${_cFmt(r.v)}" style="flex:1;min-width:7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px">`+
+      (pk?`<div style="font-size:.6em;font-weight:900;color:#1a5c3a;white-space:nowrap">$${_cFmt(r.v)}</div>`:'')+
+      `<div style="width:72%;max-width:22px;height:${h}%;background:linear-gradient(180deg,${pk?'#f59e0b,#b45309':'#2e8b57,#1a5c3a'});border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:.58em;color:${pk?'#b45309':'#94a3b8'};font-weight:${pk?'900':'400'}">${r.d.slice(8)}</div></div>`;
   }).join('') : '';
+  // 📈 지점별 일별 꺾은선 — 매출 비교 화면과 같은 그래프를 날짜 축으로 쓴다
+  const dlyLine = mAsc.length>1 ? _cmpChartSeries(BRANCHES.map(x=>{
+    const dd={}; mAsc.forEach(d=>{ const v=_dv(x.id,d); if(v!=null) dd[d]=v; });
+    return { name:bShort(x), color:CMP_COLORS[x.id]||'#64748b', data:dd };
+  }), { xLab:d=>d.slice(8) }) : '';
 
   return `<div style="background:#f6f8f7;border-radius:16px;max-width:840px;width:100%;padding:16px 18px;margin:auto 0">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
@@ -1813,6 +1827,8 @@ function renderDaily(){
       ${matHint}
       <table class="cmp"><tr><th style="text-align:left">${t('dCols')[0]}</th><th style="text-align:center">${t('dCols')[1]}</th>${BRANCHES.map(x=>`<th>${esc(bShort(x))}</th>`).join('')}<th>${t('dColTotal')}</th></tr>${matRows}${matFoot}</table>
     </div>
+
+    ${dlyLine?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartBr')}</div>${dlyLine}`:''}
 
     ${gvals.length?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartAll')}</div>
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 10px 8px;display:flex;align-items:flex-end;gap:3px;height:150px">${gChart}</div>`:''}
