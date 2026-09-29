@@ -725,7 +725,8 @@ window.openDeptSales = async function(){
       <button class="btn" onclick="dsAddSale()">＋ 추가</button>
     </div>
     <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">③ 일괄 붙여넣기 <span style="font-weight:600;color:#94a3b8;font-size:.8em">한 줄에: 부서,YYYY-MM,금액 &nbsp;·&nbsp; 앞에 지점을 붙이면 여러 지점 한꺼번에 → 지점,부서,YYYY-MM,금액</span></div>
-    <div style="font-size:.78em;color:#6b7280;margin:-2px 0 6px">지난 달·지난 해 자료도 그냥 넣으면 됩니다 (월을 2026-01 처럼 적으면 그 달로 들어갑니다). 엑셀에서 복사해 붙여넣어도 됩니다.</div>
+    <div style="font-size:.78em;color:#6b7280;margin:-2px 0 6px">지난 달·지난 해 자료도 그냥 넣으면 됩니다 (월을 2026-01 처럼 적으면 그 달로 들어갑니다). 엑셀에서 복사해 붙여넣어도 됩니다.<br>
+      <b style="color:#1a5c3a">🧾 POS 월간 리포트(SUMMARY-SALE REPORT)를 통째로 붙여넣어도 됩니다</b> — 매장·월·부서 매출을 알아서 읽고, 저장 전에 한 번 보여 줍니다.</div>
     <textarea id="dsBulk" rows="5" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="PRODUCE,2026-01,29659.84
 MEAT,2026-01,14931.83
 마이애미,SUSHI,2026-02,10464
@@ -774,8 +775,91 @@ window.dsDelSale = async function(dk,mo){
   await window.__fb.remove(window.__fb.ref(window.__fb.db,'hr/'+BRANCH+'/deptSales/'+dk+'/'+mo));
   openDeptSales();
 };
+// ===== 🧾 POS 월간 리포트 읽기 (2026-09-29) =====
+// 벨라포스 SUMMARY-SALE REPORT 를 통째로 붙여넣으면 매장·월·부서 매출을 뽑아낸다.
+// 부서 묶음은 전무님 확인 기준(2026-09-29):
+//   PRODUCE  = PRODUCE 그룹 전체
+//   MEAT     = MEAT/SEAFOOD 그룹에서 SEAFOOD 를 뺀 나머지 (정육·마리네이드·소매)
+//   SEAFOOD  = SEAFOOD 항목만
+//   SUSHI    = SUSHI 항목만
+//   K-FOOD   = 반찬 + 즉석식품(READY-TO-EAT) + 김치 + 김밥
+//   TOTAL    = SALES TOTAL (세금 포함)
+// 반품(CATEGORIES-RETURNS)은 빼고 순매출로 넣는다.
+function _posNum(x){ var n = parseFloat(String(x || '').replace(/[\[\]$,\s]/g, '')); return isFinite(n) ? n : null; }
+function _posDept(group, item){
+  var g = String(group || '').toUpperCase(), i = String(item || '').toUpperCase();
+  if (g.indexOf('PRODUCE') === 0) return 'PRODUCE';
+  if (g.indexOf('MEAT') === 0){ return /SEAFOOD/.test(i) ? 'SEAFOOD' : 'MEAT'; }
+  if (g.indexOf('DELI') === 0){
+    if (/SUSHI/.test(i)) return 'SUSHI';
+    if (/BANCHAN|READY|KIMCHI|GIMBAP|UNDEFINED/.test(i)) return 'K-FOOD';
+    return null;
+  }
+  return null;                       // 그 밖의 그룹(그로서리·냉동·음료·생활)은 부서 매출로 안 잡는다
+}
+function parsePosReport(text){
+  var lines = String(text || '').split(/\r?\n/);
+  var out = { branch: null, month: null, depts: {}, total: null, found: false };
+  var sec = '', group = '', sign = 1;
+  for (var li = 0; li < lines.length; li++){
+    var ln = lines[li], t = ln.trim();
+    if (!t) continue;
+    if (/SUMMARY-SALE REPORT/i.test(t)){ out.found = true; continue; }
+    // 기간: "Sun 03/01/2026 ~ Tue 03/31/2026"
+    var md = t.match(/(\d{2})\/(\d{2})\/(\d{4})\s*~/);
+    if (md && !out.month){ out.month = md[3] + '-' + md[1]; continue; }
+    // 매장: "STORE:   KIMCHI MART - CORAL SPRINGS"
+    if (/^STORE\s*:/i.test(t)){
+      var nm = t.split(':')[1] || '';
+      nm = nm.replace(/KIMCHI\s*MART/i, '').replace(/[-–]/g, ' ').trim();
+      out.branch = _brFromText(nm) || _brFromText(nm.split(/\s{2,}/)[0]) || null;
+      if (!out.branch){ for (var bi = 0; bi < BRANCHES.length; bi++){ if (_brNorm(nm).indexOf(_brNorm(BRANCHES[bi].id)) >= 0) { out.branch = BRANCHES[bi].id; break; } } }
+      continue;
+    }
+    if (/^SALES\s+TOTAL/i.test(t)){ var v = _posNum(t.replace(/^SALES\s+TOTAL/i, '')); if (v != null) out.total = v; continue; }
+    if (/^CATEGORIES-SALES/i.test(t)){ sec = 'sales'; sign = 1; group = ''; continue; }
+    if (/^CATEGORIES-RETURNS/i.test(t)){ sec = 'ret'; sign = -1; group = ''; continue; }
+    if (/^-{5,}$/.test(t)){ if (sec) sec = ''; continue; }
+    if (!sec) continue;
+    if (/^\[?TOTAL\]?/i.test(t)) continue;                      // 그룹 소계는 건너뛴다 (항목을 직접 더한다)
+    // 그룹 줄: 들여쓰기 1칸 + 금액 없음
+    var amt = _posNum((t.match(/-?[\d,]+\.\d{2}\s*$/) || [''])[0]);
+    if (amt == null){ group = t.replace(/\s+$/, ''); continue; }
+    var item = t.replace(/\(\d+\)/g, ' ').replace(/-?[\d,]+\.\d{2}\s*$/, '').trim();
+    var dept = _posDept(group, item);
+    if (!dept) continue;
+    out.depts[dept] = (out.depts[dept] || 0) + sign * Math.abs(amt);
+  }
+  return out;
+}
+window.parsePosReport = parsePosReport;
+
 window.dsBulkAdd = async function(){
-  const lines=document.getElementById('dsBulk').value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+  const raw=document.getElementById('dsBulk').value;
+  // 🧾 POS 월간 리포트를 통째로 붙여넣었으면 여기서 읽어 준다
+  if (/SUMMARY-SALE REPORT/i.test(raw) || /CATEGORIES-SALES/i.test(raw)){
+    const r = parsePosReport(raw);
+    const bo = BRANCHES.find(b=>b.id===r.branch);
+    if (!r.month || !r.branch){ alert('POS 리포트는 읽었는데 매장 또는 기간을 못 찾았습니다.\n\n매장: '+(r.branch||'?')+'\n기간: '+(r.month||'?')); return; }
+    const rows=[]; Object.keys(r.depts).forEach(d=>rows.push([d, Math.round(r.depts[d]*100)/100]));
+    if (r.total!=null) rows.push(['TOTAL', r.total]);
+    if (!rows.length){ alert('부서 매출을 못 찾았습니다.'); return; }
+    const preview = rows.map(x=>'  · '+x[0]+'  $'+Number(x[1]).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join('\n');
+    if (!confirm('🧾 POS 리포트를 읽었습니다\n\n'+((bo&&bo.ko)||r.branch)+' · '+r.month+'\n\n'+preview+'\n\n이대로 저장할까요? (반품은 뺀 순매출)')) return;
+    let n=0;
+    for (const [dept, amt] of rows){
+      const dk=dsKey(dept);
+      let map; try { map = await fbGet('hr/'+r.branch+'/deptMap') || {}; } catch(_){ map = {}; }
+      if (!map[dk]) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/deptMap/'+dk), {name:dept.toUpperCase(), staff:''});
+      await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/deptSales/'+dk+'/'+r.month), {amt});
+      n++;
+    }
+    alert('✅ '+((bo&&bo.ko)||r.branch)+' '+r.month+' — '+n+'건 저장');
+    document.getElementById('dsBulk').value='';
+    openDeptSales();
+    return;
+  }
+  const lines=raw.split(/\n+/).map(l=>l.trim()).filter(Boolean);
   if(!lines.length){ alert('붙여넣은 내용이 없어요'); return; }
   let ok=0, bad=[]; const perBr={};
   const otherMaps={};      // 다른 지점 deptMap 은 필요할 때만 읽어 온다
