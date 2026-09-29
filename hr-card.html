@@ -290,6 +290,7 @@ const I18N = {
  dRowMonthTot:{ko:'월 합계',en:'Month total',es:'Total mes'},
  dRowWeekTot:{ko:'주간 합계',en:'Week total',es:'Total semana'},
  dChartAll:{ko:'전 지점 합계 · 일별 추이',en:'All-branch total · daily trend',es:'Total · tendencia diaria'},
+ ddChartAll:{ko:'부서별 일별 추이 — 전 지점 합계',en:'Daily trend by department — all branches',es:'Tendencia diaria por departamento — todas'},
  dChartBr:{ko:'지점별 일별 추이 (꼭지점 = 그 달 최고 매출일)',en:'Daily trend by store (marker = best day)',es:'Tendencia diaria por tienda (punto = mejor día)'},
  dNoAny:{ko:'이 달 전 지점 기록이 없어요 — 위에서 입력하세요',en:'No records this month — enter above',es:'Sin registros este mes'},
  dRollupAll:{ko:'이 달 일일 합계 → 각 지점 월 총매출(TOTAL) 저장',en:'This month’s daily sums → each branch monthly TOTAL',es:'Sumas diarias → TOTAL mensual de cada sucursal'},
@@ -1029,7 +1030,7 @@ function _cmpChartSeries(series, opt){
     g += '<text x="' + px(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#6b7280">' + esc(xLab(mo)) + '</text>';
   });
   const dotR = months.length > 20 ? 2 : 3;               // 점이 빽빽하면 작게
-  let lines = '', peaks = '', legend = '';
+  let lines = '', peaks = '', legend = '', peakList = [];
   series.forEach(sx => {
     const col = sx.color || '#64748b';
     const pts = [];
@@ -1039,17 +1040,46 @@ function _cmpChartSeries(series, opt){
              pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '"/>';
     pts.forEach(p => { lines += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="' + dotR + '" fill="' + col + '"><title>' +
       esc(sx.name) + ' ' + esc(p[3]) + ' — ' + money(p[2]) + '</title></circle>'; });
-    // 🔝 그 줄의 최고점에만 금액을 적는다 (점마다 다 적으면 복잡해서)
+    // 🔝 그 줄의 최고점에만 금액을 적는다 (점마다 다 적으면 복잡해서) — 자리는 아래에서 한꺼번에 정한다
     let pk = pts[0]; pts.forEach(p => { if (p[2] > pk[2]) pk = p; });
-    const ly = (pk[1] > T + 12) ? pk[1] - 9 : pk[1] + 16;        // 위가 좁으면 아래에
-    let lx = pk[0], anc = 'middle';
-    if (lx < L + 34){ lx = L + 2; anc = 'start'; }               // 왼쪽 끝이면 안쪽으로
-    else if (lx > W - R - 34){ lx = W - R - 2; anc = 'end'; }    // 오른쪽 끝도 마찬가지
-    peaks += '<circle cx="' + pk[0].toFixed(1) + '" cy="' + pk[1].toFixed(1) + '" r="4.6" fill="#fff" stroke="' + col + '" stroke-width="2.6"/>' +
-             '<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" text-anchor="' + anc + '" font-size="11.5" font-weight="800" fill="' + col +
-             '" stroke="#fff" stroke-width="3.5" style="paint-order:stroke">' + money(pk[2]) + '</text>';
+    peaks += '<circle cx="' + pk[0].toFixed(1) + '" cy="' + pk[1].toFixed(1) + '" r="4.6" fill="#fff" stroke="' + col + '" stroke-width="2.6"/>';
+    peakList.push({ x: pk[0], y: pk[1], v: pk[2], col: col });
     legend += '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:.78em;font-weight:700;color:#374151">' +
               '<span style="width:14px;height:3px;background:' + col + ';border-radius:2px;display:inline-block"></span>' + esc(sx.name) + '</span>';
+  });
+  // 🔝 금액표 자리 잡기 — 겹치면 옆(또는 아래)으로 밀고, 어느 점인지 화살표로 이어 준다
+  const placed = [];
+  const free = (x, y, w) => !placed.some(r => Math.abs(r.y - y) < 13 && Math.abs(r.x - x) < (r.w + w) / 2 + 7);
+  peakList.sort((a, b) => a.y - b.y).forEach(pkx => {
+    const txt = money(pkx.v), w = txt.length * 6.7 + 4;
+    const clamp = x => Math.min(Math.max(x, L + w / 2 + 1), W - R - w / 2 - 1);
+    const cand = [];
+    [-10, 17, -24, 31, -38].forEach(dy => [0, 1, -1, 1.9, -1.9, 2.9, -2.9].forEach(k => cand.push([clamp(pkx.x + k * (w / 2 + 11)), pkx.y + dy])));
+    let sel = null;
+    for (let ci = 0; ci < cand.length; ci++){
+      const c = cand[ci];
+      if (c[1] < T - 4 || c[1] > H - B - 2) continue;
+      if (free(c[0], c[1], w)){ sel = c; break; }
+    }
+    if (!sel){                                              // 그래도 자리가 없으면 빈 줄이 나올 때까지 위로 올린다
+      let yy = Math.max(T - 4, pkx.y - 10);
+      for (let k = 0; k < 8 && !free(clamp(pkx.x), yy, w); k++) yy = (yy - 13 < T - 4) ? yy + 13 : yy - 13;
+      sel = [clamp(pkx.x), yy];
+    }
+    placed.push({ x: sel[0], y: sel[1], w: w });
+    if (Math.abs(sel[0] - pkx.x) > 7){                       // 옆으로 밀렸으면 화살표로 잇는다
+      const ax = sel[0] + (pkx.x > sel[0] ? w / 2 + 2 : -(w / 2 + 2)), ay = sel[1] - 3.5;
+      let dx = pkx.x - ax, dy = pkx.y - ay; const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      const ex = pkx.x - ux * 7.5, ey = pkx.y - uy * 7.5;    // 꼭지점 조금 앞에서 멈춘다
+      const bx = ex - ux * 5.5, by = ey - uy * 5.5, nx = -uy, ny = ux;
+      peaks += '<line x1="' + ax.toFixed(1) + '" y1="' + ay.toFixed(1) + '" x2="' + bx.toFixed(1) + '" y2="' + by.toFixed(1) +
+               '" stroke="' + pkx.col + '" stroke-width="1.1" opacity=".75"/>' +
+               '<polygon points="' + ex.toFixed(1) + ',' + ey.toFixed(1) + ' ' + (bx + nx * 2.7).toFixed(1) + ',' + (by + ny * 2.7).toFixed(1) +
+               ' ' + (bx - nx * 2.7).toFixed(1) + ',' + (by - ny * 2.7).toFixed(1) + '" fill="' + pkx.col + '" opacity=".85"/>';
+    }
+    peaks += '<text x="' + sel[0].toFixed(1) + '" y="' + sel[1].toFixed(1) + '" text-anchor="middle" font-size="11.5" font-weight="800" fill="' + pkx.col +
+             '" stroke="#fff" stroke-width="3.5" style="paint-order:stroke">' + txt + '</text>';
   });
   return '<div class="cmp-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">' +
          g + lines + peaks + '</svg><div style="margin-top:4px">' + legend + '</div></div>';
@@ -1633,11 +1663,21 @@ function _renderDailyDepts(mo){
        '<td style="background:#1a5c3a;color:#fff"><b>$'+_cFmt(grand)+'</b></td></tr></table>';
   // 부서마다 총매출 표와 똑같은 모양 — 날짜 × 지점 + 합계, 맨 아래 월 합계.
   // 2026-09-18 전무님: "총매출처럼 날짜별 지점별 한눈에" — 접어 두지 않고 다 펼친다.
-  const detail=depts.map(dk=>
-    `<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📦 ${esc(dk.replace(/_/g,'-'))} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('ddDaily')}</span></div>
-    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${_ddMatrix(data[dk], mo, false)}</div>`).join('');
+  // 📈 부서별 일별 그래프 — 전 지점 합계를 부서마다 한 줄씩
+  const ddAll = _cmpChartSeries(depts.map(dk=>{
+    const dd={}; BRANCHES.forEach(x=>Object.entries((data[dk]||{})[x.id]||{}).forEach(([d,v])=>{ dd[d]=(dd[d]||0)+v; }));
+    return { name:dk.replace(/_/g,'-'), color:CHAIN_C[dk.toUpperCase()]||'#64748b', data:dd };
+  }), { xLab:d=>d.slice(8) });
+  const ddAllBox = ddAll ? `<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('ddChartAll')}</div>${ddAll}` : '';
+  const detail=depts.map(dk=>{
+    // 부서마다 지점별 꺾은선 — 꼭지점은 그 부서에서 그 매장이 제일 잘 판 날
+    const ch=_cmpChartSeries(BRANCHES.map(x=>({ name:_ddBLbl(x), color:CMP_COLORS[x.id]||'#64748b', data:(data[dk]||{})[x.id]||{} })), { xLab:d=>d.slice(8) });
+    return `<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📦 ${esc(dk.replace(/_/g,'-'))} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('ddDaily')}</span></div>
+    ${ch}
+    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto;margin-top:${ch?'6px':'0'}">${_ddMatrix(data[dk], mo, false)}</div>`;
+  }).join('');
   return head+
-    `<div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${sum}</div>${detail}
+    `<div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${sum}</div>${ddAllBox}${detail}
     <div style="margin-top:10px"><button class="btn" style="width:100%" onclick="dlyRollupDepts()">💾 ${t('ddRollup')}</button>
     <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`;
 }
