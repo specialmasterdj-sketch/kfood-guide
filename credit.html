@@ -190,6 +190,8 @@ const L = {
   scanFail:{ko:'카메라를 열 수 없습니다 — 직접 입력해 주세요',en:'Camera unavailable — type it in',es:'Sin cámara — escriba'},
   notFound:{ko:'등록되지 않은 바코드입니다 — 이름·벤더를 적어주세요',en:'Barcode not in POS — type name and vendor',es:'Código no encontrado'},
   found:{ko:'찾았습니다',en:'Found',es:'Encontrado'},
+  scanReady:{ko:'카메라 준비 중…',en:'Getting the camera ready…',es:'Preparando la cámara…'},
+  scanHint:{ko:'상품 바코드를 화면 안에 맞춰 주세요',en:'Line the barcode up inside the frame',es:'Alinee el código dentro del marco'},
 };
 let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; } })();
 if (['ko','en','es'].indexOf(LANG) < 0) LANG = 'ko';
@@ -283,14 +285,41 @@ document.getElementById('btnManual').onclick = () => {
 };
 document.getElementById('btnScan').onclick = () => startScan();
 document.getElementById('scanClose').onclick = () => stopScan();
-let scanStream = null, scanStop = false;
+let scanStream = null, scanStop = false, zxingReady = null;
+
+/* 아이폰(Safari)은 BarcodeDetector 가 없어 ZXing 으로 읽는다.
+   버튼을 누른 뒤에 받아오면 매장 와이파이에서 첫 스캔이 멈춘 것처럼 보이므로,
+   화면이 열릴 때 미리 받아 둔다. 안드로이드는 받을 필요가 없다. */
+function loadZXing(){
+  if (window.ZXing) return Promise.resolve(true);
+  if (zxingReady) return zxingReady;
+  zxingReady = new Promise(res=>{
+    const s=document.createElement('script');
+    s.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload=()=>res(true); s.onerror=()=>res(false);
+    document.head.appendChild(s);
+  });
+  return zxingReady;
+}
+if (!('BarcodeDetector' in window)) loadZXing();
+
 async function startScan(){
   const box = document.getElementById('scanBox'), vid = document.getElementById('scanVideo');
   box.style.display = 'flex'; scanStop = false;
+  document.getElementById('scanHint').textContent = t('scanHint');
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+    // 해상도를 안 정해주면 아이폰이 640x480 으로 준다 — 바코드 줄이 뭉개져서 잘 안 읽힌다.
+    // 높은 해상도를 달라고 해야 후면 메인 카메라로 또렷하게 들어온다(안 되면 알아서 낮춰 준다).
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ ideal:'environment' }, width:{ ideal:1920 }, height:{ ideal:1080 } }
+    });
     vid.srcObject = scanStream; await vid.play();
-  } catch(e){ stopScan(); toast(t('scanFail')); document.getElementById('prodBox').style.display=''; return; }
+  } catch(e){
+    try {   // 해상도를 못 맞추는 기기면 조건 없이 한 번 더
+      scanStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+      vid.srcObject = scanStream; await vid.play();
+    } catch(e2){ stopScan(); toast(t('scanFail')); document.getElementById('prodBox').style.display=''; return; }
+  }
   // 브라우저 기본 인식기(안드로이드 크롬)가 있으면 그걸 쓰고, 없으면 ZXing 을 불러온다 (아이폰)
   if ('BarcodeDetector' in window){
     const det = new window.BarcodeDetector({ formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39'] });
@@ -301,11 +330,19 @@ async function startScan(){
     };
     tick();
   } else {
-    if (!window.ZXing){
-      await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); }).catch(()=>{});
-    }
+    document.getElementById('scanHint').textContent = '📷 ' + t('scanReady');
+    await loadZXing();
+    if (scanStop) return;
     if (window.ZXing){
-      const reader = new window.ZXing.BrowserMultiFormatReader();
+      // 매장 바코드 6가지만 찾게 좁혀 준다 — 전부 뒤지면 아이폰에서 느려서 못 잡는다.
+      const Z = window.ZXing, hints = new Map();
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [
+        Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8,
+        Z.BarcodeFormat.UPC_A,  Z.BarcodeFormat.UPC_E,
+        Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39 ]);
+      hints.set(Z.DecodeHintType.TRY_HARDER, true);   // 비뚤게 잡아도 읽히도록
+      const reader = new Z.BrowserMultiFormatReader(hints, 120);
+      document.getElementById('scanHint').textContent = t('scanHint');
       reader.decodeFromVideoElement(vid, (result) => {
         if (result && !scanStop){ const v = result.getText(); try { reader.reset(); } catch(e){} stopScan(); fillFrom(v); }
       });

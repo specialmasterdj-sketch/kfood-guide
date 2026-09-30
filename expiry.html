@@ -1834,7 +1834,14 @@ async function scanBarcode(){
 
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    // 해상도를 안 정해주면 아이폰이 640x480 으로 준다 — 바코드 줄이 뭉개져 잘 안 읽힌다.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode:{ ideal:'environment' }, width:{ ideal:1920 }, height:{ ideal:1080 } }
+      });
+    } catch(e0){   // 해상도를 못 맞추는 기기면 조건 없이 한 번 더
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    }
     video.srcObject = stream;
     await video.play();
   } catch (e) {
@@ -1897,7 +1904,16 @@ async function scanBarcode(){
         document.head.appendChild(s);
       });
     }
-    const reader = new window.ZXing.BrowserMultiFormatReader();
+    // 찾을 코드를 좁혀 준다 — 전부 뒤지면 아이폰에서 느려 잘 못 잡는다.
+    // 매대 QR 도 읽어야 하므로 QR_CODE 는 반드시 넣는다.
+    const Z = window.ZXing, hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [
+      Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8,
+      Z.BarcodeFormat.UPC_A,  Z.BarcodeFormat.UPC_E,
+      Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39,
+      Z.BarcodeFormat.QR_CODE ]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);   // 비뚤게 잡아도 읽히도록
+    const reader = new Z.BrowserMultiFormatReader(hints, 120);
     statusEl.textContent = '📡 인식 중… (ZXing)';
     __bcReader = reader;
     reader.decodeFromVideoElementContinuously(video, (result) => {
