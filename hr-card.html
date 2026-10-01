@@ -278,6 +278,7 @@ const I18N = {
  dBulkBtn:{ko:'📥 일괄 추가',en:'📥 Bulk add',es:'📥 Agregar lote'},
  dRollup:{ko:'이 달 일일 합계를 월 총매출(TOTAL)로 저장',en:'Save this month’s daily sum as monthly TOTAL',es:'Guardar suma diaria como TOTAL mensual'},
  dRollupHint:{ko:'→ 전 지점 매출 비교·평가에 자동 반영',en:'→ flows into comparison & evaluations',es:'→ se refleja en comparación y evaluaciones'},
+ grocStaff:{ko:(n)=>'🧑‍🤝‍🧑 그로서리 담당 명단을 스케줄표에서 가져왔습니다 ('+n+'개 매장)',en:(n)=>'🧑‍🤝‍🧑 Grocery staff list pulled from the schedule ('+n+' stores)',es:(n)=>'🧑‍🤝‍🧑 Lista de Abarrotes tomada del horario ('+n+' tiendas)'},
  grocFilled:{ko:(n)=>'🛒 그로서리 파트 '+n+'건 자동 계산 — 총매출에서 다섯 부서를 뺀 금액입니다',en:(n)=>'🛒 Grocery part filled for '+n+' months (total minus the five departments)',es:(n)=>'🛒 Parte Abarrotes calculada para '+n+' meses (total menos los cinco departamentos)'},
  dAutoRoll:{ko:(n,m)=>'📊 '+m+' 월 매출에 '+n+'건 자동 반영 — 전 지점 비교에서 바로 보입니다',en:(n,m)=>'📊 '+n+' values for '+m+' added to monthly sales automatically',es:(n,m)=>'📊 '+n+' valores de '+m+' agregados automáticamente'},
  dAutoNote:{ko:'달이 끝나면 그 달 일일 기록이 월 매출에 자동으로 올라갑니다 — 전 지점 비교에 바로 보입니다. (이미 들어 있는 값은 덮지 않고, 날짜가 많이 빠진 달은 건너뜁니다. 이번 달은 끝난 뒤에 올라갑니다.) 지금 바로 올리거나 덮어쓰려면 아래 버튼을 쓰세요.',en:'When a month ends, its daily records roll up into monthly sales automatically. Existing values are never overwritten, months with many missing days are skipped, and the current month waits until it is over. Use the buttons below to do it now or to overwrite.',es:'Al terminar el mes, sus registros diarios pasan automáticamente a las ventas mensuales. Nunca se sobrescriben valores existentes, se omiten los meses con muchos días faltantes y el mes actual espera a terminar. Usa los botones de abajo para hacerlo ahora o sobrescribir.'},
@@ -968,6 +969,51 @@ async function grocFill(all){
   if (put){ DEPT_MAP = null; DEPT_SALES = null; }
   return put;
 }
+// 🧑‍🤝‍🧑 스케줄표 역할 → 파트 (2026-10-01 전무님: "5개 부서에서 일하는 사람 빼면 나머지는 그로서리 직원")
+//   스케줄표에는 사람마다 역할이 적혀 있다 (VEGETABLE · SUSHI KING · CASHIER/STOCKER …).
+//   다섯 부서에 해당하는 역할만 그 부서로 보내고, 관리직을 뺀 나머지는 모두 그로서리로 본다.
+//   매장마다 역할 이름 표기가 달라(MEAT DEPT · SEAFOOD DPTM …) 표를 넉넉히 둔다.
+const ROLE_PART = {
+  'VEGETABLE':'PRODUCE', 'PRODUCE':'PRODUCE', 'PRODUCE DEPT':'PRODUCE',
+  'MEAT DEPT':'MEAT', 'MEAT':'MEAT', 'MEAT & SEAFOOD':'MEAT', 'MEAT/SEAFOOD':'MEAT',
+  'SEAFOOD DPTM':'SEAFOOD', 'SEAFOOD':'SEAFOOD', 'SEAFOOD DEPT':'SEAFOOD',
+  'SUSHI/KITCHEN':'SUSHI', 'SUSHI KING':'SUSHI', 'SUSHI':'SUSHI', 'KITCHEN':'SUSHI',
+  'K-SIDES':'K_FOOD', 'K SIDES':'K_FOOD', 'YUMSEM':'K_FOOD', 'BANCHAN':'K_FOOD', 'DELI':'K_FOOD', 'GIMBAP':'K_FOOD',
+};
+const ROLE_MGR = ['MANAGER','ASSISTANT MANAGER','ASSISTANT_MANAGER','SUPERVISOR','SENIOR SUPERVISOR','VICE SUPERVISOR','HR MANAGER','OWNER','EXECUTIVE'];
+function _rolePart(role){
+  const r = String(role || '').toUpperCase().trim();
+  if (ROLE_PART[r]) return ROLE_PART[r];
+  if (ROLE_MGR.indexOf(r) >= 0) return 'MGR';
+  return GROC_KEY;                      // 다섯 부서도 관리직도 아니면 그로서리
+}
+async function partRoster(branch){
+  let arr = [];
+  try { const e = await fbGet('schedules/' + branch + '/employees'); arr = Array.isArray(e) ? e : Object.values(e || {}); } catch(_){}
+  const by = {};
+  arr.filter(x => x && x.name).forEach(x => { const p = _rolePart(x.role); (by[p] = by[p] || []).push(String(x.name).trim()); });
+  return by;
+}
+window.partRoster = partRoster;
+// 그로서리 담당 명단을 스케줄표에서 채운다 — 이미 적어 두신 명단이 있으면 건드리지 않는다
+async function grocStaffFill(){
+  let n = 0;
+  for (const b of BRANCHES){
+    try {
+      const cur = await fbGet('hr/' + b.id + '/deptMap/' + GROC_KEY);
+      if (cur && String(cur.staff || '').trim()) continue;
+      const by = await partRoster(b.id);
+      const list = by[GROC_KEY] || [];
+      if (!list.length) continue;
+      await window.__fb.set(window.__fb.ref(window.__fb.db, 'hr/' + b.id + '/deptMap/' + GROC_KEY), { name:'GROCERY', staff: list.join(', ') });
+      n++;
+    } catch(_){}
+  }
+  if (n){ DEPT_MAP = null; DEPT_SALES = null; }
+  return n;
+}
+window.grocStaffFill = grocStaffFill;
+
 async function grocFillAll(){
   const all = {};
   for (const b of BRANCHES){ try { all[b.id] = await fbGet('hr/' + b.id + '/deptSales') || {}; } catch(_){ all[b.id] = {}; } }
@@ -984,10 +1030,13 @@ window.openSalesCompare = async function(){
   m.style.display='flex';
   const all={};
   await Promise.all(BRANCHES.map(async b=>{ try{ all[b.id]=await fbGet('hr/'+b.id+'/deptSales')||{}; }catch(_){ all[b.id]={}; } }));
-  let _gn = 0; try { _gn = await grocFill(all); } catch(_){}    // 🛒 그로서리 파트 채우기
+  let _gn = 0, _gs = 0;
+  try { _gn = await grocFill(all); } catch(_){}                 // 🛒 그로서리 매출 채우기
+  try { _gs = await grocStaffFill(); } catch(_){}               // 🧑‍🤝‍🧑 그로서리 담당 명단 채우기
   window.__cmpData=all;
   m.innerHTML=renderSalesCompare(all);
   if (_gn) toast(t('grocFilled')(_gn));
+  if (_gs) setTimeout(function(){ toast(t('grocStaff')(_gs)); }, 1200);
 };
 window.scmpClose=function(){ const m=document.getElementById('scmpOv'); if(m) m.remove(); };
 window.printSalesCompare=function(){
@@ -1871,7 +1920,7 @@ async function dlyAutoRollup(mo){
     } catch(_){}
   }
   if (put){ DEPT_MAP = null; DEPT_SALES = null; }       // 캐시 비움 → 비교·평가가 새 값으로
-  if (put){ try { await grocFillAll(); } catch(_){} }   // 🛒 총매출·부서가 들어왔으면 그로서리도 바로 세운다
+  if (put){ try { await grocFillAll(); await grocStaffFill(); } catch(_){} }   // 🛒 총매출·부서가 들어왔으면 그로서리도 바로 세운다
   return { put, kept, partial, mo };
 }
 window.dlyAutoRollup = dlyAutoRollup;
