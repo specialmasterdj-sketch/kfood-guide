@@ -278,6 +278,9 @@ const I18N = {
  dBulkBtn:{ko:'📥 일괄 추가',en:'📥 Bulk add',es:'📥 Agregar lote'},
  dRollup:{ko:'이 달 일일 합계를 월 총매출(TOTAL)로 저장',en:'Save this month’s daily sum as monthly TOTAL',es:'Guardar suma diaria como TOTAL mensual'},
  dRollupHint:{ko:'→ 전 지점 매출 비교·평가에 자동 반영',en:'→ flows into comparison & evaluations',es:'→ se refleja en comparación y evaluaciones'},
+ dAutoRoll:{ko:(n,m)=>'📊 '+m+' 월 매출에 '+n+'건 자동 반영 — 전 지점 비교에서 바로 보입니다',en:(n,m)=>'📊 '+n+' values for '+m+' added to monthly sales automatically',es:(n,m)=>'📊 '+n+' valores de '+m+' agregados automáticamente'},
+ dAutoNote:{ko:'달이 끝나면 그 달 일일 기록이 월 매출에 자동으로 올라갑니다 — 전 지점 비교에 바로 보입니다. (이미 들어 있는 값은 덮지 않고, 날짜가 많이 빠진 달은 건너뜁니다. 이번 달은 끝난 뒤에 올라갑니다.) 지금 바로 올리거나 덮어쓰려면 아래 버튼을 쓰세요.',en:'When a month ends, its daily records roll up into monthly sales automatically. Existing values are never overwritten, months with many missing days are skipped, and the current month waits until it is over. Use the buttons below to do it now or to overwrite.',es:'Al terminar el mes, sus registros diarios pasan automáticamente a las ventas mensuales. Nunca se sobrescriben valores existentes, se omiten los meses con muchos días faltantes y el mes actual espera a terminar. Usa los botones de abajo para hacerlo ahora o sobrescribir.'},
+ dBackMonth:{ko:(m)=>'📅 이 달은 아직 기록이 없어 '+m+' 을(를) 보여 드립니다',en:(m)=>'📅 No records yet this month — showing '+m,es:(m)=>'📅 Sin registros este mes — mostrando '+m},
  dRollupDone:{ko:m=>'✅ '+m+' 총매출로 저장됨 — 전 지점 비교에 반영',en:m=>'✅ Saved as '+m+' TOTAL — shown in comparison',es:m=>'✅ Guardado como TOTAL de '+m},
  dAllTitle:{ko:'⑤ 전 지점 최근일 매출',en:'⑤ Latest-day sales by branch',es:'⑤ Ventas del último día por sucursal'},
  dAllNone:{ko:'전 지점 일일 기록이 아직 없어요',en:'No daily records across branches yet',es:'Aún no hay registros diarios'},
@@ -1152,7 +1155,7 @@ function renderSalesCompare(all){
 }
 
 // ================= 📅 일일 매출 =================
-let DAILY=null, DAILY_ALL=null, DAILY_MONTH=null, DAILY_ALLDATE=null;
+let DAILY=null, DAILY_ALL=null, DAILY_MONTH=null, DAILY_ALLDATE=null, DLY_BACK_NOTE=null;
 function _localDate(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function _matchBranch(tok){
   const s=String(tok||'').toUpperCase().replace(/[\s_]+/g,'');
@@ -1171,7 +1174,15 @@ window.openDailySales = async function(){
   try{ DAILY = await fbGet('hr/'+BRANCH+'/dailySales') || {}; }catch(_){ DAILY={}; }
   DAILY_ALL={};
   await Promise.all(BRANCHES.map(async b=>{ try{ DAILY_ALL[b.id]=await fbGet('hr/'+b.id+'/dailySales')||{}; }catch(_){ DAILY_ALL[b.id]={}; } }));
+  // 📅 달이 막 바뀐 날(1일)에 열면 빈 표만 보이던 문제 — 이 달 기록이 없으면 기록이 있는 달로
+  const _nowMo = _localDate().slice(0,7);
+  if (DAILY_MONTH === _nowMo && !_dlyMonthHas(DAILY_MONTH)){
+    const last = _dlyLastMonth();
+    if (last && last !== DAILY_MONTH){ DAILY_MONTH = last; DLY_BACK_NOTE = last; }
+  }
   m.innerHTML=renderDaily();
+  // 📊 이 달 값이 월 매출에 아직 없으면 자동으로 올린다
+  dlyAutoRollup(DAILY_MONTH).then(r=>{ if (r && r.put) toast(t('dAutoRoll')(r.put, r.mo)); }).catch(function(){});
 };
 window.dlyClose=function(){ const m=document.getElementById('dlyOv'); if(m) m.remove(); };
 async function dlyReload(){
@@ -1202,7 +1213,10 @@ function _dailyPctMap(){
   return pm;
 }
 function _wkLbl(dstr){ const p=dstr.split('-'); const d=new Date(+p[0],+p[1]-1,+p[2]); return t('dWk')[d.getDay()]; }
-window.dlyMonthChange=function(v){ DAILY_MONTH=v||_localDate().slice(0,7); const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily(); };
+window.dlyMonthChange=function(v){ DAILY_MONTH=v||_localDate().slice(0,7); DLY_BACK_NOTE=null;
+  const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily();
+  dlyAutoRollup(DAILY_MONTH).then(r=>{ if (r && r.put) toast(t('dAutoRoll')(r.put, r.mo)); }).catch(function(){});
+};
 window.dlyAdd = async function(){
   const dt=document.getElementById('dlyDate').value;
   const amt=parseFloat(String(document.getElementById('dlyAmt').value).replace(/[^0-9.]/g,''));
@@ -1748,6 +1762,63 @@ function _ddPrintTable(mo){
   return h+'<tfoot><tr><td>'+t('ddDeptSum')+'</td>'+BRANCHES.map(x=>'<td class="r">$'+_cFmt(bTot[x.id])+'</td>').join('')+'<td class="r">$'+_cFmt(grand)+'</td></tr></tfoot></table>'+
     depts.map(dk=>'<h1 style="margin-top:16px;font-size:15px">📦 '+esc(dk.replace(/_/g,'-'))+'</h1>'+_ddMatrix(data[dk], mo, true)).join('');
 }
+// ===== 📊 일일 → 월 매출 자동 반영 (2026-10-01 전무님) =====
+// "지난달 일일 기록 다 끝났는데 전 지점 비교에 안 보인다 — 따로 입력해야 하나?"
+//   → 그동안은 💾 버튼을 매달 손으로 눌러야 했다. 이제 일일 매출 화면을 열면
+//     그 달 값이 월 매출에 아직 없을 때만 조용히 채운다.
+// ⚠ 이미 들어 있는 값은 절대 덮지 않는다 — POS 요약 보고서로 넣은 값(세금 포함)이
+//   일일 합계보다 정확하다. 덮어쓰려면 아래 💾 버튼을 쓴다.
+const DLY_AUTO_DONE = {};
+function _dlyMonthHas(mo){
+  return BRANCHES.some(x => _dailyDates((DAILY_ALL||{})[x.id]||{}).some(d => d.slice(0,7) === mo));
+}
+function _dlyLastMonth(){
+  const ms = new Set();
+  BRANCHES.forEach(x => _dailyDates((DAILY_ALL||{})[x.id]||{}).forEach(d => ms.add(d.slice(0,7))));
+  return [...ms].sort().pop() || null;
+}
+async function dlyAutoRollup(mo){
+  if (!mo || DLY_AUTO_DONE[mo] || !DAILY_ALL) return null;
+  // 🛡 ① 아직 안 끝난 달은 손대지 않는다. 반 달치가 월매출로 올라가면 비교표가 뚝 떨어져 보이고,
+  //      한 번 들어간 값은 다시 덮지 않으므로 그 달이 영영 적게 남는다.
+  if (mo >= _localDate().slice(0,7)) return null;
+  DLY_AUTO_DONE[mo] = true;
+  // 🛡 ② 날짜가 거의 다 찬 것만 올린다 (사흘까지는 빠져도 인정). 며칠치만 적힌 부서는 건너뛴다.
+  const dim = new Date(Number(mo.slice(0,4)), Number(mo.slice(5,7)), 0).getDate();
+  const need = Math.max(1, dim - 3);
+  const jobs = []; let partial = 0;
+  BRANCHES.forEach(x => {
+    const days = _dailyDates((DAILY_ALL[x.id]||{})).filter(d => d.slice(0,7) === mo);
+    const tot = days.reduce((a,d) => a + (_cAmt((DAILY_ALL[x.id]||{})[d]) || 0), 0);
+    if (!(tot > 0)) return;
+    if (days.length < need){ partial++; return; }
+    jobs.push({ bid:x.id, key:'TOTAL', amt:Math.round(tot*100)/100 });
+  });
+  const dd = _dailyDeptData(mo);
+  Object.keys(dd).forEach(dk => BRANCHES.forEach(x => {
+    const m = (dd[dk]||{})[x.id]; if (!m) return;
+    const v = _ddSum(m); if (!(v > 0)) return;
+    if (Object.keys(m).length < need){ partial++; return; }
+    jobs.push({ bid:x.id, key:dk, amt:Math.round(v*100)/100 });
+  }));
+  if (!jobs.length) return partial ? { put:0, kept:0, partial, mo } : null;
+  let put = 0, kept = 0;
+  for (const j of jobs){
+    let cur = null;
+    try { cur = await fbGet('hr/'+j.bid+'/deptSales/'+j.key+'/'+mo); } catch(_){ continue; }
+    if (_cAmt(cur) != null){ kept++; continue; }        // 이미 있으면 손대지 않는다
+    try {
+      const dm = await fbGet('hr/'+j.bid+'/deptMap/'+j.key);
+      if (!dm) await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+j.bid+'/deptMap/'+j.key), {name:j.key, staff:''});
+      await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+j.bid+'/deptSales/'+j.key+'/'+mo), {amt:j.amt});
+      put++;
+    } catch(_){}
+  }
+  if (put){ DEPT_MAP = null; DEPT_SALES = null; }       // 캐시 비움 → 비교·평가가 새 값으로
+  return { put, kept, partial, mo };
+}
+window.dlyAutoRollup = dlyAutoRollup;
+
 window.dlyRollupAll = async function(){
   const mo=DAILY_MONTH;
   const per={}; BRANCHES.forEach(x=>{ per[x.id]=_dailyDates(DAILY_ALL[x.id]).filter(k=>k.slice(0,7)===mo).reduce((s,k)=>s+(_cAmt(DAILY_ALL[x.id][k])||0),0); });
@@ -1861,6 +1932,8 @@ function renderDaily(){
       <span style="flex:1"></span>
       <span style="font-weight:800;color:#1a5c3a;font-size:.9em">${t('dRowMonthTot')}: $${_cFmt(grandTot)}</span>
     </div>
+    ${DLY_BACK_NOTE?`<div style="background:#fff7ed;border:1.5px solid #fdba74;color:#9a3412;border-radius:10px;padding:8px 11px;font-size:.82em;font-weight:700;margin-bottom:8px">${t('dBackMonth')(DLY_BACK_NOTE)}</div>`:''}
+    <div style="font-size:.74em;color:#64748b;margin:-2px 0 8px;line-height:1.45">📊 ${t('dAutoNote')}</div>
 
     <div style="font-weight:900;color:#1a5c3a;margin:2px 0 6px">🏬 ${t('dMatrix')}</div>
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">
