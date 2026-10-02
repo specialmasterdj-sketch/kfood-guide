@@ -339,9 +339,16 @@ $('btnSend').onclick=async function(){
       const f=FILES[i];
       const ext=(f.name.match(/\.[a-z0-9]+$/i)||[f.isImg?'.jpg':''])[0]||'';
       const path='invoices/'+BRANCH+'/'+ts+'_'+i+ext;
+      /* 받을 때 바로 다운로드되도록 attachment 로 올린다.
+         이걸 안 하면 링크를 눌러도 브라우저가 화면에 띄우기만 하고,
+         파일로 가져오려면 다른 도메인이라 막힌다 (2026-10-02 전무님 테스트). */
+      const safe=('INV_'+vendor+'_'+($('dt').value||today())+'_'+(i+1)+ext)
+                 .replace(/[^A-Za-z0-9._-]+/g,'_');
       try{
         const r=window.__fb.sRef(window.__fb.st,path);
-        const snap=await window.__fb.uploadBytes(r,f.blob,{contentType:f.type||'application/octet-stream'});
+        const snap=await window.__fb.uploadBytes(r,f.blob,{
+          contentType:f.type||'application/octet-stream',
+          contentDisposition:'attachment; filename="'+safe+'"'});
         out.push({n:f.name,u:await window.__fb.getDownloadURL(snap.ref)});
       }catch(e){ console.warn('[inv] upload',e); throw new Error(t('failUp')); }
     }
@@ -416,7 +423,7 @@ function setF(k){ FILTER=k; render(); }
    Storage 링크를 그냥 열면 브라우저가 화면에 띄워버려서 "저장" 이 한 번 더 필요하다.
    파일을 통째로 받아와 blob 으로 저장하면 바로 다운로드 폴더에 떨어진다.
    다만 저장소가 다른 도메인이라 막히는 환경이 있어서, 막히면 새 창으로 열고 안내한다. */
-async function dl(url,name){
+async function dl(url,name,win){
   try{
     const res=await fetch(url);
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -425,26 +432,37 @@ async function dl(url,name){
     const a=document.createElement('a');
     a.href=u; a.download=name||'invoice'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(u),4000);
+    try{ if(win)win.close(); }catch(e){}       // 미리 열어 둔 빈 창은 필요 없으니 닫는다
     return true;
-  }catch(e){ console.warn('[inv] dl',e); window.open(url,'_blank','noopener'); return false; }
+  }catch(e){
+    console.warn('[inv] dl',e);
+    /* 저장소가 다른 도메인이라 막히는 환경이 있다. 그때는 그냥 열어 준다.
+       ⚠ 창은 '클릭한 그 순간' 에 미리 열어 둬야 한다 — await 뒤에 열면 팝업 차단에 막혀
+       아무 일도 안 일어난 것처럼 보인다 (2026-10-02 전무님 테스트에서 확인). */
+    try{ if(win)win.location=url; else window.open(url,'_blank','noopener'); }catch(e2){}
+    return false;
+  }
 }
-async function dlOne(id,i){
+function dlOne(id,i){
   const r=DATA[id]; if(!r||!r.files||!r.files[i])return;
   const f=r.files[i];
+  const w=window.open('','_blank');            // 클릭 순간에 창을 미리 잡아 둔다
   toast(t('dlGo'));
-  toast(await dl(f.u,f.n)?t('dlDone'):t('dlOpen'));
+  dl(f.u,f.n,w).then(ok=>toast(ok?t('dlDone'):t('dlOpen')));
 }
-async function dlAll(id){
+function dlAll(id){
   const r=DATA[id]; if(!r||!r.files||!r.files.length)return;
   toast(t('dlGo'));
-  let ok=true;
-  for(let i=0;i<r.files.length;i++){
-    const f=r.files[i];
-    const prefix=(r.vendor||'invoice').replace(/[^\w가-힣.-]+/g,'_')+'_'+(r.got||'')+'_'+(i+1)+'_';
-    if(!await dl(f.u,prefix+(f.n||'file'))) ok=false;
-    await new Promise(s=>setTimeout(s,350));   // 연달아 받으면 브라우저가 막는다 — 조금 쉬어 준다
-  }
-  toast(ok?t('dlDone'):t('dlOpen'));
+  (async()=>{
+    let ok=true;
+    for(let i=0;i<r.files.length;i++){
+      const f=r.files[i];
+      const prefix=(r.vendor||'invoice').replace(/[^\w가-힣.-]+/g,'_')+'_'+(r.got||'')+'_'+(i+1)+'_';
+      if(!await dl(f.u,prefix+(f.n||'file'),null)) ok=false;
+      await new Promise(s=>setTimeout(s,350)); // 연달아 받으면 브라우저가 막는다 — 조금 쉬어 준다
+    }
+    toast(ok?t('dlDone'):t('dlOpen'));
+  })();
 }
 async function setStatus(id,st){
   try{
