@@ -170,9 +170,11 @@ const L={
  fDoing:{ko:'처리중',en:'In progress',es:'En proceso'},
  fDone:{ko:'완료',en:'Done',es:'Completada'},
  fAll:{ko:'전체',en:'All',es:'Todas'},
- toNew:{ko:'접수됨으로',en:'Mark received',es:'Marcar recibida'},
- toDoing:{ko:'처리중으로',en:'Mark in progress',es:'Marcar en proceso'},
- toDone:{ko:'완료로',en:'Mark done',es:'Marcar completada'},
+ toNew:{ko:'⬅ 접수됨으로 되돌리기',en:'⬅ Back to Received',es:'⬅ Volver a Recibida'},
+ toDoing:{ko:'➡ 처리중으로 옮기기',en:'➡ Move to In progress',es:'➡ Pasar a En proceso'},
+ toDone:{ko:'✅ 완료로 옮기기',en:'✅ Move to Done',es:'✅ Pasar a Completada'},
+ moved:{ko:'📂 「{s}」 칸으로 옮겼습니다',en:'📂 Moved to the “{s}” tab',es:'📂 Movida a la pestaña “{s}”'},
+ tabHint:{ko:'탭을 눌러 칸을 옮겨 다닐 수 있습니다',en:'Tap a tab to switch between them',es:'Toque una pestaña para cambiar'},
  needVendor:{ko:'거래처를 골라 주세요',en:'Please choose the vendor',es:'Elija el proveedor'},
  needFile:{ko:'인보이스를 올려 주세요 (사진이나 파일)',en:'Please add the invoice (photo or file)',es:'Agregue la factura (foto o archivo)'},
  preparing:{ko:'⏳ 준비 중…',en:'⏳ Preparing…',es:'⏳ Preparando…'},
@@ -367,8 +369,13 @@ function rows(){
     .sort((a,b)=>(b.ts||0)-(a.ts||0));
 }
 function render(){
+  /* 탭마다 몇 건인지 숫자를 같이 보여준다 — 상태를 바꾸면 다른 칸으로 가는데,
+     숫자가 없으면 "없어졌다" 고 오해한다 */
+  const all=Object.keys(DATA).map(id=>DATA[id]).filter(r=>r&&r.vendor);
+  const cnt=k=>k==='all'?all.length:all.filter(r=>(r.status||'new')===k).length;
   $('filters').innerHTML=[['new','fNew'],['doing','fDoing'],['done','fDone'],['all','fAll']]
-    .map(([k,l])=>'<button class="'+(FILTER===k?'on':'')+'" onclick="setF(\''+k+'\')">'+esc(t(l))+'</button>').join('');
+    .map(([k,l])=>'<button class="'+(FILTER===k?'on':'')+'" onclick="setF(\''+k+'\')">'+esc(t(l))+' '+cnt(k)+'</button>').join('')
+    +'<div style="width:100%;font-size:.76em;color:var(--sub);margin-top:2px">'+esc(t('tabHint'))+'</div>';
   const rs=rows();
   if(!rs.length){ $('list').innerHTML='<div class="empty">'+t('noRec')+'</div>'; return; }
   $('list').innerHTML=rs.map(r=>{
@@ -392,7 +399,14 @@ function render(){
 }
 function setF(k){ FILTER=k; render(); }
 async function setStatus(id,st){
-  try{ await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices/'+id),{status:st,stBy:(me().name||''),stTs:Date.now()}); }
+  try{
+    await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices/'+id),{status:st,stBy:(me().name||''),stTs:Date.now()});
+    /* 상태를 바꾸면 보고 있던 칸에서 사라진다 — 없어진 걸로 오해하기 쉬워서
+       옮겨간 칸으로 같이 따라가고, 어디로 갔는지 알려 준다 (2026-10-02 전무님 지적) */
+    if(FILTER!=='all'){ FILTER=st; }
+    render();
+    toast(t('moved',{s:t({new:'fNew',doing:'fDoing',done:'fDone'}[st])}));
+  }
   catch(e){ alert(t('failStat')+': '+(e.message||e)); }
 }
 window.rm=rm; window.setF=setF; window.setStatus=setStatus;
