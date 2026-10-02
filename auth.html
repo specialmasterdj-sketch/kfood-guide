@@ -572,6 +572,46 @@ function _captureLoginIdentity(){
   }
   return { name, branch: branchId, role, joinPin };
 }
+// 🔁 2026-10-02 — 로그아웃 없이 바로 다른 사람이 로그인하는 경우.
+//   이 페이지는 me-persist.js 를 읽지 않으므로 localStorage.setItem 이 쿠키·IDB 로
+//   자동 전달되지 않는다. 그래서 ① 새 사람 정보를 백업까지 직접 쓰고,
+//   ② uid 가 달라지면 앞사람 흔적을 먼저 통째로 버린다.
+//   (앞사람 role·지점이 fallback 으로 섞여 들어가 '임원 권한'이 남는 것을 막는다)
+function __mePut(v){
+  try {
+    var secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = 'chat_me=' + encodeURIComponent(v) + '; Max-Age=' + (60*60*24*365) + '; Path=/; SameSite=Lax' + secure;
+  } catch(_){}
+  try {
+    var r = indexedDB.open('kimchi_persist', 1);
+    r.onupgradeneeded = function(){ try { r.result.createObjectStore('kv'); } catch(_){} };
+    r.onsuccess = function(){ try { r.result.transaction('kv','readwrite').objectStore('kv').put(v, 'chat.me'); } catch(_){} };
+  } catch(_){}
+}
+function __writeChatMe(obj){
+  var v = JSON.stringify(obj);
+  try { localStorage.setItem('chat.me', v); } catch(_){}
+  __mePut(v);
+}
+function __dropPrevUser(user){
+  // 로그인한 uid 가 저장된 것과 다르면 = 다른 사람 → 앞사람 정보를 남기지 않는다.
+  // 공용 계정(staff@·manager@)은 uid 가 같아 여기 걸리지 않는다 (이름 보존 의도대로).
+  try {
+    var prev = JSON.parse(localStorage.getItem('chat.me') || 'null');
+    if (!prev || !prev.uid || !user || !user.uid || prev.uid === user.uid) return null;
+    try { localStorage.removeItem('chat.me'); } catch(_){}
+    try { localStorage.removeItem('hub.branch'); } catch(_){}
+    try { localStorage.removeItem('km_branch'); } catch(_){}
+    try { __killCookie('chat_me'); } catch(_){}
+    try {
+      var r = indexedDB.open('kimchi_persist', 1);
+      r.onupgradeneeded = function(){ try { r.result.createObjectStore('kv'); } catch(_){} };
+      r.onsuccess = function(){ try { r.result.transaction('kv','readwrite').objectStore('kv').delete('chat.me'); } catch(_){} };
+    } catch(_){}
+    try { console.warn('[auth] 다른 사용자 로그인 — 앞사람 정보 삭제'); } catch(_){}
+    return prev;
+  } catch(_){ return null; }
+}
 function _saveChatMe(identity, fbUser, profile){
   if (!identity || !identity.name || !identity.branch) return false;
   try {
@@ -587,7 +627,7 @@ function _saveChatMe(identity, fbUser, profile){
       isManager: isManagerRole,
       authProvider: existing.authProvider || 'pre-set',
     });
-    localStorage.setItem('chat.me', JSON.stringify(next));
+    __writeChatMe(next);
     // 신규 가입용 매장 PIN — auth-gate.js 가 신규 user 레코드 만들 때 검증.
     // sessionStorage 에 임시 저장 (보안: 페이지 닫으면 사라짐, localStorage 노출 방지).
     if (identity.joinPin) {
@@ -1174,6 +1214,7 @@ onAuthStateChanged(auth, async (user) => {
     // as "Staff" otherwise. Same for branch when the staff is at a
     // specific store but the shared profile says branch:'*'.
     try {
+      const __prevDropped = __dropPrevUser(user);     // 🔁 다른 사람이면 앞사람 흔적부터 삭제
       const existing = (() => { try { return JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(_) { return null; } })();
       const profileName = __currentProfile.name || user.displayName || (user.email ? user.email.split('@')[0] : (user.phoneNumber || 'User'));
       const isSharedAccount = (user.email === 'staff@miamikimchi.com' || user.email === 'manager@miamikimchi.com');
@@ -1222,8 +1263,20 @@ onAuthStateChanged(auth, async (user) => {
         lastLogin: Date.now(),
         isManager: ['OWNER','EXECUTIVE','MANAGER','ASSISTANT_MANAGER','SUPERVISOR'].includes(String(role).toUpperCase())
       });
-      localStorage.setItem('chat.me', JSON.stringify(chatMe));
+      __writeChatMe(chatMe);                          // 쿠키·IndexedDB 백업까지 새 사람 것으로
       try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_) {}
+      if (__prevDropped) {
+        try {
+          var _nb = document.createElement('div');
+          _nb.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:2147483000;' +
+            'background:#1e3a8a;color:#fff;border-radius:11px;padding:10px 15px;font-size:13.5px;font-weight:800;' +
+            'box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:92vw;text-align:center;' +
+            'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
+          _nb.textContent = '🔁 이전 사용자(' + (__prevDropped.name || '?') + ') 정보를 지우고 새로 로그인했습니다';
+          document.body.appendChild(_nb);
+          setTimeout(function(){ try { _nb.remove(); } catch(_){} }, 6000);
+        } catch(_){}
+      }
       // 인증 직후 직원 명단 백그라운드 캐싱 — 다음 방문 시 dropdown 즉시 표시.
       // 폰 첫 방문에서 명단 비어있어 막힌 사용자 케이스 해결.
       if (typeof window.__refreshEmployeesAfterAuth === 'function' && branch) {
