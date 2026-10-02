@@ -175,6 +175,13 @@ const L={
  toDone:{ko:'✅ 완료로 옮기기',en:'✅ Move to Done',es:'✅ Pasar a Completada'},
  moved:{ko:'📂 「{s}」 칸으로 옮겼습니다',en:'📂 Moved to the “{s}” tab',es:'📂 Movida a la pestaña “{s}”'},
  tabHint:{ko:'탭을 눌러 칸을 옮겨 다닐 수 있습니다',en:'Tap a tab to switch between them',es:'Toque una pestaña para cambiar'},
+ dlAll:{ko:'⬇ 파일 전부 받기',en:'⬇ Download all files',es:'⬇ Descargar todo'},
+ dlOne:{ko:'받기',en:'Save',es:'Guardar'},
+ dlGo:{ko:'⬇ 받는 중…',en:'⬇ Downloading…',es:'⬇ Descargando…'},
+ dlDone:{ko:'✅ 받았습니다 — 다운로드 폴더를 보세요',en:'✅ Saved — check your Downloads folder',es:'✅ Guardado — revise su carpeta de descargas'},
+ dlOpen:{ko:'새 창으로 열었습니다. 사진을 꾹 누르거나(폰) 오른쪽 클릭해서(PC) 저장하세요.',
+         en:'Opened in a new tab. Long-press (phone) or right-click (PC) to save.',
+         es:'Se abrió en otra pestaña. Mantenga pulsado (móvil) o haga clic derecho (PC) para guardar.'},
  needVendor:{ko:'거래처를 골라 주세요',en:'Please choose the vendor',es:'Elija el proveedor'},
  needFile:{ko:'인보이스를 올려 주세요 (사진이나 파일)',en:'Please add the invoice (photo or file)',es:'Agregue la factura (foto o archivo)'},
  preparing:{ko:'⏳ 준비 중…',en:'⏳ Preparing…',es:'⏳ Preparando…'},
@@ -384,7 +391,11 @@ function render(){
     const when=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')
       +' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
     const nf=(r.files||[]).length;
-    const links=(r.files||[]).map((f,i)=>'<a class="lk" href="'+esc(f.u)+'" target="_blank" rel="noopener">'+(i+1)+'. '+esc((f.n||'file').slice(0,20))+'</a>').join('');
+    const links=(r.files||[]).map((f,i)=>
+      '<span class="lk" style="padding:0;background:none">'
+      +'<a class="lk" href="'+esc(f.u)+'" target="_blank" rel="noopener">'+(i+1)+'. '+esc((f.n||'file').slice(0,18))+'</a>'
+      +'<button class="lk" style="border:0;cursor:pointer;background:#e0e7ff;font-family:inherit;font-weight:700" onclick="dlOne(\''+r.id+'\','+i+')">⬇ '+esc(t('dlOne'))+'</button>'
+      +'</span>').join('');
     const next=(r.status||'new')==='new'?'doing':((r.status==='doing')?'done':'new');
     const nextL={doing:'toDoing',done:'toDone',new:'toNew'}[next];
     return '<div class="it"><div class="h"><div class="v">'+esc(r.vendor)+(r.invNo?' <span style="font-weight:400;color:#64748b">#'+esc(r.invNo)+'</span>':'')
@@ -393,11 +404,48 @@ function render(){
       +(r.pages&&r.pages!==nf?' <b style="color:#b91c1c">'+esc(t('diffL',{n:r.pages}))+'</b>':'')
       +'<br>'+esc(t('byL'))+' '+esc(r.by||'-')+' · '+when+(r.memo?('<br>'+esc(t('memoL'))+': '+esc(r.memo)):'')+'</div>'
       +links
-      +(isBoss()?'<div style="margin-top:9px"><button class="btn g" style="padding:7px 13px;font-size:.82em" onclick="setStatus(\''+r.id+'\',\''+next+'\')">'+esc(t(nextL))+'</button></div>':'')
-      +'</div>';
+      +'<div style="margin-top:9px;display:flex;gap:7px;flex-wrap:wrap">'
+      +(nf>1?'<button class="btn lite" style="padding:7px 13px;font-size:.82em" onclick="dlAll(\''+r.id+'\')">'+esc(t('dlAll'))+'</button>':'')
+      +(isBoss()?'<button class="btn g" style="padding:7px 13px;font-size:.82em" onclick="setStatus(\''+r.id+'\',\''+next+'\')">'+esc(t(nextL))+'</button>':'')
+      +'</div></div>';
   }).join('');
 }
 function setF(k){ FILTER=k; render(); }
+
+/* ===== 파일 내려받기 =====
+   Storage 링크를 그냥 열면 브라우저가 화면에 띄워버려서 "저장" 이 한 번 더 필요하다.
+   파일을 통째로 받아와 blob 으로 저장하면 바로 다운로드 폴더에 떨어진다.
+   다만 저장소가 다른 도메인이라 막히는 환경이 있어서, 막히면 새 창으로 열고 안내한다. */
+async function dl(url,name){
+  try{
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const b=await res.blob();
+    const u=URL.createObjectURL(b);
+    const a=document.createElement('a');
+    a.href=u; a.download=name||'invoice'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u),4000);
+    return true;
+  }catch(e){ console.warn('[inv] dl',e); window.open(url,'_blank','noopener'); return false; }
+}
+async function dlOne(id,i){
+  const r=DATA[id]; if(!r||!r.files||!r.files[i])return;
+  const f=r.files[i];
+  toast(t('dlGo'));
+  toast(await dl(f.u,f.n)?t('dlDone'):t('dlOpen'));
+}
+async function dlAll(id){
+  const r=DATA[id]; if(!r||!r.files||!r.files.length)return;
+  toast(t('dlGo'));
+  let ok=true;
+  for(let i=0;i<r.files.length;i++){
+    const f=r.files[i];
+    const prefix=(r.vendor||'invoice').replace(/[^\w가-힣.-]+/g,'_')+'_'+(r.got||'')+'_'+(i+1)+'_';
+    if(!await dl(f.u,prefix+(f.n||'file'))) ok=false;
+    await new Promise(s=>setTimeout(s,350));   // 연달아 받으면 브라우저가 막는다 — 조금 쉬어 준다
+  }
+  toast(ok?t('dlDone'):t('dlOpen'));
+}
 async function setStatus(id,st){
   try{
     await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices/'+id),{status:st,stBy:(me().name||''),stTs:Date.now()});
@@ -409,7 +457,7 @@ async function setStatus(id,st){
   }
   catch(e){ alert(t('failStat')+': '+(e.message||e)); }
 }
-window.rm=rm; window.setF=setF; window.setStatus=setStatus;
+window.rm=rm; window.setF=setF; window.setStatus=setStatus; window.dlOne=dlOne; window.dlAll=dlAll;
 
 applyLang();
 /* 위 module 스크립트가 __fb 를 올린 뒤에 구독한다.
