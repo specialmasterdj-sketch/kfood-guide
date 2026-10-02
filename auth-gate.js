@@ -593,3 +593,100 @@ window.__authGate = {
   signOut: () => signOut(auth).then(() => location.href = './auth.html'),
   getCurrentUser: () => window.__currentUser || null,
 };
+
+// ============================================================
+// ⏳ 공용 컴퓨터 자동 로그아웃 (2026-10-02 전무님)
+// ------------------------------------------------------------
+//   "회사 다른 컴퓨터에서 로그아웃했는데 계정이 남아 누가 볼까 걱정된다"
+//   → 30분 동안 아무 것도 안 하면 스스로 로그아웃(auth.html?fresh=1 = 완전 삭제).
+//
+//   ⚠ 폰·태블릿은 일부러 제외한다. 전화번호 로그인은 다시 들어오려면 SMS 인증이
+//     필요한데 SMS 는 하루 한도가 있고, 2026-06-18 에 그 한도가 터져 전 지점이
+//     로그인 불가로 마비된 적이 있다. 마우스가 달린 큰 화면(사무실 PC)만 대상.
+//
+//   여러 탭을 열어 둔 경우를 위해 마지막 활동 시각을 localStorage 로 공유한다.
+// ============================================================
+(function(){
+  'use strict';
+  var IDLE_MS = 30 * 60 * 1000;      // 30분
+  var WARN_MS = 60 * 1000;           // 끝나기 1분 전에 알림
+  var KEY = 'km_lastAct';
+
+  function isSharedComputer(){
+    try {
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return false;  // 설치한 앱
+      if (navigator.standalone) return false;                                                          // iOS 홈화면 앱
+      if (window.matchMedia && !window.matchMedia('(pointer:fine)').matches) return false;              // 마우스 없음 = 폰·태블릿
+      var sw = screen.width || window.innerWidth || 0, sh = screen.height || window.innerHeight || 0;
+      var mn = Math.min(sw, sh);
+      if (mn && mn < 700) return false;                                                                  // 작은 화면 (못 재면 통과)
+      return true;
+    } catch(e){ return false; }
+  }
+  if (!isSharedComputer()) return;
+
+  var last = Date.now(), warnBox = null, gone = false;
+  function stamp(){
+    last = Date.now();
+    try { localStorage.setItem(KEY, String(last)); } catch(e){}
+    hideWarn();
+  }
+  function lastAll(){
+    var v = 0;
+    try { v = parseInt(localStorage.getItem(KEY) || '0', 10) || 0; } catch(e){}
+    return Math.max(last, v);
+  }
+  function lang(){ try { return localStorage.getItem('km.lang') || 'ko'; } catch(e){ return 'ko'; } }
+  function t(ko, en, es){ var L = lang(); return L === 'en' ? en : (L === 'es' ? es : ko); }
+
+  function hideWarn(){ if (warnBox){ try { warnBox.remove(); } catch(e){} warnBox = null; } }
+  function showWarn(sec){
+    if (warnBox){
+      var c = warnBox.querySelector('#kmIdleSec');
+      if (c) c.textContent = sec;
+      return;
+    }
+    warnBox = document.createElement('div');
+    warnBox.id = 'kmIdleWarn';
+    warnBox.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483000;' +
+      'background:#7c2d12;color:#fff;border-radius:13px;padding:13px 18px;font-size:14.5px;font-weight:800;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,.3);display:flex;gap:12px;align-items:center;max-width:92vw;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
+    warnBox.innerHTML =
+      '<div style="line-height:1.4">⏳ ' +
+        t('잠시 후 자동 로그아웃됩니다', 'You will be signed out shortly', 'Se cerrará la sesión en breve') +
+        ' <span id="kmIdleSec" style="font-size:17px">' + sec + '</span>' + t('초', 's', 's') +
+        '<div style="font-size:11.5px;font-weight:600;opacity:.9">' +
+        t('공용 컴퓨터 보호 — 계속 쓰시려면 옆 단추를 누르세요',
+          'Shared-computer protection — press the button to stay signed in',
+          'Protección de computadora compartida — presiona el botón para seguir') + '</div></div>' +
+      '<button id="kmIdleStay" style="background:#fff;color:#7c2d12;border:0;border-radius:9px;padding:10px 15px;' +
+        'font-weight:900;font-size:14px;cursor:pointer;white-space:nowrap">' +
+        t('계속 사용', 'Stay', 'Seguir') + '</button>';
+    document.body.appendChild(warnBox);
+    var b = document.getElementById('kmIdleStay');
+    if (b) b.onclick = function(e){ e.stopPropagation(); stamp(); };
+  }
+
+  ['mousedown','mousemove','keydown','wheel','touchstart','scroll','click'].forEach(function(ev){
+    window.addEventListener(ev, function(){
+      // 경고가 떠 있을 때는 '계속 사용' 단추로만 연장한다 (지나가던 마우스로 꺼지지 않게)
+      if (warnBox) return;
+      stamp();
+    }, { passive: true, capture: true });
+  });
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible' && !warnBox) stamp(); });
+
+  stamp();
+  setInterval(function(){
+    if (gone) return;
+    var idle = Date.now() - lastAll();
+    if (idle >= IDLE_MS){
+      gone = true;
+      try { console.warn('[km-idle] 30분 미사용 — 자동 로그아웃'); } catch(e){}
+      location.href = './auth.html?fresh=1&idle=1';
+    } else if (idle >= IDLE_MS - WARN_MS){
+      showWarn(Math.max(1, Math.ceil((IDLE_MS - idle) / 1000)));
+    } else hideWarn();
+  }, 5000);
+})();
