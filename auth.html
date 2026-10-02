@@ -902,20 +902,50 @@ let __unsub = null;
 // 무한 spinner. 새 fresh 모드는 1 회만, signout 끝나면 자동 해제.
 let __freshMode = (function(){ try { return new URLSearchParams(location.search).get('fresh') === '1'; } catch(_){ return false; } })();
 let __freshHandled = false;
-async function __doFreshSignout(){
-  if (__freshHandled) return;
-  __freshHandled = true;
-  trace('auth:fresh-signout');
-  try { await signOut(auth); } catch(_){}
-  try { localStorage.removeItem('chat.me'); } catch(_){}
-  try { localStorage.removeItem('hub.branch'); } catch(_){}
-  try { sessionStorage.clear(); } catch(_){}
-  // Firebase Auth IndexedDB persistence 강제 삭제 — signOut 이 race 로 안 지운 케이스
+// 🔴 2026-10-02 전무님: "회사 다른 컴퓨터에서 로그아웃했는데 내 아이디가 계속 남아 있다"
+//   원인 — me-persist.js 가 chat.me 를 쿠키(chat_me) + IndexedDB(kimchi_persist) 에
+//   백업해 두는데, 이 auth.html 은 me-persist.js 를 안 읽는다. 그래서 여기서 부른
+//   localStorage.removeItem 은 '가로채기 없는 원본' 이라 백업이 그대로 남았고,
+//   앱으로 돌아가면 쿠키에서 즉시 되살아났다.
+//   → 이제 백업을 직접, 전부 지운다. 공용 PC 에서 쓰므로 남기지 않는 쪽이 맞다.
+function __killCookie(name){
   try {
+    var ex = '; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/';
+    document.cookie = name + '=' + ex;
+    document.cookie = name + '=' + ex + '; SameSite=Lax';
+    // 경로가 다른 사본까지 (앱이 하위 경로에서 열린 경우)
+    var seg = location.pathname.split('/').filter(Boolean);
+    var p = '';
+    for (var i = 0; i < seg.length; i++){ p += '/' + seg[i]; document.cookie = name + '=; Max-Age=0; Path=' + p; }
+    document.cookie = name + '=; Max-Age=0; Path=' + location.pathname;
+  } catch(_){}
+}
+async function __wipeThisComputer(){
+  // ① 쿠키 백업
+  try {
+    __killCookie('chat_me');
+    (document.cookie || '').split(';').forEach(function(c){
+      var k = (c.split('=')[0] || '').trim();
+      if (k && /^(chat|km|hub|recv|me)[._-]?/i.test(k)) __killCookie(k);
+    });
+  } catch(_){}
+  // ② 저장소 — 공용 PC 라 언어 설정만 남기고 전부 지운다
+  try {
+    var lang = null;
+    try { lang = localStorage.getItem('km.lang'); } catch(_){}
+    localStorage.clear();
+    if (lang) localStorage.setItem('km.lang', lang);
+  } catch(_){}
+  try { sessionStorage.clear(); } catch(_){}
+  // ③ IndexedDB — Firebase 세션 + me-persist/recv-persist 백업(kimchi_persist)
+  try {
+    try { indexedDB.deleteDatabase('kimchi_persist'); } catch(_){}
     if (indexedDB.databases) {
       var dbs = await indexedDB.databases();
       dbs.forEach(function(d){
-        if (d.name && d.name.toLowerCase().indexOf('firebase') >= 0) {
+        if (!d.name) return;
+        var n = d.name.toLowerCase();
+        if (n.indexOf('firebase') >= 0 || n.indexOf('kimchi') >= 0) {
           try { indexedDB.deleteDatabase(d.name); } catch(_){}
         }
       });
@@ -923,7 +953,31 @@ async function __doFreshSignout(){
       try { indexedDB.deleteDatabase('firebaseLocalStorageDb'); } catch(_){}
     }
   } catch(_){}
+}
+async function __doFreshSignout(){
+  if (__freshHandled) return;
+  __freshHandled = true;
+  trace('auth:fresh-signout');
+  try { await signOut(auth); } catch(_){}
+  await __wipeThisComputer();
   show('signinView');
+  // 지워졌다는 것을 눈으로 확인시켜 준다 — 공용 PC 에서 제일 불안한 부분
+  try {
+    var box = document.getElementById('__wipeOk');
+    if (!box){
+      box = document.createElement('div');
+      box.id = '__wipeOk';
+      box.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:2147483000;' +
+        'background:#14532d;color:#fff;border-radius:12px;padding:11px 16px;font-size:14px;font-weight:800;' +
+        'box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:92vw;text-align:center;line-height:1.45;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
+      box.innerHTML = '✅ 이 컴퓨터에서 계정 정보를 모두 지웠습니다<br>' +
+        '<span style="font-weight:600;font-size:12.5px;opacity:.9">Signed out — this computer no longer keeps your account · ' +
+        'Sesión cerrada — esta computadora ya no guarda tu cuenta</span>';
+      document.body.appendChild(box);
+      setTimeout(function(){ try { box.remove(); } catch(_){} }, 9000);
+    }
+  } catch(_){}
   try { history.replaceState({}, '', location.pathname); } catch(_){}
   // 🔑 fresh 모드 해제 — 이제부터 새 로그인 시도는 정상 흐름으로
   __freshMode = false;
