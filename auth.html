@@ -1000,7 +1000,49 @@ async function __doFreshSignout(){
   trace('auth:fresh-signout');
   try { await signOut(auth); } catch(_){}
   await __wipeThisComputer();
+  // 📣 열려 있는 다른 탭·창에도 알린다. 이것을 안 하면 그쪽 탭이 살아 있는 세션으로
+  //   쿠키·IndexedDB 를 다시 써 넣어, 새로고침하면 이름이 되살아난다. (전무님 사례)
+  try { localStorage.setItem('km_logout_at', String(Date.now())); } catch(_){}
+  try { var _bc = new BroadcastChannel('km-auth'); _bc.postMessage('logout'); _bc.close(); } catch(_){}
   show('signinView');
+  // 🔁 1.5초 뒤 다시 확인 — 그 사이 다른 탭이 되살렸으면 한 번 더 지우고 알려 준다
+  setTimeout(async function(){
+    var back = null;
+    try { back = localStorage.getItem('chat.me') || (document.cookie.indexOf('chat_me=') >= 0 ? 'cookie' : null); } catch(_){}
+    if (!back) return;
+    await __wipeThisComputer();
+    try { localStorage.setItem('km_logout_at', String(Date.now())); } catch(_){}
+    try { var b2 = new BroadcastChannel('km-auth'); b2.postMessage('logout'); b2.close(); } catch(_){}
+    try {
+      var w = document.createElement('div');
+      w.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:2147483000;' +
+        'background:#7f1d1d;color:#fff;border-radius:12px;padding:12px 16px;font-size:13.5px;font-weight:800;' +
+        'box-shadow:0 6px 20px rgba(0,0,0,.3);max-width:92vw;text-align:center;line-height:1.5;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
+      w.innerHTML = '⚠ 다른 창(탭)에 앱이 아직 열려 있습니다<br>' +
+        '<span style="font-weight:600;font-size:12px">그 창을 닫고 이 페이지를 한 번 더 새로고침해 주세요 · ' +
+        'Close the other tab, then refresh this page · Cierra la otra pestaña y recarga</span>';
+      document.body.appendChild(w);
+      setTimeout(function(){ try { w.remove(); } catch(_){} }, 12000);
+    } catch(_){}
+  }, 1500);
+  // 🔎 이 컴퓨터에 무엇이 남았는지 눈으로 확인 — 안 지워졌다는 신고를 받으면 여기부터 본다
+  setTimeout(function(){
+    try {
+      var ls = 0; try { ls = localStorage.length; } catch(_){}
+      var hasMe = false; try { hasMe = !!localStorage.getItem('chat.me'); } catch(_){}
+      var hasCk = (document.cookie || '').indexOf('chat_me=') >= 0;
+      var d = document.createElement('div');
+      d.style.cssText = 'margin:14px auto 0;max-width:420px;font-size:11.5px;color:#64748b;text-align:center;' +
+        'font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.6';
+      d.innerHTML = '이 컴퓨터에 남은 것 — 이름:' + (hasMe ? '<b style="color:#dc2626">있음</b>' : '없음') +
+        ' · 쿠키:' + (hasCk ? '<b style="color:#dc2626">있음</b>' : '없음') +
+        ' · 저장항목:' + ls + '개' +
+        (auth && auth.currentUser ? ' · <b style="color:#dc2626">로그인 세션 살아있음</b>' : ' · 세션:없음');
+      var host = document.getElementById('signinView');
+      if (host) host.appendChild(d);
+    } catch(_){}
+  }, 2200);
   // 지워졌다는 것을 눈으로 확인시켜 준다 — 공용 PC 에서 제일 불안한 부분
   try {
     var box = document.getElementById('__wipeOk');

@@ -595,6 +595,48 @@ window.__authGate = {
 };
 
 // ============================================================
+// 📣 다른 창에서 로그아웃하면 이 창도 같이 나간다 (2026-10-02 전무님)
+// ------------------------------------------------------------
+//   전무님: "로그아웃하고 새로고침하면 다시 내 이름으로 나온다"
+//   원인 — 사무실 PC 에 앱 탭이 여러 개 열려 있으면, 한 탭에서 로그아웃해도
+//   다른 탭은 살아 있는 세션 그대로다. 그 탭이 chat.me 를 다시 저장하면
+//   me-persist 가 쿠키·IndexedDB 에 되써서 이름이 되살아난다.
+//   → 로그아웃을 모든 탭에 전파해 다 같이 나가게 한다.
+// ============================================================
+(function(){
+  'use strict';
+  var TAB_START = Date.now();
+  var leaving = false;
+  function leave(why){
+    if (leaving) return;
+    leaving = true;
+    try { console.warn('[km-auth] 다른 창에서 로그아웃 — 같이 나감 (' + why + ')'); } catch(e){}
+    try { signOut(auth); } catch(e){}
+    try { location.href = './auth.html?fresh=1&by=' + why; } catch(e){}
+  }
+  try {
+    var bc = new BroadcastChannel('km-auth');
+    bc.onmessage = function(e){ if (e && e.data === 'logout') leave('tab'); };
+  } catch(e){}
+  window.addEventListener('storage', function(e){
+    if (e && e.key === 'km_logout_at') leave('storage');
+  });
+  // 잠들어 있던 탭이 깨어났을 때도 확인
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible') return;
+    try {
+      var t = parseInt(localStorage.getItem('km_logout_at') || '0', 10) || 0;
+      if (t > TAB_START) leave('wake');
+    } catch(e){}
+  });
+  // 이 탭이 열리기 전에 다른 창에서 로그아웃했다면 들어오면 안 된다
+  try {
+    var t0 = parseInt(localStorage.getItem('km_logout_at') || '0', 10) || 0;
+    if (t0 && Date.now() - t0 < 10000) leave('recent');
+  } catch(e){}
+})();
+
+// ============================================================
 // ⏳ 공용 컴퓨터 자동 로그아웃 (2026-10-02 전무님)
 // ------------------------------------------------------------
 //   "회사 다른 컴퓨터에서 로그아웃했는데 계정이 남아 누가 볼까 걱정된다"
