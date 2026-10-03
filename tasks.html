@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_09_27_branch_guard';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
+    var BUST = 'tasks_2026_10_03_hq';   // 📊 게시판 인쇄 — 어제·7일 개인별 수행률 그래프
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -2150,6 +2150,7 @@ button{font-family:inherit;cursor:pointer}
     <button class="btn" onclick="openAssignModal()">+ 새 지시</button>
     <button class="btn sec" onclick="openSelfReview()" title="직원이 스스로 올린 일 — 확인하고 점수 인정" style="background:#eef2ff;color:#3730a3;border-color:#c7d2fe">🙋 본인 보고<span id="selfPendBadge" style="display:none;background:#dc2626;color:#fff;border-radius:20px;padding:1px 7px;margin-left:5px;font-size:.78em">0</span></button>
     <button class="btn sec" onclick="openRoutineSetup()" title="부서 일일 체크리스트를 매일 아침 자동으로 내보냅니다" style="background:#eef6ff;color:#1d4ed8;border-color:#bfdbfe">⏰ 자동 발송</button>
+    <button class="btn sec" id="hqBoardBtn" style="display:none;background:#1e3a8a;color:#fff;border-color:#1e3a8a;font-weight:800" onclick="openHqBoard()" title="본사 요청에 지점들이 무엇을 올렸는지 한눈에">🏛 본사 제출 현황</button>
     <button class="btn sec" id="hrPersonaBtn" style="display:none" onclick="toggleHrPersona()" title="켜면 지시가 'HR MANAGER' 명의로 발송됩니다 (오너/임원/지정 인물 전용)">🎭 HR 모드 OFF</button>
     <button class="btn sec" onclick="openAssignModal('정육')" title="정육 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:700">🥩 정육 발송</button>
     <button class="btn sec" onclick="openAssignModal('스시')" title="스시 일일 체크리스트 발송 화면 열기 (항목당 1점)" style="background:#fae8ff;border-color:#c026d3;color:#86198f;font-weight:700">🍣 스시 발송</button>
@@ -2280,6 +2281,24 @@ button{font-family:inherit;cursor:pointer}
       <label id="aBranchLbl">📍 지점 (어느 지점에 발송)</label>
       <select id="aBranchSel" onchange="onAssignBranchChange()"></select>
       <div class="hint" id="aBranchHint">선택한 지점의 직원만 담당자 목록에 노출됩니다</div>
+    </div>
+    <!-- 🏛 본사(HQ) 지시 — 오너·임원만 보임. 켜면 각 지점 매니저·슈퍼바이저가 사진·파일·글을 올린다 -->
+    <div class="field" id="aHqField" style="display:none;background:linear-gradient(135deg,#eef2ff,#e0e7ff);border:2px solid #1e3a8a;border-radius:12px;padding:11px 13px">
+      <label style="color:#1e3a8a;font-weight:900">🏛 본사(HQ) 업무지시</label>
+      <label style="display:flex;align-items:center;gap:8px;margin:6px 0;font-weight:800;color:#1e3a8a;cursor:pointer">
+        <input type="checkbox" id="aHqOn" onchange="hqToggleAssign()" style="width:19px;height:19px">
+        <span>이 지시를 <b>본사 지시</b>로 보낸다 (지점 화면에 남색 🏛 표시 + 맨 위 고정)</span>
+      </label>
+      <div id="aHqOpts" style="display:none;padding-top:4px;border-top:1px dashed #a5b4fc;margin-top:4px">
+        <div style="font-size:.82em;font-weight:800;color:#3730a3;margin:7px 0 4px">무엇을 받을까요</div>
+        <label style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-weight:700"><input type="checkbox" id="aHqPhoto" checked> 📷 사진</label>
+        <label style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-weight:700"><input type="checkbox" id="aHqFile" checked> 📎 파일</label>
+        <label style="display:inline-flex;align-items:center;gap:5px;font-weight:700"><input type="checkbox" id="aHqText" checked> ✍ 글</label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:9px;font-weight:800;color:#1e3a8a;cursor:pointer">
+          <input type="checkbox" id="aHqAll" checked style="width:18px;height:18px"> 5개 지점 전부에 한 번에 보내기
+        </label>
+        <div class="hint" style="color:#4338ca">받는 사람은 각 지점 <b>매니저·슈퍼바이저</b>입니다. 제출 현황은 🏛 본사 제출 현황에서 봅니다.</div>
+      </div>
     </div>
     <div class="field"><label id="aToLbl">① 담당자</label>
       <div style="display:flex;gap:6px;align-items:center">
@@ -4744,6 +4763,8 @@ function isHrPersonaEligible(){
 function hrPersonaOn(){ try { return isHrPersonaEligible() && localStorage.getItem('km.hrPersona')==='1'; } catch(_){ return false; } }
 function hrFrom(n){ return hrPersonaOn() ? 'HR MANAGER' : n; }
 function updateHrPersonaBtn(){
+  // 🏛 본사 제출 현황 단추도 여기서 같이 (오너·임원만)
+  try { const hb = document.getElementById('hqBoardBtn'); if (hb) hb.style.display = (typeof hqCanCreate==='function' && hqCanCreate()) ? '' : 'none'; } catch(_){}
   const b = document.getElementById('hrPersonaBtn');
   if (!b) return;
   if (!isHrPersonaEligible()) { b.style.display = 'none'; return; }
@@ -8601,7 +8622,8 @@ function renderEmp(){
     // 본인 업무 (오너/전무는 6지점 '*' 중복 제거)
     my = dedupAllBranchTasks(TASKS.filter(t => isAssignedToMe(t)));
   }
-  my.sort((a,b) => (a.deadline||'99:99').localeCompare(b.deadline||'99:99'));
+  // 🏛 본사(HQ) 지시는 늘 맨 위 — 지점에서 놓치면 안 되는 요청이다
+  my.sort((a,b) => ((b.hq?1:0) - (a.hq?1:0)) || (a.deadline||'99:99').localeCompare(b.deadline||'99:99'));
   const total = my.length;
   const done = my.filter(t => t.completedAt).length;
   document.getElementById('empSumBig').textContent = done + ' / ' + total;
@@ -8867,7 +8889,9 @@ function renderTaskCard(t){
     <span style="font-size:.95em">${stars}</span>
     <span>${earnText}</span>
   </div>`;
-  return `<div class="task-card ${status}">
+  const _hqStyle = t.hq ? ' style="border-left:6px solid #1e3a8a;background:linear-gradient(135deg,#f5f7ff,#eef2ff);box-shadow:0 2px 10px rgba(30,58,138,.14)"' : '';
+  return `<div class="task-card ${status}"${_hqStyle}>
+    ${hqBadge(t)}
     ${elapsed!==null?`<div class="task-elapsed">⏱ ${elapsed}${labels.inProg[LANG]}</div>`:''}
     <div class="task-row" style="display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap">
       <div class="task-name" style="flex:1;min-width:160px">${escHtml(dispName)}</div>
@@ -8888,7 +8912,8 @@ function renderTaskCard(t){
     ${memoHtml}
     ${clHtml}
     ${photosHtml}
-    <div class="task-actions">${actions}</div>
+    ${t.hq ? hqShowSubmission(t) : ''}
+    <div class="task-actions">${t.hq ? hqSubmitBtn(t) : ''}${t.hq ? '' : actions}</div>
   </div>`;
 }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -12793,6 +12818,13 @@ async function openAssignModal(presetCat){
   // 지점 선택 — 오너/전무 + 🎭 HR 페르소나 지정 인물은 6지점 중 선택 가능, 매니저는 자기 지점만.
   const branchField = document.getElementById('aBranchField');
   const branchSel = document.getElementById('aBranchSel');
+  // 🏛 본사 지시 칸 — 오너·임원만
+  try {
+    const hqF = document.getElementById('aHqField');
+    if (hqF) { hqF.style.display = hqCanCreate() ? '' : 'none';
+      const c = document.getElementById('aHqOn'); if (c) { c.checked = false; }
+      const o = document.getElementById('aHqOpts'); if (o) o.style.display = 'none'; }
+  } catch(_){}
   if (isOwner() || isHrPersonaEligible()) {
     branchField.style.display = '';
     branchSel.innerHTML = BRANCHES.map(b => `<option value="${b.id}">🏢 ${escHtml(b[LANG]||b.ko||b.id)}</option>`).join('');
@@ -13296,7 +13328,10 @@ async function sendAssign(){
     // No checklist mode but multiple items picked — auto-bundle into a checklist
     checklist = pickedItems.map(it => ({ name: it.name, done: false }));
   }
-  const path = 'tasks/'+getAssignTargetBranch()+'/'+assignDateStr();   // 📅 오늘 또는 예약 날짜
+  // 🏛 본사 지시 + '5개 지점 전부' 면 지점마다 같은 요청을 하나씩 만든다 (hqGroup 으로 묶임)
+  const _hqAll = _hqOn && !!(document.getElementById('aHqAll') && document.getElementById('aHqAll').checked);
+  const _targets = _hqAll ? BRANCHES.map(b=>b.id) : [getAssignTargetBranch()];
+  const path = 'tasks/'+_targets[0]+'/'+assignDateStr();   // 📅 오늘 또는 예약 날짜
   // 👥 다중 담당자면 각자에게 별도 task 발송, 아니면 단일.
   // 👥 담은 사람(MULTI) + 드롭다운에 선택된 사람(to)도 합집합 — 마지막 사람 ➕추가 깜빡해도 누락 안 됨
   let _recipients;
@@ -13306,10 +13341,18 @@ async function sendAssign(){
   } else {
     _recipients = [to];
   }
+  // 🏛 본사 지시 여부
+  const _hqOn = !!(document.getElementById('aHqOn') && document.getElementById('aHqOn').checked && hqCanCreate());
+  const _hqNeed = _hqOn ? {
+    photo: !!document.getElementById('aHqPhoto')?.checked,
+    file:  !!document.getElementById('aHqFile')?.checked,
+    text:  !!document.getElementById('aHqText')?.checked,
+  } : null;
+  const _hqGroup = _hqOn ? ('hq_' + Date.now().toString(36)) : null;   // 지점끼리 같은 요청으로 묶는 열쇠
   const _vendorVal = (document.getElementById('aVendor')?.value || null) || null;
   const _zoneVal = (typeof __pickedZoneId === 'number' ? __pickedZoneId : null);
-  for (const _rcpt of _recipients) {
-    const r = window.__fb.push(window.__fb.ref(window.__fb.db, path));
+  for (const _tb of _targets) for (const _rcpt of _recipients) {
+    const r = window.__fb.push(window.__fb.ref(window.__fb.db, 'tasks/'+_tb+'/'+assignDateStr()));
     await window.__fb.set(r, {
       name, nameTr,
       deadline, category: cat, requirePhoto: photo,
@@ -13329,6 +13372,9 @@ async function sendAssign(){
       points: getAssignPoints(),
       vendor: _vendorVal,
       zoneId: _zoneVal,
+      hq: _hqOn || null,
+      hqNeed: _hqOn ? _hqNeed : null,
+      hqGroup: _hqOn ? _hqGroup : null,
     });
     // 💬 백업 채팅 알림 — 담당자에게 DM (iOS PWA 백그라운드 알림 대용)
     sendTaskChatBackup(_rcpt, name, deadline, assignDateStr());
@@ -13569,6 +13615,266 @@ setTimeout(() => { if (!USERS_CACHE) loadNameAliases(); }, 4000);
 // expose
 window.switchTab = switchTab;
 window.openAssignModal = openAssignModal;
+
+// ============================================================
+// 🏛 HQ 업무지시 — 본사가 각 지점에 사진·파일·글을 요청하고 받는다
+// ------------------------------------------------------------
+//   2026-10-03 전무님: "김치마트 HQ 부서가 시작된다. 사진·파일·글을 그때그때
+//   요청해서 받아야 한다. 매니저·슈퍼바이저가 올린다. HQ 지시라고 색으로 강조."
+//
+//   새 앱을 만들지 않고 업무 지시에 얹었다 — 알림·마감·완료율·3개 언어·
+//   채팅 자동보고가 이미 다 있고, Storage 경로 tasks/{지점} 도 열려 있어
+//   규칙을 새로 게시할 필요가 없다.
+//
+//   저장 모양 (tasks/{지점}/{날짜}/{id} 안에)
+//     hq:    true
+//     hqNeed:{ photo, file, text }     ← 무엇을 받을지
+//     hqSub: { by, at, text, photos[], files[{name,url,size}] }
+// ============================================================
+const HQ_NAVY = '#1e3a8a';
+function hqCanSubmit(){
+  if (isOwner && isOwner()) return true;
+  const r = String((me && me.role) || '').toUpperCase().replace(/\s+/g, '_');
+  return ['MANAGER','ASSISTANT_MANAGER','SUPERVISOR','SENIOR_SUPERVISOR','VICE_SUPERVISOR','EXECUTIVE','OWNER','HR_MANAGER'].includes(r);
+}
+function hqCanCreate(){
+  if (isOwner && isOwner()) return true;
+  const r = String((me && me.role) || '').toUpperCase();
+  return r === 'EXECUTIVE' || r === 'OWNER';
+}
+function hqT(ko, en, es){ return LANG === 'en' ? en : LANG === 'es' ? es : ko; }
+
+// 📎 사진이 아닌 파일(PDF·엑셀 등)도 올린다 — 업무 사진과 같은 Storage 경로를 쓴다
+async function hqUploadFile(file, path){
+  const fb = window.__fb;
+  if (!(fb && fb.st && fb.sRef && fb.uploadBytes && fb.getDownloadURL)) return null;
+  try {
+    const ref = fb.sRef(fb.st, path);
+    const up = fb.uploadBytes(ref, file, { contentType: file.type || 'application/octet-stream' })
+                 .then(snap => fb.getDownloadURL(snap.ref));
+    return await Promise.race([up, new Promise((_, rej) => setTimeout(() => rej(new Error('upload-timeout')), 60000))]);
+  } catch (e) { console.warn('[hq] 파일 업로드 실패', e); return null; }
+}
+
+// ── 카드 위쪽에 붙는 본사 표시 ──
+function hqBadge(t){
+  if (!t || !t.hq) return '';
+  const need = t.hqNeed || {};
+  const want = [need.photo ? '📷 ' + hqT('사진','Photo','Foto') : '', need.file ? '📎 ' + hqT('파일','File','Archivo') : '',
+                need.text ? '✍ ' + hqT('글','Text','Texto') : ''].filter(Boolean).join(' · ');
+  const sub = t.hqSub;
+  return '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-2px 0 7px">' +
+    '<span style="background:' + HQ_NAVY + ';color:#fff;border-radius:7px;padding:3px 10px;font-size:.78em;font-weight:900;letter-spacing:.02em">🏛 ' +
+      hqT('본사 지시 HQ','HQ REQUEST','SOLICITUD HQ') + '</span>' +
+    (want ? '<span style="color:' + HQ_NAVY + ';font-size:.78em;font-weight:800">' + want + '</span>' : '') +
+    (sub ? '<span style="background:#dcfce7;color:#14532d;border:1px solid #86efac;border-radius:7px;padding:2px 9px;font-size:.76em;font-weight:800">✅ ' +
+        hqT('제출함','Submitted','Enviado') + ' · ' + escHtml(sub.by || '') + '</span>'
+         : '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:7px;padding:2px 9px;font-size:.76em;font-weight:800">⏳ ' +
+        hqT('미제출','Not submitted','Sin enviar') + '</span>') +
+    '</div>';
+}
+function hqSubmitBtn(t){
+  if (!t || !t.hq || !hqCanSubmit()) return '';
+  const done = !!t.hqSub;
+  return '<button onclick="event.stopPropagation();openHqSubmit(\'' + t.id + '\',\'' + t.branchId + '\')" ' +
+    'style="background:' + (done ? '#eef2ff' : HQ_NAVY) + ';color:' + (done ? HQ_NAVY : '#fff') +
+    ';border:' + (done ? '1.5px solid ' + HQ_NAVY : '0') + ';border-radius:9px;padding:9px 15px;font-weight:900;font-size:.92em;cursor:pointer;font-family:inherit">' +
+    (done ? '📂 ' + hqT('제출 내용 보기','View submission','Ver envío') : '📤 ' + hqT('본사에 제출','Submit to HQ','Enviar a HQ')) + '</button>';
+}
+function hqShowSubmission(t){
+  const s = t && t.hqSub;
+  if (!s) return '';
+  const ph = (s.photos || []).map(u => _mgrThumb(u, '', 'width:74px;height:74px;border-radius:9px;object-fit:cover;cursor:zoom-in;border:1.5px solid #c7d2fe;', '')).join('');
+  const fl = (s.files || []).map(f =>
+    '<a href="' + escHtml(f.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:1.5px solid #c7d2fe;border-radius:8px;padding:5px 10px;font-size:.82em;font-weight:800;color:' + HQ_NAVY + ';text-decoration:none;margin:2px 4px 2px 0">📎 ' +
+    escHtml(f.name || 'file') + (f.size ? ' <span style="color:#94a3b8;font-weight:600">' + Math.round(f.size / 1024) + 'KB</span>' : '') + '</a>').join('');
+  return '<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:11px;padding:10px 12px;margin-top:8px">' +
+    '<div style="font-size:.78em;font-weight:900;color:' + HQ_NAVY + ';margin-bottom:6px">🏛 ' + hqT('본사 제출 내용','Submitted to HQ','Enviado a HQ') +
+      ' <span style="font-weight:600;color:#64748b">· ' + escHtml(s.by || '') + ' · ' + new Date(s.at || 0).toLocaleString() + '</span></div>' +
+    (s.text ? '<div style="background:#fff;border:1px solid #e0e7ff;border-radius:8px;padding:8px 11px;font-size:.88em;line-height:1.55;white-space:pre-wrap;margin-bottom:' + (ph || fl ? '7px' : '0') + '">' + escHtml(s.text) + '</div>' : '') +
+    (ph ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:' + (fl ? '7px' : '0') + '">' + ph + '</div>' : '') +
+    (fl || '') + '</div>';
+}
+
+// ── 제출 창 ──
+let HQ_PHOTOS = [], HQ_FILES = [], HQ_CUR = null;
+window.openHqSubmit = function(taskId, branchId){
+  const t = TASKS.find(x => x.id === taskId && x.branchId === branchId);
+  if (!t) { alert('업무를 찾을 수 없습니다'); return; }
+  HQ_CUR = t; HQ_PHOTOS = []; HQ_FILES = [];
+  const need = t.hqNeed || { photo: true, file: true, text: true };
+  let ov = document.getElementById('hqSubOv');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id = 'hqSubOv';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px 10px';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML =
+    '<div style="background:#fff;border-radius:16px;max-width:560px;width:100%;margin:auto 0;overflow:hidden">' +
+      '<div style="background:' + HQ_NAVY + ';color:#fff;padding:14px 16px">' +
+        '<div style="font-size:1.05em;font-weight:900">🏛 ' + hqT('본사에 제출','Submit to HQ','Enviar a HQ') + '</div>' +
+        '<div style="font-size:.84em;opacity:.9;margin-top:2px">' + escHtml(pickLang(t.nameTr, t.name)) + '</div>' +
+      '</div>' +
+      '<div style="padding:14px 16px">' +
+        (t.note ? '<div style="background:#f8fafc;border-left:4px solid ' + HQ_NAVY + ';border-radius:0 8px 8px 0;padding:9px 12px;font-size:.88em;line-height:1.55;margin-bottom:12px;white-space:pre-wrap">' + escHtml(pickLang(t.noteTr, t.note)) + '</div>' : '') +
+        (t.hqSub ? hqShowSubmission(t) : '') +
+        (need.text ? '<div style="margin-bottom:11px"><label style="display:block;font-size:.86em;font-weight:800;color:#334155;margin-bottom:4px">✍ ' + hqT('내용','Text','Texto') + '</label>' +
+          '<textarea id="hqText" rows="4" style="width:100%;border:1.5px solid #cbd5e1;border-radius:10px;padding:10px;font-family:inherit;font-size:.95em;box-sizing:border-box" placeholder="' +
+          hqT('본사에 보고할 내용을 적어주세요','Write your report to HQ','Escribe tu reporte a HQ') + '">' + escHtml((t.hqSub && t.hqSub.text) || '') + '</textarea></div>' : '') +
+        (need.photo ? '<div style="margin-bottom:11px"><label style="display:block;font-size:.86em;font-weight:800;color:#334155;margin-bottom:4px">📷 ' + hqT('사진','Photos','Fotos') + '</label>' +
+          '<button onclick="hqPickPhoto()" style="background:#eef2ff;color:' + HQ_NAVY + ';border:1.5px dashed ' + HQ_NAVY + ';border-radius:10px;padding:11px;width:100%;font-weight:800;cursor:pointer;font-family:inherit">+ ' + hqT('사진 추가','Add photos','Agregar fotos') + '</button>' +
+          '<div id="hqPhotoPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px"></div></div>' : '') +
+        (need.file ? '<div style="margin-bottom:11px"><label style="display:block;font-size:.86em;font-weight:800;color:#334155;margin-bottom:4px">📎 ' + hqT('파일 (PDF·엑셀 등)','Files (PDF, Excel…)','Archivos (PDF, Excel…)') + '</label>' +
+          '<button onclick="hqPickFile()" style="background:#f1f5f9;color:#334155;border:1.5px dashed #94a3b8;border-radius:10px;padding:11px;width:100%;font-weight:800;cursor:pointer;font-family:inherit">+ ' + hqT('파일 추가','Add files','Agregar archivos') + '</button>' +
+          '<div id="hqFilePrev" style="margin-top:7px"></div></div>' : '') +
+        '<div id="hqSubStatus" style="display:none;font-size:.86em;font-weight:800;color:' + HQ_NAVY + ';margin-bottom:8px"></div>' +
+        '<div style="display:flex;gap:8px">' +
+          '<button onclick="hqSubmitNow()" id="hqSubBtn" style="flex:1;background:' + HQ_NAVY + ';color:#fff;border:0;border-radius:11px;padding:13px;font-weight:900;font-size:1em;cursor:pointer;font-family:inherit">📤 ' + hqT('제출','Submit','Enviar') + '</button>' +
+          '<button onclick="document.getElementById(\'hqSubOv\').remove()" style="background:#f1f5f9;color:#475569;border:0;border-radius:11px;padding:13px 18px;font-weight:800;cursor:pointer;font-family:inherit">' + hqT('닫기','Close','Cerrar') + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+};
+window.hqPickPhoto = function(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+  inp.onchange = async function(){
+    for (const f of Array.from(inp.files || [])) {
+      try { HQ_PHOTOS.push({ file: await compressImage(f), url: URL.createObjectURL(f) }); } catch(_){ HQ_PHOTOS.push({ file: f, url: URL.createObjectURL(f) }); }
+    }
+    const p = document.getElementById('hqPhotoPrev');
+    if (p) p.innerHTML = HQ_PHOTOS.map((x, i) => '<div style="position:relative"><img src="' + x.url + '" style="width:66px;height:66px;object-fit:cover;border-radius:8px;border:1.5px solid #c7d2fe"><button onclick="HQ_PHOTOS.splice(' + i + ',1);hqPickPhotoRefresh()" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-weight:900;cursor:pointer">✕</button></div>').join('');
+  };
+  inp.click();
+};
+window.hqPickPhotoRefresh = function(){
+  const p = document.getElementById('hqPhotoPrev');
+  if (p) p.innerHTML = HQ_PHOTOS.map((x, i) => '<div style="position:relative"><img src="' + x.url + '" style="width:66px;height:66px;object-fit:cover;border-radius:8px;border:1.5px solid #c7d2fe"><button onclick="HQ_PHOTOS.splice(' + i + ',1);hqPickPhotoRefresh()" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-weight:900;cursor:pointer">✕</button></div>').join('');
+};
+window.hqPickFile = function(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true;
+  inp.onchange = function(){
+    Array.from(inp.files || []).forEach(f => {
+      if (f.size > 25 * 1024 * 1024) { alert(hqT('파일이 25MB를 넘습니다: ','File over 25MB: ','Archivo supera 25MB: ') + f.name); return; }
+      HQ_FILES.push(f);
+    });
+    hqFileRefresh();
+  };
+  inp.click();
+};
+window.hqFileRefresh = function(){
+  const p = document.getElementById('hqFilePrev');
+  if (p) p.innerHTML = HQ_FILES.map((f, i) =>
+    '<div style="display:flex;align-items:center;gap:7px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;margin-bottom:5px;font-size:.86em">' +
+    '<span style="flex:1;font-weight:700;word-break:break-all">📎 ' + escHtml(f.name) + '</span>' +
+    '<span style="color:#94a3b8;font-weight:700">' + Math.round(f.size / 1024) + 'KB</span>' +
+    '<button onclick="HQ_FILES.splice(' + i + ',1);hqFileRefresh()" style="background:#fef2f2;color:#dc2626;border:0;border-radius:6px;padding:3px 8px;font-weight:900;cursor:pointer">✕</button></div>').join('');
+};
+window.hqSubmitNow = async function(){
+  const t = HQ_CUR; if (!t) return;
+  const need = t.hqNeed || {};
+  const txt = (document.getElementById('hqText')?.value || '').trim();
+  if (need.text && !txt && !HQ_PHOTOS.length && !HQ_FILES.length) { alert(hqT('내용을 적거나 사진·파일을 넣어주세요','Add text, photos or files','Agrega texto, fotos o archivos')); return; }
+  const btn = document.getElementById('hqSubBtn'), st = document.getElementById('hqSubStatus');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  const say = m => { if (st) { st.style.display = ''; st.textContent = m; } };
+  const base = 'tasks/' + t.branchId + '/hq_' + t.id + '_' + Date.now();
+  const photos = [], files = [];
+  try {
+    for (let i = 0; i < HQ_PHOTOS.length; i++) {
+      say('📷 ' + hqT('사진 올리는 중','Uploading photos','Subiendo fotos') + ' ' + (i + 1) + '/' + HQ_PHOTOS.length);
+      const u = await _uploadPhotoSmart(HQ_PHOTOS[i].file, base + '_p' + i + '.jpg', 30000);
+      if (u) photos.push(u);
+    }
+    for (let i = 0; i < HQ_FILES.length; i++) {
+      const f = HQ_FILES[i];
+      say('📎 ' + hqT('파일 올리는 중','Uploading files','Subiendo archivos') + ' ' + (i + 1) + '/' + HQ_FILES.length + ' — ' + f.name);
+      const safe = String(f.name).replace(/[^\w.\-]/g, '_');
+      const u = await hqUploadFile(f, base + '_f' + i + '_' + safe);
+      if (u) files.push({ name: f.name, url: u, size: f.size, type: f.type || '' });
+      else { alert(hqT('파일 업로드 실패: ','Upload failed: ','Error al subir: ') + f.name); }
+    }
+    say('💾 ' + hqT('저장 중','Saving','Guardando'));
+    const sub = { by: (me && me.name) || '', at: Date.now(), text: txt || null,
+                  photos: photos.length ? photos : null, files: files.length ? files : null };
+    const p = 'tasks/' + t.branchId + '/' + todayStr() + '/' + t.id;
+    await window.__fb.update(window.__fb.ref(window.__fb.db, p), { hqSub: sub, completedAt: Date.now(), completedBy: (me && me.name) || '' });
+    t.hqSub = sub; t.completedAt = Date.now();
+    document.getElementById('hqSubOv')?.remove();
+    try { toast('🏛 ' + hqT('본사에 제출했습니다','Sent to HQ','Enviado a HQ')); } catch(_){ alert('🏛 ' + hqT('본사에 제출했습니다','Sent to HQ','Enviado a HQ')); }
+    renderAll();
+  } catch (e) {
+    alert(hqT('제출 실패: ','Submit failed: ','Error: ') + ((e && e.message) || e));
+  } finally { if (btn) { btn.disabled = false; btn.textContent = '📤 ' + hqT('제출','Submit','Enviar'); } }
+};
+
+// ── 본사 집계판 — 어느 지점이 냈고 안 냈는지 ──
+window.openHqBoard = async function(){
+  let ov = document.getElementById('hqBoardOv');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id = 'hqBoardOv';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px 10px';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:900px;width:100%;margin:auto 0;padding:20px;text-align:center;color:#64748b">⏳</div>';
+  const days = [];
+  for (let i = 0; i < 14; i++){ const d = new Date(); d.setDate(d.getDate() - i); days.push(d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')); }
+  const rows = {};
+  for (const b of BRANCHES){
+    for (const d of days){
+      let v = null;
+      try { v = await fetch(FB_DB_URL + '/tasks/' + b.id + '/' + d + '.json?cache=' + Date.now(), { cache:'no-store' }).then(r => r.json()); } catch(_){}
+      Object.entries(v || {}).forEach(([id, t]) => {
+        if (!t || !t.hq) return;
+        const key = (t.hqGroup || t.name) + '§' + d;
+        rows[key] = rows[key] || { name: t.name, date: d, by: t.from || '', need: t.hqNeed || {}, per: {} };
+        rows[key].per[b.id] = { id, sub: t.hqSub || null };
+      });
+    }
+  }
+  const list = Object.values(rows).sort((a, b) => (b.date + '').localeCompare(a.date + ''));
+  const head = '<div style="background:' + HQ_NAVY + ';color:#fff;padding:14px 18px;display:flex;align-items:center;gap:10px">' +
+    '<div style="flex:1"><div style="font-size:1.1em;font-weight:900">🏛 ' + hqT('본사 제출 현황','HQ submissions','Envíos a HQ') + '</div>' +
+    '<div style="font-size:.82em;opacity:.9">' + hqT('최근 14일','Last 14 days','Últimos 14 días') + '</div></div>' +
+    '<button onclick="document.getElementById(\'hqBoardOv\').remove()" style="background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:9px;padding:9px 14px;font-weight:800;cursor:pointer;font-family:inherit">✕</button></div>';
+  const body = list.length ? ('<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.86em">' +
+    '<tr><th style="background:#f1f5f9;padding:8px;text-align:left">' + hqT('요청','Request','Solicitud') + '</th>' +
+    BRANCHES.map(b => '<th style="background:#f1f5f9;padding:8px">' + escHtml(localizeBranch(b.id)) + '</th>').join('') + '</tr>' +
+    list.map(r => '<tr><td style="border-bottom:1px solid #eef2f7;padding:8px"><b>' + escHtml(r.name) + '</b><br>' +
+      '<span style="color:#94a3b8;font-size:.9em">' + r.date + ' · ' + escHtml(r.by) + '</span></td>' +
+      BRANCHES.map(b => { const c = r.per[b.id];
+        if (!c) return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;color:#cbd5e1">–</td>';
+        if (!c.sub) return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;background:#fffbeb;color:#92400e;font-weight:800">⏳</td>';
+        const n = ((c.sub.photos || []).length) + ((c.sub.files || []).length);
+        return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;background:#f0fdf4"><a href="#" onclick="event.preventDefault();hqOpenOne(\'' + b.id + '\',\'' + r.date + '\',\'' + c.id + '\')" style="color:#14532d;font-weight:900;text-decoration:none">✅' + (n ? ' ' + n : '') + '</a></td>';
+      }).join('') + '</tr>').join('') + '</table></div>')
+    : '<div style="padding:28px;text-align:center;color:#94a3b8">' + hqT('아직 본사 요청이 없습니다','No HQ requests yet','Aún no hay solicitudes') + '</div>';
+  ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:900px;width:100%;margin:auto 0;overflow:hidden">' + head + body + '</div>';
+};
+window.hqOpenOne = async function(branch, date, id){
+  let t = null;
+  try { t = await fetch(FB_DB_URL + '/tasks/' + branch + '/' + date + '/' + id + '.json', { cache:'no-store' }).then(r => r.json()); } catch(_){}
+  if (!t) return;
+  const w = window.open('', '_blank');
+  if (!w) { alert('팝업을 허용해주세요'); return; }
+  const s = t.hqSub || {};
+  w.document.write('<!doctype html><meta charset="utf-8"><title>' + escHtml(t.name) + '</title>' +
+    '<body style="font-family:-apple-system,\'Malgun Gothic\',sans-serif;padding:18px;max-width:760px;margin:auto">' +
+    '<h2 style="color:' + HQ_NAVY + '">🏛 ' + escHtml(t.name) + '</h2>' +
+    '<p style="color:#64748b">' + escHtml(localizeBranch(branch)) + ' · ' + date + ' · ' + escHtml(s.by || '') + '</p>' +
+    (s.text ? '<pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;white-space:pre-wrap;font-family:inherit">' + escHtml(s.text) + '</pre>' : '') +
+    (s.photos || []).map(u => '<img src="' + u + '" style="max-width:100%;border-radius:10px;margin:6px 0">').join('') +
+    (s.files || []).map(f => '<p><a href="' + f.url + '" target="_blank">📎 ' + escHtml(f.name) + '</a></p>').join('') +
+    '</body>');
+  w.document.close();
+};
+
+window.hqToggleAssign = function(){
+  const on = !!(document.getElementById('aHqOn') && document.getElementById('aHqOn').checked);
+  const o = document.getElementById('aHqOpts'); if (o) o.style.display = on ? '' : 'none';
+};
+
 window.sendAssign = sendAssign;
 window.startTask = startTask;
 window.openDoneModal = openDoneModal;
