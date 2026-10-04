@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_04_hqdir';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_04_hqstaff';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -8893,7 +8893,7 @@ function renderTaskCard(t){
       ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>`:''}
       ${t.vendor?`<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📦 ${escHtml(t.vendor)}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
-      ${t.from?`<span class="from">${t.hq?'🏛':'👤'} ${escHtml(t.hq ? hqFromLabel() : t.from)}</span>`:''}
+      ${t.from?`<span class="from">${t.hq?'🏛':'👤'} ${escHtml(t.hq ? hqFromLabel(t.from) : t.from)}</span>`:''}
       ${t.category?`<span>· ${escHtml(localizeCat(t.category))}</span>`:''}
     </div>
     ${noteHtml}
@@ -13332,8 +13332,8 @@ async function sendAssign(){
       assignedToId: _rcpt === '*' ? null : _rcpt,
       // 🏛 본사 지시는 개인 이름 대신 직책으로 나간다 — 지점은 '누가' 가 아니라 '본사가' 시킨 일로 받아야 한다.
       //   실제 누가 보냈는지는 actualBy 에 남겨 감사(audit) 가 가능하다. (HR 모드와 같은 방식)
-      from: _hqOn ? HQ_FROM : hrFrom(me.name),
-      fromRole: _hqOn ? HQ_FROM : (hrPersonaOn() ? 'HR MANAGER' : me.role),
+      from: _hqOn ? hqFromFor(me.name) : hrFrom(me.name),
+      fromRole: _hqOn ? hqFromFor(me.name) : (hrPersonaOn() ? 'HR MANAGER' : me.role),
       actualBy: (_hqOn || hrPersonaOn()) ? me.name : null,
       createdAt: Date.now(),
       note: note || null,
@@ -13604,10 +13604,56 @@ window.openAssignModal = openAssignModal;
 //     hqSub: { by, at, text, photos[], files[{name,url,size}] }
 // ============================================================
 const HQ_NAVY = '#1e3a8a';
-// 보낸이 표시 — 저장은 늘 'HQ DIRECTOR' 하나로 두고, 화면에서만 그 사람 언어로 바꾼다.
-// (집계·검색이 한 값으로 모이게 하려고 저장값은 번역하지 않는다)
+// 🏛 HQ 부서 명단 — 여기 있는 사람이 보내면 이름 대신 직책으로 나간다 (2026-10-04 전무님).
+//   지점은 '누가' 가 아니라 '본사가' 시킨 일로 받아야 하고, 사람이 바뀌어도 지시는 그대로 이어진다.
+//   기본값은 여기 두고, 나중에 사람이 바뀌면 RTDB taskTemplates/_hqStaff 로 덮어쓸 수 있다
+//   (새 경로가 아니라 이미 쓰기가 열려 있는 곳이라 규칙을 다시 게시할 필요가 없다).
+const HQ_TITLES_DEFAULT = {
+  'B.H.K': 'DIRECTOR',
+  'H.KIM': 'MANAGER',
+  'SHREYA SHRESTHA': 'COORDINATOR',
+  'SUYOUNG CHOI': 'COORDINATOR',
+  'ERIKA GARCIA': 'ASSISTANT',
+};
+let HQ_TITLES = Object.assign({}, HQ_TITLES_DEFAULT);
+(async function loadHqStaff(){
+  try {
+    const r = await fetch(FB_DB_URL + '/taskTemplates/_hqStaff.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = await r.json();
+    if (v && typeof v === 'object'){
+      const next = {};
+      Object.entries(v).forEach(([k, t]) => { if (t) next[_hqNorm(k)] = String(t).toUpperCase(); });
+      if (Object.keys(next).length) HQ_TITLES = next;       // 서버에 명단이 있으면 그것이 기준
+    }
+  } catch(_){}
+})();
+function hqTitleOf0(v){ return /^HQ\s/i.test(String(v || '')); }
+function _hqNorm(n){ return String(n || '').toUpperCase().replace(/s+/g, ' ').trim(); }
+function hqTitleOf(name){
+  const k = _hqNorm(name);
+  if (!k) return null;
+  if (HQ_TITLES[k]) return HQ_TITLES[k];
+  // 띄어쓰기·점 표기가 달라도 찾는다 (H.KIM / H KIM / HKIM)
+  const flat = k.replace(/[^A-Z가-힣]/g, '');
+  for (const [n, t] of Object.entries(HQ_TITLES)) if (n.replace(/[^A-Z가-힣]/g, '') === flat) return t;
+  return null;
+}
+// 저장값 — 'HQ DIRECTOR' 처럼 한 가지로 둔다 (집계·검색이 한 값으로 모이게)
+function hqFromFor(name){ const t = hqTitleOf(name); return t ? ('HQ ' + t) : HQ_FROM; }
 const HQ_FROM = 'HQ DIRECTOR';
-function hqFromLabel(){ return LANG === 'en' ? 'HQ Director' : LANG === 'es' ? 'Director de HQ' : 'HQ 디렉터'; }
+// 화면에서만 그 사람 언어로
+const HQ_TITLE_LBL = {
+  DIRECTOR:    { ko:'HQ 디렉터',    en:'HQ Director',    es:'Director de HQ' },
+  MANAGER:     { ko:'HQ 매니저',    en:'HQ Manager',     es:'Gerente de HQ' },
+  COORDINATOR: { ko:'HQ 코디네이터', en:'HQ Coordinator', es:'Coordinador de HQ' },
+  ASSISTANT:   { ko:'HQ 어시스턴트', en:'HQ Assistant',   es:'Asistente de HQ' },
+};
+function hqFromLabel(stored){
+  const key = String(stored || HQ_FROM).toUpperCase().replace(/^HQ\s+/, '').trim();
+  const m = HQ_TITLE_LBL[key] || HQ_TITLE_LBL.DIRECTOR;
+  return m[LANG] || m.ko;
+}
 function hqCanSubmit(){
   if (isOwner && isOwner()) return true;
   const r = String((me && me.role) || '').toUpperCase().replace(/\s+/g, '_');
@@ -13615,6 +13661,7 @@ function hqCanSubmit(){
 }
 function hqCanCreate(){
   if (isOwner && isOwner()) return true;
+  if (me && hqTitleOf(me.name)) return true;          // 🏛 HQ 부서 사람이면 본사 지시를 낼 수 있다
   const r = String((me && me.role) || '').toUpperCase();
   return r === 'EXECUTIVE' || r === 'OWNER';
 }
@@ -13819,7 +13866,7 @@ window.openHqBoard = async function(){
     '<tr><th style="background:#f1f5f9;padding:8px;text-align:left">' + hqT('요청','Request','Solicitud') + '</th>' +
     BRANCHES.map(b => '<th style="background:#f1f5f9;padding:8px">' + escHtml(localizeBranch(b.id)) + '</th>').join('') + '</tr>' +
     list.map(r => '<tr><td style="border-bottom:1px solid #eef2f7;padding:8px"><b>' + escHtml(r.name) + '</b><br>' +
-      '<span style="color:#94a3b8;font-size:.9em">' + r.date + ' · ' + escHtml(r.by === HQ_FROM ? hqFromLabel() : r.by) + '</span></td>' +
+      '<span style="color:#94a3b8;font-size:.9em">' + r.date + ' · ' + escHtml(hqTitleOf0(r.by) ? hqFromLabel(r.by) : r.by) + '</span></td>' +
       BRANCHES.map(b => { const c = r.per[b.id];
         if (!c) return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;color:#cbd5e1">–</td>';
         if (!c.sub) return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;background:#fffbeb;color:#92400e;font-weight:800">⏳</td>';
