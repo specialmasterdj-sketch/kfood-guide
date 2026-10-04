@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_04_noask';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_04_applink';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -8629,6 +8629,42 @@ function computeStatus(t){
 }
 
 // ================= EMPLOYEE VIEW =================
+// ============================================================
+// 🔗 업무 분야 → 앱 지도 (2026-10-04 전무님)
+// ------------------------------------------------------------
+//   직원은 앱 이름을 몰라도 된다. 업무 카드에서 바로 그 일을 하는 앱으로 간다.
+//   · 업무를 만들 때가 아니라 '그릴 때' 붙인다 → 이미 나가 있는 업무에도 바로 적용
+//   · task 에 appLink 가 직접 적혀 있으면 그것이 우선 (온도·매대는 예전부터 그렇게 한다)
+//   · 매장이 필요한 앱에는 지점을 함께 넘겨 그 매장 화면으로 바로 연다
+// ============================================================
+const TASK_APP_MAP = [
+  { cat: ['유통기한', '유통기한 관리', 'EXPIRY'], href: './expiry.html',
+    lbl: { ko:'📅 유통기한 관리 열기', en:'📅 Open Expiry Manager', es:'📅 Abrir Control de Vencimiento' } },
+  { cat: ['가격표 감사', 'PRICE AUDIT'], href: './price-audit.html?b={B}',
+    lbl: { ko:'🏷️ 가격표 감사 열기', en:'🏷️ Open Price Audit', es:'🏷️ Abrir Auditoría de Precios' } },
+  // ⚠ 매대 관리 앱은 헐리우드 도면 전용(floorplan/matdae-hollywood) — 그 지점에만 붙인다
+  { cat: ['진열', 'DISPLAY'], br: ['HOLLYWOOD'], href: './store-map.html',
+    lbl: { ko:'📦 매대 관리 — 품절 기록', en:'📦 Shelf Manager — log out-of-stock', es:'📦 Gestión de Estantes — faltantes' } },
+  { cat: ['온도 체크', 'TEMPERATURE CHECK', '온도', 'Frozen'], href: './temp.html',
+    lbl: { ko:'🌡 온도 관리 앱 열기', en:'🌡 Open Temp Tracker', es:'🌡 Abrir Control de Temperatura' } },
+  { cat: ['Delivery', '배달 박스', 'Organización de delivery', 'Ordering Products'], href: './receiving-scan.html',
+    lbl: { ko:'📥 입고 스캔 열기', en:'📥 Open Receiving Scan', es:'📥 Abrir Escaneo de Recepción' } },
+  { cat: ['재고', 'INVENTORY', 'Top 500'], href: './voice-stock.html',
+    lbl: { ko:'🎤 말로 재고 세기', en:'🎤 Count stock by voice', es:'🎤 Contar inventario por voz' } },
+];
+function taskAppFor(t){
+  if (!t) return null;
+  const cat = String(t.category || '').trim().toUpperCase();
+  const nm  = String(t.name || '').toUpperCase();
+  for (const m of TASK_APP_MAP){
+    if (m.br && m.br.indexOf(t.branchId) < 0) continue;          // 그 지점에만 있는 앱
+    const hit = m.cat.some(c => { const u = String(c).toUpperCase(); return cat === u || nm.indexOf(u) >= 0; });
+    if (hit) return { href: m.href.replace('{B}', encodeURIComponent(t.branchId || '')), lbl: m.lbl };
+  }
+  return null;
+}
+window.taskAppFor = taskAppFor;
+
 function renderEmp(){
   const list = document.getElementById('empList');
   // 대시보드에서 다른 매장을 선택하면 그 매장 직원들 업무를 참고용으로 표시
@@ -8860,10 +8896,7 @@ function renderTaskCard(t){
   // 라벨은 인라인 fallback 으로 처리.
   // 🏷️ 2026-06-28 가격표 감사 task — price-audit 앱 링크 자동 생성(직원이 QR 대신 앱에서도 시작 가능).
   let _appLink = t.appLink, _appLabel = t.appLinkLabel;
-  if (!_appLink && t.category === '가격표 감사') {
-    _appLink = './price-audit.html?b=' + encodeURIComponent(t.branchId || '');
-    _appLabel = { ko:'🏷️ 가격표 감사 열기', en:'🏷️ Open Price Audit', es:'🏷️ Abrir Auditoría' };
-  }
+  if (!_appLink) { const _m = taskAppFor(t); if (_m) { _appLink = _m.href; _appLabel = _m.lbl; } }
   if (_appLink) {
     const linkLblFallback = LANG==='en' ? '🌡 Open Temp Tracker'
                           : LANG==='es' ? '🌡 Abrir Temp Tracker'
