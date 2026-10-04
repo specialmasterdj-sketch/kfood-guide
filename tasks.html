@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_04_applink';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_04_home';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -5111,11 +5111,9 @@ function refreshMe(){
   // 동기부여용이라 보여줘야 함. 매니저 전용 액션(업무 지시/보고 확인)은
   // renderDashboard 에서 따로 숨김.
   if (homeBtn) homeBtn.style.display = '';
-  // 매니저는 default 진입 = 대시보드 (한 번만)
-  if (showMgr && CUR_TAB === 'emp' && !window.__dashFirstShown) {
-    window.__dashFirstShown = true;
-    setTimeout(() => switchTab('home'), 50);
-  }
+  // 🏠 2026-10-04 전무님: 첫 화면을 '내 업무' 로.
+  //   "직원 대다수가 매일 보는 것은 내 업무다" — 매니저도 같은 화면에서 시작해야
+  //   본사 지시·공지를 같이 보게 된다. 대시보드는 탭으로 언제든 간다.
 }
 function goSetName(){
   // chat.html me-modal 자동 오픈 + 등록 완료 시 tasks.html 로 자동 복귀
@@ -8728,8 +8726,74 @@ function renderEmp(){
     </div>`;
     return;
   }
-  list.innerHTML = my.map(renderTaskCard).join('');
+  list.innerHTML = empTopBanners(my) + my.map(renderTaskCard).join('');
   try { applyMgrHugePhotos(list); } catch(_){}   // 🚀 base64 사진은 보일 때만 .src 채움
+  try { loadNoticeBanner(); } catch(_){}         // 📢 공지는 늦게 와도 그 자리에 채운다
+}
+
+// ============================================================
+// 🔔 '내 업무' 맨 위 띠 — 본사 지시 · 공지 (2026-10-04 전무님)
+// ------------------------------------------------------------
+//   첫 화면이 '내 업무' 가 됐으니, 놓치면 안 되는 두 가지를 맨 위에 둔다.
+//   · 🏛 본사 지시 — 아직 제출 안 한 것이 있으면 크게
+//   · 📢 공지 — 안 읽은 것이 있으면 (updates/updateReads 를 그대로 쓴다)
+// ============================================================
+function empTopBanners(list){
+  let h = '';
+  const hq = (list || []).filter(x => x && x.hq && !x.hqSub);
+  if (hq.length){
+    const one = hq[0];
+    h += '<div onclick="document.querySelector(\'.task-card[style*=1e3a8a]\')?.scrollIntoView({behavior:\'smooth\',block:\'center\'})" ' +
+      'style="cursor:pointer;background:linear-gradient(135deg,#1e3a8a,#312e81);color:#fff;border-radius:14px;padding:13px 16px;margin-bottom:12px;' +
+      'box-shadow:0 4px 14px rgba(30,58,138,.3);display:flex;align-items:center;gap:12px">' +
+      '<div style="font-size:1.7em;line-height:1">🏛</div>' +
+      '<div style="flex:1;line-height:1.45">' +
+        '<div style="font-weight:900;font-size:1.02em">' + hqT('본사 지시 ' + hq.length + '건 — 아직 제출 안 했습니다',
+            'HQ request' + (hq.length > 1 ? 's' : '') + ' — ' + hq.length + ' not submitted yet',
+            'Solicitud de HQ — ' + hq.length + ' sin enviar') + '</div>' +
+        '<div style="font-size:.84em;opacity:.9">' + escHtml(pickLang(one.nameTr, one.name)) + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(255,255,255,.2);border-radius:9px;padding:8px 13px;font-weight:900;font-size:.9em;white-space:nowrap">' +
+        hqT('보기 ›', 'View ›', 'Ver ›') + '</div></div>';
+  }
+  h += '<div id="empNoticeBar"></div>';
+  return h;
+}
+// 📢 공지 — 안 읽은 것 세어 띠로. 읽음 표시는 공지 앱(updates.html)이 한다.
+let __noticeDone = false;
+async function loadNoticeBanner(){
+  if (__noticeDone) return;
+  const bar = document.getElementById('empNoticeBar');
+  if (!bar || !me || !me.name) return;
+  __noticeDone = true;
+  try {
+    const ups = await fetch(FB_DB_URL + '/updates.json', { cache:'no-store' }).then(r => r.json()) || {};
+    const myKey = String(me.name).replace(/[.#$\[\]\/]/g, '_');
+    const mine = Object.entries(ups).filter(([, u]) => {
+      if (!u) return false;
+      const aud = String(u.audience || 'all');
+      return aud === 'all' || aud === me.branch;
+    });
+    let unread = [];
+    for (const [id, u] of mine){
+      let reads = null;
+      try { reads = await fetch(FB_DB_URL + '/updateReads/' + id + '.json', { cache:'no-store' }).then(r => r.json()); } catch(_){}
+      const got = reads && (reads[myKey] || reads[me.name]);
+      if (!got) unread.push(u);
+    }
+    if (!unread.length) return;
+    unread.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const head = String(unread[0].title || unread[0].body || '').replace(/[#*_>]/g, '').split('\n').filter(Boolean)[0] || '';
+    bar.innerHTML = '<a href="./updates.html" style="text-decoration:none;display:flex;align-items:center;gap:12px;' +
+      'background:linear-gradient(135deg,#fef3c7,#fde68a);border:2px solid #f59e0b;border-radius:14px;padding:12px 15px;margin-bottom:12px;color:#78350f">' +
+      '<div style="font-size:1.6em;line-height:1">📢</div>' +
+      '<div style="flex:1;line-height:1.45">' +
+        '<div style="font-weight:900">' + hqT('안 읽은 공지 ' + unread.length + '건', unread.length + ' unread notice' + (unread.length > 1 ? 's' : ''), unread.length + ' aviso(s) sin leer') + '</div>' +
+        '<div style="font-size:.84em;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(head.slice(0, 70)) + '</div>' +
+      '</div>' +
+      '<div style="background:#b45309;color:#fff;border-radius:9px;padding:8px 13px;font-weight:900;font-size:.9em;white-space:nowrap">' +
+        hqT('읽기 ›', 'Read ›', 'Leer ›') + '</div></a>';
+  } catch(e){ console.warn('[notice]', e); }
 }
 // 🔧 2026-05-21 전무님 신고: 직원이 업무지시 안 보임 → 시작/완료 못함.
 // 원인 #1: 매니저가 발사한 이름과 직원 me.name 이 대소문자·공백·구두점 차이로 매칭 실패.
