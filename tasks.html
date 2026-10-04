@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_04_hqlink';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_04_hqlink2';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1846,21 +1846,34 @@ button{font-family:inherit;cursor:pointer}
     //   지점 매니저·슈퍼바이저 → '내 업무' 로 옮기고 본사 지시 카드로 데려간다
     //   본사 지시가 오늘 없으면 그렇다고 알려 준다 (빈 화면에서 헤매지 않게)
     if (h === '#hq'){
-      try { history.replaceState({}, '', location.pathname + location.search); } catch(_){}
-      if (typeof hqCanCreate === 'function' && hqCanCreate()){
-        try { openHqBoard(); } catch(_){}
-        return;
-      }
-      if (typeof switchTab === 'function') { try { switchTab('emp'); } catch(_){} }
-      setTimeout(function(){
-        const card = document.querySelector('.page.active .task-card[style*="1e3a8a"]')
-                  || document.querySelector('.task-card[style*="1e3a8a"]');
-        if (card){ try { card.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_){ card.scrollIntoView(); }
-          card.style.outline = '3px solid #1e3a8a';
-          setTimeout(function(){ try { card.style.outline = ''; } catch(_){} }, 2500);
-          return; }
-        try { toast('🏛 ' + (LANG==='en' ? 'No HQ request right now' : LANG==='es' ? 'No hay solicitudes de HQ ahora' : '지금은 본사 지시가 없습니다')); } catch(_){}
-      }, 500);
+      // ⏳ me(내 정보)·업무 목록이 늦게 올라오므로 준비될 때까지 몇 번 다시 본다.
+      //    준비 전에 한 번만 보면 매니저가 대시보드에 그대로 서 있게 된다 (전무님 신고).
+      let tries = 0;
+      (function go(){
+        tries++;
+        const ready = (typeof me !== 'undefined') && me && me.name;
+        if (!ready && tries < 20){ setTimeout(go, 400); return; }   // 최대 8초
+        try { history.replaceState({}, '', location.pathname + location.search); } catch(_){}
+        if (typeof hqCanCreate === 'function' && hqCanCreate()){
+          try { openHqBoard(); } catch(e){ console.warn('[hq] board', e); }
+          return;
+        }
+        if (typeof switchTab === 'function') { try { switchTab('emp'); } catch(_){} }
+        let look = 0;
+        (function find(){
+          look++;
+          const card = document.querySelector('.page.active .task-card[style*="1e3a8a"]')
+                    || document.querySelector('.task-card[style*="1e3a8a"]');
+          if (card){
+            try { card.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_){ card.scrollIntoView(); }
+            card.style.outline = '3px solid #1e3a8a';
+            setTimeout(function(){ try { card.style.outline = ''; } catch(_){} }, 2500);
+            return;
+          }
+          if (look < 12){ setTimeout(find, 500); return; }          // 최대 6초
+          try { toast('🏛 ' + (LANG==='en' ? 'No HQ request right now' : LANG==='es' ? 'No hay solicitudes de HQ ahora' : '지금은 본사 지시가 없습니다')); } catch(_){}
+        })();
+      })();
       return;
     }
     if (h !== '#ideas' && h !== '#ask') return;
