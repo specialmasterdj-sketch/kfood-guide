@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_04_home';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_04_cards';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -160,6 +160,41 @@ button{font-family:inherit;cursor:pointer}
 .prog-mini{flex:1;height:9px;background:#e5e7eb;border-radius:5px;overflow:hidden;min-width:140px}
 .prog-mini .fill{height:100%;background:linear-gradient(90deg,#fbbf24,#16a34a);transition:width .4s cubic-bezier(.2,.8,.2,1);border-radius:5px}
 
+/* 🗂 '내 업무' 4칸 카드 (2026-10-04 전무님) */
+.emp-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:0 0 14px}
+.emp-card{display:flex;align-items:center;gap:10px;background:#fff;border:2px solid #e8eceb;border-radius:14px;
+  padding:11px 12px;cursor:pointer;font-family:inherit;text-align:left;transition:.15s}
+.emp-card:hover{border-color:#cbd5e1}
+.emp-card.on{border-color:#1a5c3a;box-shadow:0 3px 12px rgba(26,92,58,.16)}
+.emp-card .ic{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+.emp-card .tx{display:flex;flex-direction:column;min-width:0}
+.emp-card .tx b{font-size:21px;font-weight:900;letter-spacing:-.8px;line-height:1.1}
+.emp-card .tx i{font-style:normal;font-size:11.5px;font-weight:800;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.emp-card .tx u{text-decoration:none;font-size:10.5px;color:#94a3b8;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.emp-list{background:#fff;border:1.5px solid #e8eceb;border-radius:14px;overflow:hidden}
+.emp-row{display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid #f1f5f4}
+.emp-row:last-child{border-bottom:0}
+.emp-row .av{width:34px;height:34px;border-radius:50%;background:#e8f5ee;color:#1a5c3a;display:flex;align-items:center;
+  justify-content:center;font-weight:900;font-size:14px;flex:none}
+.emp-row .nm{flex:1;font-weight:800;font-size:14px;min-width:0}
+.emp-row .nm i{display:block;font-style:normal;font-size:11.5px;color:#94a3b8;font-weight:700}
+.emp-row .tm{font-size:12.5px;font-weight:800;color:#475569;white-space:nowrap}
+.emp-note{background:#f8fafc;border:1px dashed #cbd5e1;border-radius:11px;padding:10px 13px;font-size:12.5px;
+  color:#64748b;font-weight:700;margin:8px 0}
+.emp-sec{font-size:13.5px;font-weight:900;color:#0f3d28;margin:16px 0 7px}
+.emp-go{display:block;text-align:center;background:#1a5c3a;color:#fff;border-radius:11px;padding:12px;
+  font-weight:900;text-decoration:none;margin-top:10px}
+.emp-ph{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.emp-ph a{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:#f1f5f4;display:block}
+.emp-ph img{width:100%;height:100%;object-fit:cover;display:block}
+.emp-ph b{position:absolute;top:5px;left:5px;background:#1e3a8a;color:#fff;border-radius:6px;padding:1px 5px;font-size:10px}
+.emp-ph u{position:absolute;left:0;right:0;bottom:0;text-decoration:none;background:linear-gradient(transparent,rgba(0,0,0,.7));
+  color:#fff;font-size:9.5px;font-weight:800;padding:10px 5px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:620px){
+  .emp-cards{grid-template-columns:1fr 1fr;gap:8px}
+  .emp-card .tx b{font-size:19px}
+  .emp-ph{grid-template-columns:repeat(3,1fr)}
+}
 .task-card{
   background:#fff;border:1px solid rgba(15,23,42,.06);
   border-radius:14px;padding:15px 17px;margin-bottom:11px;
@@ -8726,9 +8761,144 @@ function renderEmp(){
     </div>`;
     return;
   }
-  list.innerHTML = empTopBanners(my) + my.map(renderTaskCard).join('');
+  list.innerHTML = empTopBanners(my) + empStatCards(my) + empPanel(my);
   try { applyMgrHugePhotos(list); } catch(_){}   // 🚀 base64 사진은 보일 때만 .src 채움
   try { loadNoticeBanner(); } catch(_){}         // 📢 공지는 늦게 와도 그 자리에 채운다
+}
+
+
+// ============================================================
+// 🗂 '내 업무' 맨 위 4칸 카드 (2026-10-04 전무님 지시)
+// ------------------------------------------------------------
+//   ① 오늘 스태프  ② 오늘 나의 업무(기본 — 아래에 내 임무)  ③ 품절  ④ HQ 지시(오늘 올린 사진)
+//   카드를 누르면 아래 내용만 바뀐다. 화면을 떠나지 않으므로 직원이 길을 잃지 않는다.
+// ============================================================
+let EMP_VIEW = 'my';
+let EMP_STAFF = null, EMP_OOS = null, EMP_HQPH = null;   // 눌렀을 때만 불러온다
+const EMP_VIEWS = {
+  staff: { ic:'👥', ko:'오늘 근무', en:'Staff today',  es:'Personal hoy', bg:'#dcfce7', fg:'#15803d' },
+  my:    { ic:'✅', ko:'오늘 나의 업무', en:'My tasks', es:'Mis tareas',  bg:'#dbeafe', fg:'#1d4ed8' },
+  stock: { ic:'📦', ko:'품절', en:'Low stock', es:'Sin stock', bg:'#ffedd5', fg:'#c2410c' },
+  hq:    { ic:'🏛', ko:'본사(HQ) 지시', en:'HQ requests', es:'Solicitudes HQ', bg:'#e0e7ff', fg:'#3730a3' },
+};
+function empViewLbl(k, f){ const v = EMP_VIEWS[k]; return LANG === 'en' ? v.en : LANG === 'es' ? v.es : v.ko; }
+function empStatCards(my){
+  const myDone = (my || []).filter(x => x.completedAt).length, myTot = (my || []).length;
+  const hqN = (my || []).filter(x => x.hq).length;
+  const hqWait = (my || []).filter(x => x.hq && !x.hqSub).length;
+  const nums = {
+    staff: { v: EMP_STAFF ? EMP_STAFF.length : '…', sub: EMP_STAFF ? (LANG==='en'?'from schedule':LANG==='es'?'del horario':'스케줄 기준') : '' },
+    my:    { v: myDone + '<span style="font-size:.6em;color:#94a3b8">/' + myTot + '</span>',
+             sub: (myTot - myDone) > 0 ? ((myTot - myDone) + (LANG==='en'?' left':LANG==='es'?' faltan':'건 남음')) : (LANG==='en'?'all done 🎉':LANG==='es'?'todo listo 🎉':'모두 완료 🎉') },
+    stock: { v: EMP_OOS ? EMP_OOS.length : '…', sub: LANG==='en'?'to reorder':LANG==='es'?'para pedir':'발주 필요' },
+    hq:    { v: hqN, sub: hqWait ? (LANG==='en'?'not submitted':LANG==='es'?'sin enviar':'미제출') : (LANG==='en'?'done':LANG==='es'?'enviado':'제출 완료') },
+  };
+  return '<div class="emp-cards">' + ['staff','my','stock','hq'].map(k => {
+    const v = EMP_VIEWS[k], n = nums[k], on = (EMP_VIEW === k);
+    const warn = (k === 'hq' && hqWait) || (k === 'my' && (myTot - myDone) > 0);
+    return '<button class="emp-card' + (on ? ' on' : '') + '" onclick="empSetView(\'' + k + '\')">' +
+      '<span class="ic" style="background:' + v.bg + ';color:' + v.fg + '">' + v.ic + '</span>' +
+      '<span class="tx"><b style="color:' + (warn ? '#b45309' : '#0f3d28') + '">' + n.v + '</b>' +
+        '<i>' + escHtml(empViewLbl(k)) + '</i><u>' + escHtml(n.sub) + '</u></span></button>';
+  }).join('') + '</div>';
+}
+window.empSetView = function(v){
+  EMP_VIEW = v;
+  renderEmp();
+  if (v === 'staff' && !EMP_STAFF) empLoadStaff();
+  if (v === 'stock' && !EMP_OOS)   empLoadOos();
+  if (v === 'hq'    && !EMP_HQPH)  empLoadHqPhotos();
+};
+function empPanel(my){
+  if (EMP_VIEW === 'my') return my.map(renderTaskCard).join('');
+  if (EMP_VIEW === 'staff') return empStaffPanel();
+  if (EMP_VIEW === 'stock') return empOosPanel();
+  if (EMP_VIEW === 'hq')    return empHqPanel(my);
+  return '';
+}
+function empWait(){ return '<div style="text-align:center;color:#94a3b8;padding:26px;font-weight:700">⏳</div>'; }
+
+// ① 오늘 근무 — 스케줄의 오늘 시프트
+async function empLoadStaff(){
+  const br = (me && me.branch) || '';
+  EMP_STAFF = [];
+  try {
+    const [sh, emp] = await Promise.all([
+      fetch(FB_DB_URL + '/schedules/' + br + '/shifts.json', { cache:'no-store' }).then(r => r.json()),
+      fetch(FB_DB_URL + '/schedules/' + br + '/employees.json', { cache:'no-store' }).then(r => r.json()),
+    ]);
+    const list = Array.isArray(emp) ? emp : Object.values(emp || {});
+    const byId = {}; list.forEach(e => { if (e && e.id) byId[e.id] = e; });
+    const d = todayStr();
+    Object.entries(sh || {}).forEach(([k, v]) => {
+      if (!k.endsWith('@' + d) || !v) return;
+      const id = k.split('@')[0], e = byId[id];
+      EMP_STAFF.push({ name: (e && e.name) || id, role: v.position || (e && e.role) || '', start: v.start || '', end: v.end || '' });
+    });
+    EMP_STAFF.sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  } catch(e){ console.warn('[staff]', e); }
+  if (EMP_VIEW === 'staff') renderEmp();
+}
+function empStaffPanel(){
+  if (!EMP_STAFF) return empWait();
+  if (!EMP_STAFF.length) return '<div class="empty">' + (LANG==='en'?'No shifts scheduled for today':LANG==='es'?'No hay turnos hoy':'오늘 등록된 근무가 없습니다') + '</div>';
+  return '<div class="emp-list">' + EMP_STAFF.map(p =>
+    '<div class="emp-row"><span class="av">' + escHtml(String(p.name).slice(0,1)) + '</span>' +
+    '<span class="nm">' + escHtml(p.name) + '<i>' + escHtml(p.role) + '</i></span>' +
+    '<span class="tm">' + escHtml(p.start) + (p.end ? ' – ' + escHtml(p.end) : '') + '</span></div>').join('') + '</div>';
+}
+// ③ 품절 — 매대 관리 앱에 쌓인 것 (지금은 헐리우드 도면만)
+async function empLoadOos(){
+  EMP_OOS = [];
+  try {
+    const v = await fetch(FB_DB_URL + '/floorplan/matdae-hollywood/outOfStock.json', { cache:'no-store' }).then(r => r.json());
+    EMP_OOS = Object.entries(v || {}).map(([k, x]) => ({ key:k, name: (x && (x.name || x.item)) || '', bay: (x && x.bay) || '', at: (x && x.at) || 0 }))
+                .sort((a, b) => (b.at || 0) - (a.at || 0));
+  } catch(e){ console.warn('[oos]', e); }
+  if (EMP_VIEW === 'stock') renderEmp();
+}
+function empOosPanel(){
+  if (!EMP_OOS) return empWait();
+  const mine = (me && me.branch) === 'HOLLYWOOD';
+  const head = mine ? '' : '<div class="emp-note">' + (LANG==='en' ? 'Shelf map is Hollywood-only for now — showing Hollywood'
+      : LANG==='es' ? 'El mapa de estantes es solo Hollywood por ahora' : '매대 관리 앱은 아직 할리우드 도면만 있습니다 — 할리우드 기준입니다') + '</div>';
+  if (!EMP_OOS.length) return head + '<div class="empty">' + (LANG==='en'?'Nothing out of stock 👍':LANG==='es'?'Sin faltantes 👍':'품절 없음 👍') + '</div>';
+  return head + '<div class="emp-list">' + EMP_OOS.slice(0, 40).map(o =>
+    '<div class="emp-row"><span class="av" style="background:#fff1e6;color:#c2410c">📦</span>' +
+    '<span class="nm">' + escHtml(o.name || '(이름 없음)') + '<i>' + escHtml(o.bay) + '</i></span>' +
+    '<span class="tm" style="color:#c2410c;font-weight:900">' + (LANG==='en'?'out':LANG==='es'?'agotado':'품절') + '</span></div>').join('') +
+    (EMP_OOS.length > 40 ? '<div class="emp-note">+' + (EMP_OOS.length - 40) + (LANG==='en'?' more':LANG==='es'?' más':'건 더') + '</div>' : '') +
+    '</div><a href="./store-map.html" class="emp-go">📦 ' + (LANG==='en'?'Open Shelf Manager':LANG==='es'?'Abrir Gestión de Estantes':'매대 관리 열기') + ' ›</a>';
+}
+// ④ 본사 지시 + 오늘 우리 매장이 올린 사진
+async function empLoadHqPhotos(){
+  EMP_HQPH = [];
+  try {
+    const br = (me && me.branch) || '';
+    const v = await fetch(FB_DB_URL + '/tasks/' + br + '/' + todayStr() + '.json?cache=' + Date.now(), { cache:'no-store' }).then(r => r.json());
+    Object.values(v || {}).forEach(t => {
+      if (!t) return;
+      const who = t.completedBy || t.assignedTo || '';
+      (t.photos || []).forEach(u => { if (String(u).startsWith('http')) EMP_HQPH.push({ url:u, by:who, name:t.name, hq: !!t.hq }); });
+      const sub = t.hqSub;
+      if (sub && sub.photos) sub.photos.forEach(u => EMP_HQPH.push({ url:u, by: sub.by || who, name:t.name, hq:true }));
+    });
+    EMP_HQPH.sort((a, b) => (b.hq ? 1 : 0) - (a.hq ? 1 : 0));
+  } catch(e){ console.warn('[hqph]', e); }
+  if (EMP_VIEW === 'hq') renderEmp();
+}
+function empHqPanel(my){
+  const hq = (my || []).filter(x => x.hq);
+  let h = hq.length ? hq.map(renderTaskCard).join('')
+        : '<div class="emp-note">' + (LANG==='en'?'No HQ request today':LANG==='es'?'No hay solicitudes de HQ hoy':'오늘 본사 지시는 없습니다') + '</div>';
+  h += '<div class="emp-sec">📸 ' + (LANG==='en'?'Photos sent today':LANG==='es'?'Fotos enviadas hoy':'오늘 올린 사진') + '</div>';
+  if (!EMP_HQPH) return h + empWait();
+  if (!EMP_HQPH.length) return h + '<div class="emp-note">' + (LANG==='en'?'No photos yet today':LANG==='es'?'Aún no hay fotos hoy':'오늘 올린 사진이 아직 없습니다') + '</div>';
+  h += '<div class="emp-ph">' + EMP_HQPH.slice(0, 24).map(p =>
+    '<a href="' + escHtml(p.url) + '" target="_blank" rel="noopener">' +
+    '<img src="' + escHtml(p.url) + '" loading="lazy">' +
+    (p.hq ? '<b>🏛</b>' : '') + '<u>' + escHtml(String(p.by).slice(0, 12)) + '</u></a>').join('') + '</div>';
+  return h;
 }
 
 // ============================================================
