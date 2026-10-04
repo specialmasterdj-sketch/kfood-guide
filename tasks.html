@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_03_hq_window';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_04_hqdir';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -8893,7 +8893,7 @@ function renderTaskCard(t){
       ${t.place?`<span style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📍 ${escHtml(localizePlace(t.place, t.placeTr))}</span>`:''}
       ${t.vendor?`<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:999px;padding:2px 9px;font-size:.78em;font-weight:700">📦 ${escHtml(t.vendor)}</span>`:''}
       ${t.requirePhoto?`<span class="photo-req">📷 ${labels.photoReq[LANG]}</span>`:''}
-      ${t.from?`<span class="from">👤 ${escHtml(t.from)}</span>`:''}
+      ${t.from?`<span class="from">${t.hq?'🏛':'👤'} ${escHtml(t.hq ? hqFromLabel() : t.from)}</span>`:''}
       ${t.category?`<span>· ${escHtml(localizeCat(t.category))}</span>`:''}
     </div>
     ${noteHtml}
@@ -13330,8 +13330,11 @@ async function sendAssign(){
       deadline, category: cat, requirePhoto: photo,
       assignedTo: _rcpt === '*' ? '*' : _rcpt,
       assignedToId: _rcpt === '*' ? null : _rcpt,
-      from: hrFrom(me.name), fromRole: hrPersonaOn() ? 'HR MANAGER' : me.role,
-      actualBy: hrPersonaOn() ? me.name : null,   // 🎭 페르소나 발송 시 실제 실행자 기록
+      // 🏛 본사 지시는 개인 이름 대신 직책으로 나간다 — 지점은 '누가' 가 아니라 '본사가' 시킨 일로 받아야 한다.
+      //   실제 누가 보냈는지는 actualBy 에 남겨 감사(audit) 가 가능하다. (HR 모드와 같은 방식)
+      from: _hqOn ? HQ_FROM : hrFrom(me.name),
+      fromRole: _hqOn ? HQ_FROM : (hrPersonaOn() ? 'HR MANAGER' : me.role),
+      actualBy: (_hqOn || hrPersonaOn()) ? me.name : null,
       createdAt: Date.now(),
       note: note || null,
       noteTr: noteTr || null,
@@ -13601,6 +13604,10 @@ window.openAssignModal = openAssignModal;
 //     hqSub: { by, at, text, photos[], files[{name,url,size}] }
 // ============================================================
 const HQ_NAVY = '#1e3a8a';
+// 보낸이 표시 — 저장은 늘 'HQ DIRECTOR' 하나로 두고, 화면에서만 그 사람 언어로 바꾼다.
+// (집계·검색이 한 값으로 모이게 하려고 저장값은 번역하지 않는다)
+const HQ_FROM = 'HQ DIRECTOR';
+function hqFromLabel(){ return LANG === 'en' ? 'HQ Director' : LANG === 'es' ? 'Director de HQ' : 'HQ 디렉터'; }
 function hqCanSubmit(){
   if (isOwner && isOwner()) return true;
   const r = String((me && me.role) || '').toUpperCase().replace(/\s+/g, '_');
@@ -13812,7 +13819,7 @@ window.openHqBoard = async function(){
     '<tr><th style="background:#f1f5f9;padding:8px;text-align:left">' + hqT('요청','Request','Solicitud') + '</th>' +
     BRANCHES.map(b => '<th style="background:#f1f5f9;padding:8px">' + escHtml(localizeBranch(b.id)) + '</th>').join('') + '</tr>' +
     list.map(r => '<tr><td style="border-bottom:1px solid #eef2f7;padding:8px"><b>' + escHtml(r.name) + '</b><br>' +
-      '<span style="color:#94a3b8;font-size:.9em">' + r.date + ' · ' + escHtml(r.by) + '</span></td>' +
+      '<span style="color:#94a3b8;font-size:.9em">' + r.date + ' · ' + escHtml(r.by === HQ_FROM ? hqFromLabel() : r.by) + '</span></td>' +
       BRANCHES.map(b => { const c = r.per[b.id];
         if (!c) return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;color:#cbd5e1">–</td>';
         if (!c.sub) return '<td style="border-bottom:1px solid #eef2f7;padding:8px;text-align:center;background:#fffbeb;color:#92400e;font-weight:800">⏳</td>';
@@ -13832,7 +13839,8 @@ window.hqOpenOne = async function(branch, date, id){
   w.document.write('<!doctype html><meta charset="utf-8"><title>' + escHtml(t.name) + '</title>' +
     '<body style="font-family:-apple-system,\'Malgun Gothic\',sans-serif;padding:18px;max-width:760px;margin:auto">' +
     '<h2 style="color:' + HQ_NAVY + '">🏛 ' + escHtml(t.name) + '</h2>' +
-    '<p style="color:#64748b">' + escHtml(localizeBranch(branch)) + ' · ' + date + ' · ' + escHtml(s.by || '') + '</p>' +
+    '<p style="color:#64748b">' + escHtml(localizeBranch(branch)) + ' · ' + date + ' · ' + escHtml(s.by || '') +
+      (t.actualBy ? ' <span style="color:#cbd5e1">(' + escHtml(t.actualBy) + ')</span>' : '') + '</p>' +
     (s.text ? '<pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;white-space:pre-wrap;font-family:inherit">' + escHtml(s.text) + '</pre>' : '') +
     (s.photos || []).map(u => '<img src="' + u + '" style="max-width:100%;border-radius:10px;margin:6px 0">').join('') +
     (s.files || []).map(f => '<p><a href="' + f.url + '" target="_blank">📎 ' + escHtml(f.name) + '</a></p>').join('') +
