@@ -262,14 +262,20 @@ async function delB(id){ if(!confirm(t('delQ')))return;
 async function createBatch(){
   const raw=$('nData').value.trim();
   if(!raw){ toast(t('needD')); return; }
-  const items=[]; const lines=raw.split(/\r?\n/).filter(x=>x.trim());
-  for(let i=0;i<lines.length;i++){
-    const c=lines[i].split('\t');
-    if(c.length<5){ toast(t('bad',{n:i+1})); return; }
-    items.push({code:String(c[0]).replace(/[^0-9]/g,''),name:c[1].trim(),cat:c[2].trim(),
-      old:parseFloat(String(c[3]).replace(/[^0-9.]/g,''))||0,
-      now:parseFloat(String(c[4]).replace(/[^0-9.]/g,''))||0});
-  }
+  /* 제목 줄·안내문이 섞여 들어와도 그냥 건너뛴다 — 인쇄용 표를 통째로 붙여넣는 일이 잦다.
+     쓸 수 있는 줄은 '맨 앞이 숫자(바코드) + 가격 두 개가 숫자' 인 줄뿐이다. */
+  const items=[]; let skipped=0;
+  raw.split(/\r?\n/).forEach(line=>{
+    if(!line.trim()) return;
+    const c=line.split('\t');
+    const code=String(c[0]==null?'':c[0]).replace(/[^0-9]/g,'');
+    const old=parseFloat(String(c[3]==null?'':c[3]).replace(/[^0-9.]/g,''));
+    const now=parseFloat(String(c[4]==null?'':c[4]).replace(/[^0-9.]/g,''));
+    if(c.length<5||code.length<6||!(now>0)){ skipped++; return; }
+    items.push({code,name:String(c[1]||'').trim(),cat:String(c[2]||'').trim(),
+      old:old>0?old:0, now});
+  });
+  if(!items.length){ toast(t('bad',{n:1})); return; }
   const F=window.__fb;
   try{
     const r=F.push(F.ref(F.db,'expiry/'+BRANCH+'/priceTags'));
@@ -277,7 +283,7 @@ async function createBatch(){
       eff:$('nEff').value||new Date().toISOString().slice(0,10),
       ts:Date.now(), by:(me().name||''), items });
     $('nData').value=''; $('newBox').style.display='none';
-    toast(t('sent',{n:items.length}));
+    toast(t('sent',{n:items.length})+(skipped?('  (제목·빈 줄 '+skipped+'줄은 건너뛰었습니다)'):''));
   }catch(e){ toast(t('failS')+' — '+esc(e.message||'')); }
 }
 
