@@ -73,16 +73,18 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
     <label id="tBranch"></label>
     <select id="branch"></select>
 
-    <label id="tVendor"></label>
-    <select id="vendorSel"></select>
-    <input id="vendorEtc" style="display:none;margin-top:7px">
+    <div id="vendorBox">
+      <label id="tVendor"></label>
+      <select id="vendorSel"></select>
+      <input id="vendorEtc" style="display:none;margin-top:7px">
+    </div>
 
     <div class="row">
       <div>
         <label id="tGot"></label>
         <input type="date" id="dt">
       </div>
-      <div>
+      <div id="invnoBox">
         <label id="tInvNo"></label>
         <input id="invno" placeholder="96-1107632">
       </div>
@@ -93,8 +95,15 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
     <h2 id="tS2"></h2>
     <div class="hint" id="tOrder"></div>
 
-    <label id="tPages"></label>
-    <input type="number" id="pages" min="1" inputmode="numeric">
+    <!-- 📚 2026-10-05 전무님: "인보이스가 많은 곳은 10장도 넘어"
+         → 한 장씩 10번 입력하지 않도록 '여러 장 한 번에' 를 넣었다. -->
+    <button class="btn lite" id="btnBulk" style="width:100%;margin-bottom:10px"></button>
+    <div class="note" id="bulkNote" style="display:none;margin:0 0 12px"></div>
+
+    <div id="pagesBox">
+      <label id="tPages"></label>
+      <input type="number" id="pages" min="1" inputmode="numeric">
+    </div>
 
     <div class="row" style="margin-top:12px">
       <button class="btn lite" id="btnCam"></button>
@@ -165,6 +174,24 @@ const L={
          en:'e.g. page 3 is unreadable, need a new copy / frozen came separately',
          es:'ej.: la página 3 no se lee, hace falta otra copia / lo congelado vino aparte'},
  send:{ko:'☁️ HQ 운영본부로 보내기',en:'☁️ Send to HQ Operations',es:'☁️ Enviar a Operaciones HQ'},
+ /* 📚 여러 장 한 번에 */
+ bulkOn:{ko:'📚 여러 장 한 번에 올리기',en:'📚 Upload many at once',es:'📚 Subir varias a la vez'},
+ bulkOff:{ko:'📄 한 장씩 올리기로 돌아가기',en:'📄 Back to one at a time',es:'📄 Volver a una por una'},
+ bulkNote:{ko:'인보이스를 <b>전부 한꺼번에</b> 고르세요. <b>사진 한 장 = 인보이스 한 건</b>으로 접수됩니다.<br>두 장짜리 인보이스는 뒷장에 <b>「앞 장과 한 건」</b>을 눌러 묶어 주세요. 거래처는 비워 두셔도 됩니다 — HQ가 보고 채웁니다.',
+          en:'Pick <b>all of them at once</b>. <b>One photo = one invoice.</b><br>For a two-page invoice, tick <b>“same as previous”</b> on the second page. Vendor can be left blank — HQ will fill it in.',
+          es:'Elija <b>todas a la vez</b>. <b>Una foto = una factura.</b><br>Para una factura de dos páginas, marque <b>“igual que la anterior”</b> en la segunda. Puede dejar el proveedor vacío — HQ lo completa.'},
+ bulkSend:{ko:'☁️ {n}건 한 번에 보내기',en:'☁️ Send {n} invoices',es:'☁️ Enviar {n} facturas'},
+ bulkMerge:{ko:'앞 장과 한 건',en:'same as previous',es:'igual que la anterior'},
+ bulkVendor:{ko:'거래처 (비워도 됨)',en:'Vendor (optional)',es:'Proveedor (opcional)'},
+ bulkNone:{ko:'— 나중에 —',en:'— later —',es:'— después —'},
+ bulkCont:{ko:'↳ 앞 인보이스의 뒷장',en:'↳ next page of the one above',es:'↳ página siguiente de la anterior'},
+ bulkEmpty:{ko:'위에서 📷 사진 찍기 나 📎 파일 고르기 를 눌러 인보이스를 전부 고르세요.',
+            en:'Use 📷 or 📎 above and pick all the invoices.',
+            es:'Use 📷 o 📎 arriba y elija todas las facturas.'},
+ bulkDone:{ko:'✅ {n}건 보냈습니다. HQ 운영본부가 확인합니다.',en:'✅ Sent {n} invoices. HQ Operations will review.',es:'✅ Enviadas {n} facturas. HQ las revisará.'},
+ bulkPart:{ko:'⚠ {n}건 보냈고 {m}건은 실패했습니다 — 실패한 것만 화면에 남겨 두었습니다. 다시 눌러 주세요.',
+           en:'⚠ Sent {n}, {m} failed — only the failed ones are left on screen. Tap send again.',
+           es:'⚠ Enviadas {n}, {m} fallaron — solo quedan las fallidas. Toque enviar otra vez.'},
  s3:{ko:'3. 접수 내역',en:'3. Submitted invoices',es:'3. Facturas enviadas'},
  fNew:{ko:'접수됨',en:'Received',es:'Recibida'},
  fDoing:{ko:'처리중',en:'In progress',es:'En proceso'},
@@ -254,6 +281,7 @@ function applyLang(){
   $('tMemo').innerHTML=esc(t('memo'))+' <span class="opt">'+(LANG==='ko'?'(선택)':LANG==='en'?'(optional)':'(opcional)')+'</span>';
   $('memo').placeholder=t('memoPh');
   $('btnSend').textContent=t('send');
+  applyBulkUI();
   $('tS3').textContent=t('s3');
   const keep=$('vendorSel').value;
   $('vendorSel').innerHTML='<option value="">'+esc(t('pick'))+'</option>'
@@ -308,11 +336,69 @@ $('cam').onchange=async function(){ if(this.files&&this.files.length){ toast(t('
 $('pick').onchange=async function(){ if(this.files&&this.files.length){ toast(t('preparing')); await addFiles([...this.files]); } this.value=''; };
 
 function icon(ty,n){ if(/pdf/i.test(ty)||/\.pdf$/i.test(n))return '📕'; if(/sheet|excel|csv/i.test(ty)||/\.(xlsx?|csv)$/i.test(n))return '📗'; return '📄'; }
+
+/* ===== 📚 여러 장 한 번에 =====
+   한 장씩 열 번 입력하지 않도록, 고른 파일 하나하나를 '인보이스 한 건'으로 접수한다.
+   두 장짜리는 뒷장에 '앞 장과 한 건' 을 눌러 묶는다. 거래처는 비워도 되고 HQ가 채운다. */
+let BULK=false;
+function applyBulkUI(){
+  const b=$('btnBulk'); if(!b) return;
+  b.textContent=BULK?t('bulkOff'):t('bulkOn');
+  b.style.background=BULK?'#1a5c3a':''; b.style.color=BULK?'#fff':'';
+  $('bulkNote').style.display=BULK?'':'none';
+  $('bulkNote').innerHTML=t('bulkNote');
+  ['vendorBox','invnoBox','pagesBox'].forEach(id=>{ const el=$(id); if(el) el.style.display=BULK?'none':''; });
+  $('pageWarn').style.display=BULK?'none':'';
+  paintSendBtn();
+}
+function paintSendBtn(){
+  const n=bulkGroups().length;
+  $('btnSend').textContent = (BULK && n) ? t('bulkSend',{n}) : t('send');   // 0건이면 '0건 보내기' 는 이상하다
+}
+// 연달아 '앞 장과 한 건' 인 파일들을 하나로 묶는다 → [[0],[1,2],[3]] 같은 모양
+function bulkGroups(){
+  const g=[];
+  FILES.forEach((f,i)=>{ if(i>0 && f.merge) g[g.length-1].push(i); else g.push([i]); });
+  return g;
+}
+window.bulkSetVendor=function(i,v){ if(FILES[i]) FILES[i].vendor=v; };
+window.bulkSetMerge=function(i,v){ if(FILES[i]) FILES[i].merge=v; paint(); };
+
 function paint(){
+  if(BULK){ paintBulk(); return; }
+  $('files').className='files';          // 한 장씩 모드 — 작은 네모 여러 개
   $('files').innerHTML=FILES.map((f,i)=>
     '<div class="f">'+(f.isImg?'<img src="'+f.url+'" alt="">':'<b>'+icon(f.type,f.name)+'</b><span>'+esc(f.name.slice(0,18))+'</span>')
     +'<button class="x" onclick="rm('+i+')">&times;</button></div>').join('');
   checkPages();
+  paintSendBtn();
+}
+function paintBulk(){
+  const box=$('files');
+  box.className='';                      // 묶음 모드 — 한 줄에 한 건씩 (작은 네모 배치를 끈다)
+  box.style.marginTop='11px';
+  if(!FILES.length){ box.innerHTML='<div class="empty" style="padding:18px 6px">'+esc(t('bulkEmpty'))+'</div>'; paintSendBtn(); return; }
+  const opts=f=>'<option value="">'+esc(t('bulkNone'))+'</option>'
+    +VENDORS.map(v=>'<option'+(v===f.vendor?' selected':'')+'>'+esc(v)+'</option>').join('');
+  let no=0;
+  box.innerHTML=FILES.map((f,i)=>{
+    const merged=i>0&&f.merge;
+    if(!merged) no++;
+    return '<div style="display:flex;gap:10px;align-items:flex-start;border:1.5px solid '+(merged?'#e2e8f0':'#c7d2fe')
+      +';border-left:5px solid '+(merged?'#cbd5e1':'#1a5c3a')+';border-radius:12px;padding:9px 10px;margin-bottom:8px;background:#fff">'
+      +'<div style="flex:none;width:62px;height:62px;border-radius:9px;overflow:hidden;background:#f1f5f4;display:flex;align-items:center;justify-content:center;font-size:24px">'
+        +(f.isImg?'<img src="'+f.url+'" style="width:100%;height:100%;object-fit:cover">':icon(f.type,f.name))+'</div>'
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="font-weight:900;font-size:.9em;color:'+(merged?'#64748b':'#0f3d28')+';margin-bottom:5px">'
+          +(merged?esc(t('bulkCont')):('#'+no))+'</div>'
+        +(merged?'':'<select onchange="bulkSetVendor('+i+',this.value)" style="width:100%;margin:0 0 6px;padding:7px 9px;font-size:.88em">'+opts(f)+'</select>')
+        +(i>0?'<label style="display:inline-flex;align-items:center;gap:6px;font-size:.82em;font-weight:800;color:#475569;white-space:nowrap">'
+          +'<input type="checkbox" '+(f.merge?'checked':'')+' onchange="bulkSetMerge('+i+',this.checked)"> '+esc(t('bulkMerge'))+'</label>':'')
+      +'</div>'
+      +'<button onclick="rm('+i+')" style="flex:none;background:#f1f5f9;color:#475569;border:0;border-radius:8px;'
+        +'width:30px;height:30px;font-size:1.1em;line-height:1;cursor:pointer;font-family:inherit">&times;</button></div>';
+  }).join('');
+  paintSendBtn();
 }
 function rm(i){ try{ if(FILES[i].url)URL.revokeObjectURL(FILES[i].url); }catch(e){} FILES.splice(i,1); paint(); }
 function checkPages(){
@@ -325,9 +411,58 @@ function checkPages(){
 }
 $('pages').oninput=checkPages;
 
+$('btnBulk').onclick=function(){ BULK=!BULK; applyBulkUI(); paint(); };
+
+/* 파일 하나를 Storage 에 올리고 {n,u} 를 돌려준다 (한 장씩·묶음 공용) */
+async function putOne(f,path,safe){
+  const r=window.__fb.sRef(window.__fb.st,path);
+  const snap=await window.__fb.uploadBytes(r,f.blob,{
+    contentType:f.type||'application/octet-stream',
+    contentDisposition:'attachment; filename="'+safe+'"'});
+  return { n:f.name, u:await window.__fb.getDownloadURL(snap.ref) };
+}
+
+/* ===== 📚 묶음 보내기 — 한 건씩 저장하고, 실패한 건만 화면에 남긴다 ===== */
+async function sendBulk(btn){
+  const groups=bulkGroups();
+  if(!groups.length){ toast(t('needFile')); return; }
+  const m=me(), got=$('dt').value||today(), memo=$('memo').value.trim();
+  const keep=[]; let ok=0;
+  for(let gi=0; gi<groups.length; gi++){
+    const idx=groups[gi];
+    btn.textContent=t('uploading')+' ('+(gi+1)+'/'+groups.length+')';
+    const vendor=(FILES[idx[0]].vendor||'').trim();
+    const ts=Date.now()+gi;
+    try{
+      const out=[];
+      for(let k=0;k<idx.length;k++){
+        const f=FILES[idx[k]];
+        const ext=(f.name.match(/\.[a-z0-9]+$/i)||[f.isImg?'.jpg':''])[0]||'';
+        const safe=('INV_'+(vendor||'UNKNOWN')+'_'+got+'_'+(k+1)+ext).replace(/[^A-Za-z0-9._-]+/g,'_');
+        out.push(await putOne(f,'invoices/'+BRANCH+'/'+ts+'_'+k+ext,safe));
+      }
+      const r=window.__fb.push(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices'));
+      await window.__fb.set(r,{ vendor, invNo:'', got, pages:idx.length, files:out, memo,
+        by:(m.name||''), byUid:(m.uid||''), branch:BRANCH, ts, status:'new' });
+      idx.forEach(i=>{ try{ if(FILES[i].url)URL.revokeObjectURL(FILES[i].url); }catch(e){} });
+      ok++;
+    }catch(e){
+      console.warn('[inv] bulk',e);
+      idx.forEach((i,k)=>{ const f=FILES[i]; keep.push(Object.assign({},f,{merge:k>0})); });
+    }
+  }
+  FILES=keep; paint();
+  if(!keep.length){ $('memo').value=''; toast(t('bulkDone',{n:ok})); }
+  else alert(t('bulkPart',{n:ok,m:groups.length-ok}).replace(/<[^>]+>/g,''));
+}
+
 /* ===== 보내기 ===== */
 $('btnSend').onclick=async function(){
   const btn=this;
+  if(BULK){ btn.disabled=true; const o=btn.textContent;
+    try{ await sendBulk(btn); } catch(e){ alert(t('failSave')+': '+(e.message||e)); }
+    finally{ btn.disabled=false; paintSendBtn(); }
+    return; }
   const vendor=($('vendorSel').value==='__etc'?$('vendorEtc').value.trim():$('vendorSel').value).trim();
   if(!vendor){ toast(t('needVendor')); $('vendorSel').focus(); return; }
   if(!FILES.length){ toast(t('needFile')); return; }
