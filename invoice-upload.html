@@ -185,6 +185,9 @@ const L={
  bulkVendor:{ko:'거래처 (비워도 됨)',en:'Vendor (optional)',es:'Proveedor (opcional)'},
  bulkNone:{ko:'— 나중에 —',en:'— later —',es:'— después —'},
  bulkCont:{ko:'↳ 앞 인보이스의 뒷장',en:'↳ next page of the one above',es:'↳ página siguiente de la anterior'},
+ bulkMoreCam:{ko:'📷 한 장 더 찍기',en:'📷 Take one more',es:'📷 Tomar otra'},
+ bulkMoreFile:{ko:'📎 사진 더 고르기',en:'📎 Add more photos',es:'📎 Agregar más fotos'},
+ bulkCount:{ko:'지금 {n}건 — 인보이스 수만큼 계속 찍으세요',en:'{n} so far — keep going until all invoices are in',es:'{n} hasta ahora — siga hasta tenerlas todas'},
  bulkEmpty:{ko:'위에서 📷 사진 찍기 나 📎 파일 고르기 를 눌러 인보이스를 전부 고르세요.',
             en:'Use 📷 or 📎 above and pick all the invoices.',
             es:'Use 📷 o 📎 arriba y elija todas las facturas.'},
@@ -332,8 +335,13 @@ async function addFiles(list){
 }
 $('btnCam').onclick=()=>$('cam').click();
 $('btnFile').onclick=()=>$('pick').click();
-$('cam').onchange=async function(){ if(this.files&&this.files.length){ toast(t('preparing')); await addFiles([...this.files]); } this.value=''; };
-$('pick').onchange=async function(){ if(this.files&&this.files.length){ toast(t('preparing')); await addFiles([...this.files]); } this.value=''; };
+$('cam').onchange=async function(){ if(this.files&&this.files.length){ toast(t('preparing')); await addFiles([...this.files]); afterAdd(); } this.value=''; };
+$('pick').onchange=async function(){ if(this.files&&this.files.length){ toast(t('preparing')); await addFiles([...this.files]); afterAdd(); } this.value=''; };
+// 묶음 모드에서는 방금 들어온 장과 '한 장 더' 단추가 바로 보이게 내려 준다
+function afterAdd(){
+  if(!BULK) return;
+  try{ const b=$('files'); b.scrollIntoView({block:'end',behavior:'smooth'}); }catch(e){}
+}
 
 function icon(ty,n){ if(/pdf/i.test(ty)||/\.pdf$/i.test(n))return '📕'; if(/sheet|excel|csv/i.test(ty)||/\.(xlsx?|csv)$/i.test(n))return '📗'; return '📄'; }
 
@@ -361,6 +369,8 @@ function bulkGroups(){
   FILES.forEach((f,i)=>{ if(i>0 && f.merge) g[g.length-1].push(i); else g.push([i]); });
   return g;
 }
+// 📷 찍기 / 📎 고르기 — 목록 밑 단추에서도 부른다 (찍고 바로 또 찍는 흐름)
+window.bulkPick=function(which){ $(which?'pick':'cam').click(); };
 window.bulkSetVendor=function(i,v){ if(FILES[i]) FILES[i].vendor=v; };
 window.bulkSetMerge=function(i,v){ if(FILES[i]) FILES[i].merge=v; paint(); };
 
@@ -397,7 +407,12 @@ function paintBulk(){
       +'</div>'
       +'<button onclick="rm('+i+')" style="flex:none;background:#f1f5f9;color:#475569;border:0;border-radius:8px;'
         +'width:30px;height:30px;font-size:1.1em;line-height:1;cursor:pointer;font-family:inherit">&times;</button></div>';
-  }).join('');
+  }).join('')
+  + '<div style="display:flex;gap:8px;margin:12px 0 4px">'
+    + '<button class="btn lite" style="flex:1" onclick="bulkPick(0)">' + esc(t('bulkMoreCam')) + '</button>'
+    + '<button class="btn lite" style="flex:1" onclick="bulkPick(1)">' + esc(t('bulkMoreFile')) + '</button>'
+  + '</div>'
+  + '<div class="note ok" style="margin:0">' + t('bulkCount', { n: bulkGroups().length }) + '</div>';
   paintSendBtn();
 }
 function rm(i){ try{ if(FILES[i].url)URL.revokeObjectURL(FILES[i].url); }catch(e){} FILES.splice(i,1); paint(); }
