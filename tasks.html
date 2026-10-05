@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_04_chat';   // 🏛 본사 지시 전용 창 + 발송 오류 수정
+    var BUST = 'tasks_2026_10_05_emptyday';   // 🌅 업무 0건인 날에도 첫 화면
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -8759,27 +8759,14 @@ function renderEmp(){
   if (!(_empPage && _empPage.classList.contains('active'))) { __empDirty = true; return; }
   __empDirty = false;
   MGR_HUGE = {}; MGR_HUGE_SEQ = 0;   // lazy 사진 맵 초기화 (탭은 한 번에 하나만 활성 — 충돌 없음)
-  if (total === 0) {
-    // 참고 모드(매니저가 타 매장 열람)는 기존 메시지 그대로.
-    if (isReferenceMode) {
-      list.innerHTML = `<div class="empty">${t('emptyEmp')}</div>`;
-      return;
-    }
-    // 🔧 2026-06-11 마이애미 Ana 신고("내 업무 안 열림"=업무 0개): 빈 화면이 '지금 어떤
-    //   이름·매장으로 찾는지' 를 안 보여줘 직원·매니저가 원인(이름/매장 오설정)을 못 찾았음.
-    //   → 현재 이름·매장 표시 + 다시 선택 버튼 추가(자가 해결). 매칭 로직은 그대로.
-    const nm = (me && me.name) ? escHtml(me.name) : t('empNotSet');
-    const br = (me && me.branch) ? escHtml(localizeBranch(me.branch)) : t('empNotSet');
-    list.innerHTML = `<div class="empty">${t('emptyEmp')}
-      <div style="margin-top:14px;text-align:left;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;font-size:.86em;color:#475569;line-height:1.65">
-        🔎 ${t('empSearchingAs')}:<br>
-        <b style="color:#1a5c3a;font-size:1.05em">${nm}</b> · <b>${br}</b><br>
-        <span style="display:block;margin-top:6px;color:#6b7280">${t('empNameHint')}</span>
-        <button onclick="goSetName()" style="margin-top:11px;background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.95em;cursor:pointer">👤 ${t('empReselect')}</button>
-      </div>
-    </div>`;
+  // 참고 모드(매니저가 타 매장 열람)에서 업무가 없으면 기존 메시지 그대로.
+  if (total === 0 && isReferenceMode) {
+    list.innerHTML = `<div class="empty">${t('emptyEmp')}</div>`;
     return;
   }
+  // ⚠️ 2026-10-05 전무님 신고: 오늘 업무가 0건이면 여기서 빠져나가 버려서
+  //   어제 만든 첫 화면(매장 사진·본사 알림·칸들)이 통째로 안 보였다.
+  //   → 업무가 없어도 첫 화면은 그대로 그리고, 빈 안내는 '오늘 나의 업무' 칸 안으로 옮겼다.
   list.innerHTML = empHeroHtml() + empTopBanners(my) + empStatCards(my) + empPanel(my);
   try { applyMgrHugePhotos(list); } catch(_){}   // 🚀 base64 사진은 보일 때만 .src 채움
   try { loadNoticeBanner(); } catch(_){}         // 📢 공지는 늦게 와도 그 자리에 채운다
@@ -8840,9 +8827,13 @@ function empStatCards(my){
   const nums = {
     staff: { v: EMP_STAFF ? EMP_STAFF.length : '…', sub: EMP_STAFF ? (LANG==='en'?'from schedule':LANG==='es'?'del horario':'스케줄 기준') : '' },
     my:    { v: myDone + '<span style="font-size:.6em;color:#94a3b8">/' + myTot + '</span>',
-             sub: (myTot - myDone) > 0 ? ((myTot - myDone) + (LANG==='en'?' left':LANG==='es'?' faltan':'건 남음')) : (LANG==='en'?'all done 🎉':LANG==='es'?'todo listo 🎉':'모두 완료 🎉') },
+             sub: myTot === 0 ? (LANG==='en'?'none today':LANG==='es'?'ninguna hoy':'오늘 지시 없음')
+                  : (myTot - myDone) > 0 ? ((myTot - myDone) + (LANG==='en'?' left':LANG==='es'?' faltan':'건 남음'))
+                  : (LANG==='en'?'all done 🎉':LANG==='es'?'todo listo 🎉':'모두 완료 🎉') },
     stock: { v: EMP_OOS ? EMP_OOS.length : '…', sub: LANG==='en'?'to reorder':LANG==='es'?'para pedir':'발주 필요' },
-    hq:    { v: hqN, sub: hqWait ? (LANG==='en'?'not submitted':LANG==='es'?'sin enviar':'미제출') : (LANG==='en'?'done':LANG==='es'?'enviado':'제출 완료') },
+    hq:    { v: hqN, sub: hqWait ? (LANG==='en'?'not submitted':LANG==='es'?'sin enviar':'미제출')
+                        : hqN ? (LANG==='en'?'done':LANG==='es'?'enviado':'제출 완료')
+                        : (LANG==='en'?'none today':LANG==='es'?'ninguna hoy':'오늘 없음') },
   };
   nums.photo = { v: EMP_HQPH ? EMP_HQPH.length : '…', sub: LANG==='en'?'from our store':LANG==='es'?'de la tienda':'우리 매장' };
   nums.chat  = { v: EMP_CHAT == null ? '…' : EMP_CHAT,
@@ -8871,7 +8862,7 @@ window.empSetView = function(v){
   if ((v === 'hq' || v === 'photo') && !EMP_HQPH) empLoadHqPhotos();
 };
 function empPanel(my){
-  if (EMP_VIEW === 'my') return my.map(renderTaskCard).join('');
+  if (EMP_VIEW === 'my') return my.length ? my.map(renderTaskCard).join('') : empNoTaskHtml();
   if (EMP_VIEW === 'staff') return empStaffPanel();
   if (EMP_VIEW === 'stock') return empOosPanel();
   if (EMP_VIEW === 'hq')    return empHqPanel(my);
@@ -8879,6 +8870,20 @@ function empPanel(my){
   return '';
 }
 function empWait(){ return '<div style="text-align:center;color:#94a3b8;padding:26px;font-weight:700">⏳</div>'; }
+// 📋 오늘 배정된 업무가 없을 때 — 어떤 이름·매장으로 찾는지 보여줘 직원이 스스로 고치게 한다.
+//    (2026-06-11 마이애미 Ana 신고로 넣은 안내. 위치만 '오늘 나의 업무' 칸 안으로 옮겼다.)
+function empNoTaskHtml(){
+  const nm = (me && me.name) ? escHtml(me.name) : t('empNotSet');
+  const br = (me && me.branch) ? escHtml(localizeBranch(me.branch)) : t('empNotSet');
+  return `<div class="empty">${t('emptyEmp')}
+    <div style="margin-top:14px;text-align:left;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;font-size:.86em;color:#475569;line-height:1.65">
+      🔎 ${t('empSearchingAs')}:<br>
+      <b style="color:#1a5c3a;font-size:1.05em">${nm}</b> · <b>${br}</b><br>
+      <span style="display:block;margin-top:6px;color:#6b7280">${t('empNameHint')}</span>
+      <button onclick="goSetName()" style="margin-top:11px;background:#1a5c3a;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-weight:700;font-size:.95em;cursor:pointer">👤 ${t('empReselect')}</button>
+    </div>
+  </div>`;
+}
 
 // ① 오늘 근무 — 스케줄의 오늘 시프트
 async function empLoadStaff(){
@@ -8974,7 +8979,7 @@ function empHeroHtml(){
   const br = (me && me.branch) || 'HOLLYWOOD';
   const nm = (me && me.name) ? me.name : '';
   // 사진 = 실제 매장 정면(라스올라스). 지점별 사진이 들어오면 store-photos 에 넣고 지점별로 갈라 쓰면 된다.
-  return '<div class="emp-hero" style="background-image:linear-gradient(180deg,rgba(6,26,18,0) 24%,rgba(6,26,18,.66) 58%,rgba(6,26,18,.94) 100%),url(\'./store-photos/front.webp\')">' +
+  return '<div class="emp-hero" style="background-image:linear-gradient(180deg,rgba(6,26,18,0) 16%,rgba(6,26,18,.42) 40%,rgba(6,26,18,.82) 66%,rgba(6,26,18,.96) 100%),url(\'./store-photos/front.webp\')">' +
     '<div class="hi"><b id="empHelloT">' + escHtml(empHello()) + (nm ? ', ' + escHtml(nm) : '') + ' 👋</b>' +
     '<span id="empClock">' + escHtml(empWhen()) + '</span>' +
     '<i>📍 ' + escHtml(localizeBranch(br)) + '</i></div></div>';
