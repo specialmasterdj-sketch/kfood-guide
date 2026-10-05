@@ -183,7 +183,18 @@ const L={
  sent:{ko:'✅ {n}개 상품을 내려보냈습니다',en:'✅ Sent {n} items',es:'✅ Se enviaron {n} productos'},
  failS:{ko:'보내지 못했습니다',en:'Could not send',es:'No se pudo enviar'},
  delQ:{ko:'이 목록을 지울까요?',en:'Delete this list?',es:'¿Eliminar esta lista?'},
- del:{ko:'🗑 지우기',en:'🗑 Delete',es:'🗑 Eliminar'}
+ del:{ko:'🗑 지우기',en:'🗑 Delete',es:'🗑 Eliminar'},
+ tsk:{ko:'📋 업무지시로 보내기',en:'📋 Send as a task',es:'📋 Enviar como tarea'},
+ tskD:{ko:'📋 업무지시 보냄',en:'📋 Task sent',es:'📋 Tarea enviada'},
+ tskQ:{ko:'{b} 직원 업무지시로 보냅니다. 오늘 날짜로 들어갑니다.',
+       en:'This will go to {b} staff as a task, dated today.',
+       es:'Se enviará al personal de {b} como tarea de hoy.'},
+ tskA:{ko:'이미 업무지시로 보낸 목록입니다. 다시 보낼까요?',
+       en:'A task was already sent for this list. Send again?',
+       es:'Ya se envió una tarea para esta lista. ¿Enviar de nuevo?'},
+ tskOk:{ko:'✅ 업무지시를 보냈습니다',en:'✅ Task sent',es:'✅ Tarea enviada'},
+ tskNo:{ko:'업무지시를 보내지 못했습니다',en:'Could not send the task',es:'No se pudo enviar la tarea'},
+ noPerm:{ko:'권한이 없습니다',en:'Not allowed',es:'Sin permiso'}
 };
 let LANG=(function(){ try{ const v=localStorage.getItem('kimchi_lang'); return ['ko','en','es'].includes(v)?v:'ko'; }catch(e){ return 'ko'; } })();
 function t(k,v){ const o=L[k]; let s=o?(o[LANG]||o.ko):k; if(v)for(const x in v)s=s.split('{'+x+'}').join(v[x]); return s; }
@@ -314,6 +325,9 @@ function render(){
 function body(id,b,items,done){
   return '<div class="bar" style="margin:12px 0 0">'+
     '<button class="btn go sm" onclick="event.stopPropagation();doPrint(\''+id+'\')">'+t('prn')+'</button>'+
+    (isBoss()?('<button class="btn sm" style="background:'+(b.taskId?'#e2e8f0':'#1a5c3a')+';color:'+(b.taskId?'#334155':'#fff')+
+      ';border-color:'+(b.taskId?'#cbd5e1':'#1a5c3a')+'" onclick="event.stopPropagation();sendTask(\''+id+'\')">'+
+      (b.taskId?t('tskD'):t('tsk'))+'</button>'):'')+
     (isBoss()?'<button class="btn sm" onclick="event.stopPropagation();delB(\''+id+'\')">'+t('del')+'</button>':'')+
     '</div>'+
     '<table><tr><th>'+t('thBc')+'</th><th>'+t('thNm')+'</th><th>'+t('thCat')+'</th>'+
@@ -342,6 +356,56 @@ async function setVend(id){
   try{ await F.update(F.ref(F.db,'expiry/'+b._br+'/priceTags/'+b._id),{vendor:String(v).trim()}); }
   catch(e){ toast(esc(e.message||'')); }
 }
+/* ---- 업무지시로 내려보내기 ----
+   목록만 올려 두면 아무도 안 본다. 업무지시 앱으로 보내야 직원 폰에 뜨고, 완료·점수가
+   집계된다. 저장 위치·필드는 tasks.html 과 똑같이 맞춘다:  tasks/{지점}/{오늘}/{taskId}
+   ⚠ 품목 ✓ 는 이 페이지가 유일한 기준이라 업무지시에 체크리스트를 또 만들지 않는다
+     (두 군데서 체크하면 숫자가 어긋난다). 업무지시는 알림 + 완료확인 + 점수 몫만 한다.
+   appLink 를 넣어 두면 업무 카드에 [🏷 가격표 목록 열기] 버튼이 붙어 바로 이 페이지로 온다. */
+const today10=()=>{ const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+async function sendTask(id){
+  const b=DATA[id]; if(!b)return;
+  if(!isBoss()){ toast(t('noPerm')); return; }
+  if(b.taskId){ if(!confirm(t('tskA')))return; }
+  else if(!confirm(t('tskQ',{b:bName(b._br)})))return;
+  const n=(b.items||[]).length;
+  const v=String(b.vendor||'').trim(), vd=(v&&v!=='-')?v:'';
+  const vKo=vd?(VND[vd.toUpperCase()]||vd):'', inv=b.inv?String(b.inv).trim():'';
+  const nm={ko:'🏷 가격표 교체 — '+(vKo||'가격 변경')+' '+n+'개',
+            en:'🏷 Price tag change — '+(vd||'price update')+' ('+n+' items)',
+            es:'🏷 Cambio de etiquetas — '+(vd||'precios')+' ('+n+' productos)'};
+  const tail=inv?(' (인보이스 '+inv+')'):'';
+  const note={
+   ko:'벨라포스 가격은 HQ 가 이미 바꿔 놓았습니다. 매대 가격표만 새 가격으로 바꿔 주세요. '+
+      '아래 [🏷 가격표 목록 열기] 를 눌러 '+n+'개 목록을 보고, 바꾼 것마다 ✓ 하세요. 인쇄해서 들고 다니셔도 됩니다. '+
+      '다 바꾸면 매대 사진 한 장과 함께 완료 보고해 주세요. 못 찾은 상품이 있으면 그 줄을 HQ 에 알려 주세요.'+tail,
+   en:'HQ has already updated the prices in VelaPOS. You only change the shelf tags. '+
+      'Tap [🏷 Open price tag list] below to see the '+n+' items and tick each one you replace — you can also print it. '+
+      'When finished, report completion with one photo of the shelf. If you cannot find an item, tell HQ which line.'+
+      (inv?(' (invoice '+inv+')'):''),
+   es:'HQ ya actualizó los precios en VelaPOS. Usted solo cambia las etiquetas del estante. '+
+      'Toque [🏷 Abrir lista de etiquetas] abajo para ver los '+n+' productos y marque cada uno — también puede imprimirla. '+
+      'Al terminar, reporte con una foto del estante. Si no encuentra un producto, avise a HQ cuál línea.'+
+      (inv?(' (factura '+inv+')'):'')};
+  const who=whoLabel(me().name)||me().name||'HQ';
+  const task={ name:nm.ko, nameTr:nm, deadline:'18:00', category:'가격표 교체',
+    requirePhoto:true, place:'매장 매대',
+    locationNote:note.ko, locationNoteTr:note,
+    assignedTo:'*', assignedToId:null,
+    from:who+' (HQ 가격표 교체)', fromRole:(me().role||'EXECUTIVE'),
+    createdAt:Date.now(),
+    appLink:'./price-tags.html',
+    appLinkLabel:{ko:'🏷 가격표 목록 열기',en:'🏷 Open price tag list',es:'🏷 Abrir lista de etiquetas'},
+    points:2, priceTagBatch:b._id, priceTagBranch:b._br };
+  const F=window.__fb, tid='ptag_'+b._id;
+  try{
+    await F.set(F.ref(F.db,'tasks/'+b._br+'/'+today10()+'/'+tid),task);
+    await F.update(F.ref(F.db,'expiry/'+b._br+'/priceTags/'+b._id),{taskId:tid,taskAt:Date.now()});
+    toast(t('tskOk')+' — '+esc(bName(b._br)));
+  }catch(e){ toast(t('tskNo')+' — '+esc(e.message||'')); }
+}
+
 async function delB(id){ if(!confirm(t('delQ')))return;
   const F=window.__fb;
   try{ await F.remove(F.ref(F.db,'expiry/'+DATA[id]._br+'/priceTags/'+DATA[id]._id)); OPEN=null; }
@@ -459,7 +523,7 @@ function doPrint(id){
 }
 
 window.setLang=setLang; window.pickBranch=pickBranch; window.toggleNew=toggleNew;
-window.createBatch=createBatch; window.setVend=setVend; window.loadFile=loadFile; window.openB=openB; window.tick=tick; window.delB=delB; window.doPrint=doPrint;
+window.createBatch=createBatch; window.setVend=setVend; window.loadFile=loadFile; window.openB=openB; window.tick=tick; window.delB=delB; window.doPrint=doPrint; window.sendTask=sendTask;
 
 function boot(){ paint(); $('br').value=BRANCH; watch(); }
 if(window.__fb) boot(); else window.addEventListener('fb-ready',boot,{once:true});
