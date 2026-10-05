@@ -37,6 +37,11 @@ select.btn{min-width:150px}
 .pill{font-size:.76em;font-weight:900;padding:4px 10px;border-radius:20px;white-space:nowrap}
 .pill.a{background:#dcfce7;color:#15803d}
 .pill.b{background:#fef3c7;color:#92400e}
+.tag{font-size:.74em;font-weight:900;padding:3px 8px;border-radius:6px;white-space:nowrap}
+.tag.br{background:#1a5c3a;color:#fff}
+.tag.vd{background:#e0e7ff;color:#1e3a8a}
+.tag.iv{background:#f1f5f9;color:#475569;font-family:Consolas,monospace;font-weight:700}
+.tag.no{background:#fee2e2;color:#991b1b}
 
 table{width:100%;border-collapse:collapse;margin-top:12px;font-size:.92em}
 th{background:#f1f5f9;font-size:.82em;font-weight:800;padding:8px 6px;border:1px solid var(--line);text-align:left}
@@ -96,7 +101,8 @@ textarea{width:100%;min-height:150px;border:1.5px solid var(--line);border-radiu
 
   <div id="newBox" style="display:none" class="card">
     <div class="row2">
-      <div class="fld"><label id="lVend"></label><input id="nVend" placeholder="RHEE BROS"></div>
+      <div class="fld"><label id="lVend"></label><input id="nVend" list="vendL" placeholder="RHEE BROS">
+      <datalist id="vendL"><option>RHEE BROS</option><option>JFC</option><option>WG HANMI</option><option>SEOUL TRADING</option><option>WISMETTAC</option><option>NDM (남대문)</option><option>BANDI FOOD</option><option>EASTLAND</option><option>WEI CHUAN</option><option>K.C TRADING</option><option>WELL LUCK</option><option>SKY HARVEST</option></datalist></div>
       <div class="fld"><label id="lInv"></label><input id="nInv" placeholder="PSI-0186099"></div>
     </div>
     <div class="fld"><label id="lEff"></label><input id="nEff" type="date"></div>
@@ -150,6 +156,9 @@ const L={
  readOk:{ko:'✅ {f} — {n}줄 읽었습니다',en:'✅ {f} — {n} lines',es:'✅ {f} — {n} líneas'},
  readNo:{ko:'파일을 읽지 못했습니다',en:'Could not read the file',es:'No se pudo leer el archivo'},
  prn:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
+ noVend:{ko:'거래처 미입력',en:'No vendor',es:'Sin proveedor'},
+ sent2:{ko:'올린날',en:'sent',es:'enviado'},
+ allBr:{ko:'전체 지점',en:'All stores',es:'Todas'},
  none:{ko:'아직 내려온 가격표 교체 목록이 없습니다.',en:'No price tag lists yet.',es:'Todavía no hay listas.'},
  items:{ko:'{n}개 상품',en:'{n} items',es:'{n} productos'},
  prog:{ko:'{a} / {b} 교체함',en:'{a} of {b} done',es:'{a} de {b} hechas'},
@@ -186,7 +195,9 @@ const bName=id=>{const b=BRANCHES.find(x=>x.id===id); return b?(LANG==='ko'?b.ko
 
 function me(){ try{ return window.__currentUser||JSON.parse(localStorage.getItem('chat.me')||'{}'); }catch(e){ return {}; } }
 const isBoss=()=>{ const m=me(); return m.branch==='*'||['OWNER','EXECUTIVE'].includes(m.role); };
-let BRANCH=(function(){ try{ const b=localStorage.getItem('km_branch'); if(BRANCHES.some(x=>x.id===b))return b; }catch(e){}
+let BRANCH=(function(){
+  try{ const f=localStorage.getItem('km_ptag_filter'); if(f==='*'||BRANCHES.some(x=>x.id===f))return f; }catch(e){}
+  try{ const b=localStorage.getItem('km_branch'); if(BRANCHES.some(x=>x.id===b))return b; }catch(e){}
   const m=me(); return (m&&BRANCHES.some(x=>x.id===m.branch))?m.branch:'HOLLYWOOD'; })();
 let DATA={}, OPEN=null, unsub=null;
 
@@ -205,25 +216,45 @@ function paint(){
   $('lVend').textContent=t('vend'); $('lInv').textContent=t('inv'); $('lEff').textContent=t('eff');
   $('lPaste').textContent=t('paste'); $('hPaste').innerHTML=t('pasteH'); $('bSave').textContent=t('save'); $('bFile').textContent=t('pick');
   const sel=$('br'), keep=sel.value;
-  sel.innerHTML=BRANCHES.filter(b=>isBoss()||b.id===BRANCH)
-    .map(b=>'<option value="'+b.id+'">'+(LANG==='ko'?b.ko:b.en)+'</option>').join('');
+  sel.innerHTML=(isBoss()?('<option value="*">'+t('allBr')+'</option>'):'')+
+    BRANCHES.filter(b=>isBoss()||b.id===BRANCH)
+      .map(b=>'<option value="'+b.id+'">'+(LANG==='ko'?b.ko:b.en)+'</option>').join('');
   sel.value=keep||BRANCH; if(!sel.value)sel.value=BRANCH;
-  $('bNew').style.display=isBoss()?'':'none';
+  $('bNew').style.display=(isBoss()&&BRANCH!=='*')?'':'none';
 }
-function pickBranch(){ BRANCH=$('br').value; try{ localStorage.setItem('km_branch',BRANCH); }catch(e){} watch(); }
+/* '전체(*)' 는 이 페이지에서만 쓰는 값이라 km_branch 에 넣지 않는다 —
+   다른 앱이 km_branch 로 '내 지점' 을 판단하므로 * 를 넣으면 거기가 깨진다. */
+function pickBranch(){ BRANCH=$('br').value;
+  try{ localStorage.setItem('km_ptag_filter',BRANCH);
+       if(BRANCH!=='*') localStorage.setItem('km_branch',BRANCH); }catch(e){}
+  paint(); watch(); }
 function toggleNew(){ const b=$('newBox'); b.style.display=b.style.display==='none'?'':'none';
-  if(b.style.display===''&&!$('nEff').value) $('nEff').value=new Date().toISOString().slice(0,10); }
+  if(b.style.display===''){
+    if(!$('nEff').value) $('nEff').value=new Date().toISOString().slice(0,10);
+    /* 거래처는 지난번 값을 채워 둔다 — 같은 벤더를 연달아 넣는 일이 많다 */
+    if(!$('nVend').value){ try{ $('nVend').value=localStorage.getItem('km_ptag_vendor')||''; }catch(e){} }
+  } }
 
 /* ---- 목록 구독 ----
    저장 위치는 expiry/{지점}/priceTags — expiry 규칙이 '본인 지점 또는 전 지점(*)' 으로
    이미 잡혀 있어서 규칙을 새로 게시하지 않아도 된다. 크레딧·인보이스와 섞이지 않는다. */
+/* 지점을 '전체' 로 두면 5개 지점을 한꺼번에 본다 — 어디가 밀리는지 한 화면에서 보려고.
+   지점 하나를 고르면 그 지점만. 일반 매니저는 본인 지점만 보인다. */
+let SUBS=[];
 function watch(){
-  if(unsub){try{unsub();}catch(e){} unsub=null;}
+  SUBS.forEach(u=>{try{u();}catch(e){}}); SUBS=[];
   $('list').innerHTML='<div class="empty">⏳</div>';
+  DATA={};
   const F=window.__fb;
-  unsub=F.onValue(F.ref(F.db,'expiry/'+BRANCH+'/priceTags'),
-    s=>{ DATA=s.val()||{}; render(); },
-    e=>{ $('list').innerHTML='<div class="empty">'+esc(e.message||'')+'</div>'; });
+  const list = (BRANCH==='*') ? BRANCHES.map(b=>b.id) : [BRANCH];
+  list.forEach(bid=>{
+    SUBS.push(F.onValue(F.ref(F.db,'expiry/'+bid+'/priceTags'),
+      s=>{ const v=s.val()||{};
+        Object.keys(DATA).forEach(k=>{ if(DATA[k]._br===bid) delete DATA[k]; });
+        Object.entries(v).forEach(([k,o])=>{ DATA[bid+':'+k]={...o,_br:bid,_id:k}; });
+        render(); },
+      e=>{ /* 권한 없는 지점은 조용히 건너뛴다 */ }));
+  });
 }
 function render(){
   const ids=Object.keys(DATA).sort((a,b)=>(DATA[b].ts||0)-(DATA[a].ts||0));
@@ -232,9 +263,21 @@ function render(){
     const b=DATA[id], items=b.items||[], done=b.done||{};
     const n=items.length, a=items.filter(i=>done[i.code]).length;
     const all=n>0&&a===n;
+    const vend=String(b.vendor||'').trim();
+    const d=new Date(b.ts||0);
+    const when=b.ts?((d.getMonth()+1)+'/'+d.getDate()):'';
     return '<div class="card"><div class="h" onclick="openB(\''+id+'\')">'+
-      '<div><div class="ttl">'+esc(b.vendor||'')+(b.inv?' · '+esc(b.inv):'')+'</div>'+
-      '<div class="sub">'+t('eff2')+' '+esc(b.eff||'')+' · '+t('items',{n:n})+'</div></div>'+
+      '<div style="min-width:0">'+
+        '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:3px">'+
+          '<span class="tag br">'+esc(bName(b._br))+'</span>'+
+          (vend?('<span class="tag vd">'+esc(vend)+'</span>')
+               :('<span class="tag no">'+t('noVend')+'</span>'))+
+          (b.inv?('<span class="tag iv">'+esc(b.inv)+'</span>'):'')+
+        '</div>'+
+        '<div class="ttl">'+t('items',{n:n})+'</div>'+
+        '<div class="sub">'+t('eff2')+' '+esc(b.eff||'')+(when?(' · '+t('sent2')+' '+when):'')+
+          (b.by?(' · '+esc(b.by)):'')+'</div>'+
+      '</div>'+
       '<div class="pill '+(all?'a':'b')+'">'+(all?t('allDone'):t('prog',{a:a,b:n}))+'</div></div>'+
       (OPEN===id?body(id,b,items,done):'')+'</div>';
   }).join('');
@@ -258,13 +301,13 @@ function openB(id){ OPEN=OPEN===id?null:id; render(); }
 async function tick(id,code,on){
   const F=window.__fb;
   try{
-    await F.update(F.ref(F.db,'expiry/'+BRANCH+'/priceTags/'+id+'/done'),
+    await F.update(F.ref(F.db,'expiry/'+DATA[id]._br+'/priceTags/'+DATA[id]._id+'/done'),
       { [code]: on ? { by:(me().name||''), ts:Date.now() } : null });
   }catch(e){ toast(esc(e.message||'')); }
 }
 async function delB(id){ if(!confirm(t('delQ')))return;
   const F=window.__fb;
-  try{ await F.remove(F.ref(F.db,'expiry/'+BRANCH+'/priceTags/'+id)); OPEN=null; }
+  try{ await F.remove(F.ref(F.db,'expiry/'+DATA[id]._br+'/priceTags/'+DATA[id]._id)); OPEN=null; }
   catch(e){ toast(esc(e.message||'')); } }
 
 /* ---- 파일에서 불러오기 — 메모장 열고 복사하는 수고를 없앤다 ----
@@ -332,7 +375,8 @@ async function createBatch(){
     await F.set(r,{ vendor:$('nVend').value.trim()||'-', inv:$('nInv').value.trim()||'',
       eff:$('nEff').value||new Date().toISOString().slice(0,10),
       ts:Date.now(), by:(me().name||''), items });
-    $('nData').value=''; $('newBox').style.display='none';
+    try{ localStorage.setItem('km_ptag_vendor',$('nVend').value.trim()); }catch(e){}
+    $('nData').value=''; $('fName').textContent=''; $('newBox').style.display='none';
     toast(t('sent',{n:items.length})+(skipped?('  (제목·빈 줄 '+skipped+'줄은 건너뛰었습니다)'):''));
   }catch(e){ toast(t('failS')+' — '+esc(e.message||'')); }
 }
@@ -342,7 +386,7 @@ function doPrint(id){
   const b=DATA[id]; if(!b)return;
   const items=b.items||[], done=b.done||{};
   $('pr').innerHTML=
-    '<h1>🏷 '+esc(bName(BRANCH))+' — '+t('title').replace('🏷 ','')+'</h1>'+
+    '<h1>🏷 '+esc(bName(b._br))+' — '+t('title').replace('🏷 ','')+'</h1>'+
     '<div class="sub">'+esc(b.vendor||'')+(b.inv?' · '+esc(b.inv):'')+' · '+t('eff2')+' '+esc(b.eff||'')+
       ' · '+t('items',{n:items.length})+' · '+esc(HQ[LANG]||HQ.ko)+'</div>'+
     '<div class="g">'+esc(t('guide'))+'</div>'+
