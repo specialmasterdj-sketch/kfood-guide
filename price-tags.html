@@ -304,16 +304,26 @@ async function createBatch(){
   if(!raw){ toast(t('needD')); return; }
   /* 제목 줄·안내문이 섞여 들어와도 그냥 건너뛴다 — 인쇄용 표를 통째로 붙여넣는 일이 잦다.
      쓸 수 있는 줄은 '맨 앞이 숫자(바코드) + 가격 두 개가 숫자' 인 줄뿐이다. */
+  /* 칸 위치를 고정으로 보지 않는다 — 인쇄용 표는 맨 앞에 빈 칸이 하나 있고,
+     뒤에 '교체 ✓' 빈 칸이 붙기도 한다. 그래서 줄마다 직접 찾는다:
+       · 바코드 = 6자리 이상 숫자인 첫 칸
+       · 가격   = 그 뒤에 나오는 숫자 칸들 (둘이면 현재가·새 가격, 하나면 새 가격) */
   const items=[]; let skipped=0;
+  const money=s=>{ const t=String(s==null?'':s).replace(/[^0-9.]/g,'');
+                   const v=parseFloat(t); return (t&&isFinite(v))?v:null; };
   raw.split(/\r?\n/).forEach(line=>{
     if(!line.trim()) return;
-    const c=line.split('\t');
-    const code=String(c[0]==null?'':c[0]).replace(/[^0-9]/g,'');
-    const old=parseFloat(String(c[3]==null?'':c[3]).replace(/[^0-9.]/g,''));
-    const now=parseFloat(String(c[4]==null?'':c[4]).replace(/[^0-9.]/g,''));
-    if(c.length<5||code.length<6||!(now>0)){ skipped++; return; }
-    items.push({code,name:String(c[1]||'').trim(),cat:String(c[2]||'').trim(),
-      old:old>0?old:0, now});
+    const c=line.split('\t').map(x=>String(x==null?'':x).trim());
+    let b=-1;
+    for(let i=0;i<c.length;i++){
+      /* 숫자만 있고 6자리 이상인 칸 = 바코드. 가격($5.99)은 점이 있어 안 걸린다 */
+      if(/^[0-9\s]+$/.test(c[i]) && c[i].replace(/[^0-9]/g,'').length>=6){ b=i; break; } }
+    if(b<0){ skipped++; return; }
+    const code=c[b].replace(/[^0-9]/g,'');
+    const nums=[]; for(let i=b+1;i<c.length;i++){ const v=money(c[i]); if(v!=null&&v>0)nums.push(v); }
+    if(!nums.length){ skipped++; return; }
+    const now=nums[nums.length-1], old=nums.length>1?nums[nums.length-2]:0;
+    items.push({code,name:c[b+1]||'',cat:c[b+2]||'',old,now});
   });
   if(!items.length){ toast(t('bad',{n:1})); return; }
   const F=window.__fb;
