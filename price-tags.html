@@ -101,6 +101,11 @@ textarea{width:100%;min-height:150px;border:1.5px solid var(--line);border-radiu
     </div>
     <div class="fld"><label id="lEff"></label><input id="nEff" type="date"></div>
     <div class="fld"><label id="lPaste"></label>
+      <div class="bar" style="margin-bottom:6px">
+        <button class="btn sm" onclick="document.getElementById('nFile').click()" id="bFile"></button>
+        <span id="fName" style="font-size:.84em;color:var(--sub);align-self:center"></span>
+      </div>
+      <input type="file" id="nFile" accept=".txt,.csv,.tsv,.xlsx,.xls" style="display:none" onchange="loadFile(this)">
       <textarea id="nData" placeholder="08165219494&#9;ASSI SEAWEED STEM 1KG&#9;REFRIGERATED-OTHERS (F)&#9;5.99&#9;7.49"></textarea></div>
     <div class="hint" id="hPaste"></div>
     <button class="btn go" onclick="createBatch()" id="bSave"></button>
@@ -140,6 +145,10 @@ const L={
          en:'One per line, tab separated: <b>barcode ⇥ name ⇥ section ⇥ old ⇥ new</b><br>Copy straight from Excel.',
          es:'Uno por línea, separado por tabulación: <b>código ⇥ nombre ⇥ sección ⇥ actual ⇥ nuevo</b><br>Copie directo de Excel.'},
  save:{ko:'📤 지점에 내려보내기',en:'📤 Send to the store',es:'📤 Enviar a la tienda'},
+ pick:{ko:'📁 파일 고르기',en:'📁 Choose a file',es:'📁 Elegir archivo'},
+ read:{ko:'⏳ 읽는 중…',en:'⏳ Reading…',es:'⏳ Leyendo…'},
+ readOk:{ko:'✅ {f} — {n}줄 읽었습니다',en:'✅ {f} — {n} lines',es:'✅ {f} — {n} líneas'},
+ readNo:{ko:'파일을 읽지 못했습니다',en:'Could not read the file',es:'No se pudo leer el archivo'},
  prn:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
  none:{ko:'아직 내려온 가격표 교체 목록이 없습니다.',en:'No price tag lists yet.',es:'Todavía no hay listas.'},
  items:{ko:'{n}개 상품',en:'{n} items',es:'{n} productos'},
@@ -194,7 +203,7 @@ function paint(){
   $('tT').textContent=t('title'); $('tS').textContent=t('sub');
   $('tNew').textContent=t('newB');
   $('lVend').textContent=t('vend'); $('lInv').textContent=t('inv'); $('lEff').textContent=t('eff');
-  $('lPaste').textContent=t('paste'); $('hPaste').innerHTML=t('pasteH'); $('bSave').textContent=t('save');
+  $('lPaste').textContent=t('paste'); $('hPaste').innerHTML=t('pasteH'); $('bSave').textContent=t('save'); $('bFile').textContent=t('pick');
   const sel=$('br'), keep=sel.value;
   sel.innerHTML=BRANCHES.filter(b=>isBoss()||b.id===BRANCH)
     .map(b=>'<option value="'+b.id+'">'+(LANG==='ko'?b.ko:b.en)+'</option>').join('');
@@ -258,6 +267,37 @@ async function delB(id){ if(!confirm(t('delQ')))return;
   try{ await F.remove(F.ref(F.db,'expiry/'+BRANCH+'/priceTags/'+id)); OPEN=null; }
   catch(e){ toast(esc(e.message||'')); } }
 
+/* ---- 파일에서 불러오기 — 메모장 열고 복사하는 수고를 없앤다 ----
+   .txt/.csv 는 그대로 읽고, 엑셀은 SheetJS 를 그때 받아서 탭 구분으로 바꾼다. */
+function loadFile(inp){
+  const f=inp.files&&inp.files[0]; if(!f)return;
+  $('fName').textContent=t('read');
+  const done=(txt,n)=>{ $('nData').value=txt;
+    $('fName').textContent=t('readOk',{f:f.name,n:n});
+    toast(t('readOk',{f:f.name,n:n})); inp.value=''; };
+  const fail=e=>{ $('fName').textContent=''; toast(t('readNo')+(e?(' — '+esc(e)):'')); inp.value=''; };
+  const cnt=s=>s.split(/\r?\n/).filter(x=>x.trim()).length;
+
+  if(/\.(xlsx|xls)$/i.test(f.name)){
+    const go=()=>{ const rd=new FileReader();
+      rd.onload=e=>{ try{
+        const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const txt=XLSX.utils.sheet_to_csv(ws,{FS:'\t'});
+        done(txt,cnt(txt));
+      }catch(err){ fail(err.message); } };
+      rd.onerror=()=>fail(); rd.readAsArrayBuffer(f); };
+    if(window.XLSX) go();
+    else { const s=document.createElement('script');
+      s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+      s.onload=go; s.onerror=()=>fail('엑셀 읽기 도구를 못 받았습니다'); document.head.appendChild(s); }
+    return;
+  }
+  const rd=new FileReader();
+  rd.onload=e=>done(String(e.target.result),cnt(String(e.target.result)));
+  rd.onerror=()=>fail(); rd.readAsText(f,'utf-8');
+}
+
 /* ---- HQ: 새 목록 내려보내기 ---- */
 async function createBatch(){
   const raw=$('nData').value.trim();
@@ -307,7 +347,7 @@ function doPrint(id){
 }
 
 window.setLang=setLang; window.pickBranch=pickBranch; window.toggleNew=toggleNew;
-window.createBatch=createBatch; window.openB=openB; window.tick=tick; window.delB=delB; window.doPrint=doPrint;
+window.createBatch=createBatch; window.loadFile=loadFile; window.openB=openB; window.tick=tick; window.delB=delB; window.doPrint=doPrint;
 
 function boot(){ paint(); $('br').value=BRANCH; watch(); }
 if(window.__fb) boot(); else window.addEventListener('fb-ready',boot,{once:true});
