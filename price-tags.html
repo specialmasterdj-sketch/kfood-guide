@@ -154,6 +154,7 @@ const L={
  pick:{ko:'📁 파일 고르기',en:'📁 Choose a file',es:'📁 Elegir archivo'},
  read:{ko:'⏳ 읽는 중…',en:'⏳ Reading…',es:'⏳ Leyendo…'},
  readOk:{ko:'✅ {f} — {n}줄 읽었습니다',en:'✅ {f} — {n} lines',es:'✅ {f} — {n} líneas'},
+ headOk:{ko:'거래처·인보이스·적용일 자동 입력됨',en:'vendor/invoice/date filled in',es:'proveedor/factura/fecha rellenados'},
  readNo:{ko:'파일을 읽지 못했습니다',en:'Could not read the file',es:'No se pudo leer el archivo'},
  prn:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
  askVend:{ko:'거래처를 적어 주세요',en:'Vendor name',es:'Nombre del proveedor'},
@@ -351,8 +352,29 @@ async function delB(id){ if(!confirm(t('delQ')))return;
 function loadFile(inp){
   const f=inp.files&&inp.files[0]; if(!f)return;
   $('fName').textContent=t('read');
-  const done=(txt,n)=>{ $('nData').value=txt;
-    $('fName').textContent=t('readOk',{f:f.name,n:n});
+  /* 파일 머리말에서 거래처·인보이스·적용일을 읽어 칸을 채운다 — 손으로 적는 단계를 없앤다.
+       #벤더   RHEE BROS
+       #인보이스 PSI-0186099
+       #적용일  2026-10-08
+       #지점   MIAMI                                                        */
+  const head=txt=>{
+    let hit=0;
+    txt.split(/\r?\n/).slice(0,8).forEach(line=>{
+      const m=line.match(/^\s*#\s*([^\t:]+)[\t:]\s*(.+?)\s*$/); if(!m)return;
+      const k=m[1].trim(), v=m[2].trim(); if(!v)return;
+      if(/벤더|거래처|vendor/i.test(k)){ $('nVend').value=v; hit++; }
+      else if(/인보이스|invoice|inv/i.test(k)){ $('nInv').value=v; hit++; }
+      else if(/적용일|effective|eff/i.test(k)){ const d=v.replace(/[.\/]/g,'-');
+        if(/^\d{4}-\d{2}-\d{2}$/.test(d)){ $('nEff').value=d; hit++; } }
+      else if(/지점|store|branch/i.test(k)){ const id=v.toUpperCase().replace(/\s+/g,'_');
+        if(BRANCHES.some(b=>b.id===id)&&BRANCH!==id){ BRANCH=id; $('br').value=id;
+          try{ localStorage.setItem('km_ptag_filter',id); localStorage.setItem('km_branch',id); }catch(e){}
+          watch(); hit++; } }
+    });
+    return hit;
+  };
+  const done=(txt,n)=>{ $('nData').value=txt; const h=head(txt);
+    $('fName').textContent=t('readOk',{f:f.name,n:n})+(h?('  ·  '+t('headOk')):'');
     toast(t('readOk',{f:f.name,n:n})); inp.value=''; };
   const fail=e=>{ $('fName').textContent=''; toast(t('readNo')+(e?(' — '+esc(e)):'')); inp.value=''; };
   const cnt=s=>s.split(/\r?\n/).filter(x=>x.trim()).length;
