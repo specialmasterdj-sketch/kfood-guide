@@ -6,7 +6,7 @@
 // 어디에 띄워도 무언가를 가린다. 그래서 화면 맨 위에 흐름대로 한 줄을 끼워 넣는다.
 //
 // ← : 같은 사이트에서 왔으면 이전 화면(열린 창이 있으면 back-nav.js 가 그 창부터 닫는다),
-//     앱 창으로 바로 열었으면 홈.   🏠 : 홈(hub.html).
+//     앱 창으로 바로 열었으면 홈.   🏠 : 홈(apps.html — 앱 모음).
 // 이미 자체 ← 버튼이 있는 앱에는 이 파일을 넣지 않는다. 넣었더라도 <html data-km-back="own"> 이면 아무것도 안 한다.
 (function(){
   if (window.__kmBackButton) return;
@@ -23,7 +23,7 @@
     var ref = document.referrer || '';
     var sameSite = ref.indexOf(location.origin) === 0 && ref.split('#')[0] !== location.href.split('#')[0];
     if (history.length > 1 && (sameSite || (history.state && history.state.kmBack))){ history.back(); return; }
-    location.href = './hub.html';
+    location.href = './apps.html';
   }
   function mount(){
     if (!document.body || document.getElementById('kmBackBar')) return;

@@ -1,4 +1,4 @@
-// km-home-logo.js — 맨 위 김치마트 로고를 누르면 홈(hub.html) 으로 간다.
+// km-home-logo.js — 맨 위 김치마트 로고를 누르면 홈(apps.html — 앱 모음) 으로 간다.
 //                    로고 밑에 "🏠 홈으로" 라고 글자로 적어 둔다.
 //
 // 2026-10-07 전무님: "맨 위 상단에 김치마트 로고 누르면 첫 화면으로 가게 해줘.
@@ -18,7 +18,7 @@
   window.__kmHomeLogo = true;
 
   var page = (location.pathname.split('/').pop() || '').toLowerCase();
-  if (/^(hub|auth)\.html$/.test(page)) return;      // 홈 자신과 로그인 화면은 뺀다
+  if (/^(apps|auth)\.html$/.test(page)) return;      // 홈(앱 모음) 자신과 로그인 화면은 뺀다
 
   var lang = 'ko';
   try { lang = localStorage.getItem('kimchi_lang') || localStorage.getItem('tasks.lang') || 'ko'; } catch(e){}
@@ -52,7 +52,7 @@
 
     var a = document.createElement('a');
     a.className = 'km-home-wrap';
-    a.href = './hub.html';
+    a.href = './apps.html';
     a.title = TIP;
     a.setAttribute('aria-label', '🏠 ' + WORD + ' — ' + TIP);
 
