@@ -8771,6 +8771,7 @@ function renderEmp(){
   //   어제 만든 첫 화면(매장 사진·본사 알림·칸들)이 통째로 안 보였다.
   //   → 업무가 없어도 첫 화면은 그대로 그리고, 빈 안내는 '오늘 나의 업무' 칸 안으로 옮겼다.
   list.innerHTML = empHeroHtml() + empTopBanners(my) + empStatCards(my) + empPanel(my);
+  try { empSyncKeyFrame(list); } catch(_){}          // ⭐ 점검표 iframe 은 다시 그려도 그대로 둔다
   try { applyMgrHugePhotos(list); } catch(_){}   // 🚀 base64 사진은 보일 때만 .src 채움
   try { loadNoticeBanner(); } catch(_){}         // 📢 공지는 늦게 와도 그 자리에 채운다
   // 🔢 카드 숫자 미리 채우기 — 한 번만, 조용히. (누르기 전에도 숫자가 보여야 눌러볼 마음이 생긴다)
@@ -8781,6 +8782,7 @@ function renderEmp(){
       try { if (!EMP_STAFF) empLoadStaff(); } catch(_){}
       try { if (!EMP_HQPH)  empLoadHqPhotos(); } catch(_){}
       try { if (!EMP_OOS)   empLoadOos(); } catch(_){}
+      try { if (!EMP_KEY)   empLoadKey(); } catch(_){}
     }, 1200);
   }
 }
@@ -8812,7 +8814,7 @@ function empViewBranch(){
 }
 // 매장을 바꾼다 — 불러온 숫자는 버리고 새 매장 것으로 다시 받는다
 window.empGoBranch = function(b){
-  EMP_STAFF = null; EMP_OOS = null; EMP_HQPH = null;
+  EMP_STAFF = null; EMP_OOS = null; EMP_HQPH = null; EMP_KEY = null;
   EMP_VIEW = 'my';
   window.__empPrefetch = false;      // 새 매장 숫자를 다시 미리 채운다
   try { dashSetBranch(b); } catch(_){ EMP_REF = b; renderEmp(); }
@@ -8828,15 +8830,18 @@ const EMP_VIEWS = {
 };
 // ⭐ KEY ITEMS REPORT — 핵심 품목 진열 점검 2종 (오너 요청 2026-10-07)
 //   신선 데일리(야채·고기·수산·반찬·도시락)와 그로서리 Top 500(드라이·음료·냉장·냉동·주류).
-//   두 페이지는 claude.ai 아티팩트라 이 앱에서 숫자를 읽을 수 없다 → 바로가기만 둔다.
-//   (매니저는 아티팩트 Share 에서 Contributor 권한이 있어야 저장된다)
+//   두 페이지(key-fresh.html, key-grocery.html)는 앱 안에서 열리고 km-key-shim.js 로
+//   inventory/keyItems/{fresh|grocery} 에 저장한다 → 이 카드가 오늘 ✗ 수를 바로 읽는다.
+let EMP_KEY = null;
+let EMP_KEYTAB = (function(){ try { return localStorage.getItem('km.keyTab') || 'grocery'; } catch(_){ return 'grocery'; } })();
+const KEY_BR = { CORAL_SPRINGS:'coral', HOLLYWOOD:'hollywood', LASOLAS:'lasolas', LAS_OLAS:'lasolas', MIAMI:'miami', PEMBROKE_PINES:'pembroke', WEST_PALM:'wpb', WEST_PALM_BEACH:'wpb' };
 const KEY_REPORTS = [
-  { ic:'🥬', url:'https://claude.ai/artifact/F6EdeeZYVZcbaXh4ssS8m1', bg:'#dcfce7', fg:'#15803d',
+  { id:'fresh', ic:'🥬', page:'./key-fresh.html', bg:'#dcfce7', fg:'#15803d',
     ko:'신선 데일리 진열 점검', en:'Fresh Daily Display Check', es:'Revisión diaria de frescos',
     dko:'야채·소고기·돼지·닭·수산·반찬·도시락 — 품목별 ✓/✗ 와 사유',
     den:'Produce, beef, pork, poultry, seafood, banchan, dosirak — ✓/✗ with reason per item',
     des:'Verduras, carnes, mariscos, banchan, dosirak — ✓/✗ con motivo' },
-  { ic:'🛒', url:'https://claude.ai/artifact/KicpphWqgNc3a1kf84MvJL', bg:'#dbeafe', fg:'#1d4ed8',
+  { id:'grocery', ic:'🛒', page:'./key-grocery.html', bg:'#dbeafe', fg:'#1d4ed8',
     ko:'그로서리 Top 500 진열 점검', en:'Grocery Top 500 Shelf Check', es:'Revisión Top 500 abarrotes',
     dko:'지점별 판매 Top 500 (드라이·음료·냉장·냉동) + 주류 — 결품 사유와 입고 예정일',
     den:'Each store\'s Top 500 sellers (dry, drinks, chilled, frozen) + alcohol — out-of-stock reason and ETA',
@@ -8845,42 +8850,55 @@ const KEY_REPORTS = [
 function empKeyPanel(){
   const L = k => LANG === 'en' ? k.en : LANG === 'es' ? k.es : k.ko;
   const D = k => LANG === 'en' ? k.den : LANG === 'es' ? k.des : k.dko;
-  const br = escHtml(localizeBranch(empViewBranch()) || '');
-  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">' +
-    KEY_REPORTS.map(k =>
-      '<a href="' + k.url + '" target="_blank" rel="noopener" style="display:flex;gap:14px;align-items:flex-start;background:#fff;border:2px solid #e8eceb;border-radius:14px;padding:16px;text-decoration:none;color:#0f3d28">' +
-        '<span style="width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex:none;background:' + k.bg + ';color:' + k.fg + '">' + k.ic + '</span>' +
-        '<span style="display:flex;flex-direction:column;gap:4px;min-width:0">' +
-          '<b style="font-size:16px;font-weight:900">' + escHtml(L(k)) + '</b>' +
-          '<span style="font-size:12.5px;color:#475569;line-height:1.45">' + escHtml(D(k)) + '</span>' +
-          '<span style="margin-top:6px;display:inline-block;align-self:flex-start;background:#1a5c3a;color:#fff;border-radius:8px;padding:7px 14px;font-weight:800;font-size:13px">' +
-            (LANG==='en' ? 'Open & check' : LANG==='es' ? 'Abrir y revisar' : '열어서 점검하기') + (br ? ' · ' + br : '') + ' ↗</span>' +
-        '</span></a>').join('') +
-    '</div><div style="margin-top:10px;font-size:11.5px;color:#94a3b8">' +
-    (LANG==='en' ? 'Opens in Claude. Choose your store at the top of the page; your checks are saved there and every store sees them live.'
-     : LANG==='es' ? 'Se abre en Claude. Elija su tienda arriba; las revisiones se guardan ahí y todas las tiendas las ven.'
-     : 'Claude 에서 열립니다. 페이지 맨 위에서 내 지점을 고르면 점검 내용이 저장되고 모든 지점이 실시간으로 봅니다.') + '</div>';
+  const st = KEY_BR[empViewBranch()] || '';
+  const tab = KEY_REPORTS.find(k => k.id === EMP_KEYTAB) || KEY_REPORTS[1];
+  const stat = id => { const v = EMP_KEY && EMP_KEY[id]; if (!v) return '';
+    return v.x ? '<b style="color:#b91c1c">✗ ' + v.x + '</b>' : (v.done ? '<b style="color:#15803d">✓</b>' : ''); };
+  const url = tab.page + (st ? '?store=' + st : '');
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+    KEY_REPORTS.map(k => '<button onclick="empKeyTab(\'' + k.id + '\')" style="display:flex;gap:10px;align-items:center;flex:1 1 260px;text-align:left;cursor:pointer;background:#fff;border:2px solid ' + (k.id === tab.id ? '#1a5c3a' : '#e8eceb') + ';border-radius:14px;padding:12px 14px">' +
+      '<span style="width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:21px;flex:none;background:' + k.bg + '">' + k.ic + '</span>' +
+      '<span style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:15px;font-weight:900;color:#0f3d28">' + escHtml(L(k)) + ' ' + stat(k.id) + '</span>' +
+      '<span style="font-size:11.5px;color:#64748b;line-height:1.35">' + escHtml(D(k)) + '</span></span></button>').join('') +
+    '</div>' +
+    '<div style="display:flex;justify-content:flex-end;margin:0 0 6px"><a href="' + url + '" style="font-size:12.5px;font-weight:800;color:#1a5c3a">' +
+      (LANG==='en' ? 'Open full screen ↗' : LANG==='es' ? 'Pantalla completa ↗' : '전체 화면으로 열기 ↗') + '</a></div>' +
+    '';
 }
-// 💬 안 읽은 방 수 — 앱 모음과 같은 방식(chat/rooms 의 lastTs 와 내 마지막 방문 비교)
-let EMP_CHAT = null;
-async function empLoadChat(){
-  EMP_CHAT = 0;
-  try {
-    const rooms = await fetch(FB_DB_URL + '/chat/rooms.json', { cache:'no-store' }).then(r => r.json()) || {};
-    let lv = {}; try { lv = JSON.parse(localStorage.getItem('chat.lastVisit') || '{}'); } catch(_){}
-    const myKey = _normAssignName((me && me.name) || '');
-    const mgr = !!(me && (isManager(me.role) || isOwner()));
-    Object.keys(rooms).forEach(id => {
-      const r = rooms[id] || {};
-      if (id === 'payroll' || id === 'managers'){ if (!mgr) return; }
-      else if (id.indexOf('dm__') === 0){
-        if (!Array.isArray(r.members) || !r.members.some(n => _normAssignName(n) === myKey)) return;
-      }
-      if ((r.lastTs || 0) > (lv[id] || 0)) EMP_CHAT++;
-    });
-  } catch(e){ console.warn('[chat]', e); }
+// 점검표 iframe 은 empList 밖(바로 아래)에 한 번만 만들어 둔다.
+//   empList 는 채팅·사진 숫자가 올 때마다 통째로 다시 그려지므로, 안에 두면 매니저가 체크하던 화면이 리셋된다.
+function empSyncKeyFrame(list){
+  let host = document.getElementById('kmKeyFrameHost');
+  if (!host){ host = document.createElement('div'); host.id = 'kmKeyFrameHost'; list.parentNode.insertBefore(host, list.nextSibling); }
+  if (EMP_VIEW !== 'key'){ host.style.display = 'none'; return; }
+  host.style.display = 'block';
+  const st = KEY_BR[empViewBranch()] || '';
+  const tab = KEY_REPORTS.find(k => k.id === EMP_KEYTAB) || KEY_REPORTS[1];
+  const url = tab.page + (st ? '?store=' + st : '');
+  let f = host.querySelector('iframe');
+  if (!f){ f = document.createElement('iframe'); f.style.cssText = 'width:100%;height:calc(100vh - 140px);min-height:560px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;display:block'; host.appendChild(f); }
+  if (f.dataset.u !== url){ f.dataset.u = url; f.src = url; }
+}
+window.empKeyTab = function(id){ EMP_KEYTAB = id; try { localStorage.setItem('km.keyTab', id); } catch(_){} renderEmp(); };
+// 오늘 점검 결과 — 지금 보는 지점의 ✗ 수와 보고 완료 여부 (두 페이지가 inventory/keyItems 에 저장)
+async function empLoadKey(){
+  const st = KEY_BR[empViewBranch()] || '', d = todayStr();
+  const out = {};
+  await Promise.all(KEY_REPORTS.map(async k => {
+    const v = { x:0, done:0, docs:0 };
+    try {
+      const j = await fetch(FB_DB_URL + '/inventory/keyItems/' + k.id + '/checks/' + d + '.json', { cache:'no-store' }).then(r => r.json()) || {};
+      Object.values(j || {}).forEach(doc => {
+        if (!doc || doc.store !== st) return;
+        v.docs++; v.x += (doc.no || 0); if (doc.done) v.done++;
+      });
+    } catch(e){ console.warn('[key]', e); }
+    out[k.id] = v;
+  }));
+  EMP_KEY = out;
   if (document.getElementById('empList')) renderEmp();
 }
+
 function empViewLbl(k, f){
   const v = EMP_VIEWS[k];
   // 남의 매장을 보고 있을 때는 '나의 업무' 가 아니라 '그 매장의 오늘 업무' 다
@@ -8905,7 +8923,12 @@ function empStatCards(my){
   nums.photo = { v: EMP_HQPH ? EMP_HQPH.length : '…',
                  sub: EMP_REF ? escHtml(localizeBranch(EMP_REF))
                       : (LANG==='en'?'from our store':LANG==='es'?'de la tienda':'우리 매장') };
-  nums.key   = { v: KEY_REPORTS.length, sub: LANG==='en'?'Fresh · Grocery':LANG==='es'?'Frescos · Abarrotes':'신선 · 그로서리' };
+  const keyX = EMP_KEY ? KEY_REPORTS.reduce((a, k) => a + ((EMP_KEY[k.id] || {}).x || 0), 0) : null;
+  const keyDocs = EMP_KEY ? KEY_REPORTS.reduce((a, k) => a + ((EMP_KEY[k.id] || {}).docs || 0), 0) : 0;
+  nums.key   = { v: keyX == null ? '…' : (keyX ? '✗ ' + keyX : (keyDocs ? '✓' : '0')),
+                 sub: keyX ? (LANG==='en'?'not on shelf today':LANG==='es'?'faltan hoy':'오늘 진열 안됨')
+                      : keyDocs ? (LANG==='en'?'all on shelf':LANG==='es'?'todo en estante':'오늘 이상 없음')
+                      : (LANG==='en'?'Fresh · Grocery':LANG==='es'?'Frescos · Abarrotes':'신선 · 그로서리') };
   nums.chat  = { v: EMP_CHAT == null ? '…' : EMP_CHAT,
                  sub: EMP_CHAT ? (LANG==='en'?'unread rooms':LANG==='es'?'salas sin leer':'안 읽은 방') : (LANG==='en'?'all read':LANG==='es'?'todo leído':'모두 읽음') };
   // 🙈 숫자가 안 나오는 칸은 아예 숨긴다 (전무님: "안 나오면 없애버려")
@@ -8917,7 +8940,7 @@ function empStatCards(my){
                  stock: myBr === 'HOLLYWOOD', hq: true, photo: true, chat: !EMP_REF, key: true };
   return '<div class="emp-cards">' + ['staff','my','stock','hq','photo','chat','key'].filter(k => show[k]).map(k => {
     const v = EMP_VIEWS[k], n = nums[k], on = (EMP_VIEW === k);
-    const warn = (k === 'hq' && hqWait) || (k === 'my' && (myTot - myDone) > 0) || (k === 'chat' && EMP_CHAT);
+    const warn = (k === 'hq' && hqWait) || (k === 'my' && (myTot - myDone) > 0) || (k === 'chat' && EMP_CHAT) || (k === 'key' && keyX);
     const act = v.go ? ('location.href=\'' + v.go + '\'') : ('empSetView(\'' + k + '\')');
     return '<button class="emp-card' + (on ? ' on' : '') + '" onclick="' + act + '">' +
       '<span class="ic" style="background:' + v.bg + ';color:' + v.fg + '">' + v.ic + '</span>' +
@@ -8931,6 +8954,7 @@ window.empSetView = function(v){
   if (v === 'staff' && !EMP_STAFF) empLoadStaff();
   if (v === 'stock' && !EMP_OOS)   empLoadOos();
   if ((v === 'hq' || v === 'photo') && !EMP_HQPH) empLoadHqPhotos();
+  if (v === 'key') empLoadKey();
 };
 function empPanel(my){
   if (EMP_VIEW === 'my') return my.length ? my.map(renderTaskCard).join('') : empNoTaskHtml();
