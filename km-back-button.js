@@ -6,7 +6,7 @@
 // 어디에 띄워도 무언가를 가린다. 그래서 화면 맨 위에 흐름대로 한 줄을 끼워 넣는다.
 //
 // ← : 같은 사이트에서 왔으면 이전 화면(열린 창이 있으면 back-nav.js 가 그 창부터 닫는다),
-//     앱 창으로 바로 열었으면 홈.   🏠 : 홈(apps.html — 앱 모음).
+//     앱 창으로 바로 열었으면 홈.   🏠 : 홈(hub.html).
 // 이미 자체 ← 버튼이 있는 앱에는 이 파일을 넣지 않는다. 넣었더라도 <html data-km-back="own"> 이면 아무것도 안 한다.
 (function(){
   if (window.__kmBackButton) return;
@@ -23,7 +23,7 @@
     var ref = document.referrer || '';
     var sameSite = ref.indexOf(location.origin) === 0 && ref.split('#')[0] !== location.href.split('#')[0];
     if (history.length > 1 && (sameSite || (history.state && history.state.kmBack))){ history.back(); return; }
-    location.href = './apps.html';
+    location.href = './hub.html';
   }
   function mount(){
     if (!document.body || document.getElementById('kmBackBar')) return;
@@ -34,22 +34,15 @@
       '#kmBackBar button{display:inline-flex;align-items:center;gap:4px;border:1px solid #d1d5db;background:#fff;color:#1a5c3a;' +
       'border-radius:16px;padding:5px 12px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1.2}' +
       '#kmBackBar button:hover{border-color:#1a5c3a}' +
-      '#kmBackBar .brand-logo{height:24px;width:auto;max-width:110px;object-fit:contain;display:block;flex-shrink:0}' +
       '@media print{#kmBackBar{display:none!important}}';
     document.head.appendChild(css);
     var bar = document.createElement('div');
     bar.id = 'kmBackBar';
     bar.innerHTML = '<button type="button" id="kmBackBtn" aria-label="' + L[0] + '">← ' + L[0] + '</button>' +
-                    '<img class="brand-logo" id="kmBarLogo" src="./pwa-assets/kimchi-text-logo.png?v=2" alt="KIMCHI MART">';
+                    '<button type="button" id="kmHomeBtn" aria-label="' + L[1] + '">🏠 ' + L[1] + '</button>';
     document.body.insertBefore(bar, document.body.firstChild);
     document.getElementById('kmBackBtn').onclick = goBack;
-    // 로고를 눌러 홈으로 가는 일과 그 밑의 '홈으로' 글자는 km-home-logo.js 가 붙인다.
-    // 이 바를 쓰는 앱은 로고가 따로 없으므로 여기서 그 파일도 같이 불러온다.
-    if (!document.querySelector('script[src*="km-home-logo.js"]')){
-      var js = document.createElement('script');
-      js.src = './km-home-logo.js?v=1';
-      document.head.appendChild(js);
-    }
+    document.getElementById('kmHomeBtn').onclick = function(){ location.href = './hub.html'; };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
