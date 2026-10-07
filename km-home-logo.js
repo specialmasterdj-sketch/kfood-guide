@@ -53,7 +53,12 @@
         'letter-spacing:-.2px;white-space:nowrap;font-family:inherit}' +
       /* .brand > .brand-logo 로 크기를 주던 화면들 — 감싸고 나서도 그대로 보이게 */
       '.brand .km-home-wrap > .brand-logo{height:32px;max-width:135px}' +
-      '@media print{.km-home-tip{display:none}}';
+      /* 로고가 없던 앱에 끼워 넣는 줄 */
+      '#kmHomeBar{display:flex;align-items:center;padding:5px 10px;background:#f8faf9;' +
+        'border-bottom:1px solid #e5e7eb;position:relative;z-index:5;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif}' +
+      '#kmHomeBar .brand-logo{height:24px;width:auto;max-width:110px;object-fit:contain;display:block;flex-shrink:0}' +
+      '@media print{.km-home-tip{display:none}#kmHomeBar{display:none!important}}';
     document.head.appendChild(css);
   }
 
@@ -100,9 +105,28 @@
     for (var i = 0; i < found.length; i++) wire(found[i]);
   }
 
+  // 🏪 로고가 아예 없는 앱 — 맨 위에 로고 한 줄을 끼워 넣는다.
+  //   2026-10-07 전무님: "모든 앱에서 이 버튼 만들어줘." 로고가 있든 없든 어느 앱에서나
+  //   같은 자리에 같은 버튼이 있어야 직원이 한 번 배우고 끝난다.
+  //   뒤로가기 줄(km-back-button.js)이 이미 로고를 넣어 둔 앱에는 또 만들지 않는다.
+  function fallbackBar(){
+    if (document.querySelector('.km-home-wrap')) return;      // 어딘가에 이미 있다
+    if (!document.body || document.getElementById('kmHomeBar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'kmHomeBar';
+    var img = document.createElement('img');
+    img.className = 'brand-logo';
+    img.src = './pwa-assets/kimchi-text-logo.png?v=2';
+    img.alt = 'KIMCHI MART';
+    bar.appendChild(img);
+    document.body.insertBefore(bar, document.body.firstChild);
+    wire(img);
+  }
+
   function start(){
     style();
     mount();
+    fallbackBar();
     // 로고를 나중에 그리는 화면도 있어서 잠깐 더 지켜본다
     try {
       var mo = new MutationObserver(function(){ mount(); });
