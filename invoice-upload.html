@@ -91,7 +91,10 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
     </div>
   </div>
 
-  <div class="card">
+  <!-- 🏢 전 지점으로 보는 중이면 여기에 까닭을 적고 올리기 칸을 잠근다 -->
+  <div class="note" id="allModeNote" style="display:none"></div>
+
+  <div class="card" id="upCard">
     <h2 id="tS2"></h2>
     <div class="hint" id="tOrder"></div>
 
@@ -156,6 +159,12 @@ const L={
       es:'📷 <b>Si la fotografía</b> — una página por foto, <b>derecha y con buena luz</b>. Si los números salen borrosos no se pueden leer y habrá que repetirla.<br>📄 Si el proveedor <b>envió un PDF o Excel por correo</b>, subir ese archivo es lo más exacto.'},
  s1:{ko:'1. 어디서 온 인보이스인가요',en:'1. Where is it from',es:'1. ¿De dónde viene?'},
  branch:{ko:'지점',en:'Store',es:'Tienda'},
+ /* 🏢 전 지점 보기 — 오너·임원만. HQ 는 다섯 지점을 한 번에 봐야 한다 (2026-10-08 전무님) */
+ allBr:{ko:'🏢 전 지점 (HQ)',en:'🏢 All stores (HQ)',es:'🏢 Todas las tiendas (HQ)'},
+ allNote:{ko:'다섯 지점에 올라온 인보이스를 한 번에 봅니다. <b>올리려면 지점을 하나 고르세요.</b>',
+          en:'Showing invoices from all five stores. <b>Pick one store to upload.</b>',
+          es:'Mostrando facturas de las cinco tiendas. <b>Elija una tienda para subir.</b>'},
+ allPick:{ko:'먼저 위에서 지점을 하나 골라 주세요',en:'Please pick a store above first',es:'Primero elija una tienda arriba'},
  vendor:{ko:'벤더 (거래처)',en:'Vendor',es:'Proveedor'},
  pick:{ko:'— 고르세요 —',en:'— Select —',es:'— Seleccione —'},
  etc:{ko:'기타 (직접 입력)',en:'Other (type it in)',es:'Otro (escríbalo)'},
@@ -290,7 +299,9 @@ function applyLang(){
   $('vendorSel').innerHTML='<option value="">'+esc(t('pick'))+'</option>'
     +VENDORS.map(v=>'<option'+(v===keep?' selected':'')+'>'+esc(v)+'</option>').join('')
     +'<option value="__etc"'+(keep==='__etc'?' selected':'')+'>'+esc(t('etc'))+'</option>';
-  $('branch').innerHTML=BRANCHES.map(b=>'<option value="'+b.id+'"'+(b.id===BRANCH?' selected':'')+'>'+esc(bname(b.id))+'</option>').join('');
+  $('branch').innerHTML=(isBoss()?'<option value="*"'+(BRANCH==='*'?' selected':'')+'>'+esc(t('allBr'))+'</option>':'')
+    +BRANCHES.map(b=>'<option value="'+b.id+'"'+(b.id===BRANCH?' selected':'')+'>'+esc(bname(b.id))+'</option>').join('');
+  applyAllMode();
   document.querySelectorAll('[data-l]').forEach(b=>b.classList.toggle('on',b.getAttribute('data-l')===LANG));
   checkPages(); render();
 }
@@ -301,7 +312,11 @@ document.querySelectorAll('[data-l]').forEach(b=>b.addEventListener('click',()=>
 /* ===== 화면 준비 ===== */
 $('dt').value=today();
 $('branch').disabled=!isBoss();          // 지점 직원은 자기 지점 고정
-$('branch').onchange=function(){ BRANCH=this.value; try{localStorage.setItem('km_branch',BRANCH);}catch(e){} subscribe(); };
+$('branch').onchange=function(){
+  BRANCH=this.value;
+  try{ if(BRANCH!=='*') localStorage.setItem('km_branch',BRANCH); }catch(e){}   // 전 지점은 기억하지 않는다
+  applyAllMode(); subscribe();
+};
 $('vendorSel').onchange=function(){ $('vendorEtc').style.display=this.value==='__etc'?'':'none'; if(this.value==='__etc')$('vendorEtc').focus(); };
 
 /* ===== 파일 고르기 =====
@@ -519,12 +534,47 @@ $('btnSend').onclick=async function(){
 /* ===== 접수 내역 =====
    저장 위치는 expiry/{지점}/invoices — expiry 규칙이 이미 '본인 지점 또는 전 지점(*)' 으로
    잡혀 있어서 규칙을 새로 게시하지 않아도 된다. 크레딧 기록(expiry/{지점}/credits)과 섞이지 않는다. */
-function subscribe(){
+let UNSUBS=[];
+function stopAll(){
   if(unsub){ try{ unsub(); }catch(e){} unsub=null; }
+  UNSUBS.forEach(u=>{ try{ u(); }catch(e){} }); UNSUBS=[];
+}
+function subscribe(){
+  stopAll();
   $('list').innerHTML='<div class="empty">⏳</div>';
+
+  /* 🏢 전 지점 — 다섯 곳을 따로 듣고 한 목록으로 합친다.
+     열쇠는 '지점::아이디' 로 둬서 상태 바꾸기·내려받기가 제 지점을 찾아간다. */
+  if(BRANCH==='*'){
+    DATA={};
+    const got={};
+    BRANCHES.forEach(b=>{
+      const u=window.__fb.onValue(window.__fb.ref(window.__fb.db,'expiry/'+b.id+'/invoices'),
+        s=>{
+          const v=s.val()||{};
+          Object.keys(DATA).forEach(k=>{ if(k.indexOf(b.id+'::')===0) delete DATA[k]; });
+          Object.keys(v).forEach(id=>{ DATA[b.id+'::'+id]=Object.assign({},v[id],{_br:b.id,_id:id}); });
+          got[b.id]=1; render();
+        },
+        err=>{ got[b.id]=1; console.warn('[inv] '+b.id, err&&err.message); render(); });
+      UNSUBS.push(u);
+    });
+    return;
+  }
+
   unsub=window.__fb.onValue(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices'),
     s=>{ DATA=s.val()||{}; render(); },
     err=>{ $('list').innerHTML='<div class="empty">'+esc(err&&err.message||t('loading'))+'</div>'; });
+}
+
+/* 전 지점으로 보는 동안은 올릴 곳이 없다 — 올리기 칸을 잠그고 까닭을 적어 둔다 */
+function applyAllMode(){
+  const on=(BRANCH==='*');
+  const note=$('allModeNote');
+  if(note){ note.style.display=on?'':'none'; note.innerHTML=t('allNote'); }
+  ['vendorSel','vendorEtc','invno','dt','pages','memo','btnCam','btnFile','btnBulk','btnSend']
+    .forEach(id=>{ const el=$(id); if(el) el.disabled=on; });
+  const card=$('upCard'); if(card){ card.style.opacity=on?'.45':''; card.style.pointerEvents=on?'none':''; }
 }
 const STAT={new:['fNew','b0'],doing:['fDoing','b1'],done:['fDone','b2']};
 function rows(){
@@ -555,7 +605,10 @@ function render(){
       +'</span>').join('');
     const next=(r.status||'new')==='new'?'doing':((r.status==='doing')?'done':'new');
     const nextL={doing:'toDoing',done:'toDone',new:'toNew'}[next];
-    return '<div class="it"><div class="h"><div class="v">'+esc(r.vendor)+(r.invNo?' <span style="font-weight:400;color:#64748b">#'+esc(r.invNo)+'</span>':'')
+    const brTag=(BRANCH==='*'&&r._br)
+      ? '<span style="display:inline-block;background:#e8f5ee;border:1px solid #bbf7d0;color:#15803d;border-radius:999px;padding:1px 8px;font-size:.74em;font-weight:900;margin-right:6px;vertical-align:middle">'+esc(bname(r._br))+'</span>'
+      : '';
+    return '<div class="it"><div class="h"><div class="v">'+brTag+esc(r.vendor)+(r.invNo?' <span style="font-weight:400;color:#64748b">#'+esc(r.invNo)+'</span>':'')
       +'</div><span class="bdg '+st[1]+'">'+esc(t(st[0]))+'</span></div>'
       +'<div class="m">'+esc(t('gotL'))+' '+esc(r.got||'')+' · '+esc(t('filesL',{n:nf}))
       +(r.pages&&r.pages!==nf?' <b style="color:#b91c1c">'+esc(t('diffL',{n:r.pages}))+'</b>':'')
@@ -616,7 +669,9 @@ function dlAll(id){
 }
 async function setStatus(id,st){
   try{
-    await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices/'+id),{status:st,stBy:(me().name||''),stTs:Date.now()});
+    const rec=DATA[id]||{};
+    const br=rec._br||BRANCH, rid=rec._id||id;        // 전 지점으로 볼 때는 그 기록의 지점에 쓴다
+    await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+br+'/invoices/'+rid),{status:st,stBy:(me().name||''),stTs:Date.now()});
     /* 상태를 바꾸면 보고 있던 칸에서 사라진다 — 없어진 걸로 오해하기 쉬워서
        옮겨간 칸으로 같이 따라가고, 어디로 갔는지 알려 준다 (2026-10-02 전무님 지적) */
     if(FILTER!=='all'){ FILTER=st; }
