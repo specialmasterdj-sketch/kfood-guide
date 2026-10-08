@@ -124,7 +124,7 @@ main{padding-block:12px 110px}
 .pop .lr button b{font-size:12.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pop .lr button .num{font-size:11px;color:var(--muted)}
 .pop .lr button em{font-style:normal;font-size:11px;font-weight:700;color:#075985;white-space:nowrap}
-.pop .lr .none{padding:8px}
+.pop .lr .none{padding:9px;line-height:1.6;font-size:11.5px}
 .pop .lhint{margin-top:6px;font-size:11px;font-weight:700;color:var(--muted)}
 .pop .lr .more{display:block;grid-template-columns:none;text-align:center;font-size:11.5px;font-weight:700;color:var(--muted);background:var(--sunk);border-style:dashed}
 .pop .lr .oth{display:grid;gap:4px;opacity:.8}
@@ -575,32 +575,41 @@ async function openLink(id){
   // 품목별 자료가 할리우드 것이면 이름도 할리우드 것을 받는다
   if(!SNAMES&&db&&G.my){ const src=(SCALE&&SCALE._ref)||G.my;
     try{ const d=await db.doc('salesNames/'+src).get(); SNAMES=(d.exists&&d.data())||{}; delete SNAMES._id; }catch(e){ SNAMES={}; } }
-  paintLink(it?.en||'');
-  const q=document.getElementById('link-q');if(q){q.value=it?.en||'';q.focus();q.select()}
+  // 괄호 안 설명은 떼고 넣어 둔다 — POS 이름엔 보통 없다 ("Chinese Broccoli (Gai Lan)" → "Chinese Broccoli Gai Lan")
+  const pre=String(it?.en||'').replace(/[()]/g,' ').replace(/\s+/g,' ').trim();
+  paintLink(pre);
+  const q=document.getElementById('link-q');if(q){q.value=pre;q.focus();q.select()}
 }
 function paintLink(term){
   const el=document.getElementById('link-rows');if(!el)return;
   if(!SNAMES){el.textContent='POS 목록 받는 중…';return}
-  const t=String(term||'').trim().toUpperCase();
-  if(!t){el.textContent='이름이나 번호를 적어 보세요';return}
-  const words=t.split(/\s+/).filter(Boolean);
+  const raw=String(term||'').trim();
+  if(!raw){el.textContent='이름이나 번호를 적어 보세요';return}
+  /* 🔎 이름 맞대기 — 양쪽에서 괄호·빗금·붙임표를 떼고 낱말로 쪼갠다.
+     2026-10-08 전무님: "Chinese Broccoli (Gai Lan)" 이 안 찾아졌다.
+       POS 이름은 'GAI LAN-CHINESE BROCCOLI/LB'. 전에는 괄호까지 낱말로 치고
+       **모든** 낱말이 들어 있어야 찾게 돼 있어 영영 못 만났다.
+     이제는 겹치는 낱말 수로 줄 세운다 — 하나만 겹쳐도 보여 주고, 많이 겹친 것이 위로 온다. */
+  const tok=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9가-힣]+/g,' ').trim().split(' ').filter(w=>w.length>1);
+  const t=raw.toUpperCase();
+  const words=tok(raw);
   const mine=[],other=[];
   for(const c in SNAMES){
-    const n=String(SNAMES[c]).toUpperCase();
-    const byCode=c.startsWith(t);
-    if(!(byCode||words.every(w=>n.includes(w))))continue;
-    const s=dayAvg(c);const row={c,n:SNAMES[c],q:s?s.a:0};
+    const nw=tok(SNAMES[c]);
+    const byCode=c.startsWith(t.replace(/\D/g,''))&&/\d/.test(t);
+    let hit=0; for(const w of words) if(nw.some(x=>x===w||x.includes(w)||w.includes(x))) hit++;
+    if(!byCode&&!hit)continue;
+    const s=dayAvg(c);const row={c,n:SNAMES[c],q:s?s.a:0,h:byCode?99:hit};
     // 번호를 직접 친 것은 부서를 가리지 않는다 — 번호를 아는 사람은 이미 답을 아는 것이다.
-    // (2026-10-08 전무님: "POS 에서 번호로 찾기 없어?" — 다른 부서 번호가 접힌 쪽으로 밀렸었다)
     if(byCode||inMyDept(c))mine.push(row);else other.push(row);
-    if(mine.length+other.length>600)break;
+    if(mine.length+other.length>900)break;
   }
-  const by=(a,b)=>b.q-a.q; mine.sort(by); other.sort(by);
+  const by=(a,b)=>b.h-a.h||b.q-a.q; mine.sort(by); other.sort(by);
   const btn=x=>`<button type="button" data-pick="${esc(x.c)}"><b>${esc(x.n)}</b><span class="num">#${esc(x.c)}</span><em>${x.q?x.q.toFixed(x.q<10?1:0)+'개/일':'—'}</em></button>`;
   const d=DK[G.dept];
   let h='';
   if(mine.length)h+=mine.slice(0,40).map(btn).join('');
-  else h+=`<span class="none">${esc(d.ko)}에서는 못 찾았습니다 · not found in ${esc(d.en)}</span>`;
+  else h+=`<span class="none">${esc(d.ko)}에서는 못 찾았습니다.<br>· 낱말을 줄여 보세요 (예: “Chinese Broccoli” → “broccoli”)<br>· POS 번호를 아시면 번호를 치면 바로 나옵니다<br>· 요즘 한 번도 안 팔린 품목은 목록에 없을 수 있습니다</span>`;
   if(other.length){
     h+=`<button type="button" class="more" data-all="${LINKALL?'0':'1'}">${LINKALL?'▲ 다른 부서 접기':`▼ 다른 부서에서도 찾기 (${other.length})`}</button>`;
     if(LINKALL)h+=`<div class="oth">${other.slice(0,40).map(btn).join('')}</div>`;
