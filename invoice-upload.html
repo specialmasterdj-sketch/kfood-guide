@@ -221,6 +221,9 @@ const L={
  dlOpen:{ko:'새 창으로 열었습니다. 사진을 꾹 누르거나(폰) 오른쪽 클릭해서(PC) 저장하세요.',
          en:'Opened in a new tab. Long-press (phone) or right-click (PC) to save.',
          es:'Se abrió en otra pestaña. Mantenga pulsado (móvil) o haga clic derecho (PC) para guardar.'},
+ dlPop:{ko:'브라우저가 창 여는 것을 막았습니다. 주소창 오른쪽의 팝업 차단 아이콘을 눌러 이 사이트는 허용으로 바꿔 주세요. 그 전에는 [⬇ 받기] 로 한 장씩 받으시면 됩니다.',
+        en:'The browser blocked the pop-ups. Click the pop-up blocked icon in the address bar and allow this site. Until then use [⬇ Download] one at a time.',
+        es:'El navegador bloqueó las ventanas. Pulse el icono de bloqueo en la barra de direcciones y permita este sitio. Mientras tanto use [⬇ Descargar] uno por uno.'},
  needVendor:{ko:'거래처를 골라 주세요',en:'Please choose the vendor',es:'Elija el proveedor'},
  needFile:{ko:'인보이스를 올려 주세요 (사진이나 파일)',en:'Please add the invoice (photo or file)',es:'Agregue la factura (foto o archivo)'},
  preparing:{ko:'⏳ 준비 중…',en:'⏳ Preparing…',es:'⏳ Preparando…'},
@@ -667,16 +670,26 @@ function dlOne(id,i){
 }
 function dlAll(id){
   const r=DATA[id]; if(!r||!r.files||!r.files.length)return;
+  /* 🔴 창은 '클릭한 바로 그 순간' 에 다 잡아 둬야 한다.
+     dlOne 은 그렇게 해서 되는데 dlAll 은 안 해서, 파일 가져오기가 막히는 환경에서는
+     await 뒤에 열린 창이 전부 팝업 차단에 걸려 '아무 일도 안 일어난' 것처럼 보였다
+     (2026-10-08 전무님). 같은 함정을 주석에 적어 두고도 여기엔 적용이 안 돼 있었다.
+     가져오기가 잘 되면 dl() 이 이 창들을 알아서 닫는다 — 쓸데없이 남지 않는다. */
+  const n=Math.min(r.files.length,12);               // 12장 넘게 한꺼번에는 창을 안 연다
+  const wins=[];
+  for(let i=0;i<n;i++){ try{ wins.push(window.open('','_blank')); }catch(e){ wins.push(null); } }
   toast(t('dlGo'));
   (async()=>{
-    let ok=true;
+    let ok=true, blocked=0;
     for(let i=0;i<r.files.length;i++){
       const f=r.files[i];
       const prefix=(r.vendor||'invoice').replace(/[^\w가-힣.-]+/g,'_')+'_'+(r.got||'')+'_'+(i+1)+'_';
-      if(!await dl(f.u,prefix+(f.n||'file'),null)) ok=false;
+      if(!await dl(f.u,prefix+(f.n||'file'),wins[i]||null)){ ok=false; if(!wins[i]) blocked++; }
       await new Promise(s=>setTimeout(s,350)); // 연달아 받으면 브라우저가 막는다 — 조금 쉬어 준다
     }
-    toast(ok?t('dlDone'):t('dlOpen'));
+    /* 미처 못 연 창이 남아 있으면 닫아 준다 */
+    wins.forEach(w=>{ try{ if(w&&!w.closed&&!w.location.href) w.close(); }catch(e){} });
+    toast(ok?t('dlDone'):(blocked?t('dlPop'):t('dlOpen')));
   })();
 }
 async function setStatus(id,st){
