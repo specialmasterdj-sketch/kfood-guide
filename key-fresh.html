@@ -123,6 +123,9 @@ main{padding-block:12px 110px}
 .pop .lr button .num{font-size:11px;color:var(--muted)}
 .pop .lr button em{font-style:normal;font-size:11px;font-weight:700;color:#075985;white-space:nowrap}
 .pop .lr .none{padding:8px}
+.pop .lhint{margin-top:6px;font-size:11px;font-weight:700;color:var(--muted)}
+.pop .lr .more{display:block;grid-template-columns:none;text-align:center;font-size:11.5px;font-weight:700;color:var(--muted);background:var(--sunk);border-style:dashed}
+.pop .lr .oth{display:grid;gap:4px;opacity:.8}
 /* 기준 수량 칸 */
 .pop .pr{grid-column:1/-1;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px;padding:8px 10px;background:var(--sunk);border-radius:8px}
 .pop .pr label{display:flex;gap:7px;align-items:center;font-size:12px;font-weight:700}
@@ -288,6 +291,24 @@ const catOf=k=>Array.isArray(CAT[k])?CAT[k]:null;
      poslink/{품목id}  {c:POS코드}  — 체인 공통. 한 번 이으면 모두가 쓴다
      par/{지점}_{부서} {품목id:최소수량} — 지점마다 다르다 */
 let SALES=null, SNAMES=null, LINK={}, PAR={};
+/* 🔗 연결 창에서 그 부서 물건만 먼저 보여 주기.
+   2026-10-08 전무님: "야채는 야채에서만 골라야지? 왜 전 품목?"
+     — 'Avocado' 로 찾으니 아보카도 오일·연어롤·까는 도구가 나왔다.
+   POS 코드가 부서마다 갈려 있다 (할리우드 판매 자료로 확인):
+     야채·청과  1~3자리 저울 PLU + 1xxx   (12 POTATO, 51 LEMON, 1625 CARROTS)
+     정육·닭    9xxx                      (9101 BEEF BRISKET, 9078 CHICKEN BREAST)
+     수산       2xxx·3xxx·6xxx·7xxx       (6003 MACKEREL, 3099 KING TIGER SHRIMP)
+     반찬·김치  4xxx                      (4001 KIMCHI, 4057 CUCUMBER KIMCHI)
+     도시락·즉석 3xxx·4xxx + 자체 바코드    (4520 KIMBAP, 20000011 삼각김밥)
+   맞는 것을 위에 모아 주고, 못 찾으면 '전 품목에서 찾기' 로 풀 수 있게 둔다. */
+const DEPT_CODE={
+  produce:/^(\d{1,3}|1\d{3})$/,
+  beef:/^9\d{3}$/, pork:/^9\d{3}$/, poultry:/^(9\d{3}|2\d{4})$/,
+  seafood:/^[2367]\d{3}$/,
+  banchan:/^4\d{3}$/,
+  hotfood:/^[34]\d{3}$/,
+};
+let LINKALL=false;   // '전 품목에서 찾기' 를 켰나
 const dayAvg=code=>{ if(!SALES||!code)return null; const r=SALES[code]; if(!r)return null;
   const d7=(SALES._d&&SALES._d[0])||1, d30=(SALES._d&&SALES._d[1])||1;
   const a7=r[0]/d7, a30=r[1]/d30; return {a:Math.max(a7,a30*0.6), a7, a30, s:r[0], m:r[1], d7, d30}; };
@@ -488,6 +509,7 @@ function openPop(id,store){
 $('#pop-root').addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   if(b.dataset.link){openLink(b.dataset.link);return}
+  if(b.dataset.all!=null){LINKALL=b.dataset.all==='1';paintLink(document.getElementById('link-q')?.value||'');return}
   if(b.dataset.pick!=null){pickLink(b.dataset.pick);return}
   if(!POP)return;
   if(b.dataset.pv!=null){if(b.dataset.pv==='close'){closePop();return}setMine(POP.id,b.dataset.pv);closePop();return}
@@ -514,6 +536,7 @@ async function openLink(id){
     <h4>🔗 POS 연결 — ${esc(it?.en||id)}</h4>
     <div class="sub">${esc(it?.ko||'')} · 한 번 고르면 모든 지점이 같이 씁니다</div>
     <input id="link-q" placeholder="POS 상품 이름이나 번호로 찾기 · search POS" autocomplete="off">
+    <div class="lhint">${esc(DK[G.dept].ko)} 번호만 먼저 보여 줍니다 · showing ${esc(DK[G.dept].en)} codes first</div>
     <div class="lr" id="link-rows">${SNAMES?'이름이나 번호를 적어 보세요':'POS 목록 받는 중… · loading'}</div>
     <div class="row"><button type="button" data-pick="">연결 지우기 · Unlink</button><button type="button" class="go" data-pv="close">닫기 · Close</button></div>
   </div></div>`;
@@ -527,14 +550,26 @@ function paintLink(term){
   const t=String(term||'').trim().toUpperCase();
   if(!t){el.textContent='이름이나 번호를 적어 보세요';return}
   const words=t.split(/\s+/).filter(Boolean);
-  const hit=[];
+  const re=DEPT_CODE[G.dept];
+  const mine=[],other=[];
   for(const c in SNAMES){
     const n=String(SNAMES[c]).toUpperCase();
-    if(c.startsWith(t)||words.every(w=>n.includes(w))){const s=dayAvg(c);hit.push({c,n:SNAMES[c],q:s?s.a:0});if(hit.length>400)break}
+    if(!(c.startsWith(t)||words.every(w=>n.includes(w))))continue;
+    const s=dayAvg(c);const row={c,n:SNAMES[c],q:s?s.a:0};
+    if(!re||re.test(c))mine.push(row);else other.push(row);
+    if(mine.length+other.length>600)break;
   }
-  hit.sort((a,b)=>b.q-a.q);
-  el.innerHTML=hit.length?hit.slice(0,40).map(x=>`<button type="button" data-pick="${esc(x.c)}"><b>${esc(x.n)}</b><span class="num">#${esc(x.c)}</span><em>${x.q?x.q.toFixed(x.q<10?1:0)+'개/일':'—'}</em></button>`).join('')
-    :'<span class="none">못 찾았습니다 · no match</span>';
+  const by=(a,b)=>b.q-a.q; mine.sort(by); other.sort(by);
+  const btn=x=>`<button type="button" data-pick="${esc(x.c)}"><b>${esc(x.n)}</b><span class="num">#${esc(x.c)}</span><em>${x.q?x.q.toFixed(x.q<10?1:0)+'개/일':'—'}</em></button>`;
+  const d=DK[G.dept];
+  let h='';
+  if(mine.length)h+=mine.slice(0,40).map(btn).join('');
+  else h+=`<span class="none">${esc(d.ko)}에서는 못 찾았습니다 · not found in ${esc(d.en)}</span>`;
+  if(other.length){
+    h+=`<button type="button" class="more" data-all="${LINKALL?'0':'1'}">${LINKALL?'▲ 다른 부서 접기':`▼ 다른 부서에서도 찾기 (${other.length})`}</button>`;
+    if(LINKALL)h+=`<div class="oth">${other.slice(0,40).map(btn).join('')}</div>`;
+  }
+  el.innerHTML=h;
 }
 async function pickLink(code){
   if(!LINKFOR)return;
