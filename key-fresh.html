@@ -110,6 +110,8 @@ main{padding-block:12px 110px}
 /* 판매량 · 기준 · 연결 */
 .sl{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:3px}
 .sl .sv{font-size:10.5px;font-weight:700;color:#075985;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:6px;padding:1px 5px}
+.sl .sv.est{background:var(--sunk);border-color:var(--line);color:var(--muted)}
+.sl .sv em{font-style:normal;opacity:.7;margin-left:3px}
 .sl .pv{font-size:10.5px;font-weight:700;color:var(--muted);background:var(--sunk);border:1px solid var(--line);border-radius:6px;padding:1px 5px}
 .sl .pv em{font-style:normal;opacity:.6;margin-left:3px}
 .sl .lk{font-size:10px;font-weight:700;color:var(--accent);background:none;border:1px dashed var(--line);border-radius:6px;padding:1px 5px}
@@ -290,7 +292,7 @@ const catOf=k=>Array.isArray(CAT[k])?CAT[k]:null;
      salesNames/{지점} {코드:이름}  — 🔗 연결 창을 열 때만 받는다 (371KB 라 평소엔 안 받는다)
      poslink/{품목id}  {c:POS코드}  — 체인 공통. 한 번 이으면 모두가 쓴다
      par/{지점}_{부서} {품목id:최소수량} — 지점마다 다르다 */
-let SALES=null, SNAMES=null, LINK={}, PAR={};
+let SALES=null, SNAMES=null, LINK={}, PAR={}, SCALE=null;
 /* 🔗 연결 창에서 그 부서 물건만 먼저 보여 주기.
    2026-10-08 전무님: "야채는 야채에서만 골라야지? 왜 전 품목?"
      — 'Avocado' 로 찾으니 아보카도 오일·연어롤·까는 도구가 나왔다.
@@ -309,9 +311,16 @@ const DEPT_CODE={
   hotfood:/^[34]\d{3}$/,
 };
 let LINKALL=false;   // '전 품목에서 찾기' 를 켰나
+/* ⚖️ 품목별 판매량은 할리우드 POS 자료뿐이다. 다른 지점은 부서 매출 비율로 늘리고 줄여 쓴다.
+   2026-10-08 전무님: "야채 매출이 이리 나오는데" — 부서 **금액** 은 5개 지점이 다 있다
+   (hr/{지점}/dailySales/{날짜}/pos/cats). 코럴 야채는 할리우드의 2.36배, 마이애미 수산은 0.51배.
+   어림이라 화면에 '환산' 이라고 밝혀 적는다. 그 지점 POS 자료가 들어오면 그게 이긴다. */
+const scaleOf=()=>(SCALE&&+SCALE[G.dept])||1;
+const scaled=()=>!!(SCALE&&SCALE._est&&SCALE[G.dept]);
 const dayAvg=code=>{ if(!SALES||!code)return null; const r=SALES[code]; if(!r)return null;
-  const d7=(SALES._d&&SALES._d[0])||1, d30=(SALES._d&&SALES._d[1])||1;
-  const a7=r[0]/d7, a30=r[1]/d30; return {a:Math.max(a7,a30*0.6), a7, a30, s:r[0], m:r[1], d7, d30}; };
+  const d7=(SALES._d&&SALES._d[0])||1, d30=(SALES._d&&SALES._d[1])||1, k=scaleOf();
+  const a7=r[0]/d7*k, a30=r[1]/d30*k;
+  return {a:Math.max(a7,a30*0.6), a7, a30, s:r[0]*k, m:r[1]*k, d7, d30, est:scaled()}; };
 /* 기준 = 담당자가 정한 값이 있으면 그것, 없으면 하루 평균 × 2일치 (올림, 최소 1) */
 function parOf(id){ if(PAR[id]!=null) return {v:PAR[id], from:'set'};
   const s=dayAvg(LINK[id]); if(s&&s.a>0) return {v:Math.max(1,Math.ceil(s.a*2)), from:'sales'};
@@ -321,7 +330,15 @@ function levelFor(id,q){ const p=parOf(id); if(q==null||p.v==null) return null;
   if(q<=0) return 'x'; if(q<p.v) return 'w'; return 'o'; }
 async function loadSide(){
   if(!db||!G.my) return;
+  SCALE=null;
   try{ const d=await db.doc('sales/'+G.my).get(); SALES=d.exists?d.data():null; }catch(e){ SALES=null; }
+  // 그 지점 품목별 자료가 없으면 할리우드 것을 부서 매출 비율로 환산해 쓴다
+  if(!SALES){
+    try{ const d=await db.doc('scale/'+G.my).get(); const sc=(d.exists&&d.data())||null;
+         if(sc&&sc._ref){ const h=await db.doc('sales/'+sc._ref).get();
+           if(h.exists){ SALES=h.data(); SCALE=Object.assign({},sc,{_est:1}); } } }catch(e){}
+  }
+  // 이름 목록(408KB)은 여기서 받지 않는다 — 🔗 연결 창을 열 때만 받는다
   try{ const d=await db.doc('par/'+G.my+'_'+G.dept).get(); PAR=(d.exists&&d.data())||{}; delete PAR._id; }catch(e){ PAR={}; }
   try{ const d=await db.doc('poslink/'+G.dept).get(); LINK=(d.exists&&d.data())||{}; delete LINK._id; }catch(e){ LINK={}; }
 }
@@ -448,7 +465,7 @@ function paintCells(){
     if(sl){
       const code=LINK[it.id], s=dayAvg(code), p=parOf(it.id);
       let h='';
-      if(s) h+=`<span class="sv">📈 하루 ${s.a.toFixed(s.a<10?1:0)}개</span>`;
+      if(s) h+=`<span class="sv${s.est?' est':''}" title="${s.est?'할리우드 품목 판매량을 이 지점 부서 매출 비율(×'+scaleOf()+')로 환산한 값':'이 지점 POS 판매량'}">📈 하루 ${s.a.toFixed(s.a<10?1:0)}개${s.est?'<em>환산</em>':''}</span>`;
       if(p.v!=null) h+=`<span class="pv" title="${p.from==='sales'?'판매량으로 앱이 잡은 값 (이틀치)':'담당자가 정한 값'}">기준 ${p.v}${p.from==='sales'?'<em>자동</em>':''}</span>`;
       if(!code) h+=`<button type="button" class="lk" data-link="${it.id}">🔗 POS 연결</button>`;
       if(sl.innerHTML!==h)sl.innerHTML=h;
@@ -495,7 +512,7 @@ function openPop(id,store){
     const p=parOf(id),sv=dayAvg(LINK[id]);
     h+=`<div class="pr">
         <label>기준 수량 · Par<input id="pop-par" type="text" inputmode="numeric" value="${p.from==='set'?p.v:''}" placeholder="${p.from==='sales'?p.v+' (자동)':'예: 6'}"></label>
-        <span class="hint">${sv?`📈 하루 평균 ${sv.a.toFixed(sv.a<10?1:0)}개 — 이틀치면 ${Math.max(1,Math.ceil(sv.a*2))}개`:'판매량이 아직 안 이어져 있습니다 · 🔗 POS 연결을 하면 앱이 기준을 잡아 줍니다'}</span>
+        <span class="hint">${sv?(sv.est?'⚖️ 환산값 — 할리우드 판매량 × '+scaleOf()+' · ':'')+`📈 하루 평균 ${sv.a.toFixed(sv.a<10?1:0)}개 — 이틀치면 ${Math.max(1,Math.ceil(sv.a*2))}개`:'판매량이 아직 안 이어져 있습니다 · 🔗 POS 연결을 하면 앱이 기준을 잡아 줍니다'}</span>
       </div>
       <div class="rs">${REASONS.map(([k,e,ko])=>`<button type="button" data-r="${k}" aria-pressed="${rs.includes(k)}">${e} · ${ko}</button>`).join('')}</div>
       <input id="pop-note" value="${esc(note)}" placeholder="What is wrong / what you did · 문제와 조치">
@@ -540,7 +557,9 @@ async function openLink(id){
     <div class="lr" id="link-rows">${SNAMES?'이름이나 번호를 적어 보세요':'POS 목록 받는 중… · loading'}</div>
     <div class="row"><button type="button" data-pick="">연결 지우기 · Unlink</button><button type="button" class="go" data-pv="close">닫기 · Close</button></div>
   </div></div>`;
-  if(!SNAMES&&db&&G.my){ try{ const d=await db.doc('salesNames/'+G.my).get(); SNAMES=(d.exists&&d.data())||{}; delete SNAMES._id; }catch(e){ SNAMES={}; } }
+  // 품목별 자료가 할리우드 것이면 이름도 할리우드 것을 받는다
+  if(!SNAMES&&db&&G.my){ const src=(SCALE&&SCALE._ref)||G.my;
+    try{ const d=await db.doc('salesNames/'+src).get(); SNAMES=(d.exists&&d.data())||{}; delete SNAMES._id; }catch(e){ SNAMES={}; } }
   paintLink(it?.en||'');
   const q=document.getElementById('link-q');if(q){q.value=it?.en||'';q.focus();q.select()}
 }
