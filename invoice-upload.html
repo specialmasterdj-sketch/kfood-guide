@@ -230,9 +230,11 @@ const L={
  dlSome:{ko:'⚠ {k}장만 묶었습니다. {n}번째는 못 받았으니 그 줄의 [⬇ 받기] 로 따로 받아 주세요.',
          en:'⚠ Only {k} files were packed. Page {n} failed — use [⬇ Save] on that row.',
          es:'⚠ Solo se empaquetaron {k}. La página {n} falló — use [⬇ Guardar] en esa fila.'},
- dlFail:{ko:'파일을 가져올 수 없었습니다. 인터넷을 확인하고 다시 눌러 주세요. 계속 안 되면 [⬇ 받기] 로 한 장씩 받으시면 됩니다.',
-         en:'Could not fetch the files. Check your connection and try again, or use [⬇ Save] one at a time.',
-         es:'No se pudieron obtener los archivos. Revise la conexión, o use [⬇ Guardar] uno por uno.'},
+ /* 왜 못 가져왔는지를 꼭 같이 보여 준다. "가져올 수 없습니다" 만으로는
+    인터넷 문제인지 저장소 설정 문제인지 구별이 안 돼 엉뚱한 데를 고치게 된다. */
+ dlFail:{ko:'파일을 가져올 수 없었습니다 ({e}). 우선 [⬇ 받기] 로 한 장씩 받으시고, 이 괄호 안 글자를 매니저에게 알려 주세요.',
+         en:'Could not fetch the files ({e}). Use [⬇ Save] one at a time and report the text in brackets.',
+         es:'No se pudieron obtener los archivos ({e}). Use [⬇ Guardar] uno por uno e informe el texto entre paréntesis.'},
  needVendor:{ko:'거래처를 골라 주세요',en:'Please choose the vendor',es:'Elija el proveedor'},
  needFile:{ko:'인보이스를 올려 주세요 (사진이나 파일)',en:'Please add the invoice (photo or file)',es:'Agregue la factura (foto o archivo)'},
  preparing:{ko:'⏳ 준비 중…',en:'⏳ Preparing…',es:'⏳ Preparando…'},
@@ -721,7 +723,7 @@ async function dlAll(id){
   const base=((r.vendor||'invoice')+'_'+(r.got||'')).replace(/[^\w가-힣.-]+/g,'_').replace(/^_+|_+$/g,'');
   const tot=r.files.length;
   toast(t('dlGo'));
-  const items=[], bad=[];
+  const items=[], bad=[]; let why='';
   for(let i=0;i<tot;i++){
     toast(t('dlProg').replace('{a}',i+1).replace('{b}',tot));
     try{
@@ -732,9 +734,13 @@ async function dlAll(id){
       /* ZIP 안의 이름에 폴더 구분자가 들어가면 압축을 못 푸는 프로그램이 있다 */
       const nm=String(r.files[i].n||('page'+(i+1))).replace(/[\\/:*?"<>|]+/g,'_');
       items.push({name:base+'_'+String(i+1).padStart(2,'0')+'_'+nm, data:buf});
-    }catch(e){ console.warn('[inv] zip',i,e); bad.push(i+1); }
+    }catch(e){
+      console.warn('[inv] zip',i,r.files[i]&&r.files[i].u,e);
+      if(!why) why=String((e&&e.message)||e).slice(0,70);
+      bad.push(i+1);
+    }
   }
-  if(!items.length){ toast(t('dlFail')); return; }
+  if(!items.length){ toast(t('dlFail').replace('{e}',why||'?')); return; }
   const u=URL.createObjectURL(zipOf(items));
   const a=document.createElement('a');
   a.href=u; a.download=base+'_'+items.length+'.zip';
