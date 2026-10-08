@@ -214,16 +214,25 @@ const L={
  toDone:{ko:'✅ 완료로 옮기기',en:'✅ Move to Done',es:'✅ Pasar a Completada'},
  moved:{ko:'📂 「{s}」 칸으로 옮겼습니다',en:'📂 Moved to the “{s}” tab',es:'📂 Movida a la pestaña “{s}”'},
  tabHint:{ko:'탭을 눌러 칸을 옮겨 다닐 수 있습니다',en:'Tap a tab to switch between them',es:'Toque una pestaña para cambiar'},
- dlAll:{ko:'⬇ 파일 전부 받기',en:'⬇ Download all files',es:'⬇ Descargar todo'},
+ dlAll:{ko:'⬇ 전부 받기 (ZIP 한 개)',en:'⬇ Download all (one ZIP)',es:'⬇ Descargar todo (un ZIP)'},
  dlOne:{ko:'받기',en:'Save',es:'Guardar'},
  dlGo:{ko:'⬇ 받는 중…',en:'⬇ Downloading…',es:'⬇ Descargando…'},
  dlDone:{ko:'✅ 받았습니다 — 다운로드 폴더를 보세요',en:'✅ Saved — check your Downloads folder',es:'✅ Guardado — revise su carpeta de descargas'},
  dlOpen:{ko:'새 창으로 열었습니다. 사진을 꾹 누르거나(폰) 오른쪽 클릭해서(PC) 저장하세요.',
          en:'Opened in a new tab. Long-press (phone) or right-click (PC) to save.',
          es:'Se abrió en otra pestaña. Mantenga pulsado (móvil) o haga clic derecho (PC) para guardar.'},
- dlPop:{ko:'브라우저가 창 여는 것을 막았습니다. 주소창 오른쪽의 팝업 차단 아이콘을 눌러 이 사이트는 허용으로 바꿔 주세요. 그 전에는 [⬇ 받기] 로 한 장씩 받으시면 됩니다.',
-        en:'The browser blocked the pop-ups. Click the pop-up blocked icon in the address bar and allow this site. Until then use [⬇ Download] one at a time.',
-        es:'El navegador bloqueó las ventanas. Pulse el icono de bloqueo en la barra de direcciones y permita este sitio. Mientras tanto use [⬇ Descargar] uno por uno.'},
+ /* 전부 받기는 더 이상 창을 열지 않으므로 '팝업을 허용하세요' 안내는 치웠다 —
+    쓰지 않는 길을 알려 주면 엉뚱한 데를 고치게 된다. */
+ dlProg:{ko:'⬇ 묶는 중… {a}/{b}',en:'⬇ Packing… {a}/{b}',es:'⬇ Empaquetando… {a}/{b}'},
+ dlZip:{ko:'✅ {n}장을 ZIP 한 개로 받았습니다 — 다운로드 폴더에서 열어 보세요',
+        en:'✅ {n} files saved as one ZIP — open it from your Downloads folder',
+        es:'✅ {n} archivos guardados en un ZIP — ábralo desde Descargas'},
+ dlSome:{ko:'⚠ {k}장만 묶었습니다. {n}번째는 못 받았으니 그 줄의 [⬇ 받기] 로 따로 받아 주세요.',
+         en:'⚠ Only {k} files were packed. Page {n} failed — use [⬇ Save] on that row.',
+         es:'⚠ Solo se empaquetaron {k}. La página {n} falló — use [⬇ Guardar] en esa fila.'},
+ dlFail:{ko:'파일을 가져올 수 없었습니다. 인터넷을 확인하고 다시 눌러 주세요. 계속 안 되면 [⬇ 받기] 로 한 장씩 받으시면 됩니다.',
+         en:'Could not fetch the files. Check your connection and try again, or use [⬇ Save] one at a time.',
+         es:'No se pudieron obtener los archivos. Revise la conexión, o use [⬇ Guardar] uno por uno.'},
  needVendor:{ko:'거래처를 골라 주세요',en:'Please choose the vendor',es:'Elija el proveedor'},
  needFile:{ko:'인보이스를 올려 주세요 (사진이나 파일)',en:'Please add the invoice (photo or file)',es:'Agregue la factura (foto o archivo)'},
  preparing:{ko:'⏳ 준비 중…',en:'⏳ Preparing…',es:'⏳ Preparando…'},
@@ -668,29 +677,71 @@ function dlOne(id,i){
   toast(t('dlGo'));
   dl(f.u,f.n,w).then(ok=>toast(ok?t('dlDone'):t('dlOpen')));
 }
-function dlAll(id){
+/* ===== ZIP 한 개로 묶기 (압축은 하지 않고 담기만) =====
+   🔴 전에는 파일 수만큼 빈 창을 미리 열어 뒀다. 크롬은 클릭 한 번에 창 하나만 허용해서
+      7장이면 6장이 팝업 차단에 걸렸고, 화면엔 아무 일도 안 일어난 것처럼 보였다
+      (2026-10-02 · 10-08 전무님 두 번 보고). 창을 미리 여는 쪽으로 고치려 했지만
+      애초에 창을 여는 설계가 틀렸다 — 창을 아예 안 쓴다.
+   사진은 이미 압축돼 있어 묶어도 줄지 않으니 압축 단계를 넣지 않았다.
+   그래서 라이브러리가 필요 없고, 저장 버튼도 한 번이면 끝난다. */
+const ZCRC=(()=>{ const t=new Uint32Array(256);
+  for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+  return t; })();
+function zcrc32(u8){ let c=0xFFFFFFFF;
+  for(let i=0;i<u8.length;i++) c=ZCRC[(c^u8[i])&0xFF]^(c>>>8);
+  return (c^0xFFFFFFFF)>>>0; }
+function zipOf(items){                  // items = [{name, data:Uint8Array}]
+  const enc=new TextEncoder(), body=[], cen=[];
+  const n16=v=>[v&255,(v>>8)&255], n32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+  const d=new Date();
+  const dt=((d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1))&0xFFFF;
+  const dd=(((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate())&0xFFFF;
+  let off=0;
+  items.forEach(it=>{
+    const nm=enc.encode(it.name), crc=zcrc32(it.data), sz=it.data.length;
+    /* 플래그 0x0800 = 파일 이름이 UTF-8 — 한글 이름이 깨지지 않게 꼭 켜 둔다 */
+    const lh=new Uint8Array([0x50,0x4b,3,4, 20,0, 0x00,0x08, 0,0,
+      ...n16(dt),...n16(dd),...n32(crc),...n32(sz),...n32(sz),...n16(nm.length),0,0]);
+    body.push(lh,nm,it.data); cen.push({nm,crc,sz,off});
+    off+=lh.length+nm.length+sz;
+  });
+  const cdAt=off, cd=[];
+  cen.forEach(c=>{
+    const h=new Uint8Array([0x50,0x4b,1,2, 20,0, 20,0, 0x00,0x08, 0,0,
+      ...n16(dt),...n16(dd),...n32(c.crc),...n32(c.sz),...n32(c.sz),
+      ...n16(c.nm.length),0,0, 0,0, 0,0, 0,0, 0,0,0,0, ...n32(c.off)]);
+    cd.push(h,c.nm); off+=h.length+c.nm.length;
+  });
+  const eo=new Uint8Array([0x50,0x4b,5,6, 0,0, 0,0,
+    ...n16(cen.length),...n16(cen.length),...n32(off-cdAt),...n32(cdAt), 0,0]);
+  return new Blob([...body,...cd,eo],{type:'application/zip'});
+}
+async function dlAll(id){
   const r=DATA[id]; if(!r||!r.files||!r.files.length)return;
-  /* 🔴 창은 '클릭한 바로 그 순간' 에 다 잡아 둬야 한다.
-     dlOne 은 그렇게 해서 되는데 dlAll 은 안 해서, 파일 가져오기가 막히는 환경에서는
-     await 뒤에 열린 창이 전부 팝업 차단에 걸려 '아무 일도 안 일어난' 것처럼 보였다
-     (2026-10-08 전무님). 같은 함정을 주석에 적어 두고도 여기엔 적용이 안 돼 있었다.
-     가져오기가 잘 되면 dl() 이 이 창들을 알아서 닫는다 — 쓸데없이 남지 않는다. */
-  const n=Math.min(r.files.length,12);               // 12장 넘게 한꺼번에는 창을 안 연다
-  const wins=[];
-  for(let i=0;i<n;i++){ try{ wins.push(window.open('','_blank')); }catch(e){ wins.push(null); } }
+  const base=((r.vendor||'invoice')+'_'+(r.got||'')).replace(/[^\w가-힣.-]+/g,'_').replace(/^_+|_+$/g,'');
+  const tot=r.files.length;
   toast(t('dlGo'));
-  (async()=>{
-    let ok=true, blocked=0;
-    for(let i=0;i<r.files.length;i++){
-      const f=r.files[i];
-      const prefix=(r.vendor||'invoice').replace(/[^\w가-힣.-]+/g,'_')+'_'+(r.got||'')+'_'+(i+1)+'_';
-      if(!await dl(f.u,prefix+(f.n||'file'),wins[i]||null)){ ok=false; if(!wins[i]) blocked++; }
-      await new Promise(s=>setTimeout(s,350)); // 연달아 받으면 브라우저가 막는다 — 조금 쉬어 준다
-    }
-    /* 미처 못 연 창이 남아 있으면 닫아 준다 */
-    wins.forEach(w=>{ try{ if(w&&!w.closed&&!w.location.href) w.close(); }catch(e){} });
-    toast(ok?t('dlDone'):(blocked?t('dlPop'):t('dlOpen')));
-  })();
+  const items=[], bad=[];
+  for(let i=0;i<tot;i++){
+    toast(t('dlProg').replace('{a}',i+1).replace('{b}',tot));
+    try{
+      const res=await fetch(r.files[i].u);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const buf=new Uint8Array(await res.arrayBuffer());
+      if(!buf.length) throw new Error('empty');
+      /* ZIP 안의 이름에 폴더 구분자가 들어가면 압축을 못 푸는 프로그램이 있다 */
+      const nm=String(r.files[i].n||('page'+(i+1))).replace(/[\\/:*?"<>|]+/g,'_');
+      items.push({name:base+'_'+String(i+1).padStart(2,'0')+'_'+nm, data:buf});
+    }catch(e){ console.warn('[inv] zip',i,e); bad.push(i+1); }
+  }
+  if(!items.length){ toast(t('dlFail')); return; }
+  const u=URL.createObjectURL(zipOf(items));
+  const a=document.createElement('a');
+  a.href=u; a.download=base+'_'+items.length+'.zip';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),10000);
+  toast(bad.length ? t('dlSome').replace('{k}',items.length).replace('{n}',bad.join(', '))
+                   : t('dlZip').replace('{n}',items.length));
 }
 async function setStatus(id,st){
   try{
