@@ -310,7 +310,19 @@ const DEPT_CODE={
   banchan:/^4\d{3}$/,
   hotfood:/^[34]\d{3}$/,
 };
-let LINKALL=false;   // '전 품목에서 찾기' 를 켰나
+/* 🏷 POS 가 적어 준 진짜 분류 — 번호 모양으로 짐작하는 것보다 이게 맞다.
+   2026-10-08 전무님이 POS 의 BY DEPARTMENTS 화면을 보여 주셔서 알았다.
+   ALL LIST CSV 에 DEPARTMENT·::CAT:: 가 있었는데 내가 안 읽고 있었다 (poscat_push.js).
+   POS 는 소·돼지·닭을 'MEAT' 한 칸으로 본다 → 우리 세 부서를 다 meat 로 받는다. */
+let POSCAT=null;
+const DEPT_POS={ produce:['produce'], beef:['meat'], pork:['meat'], poultry:['meat'],
+                 seafood:['seafood'], banchan:['banchan'], hotfood:['hotfood','sushi'] };
+function inMyDept(code){
+  if(POSCAT){ const d=POSCAT[code]; if(d) return (DEPT_POS[G.dept]||[]).includes(d);
+              return false; }            // 분류표에 있는데 내 부서가 아니면 아닌 것
+  const re=DEPT_CODE[G.dept]; return !re||re.test(code);   // 분류표가 없으면 번호 모양으로 짐작
+}
+let LINKALL=false;   // '다른 부서에서도 찾기' 를 켰나
 /* ⚖️ 품목별 판매량은 할리우드 POS 자료뿐이다. 다른 지점은 부서 매출 비율로 늘리고 줄여 쓴다.
    2026-10-08 전무님: "야채 매출이 이리 나오는데" — 부서 **금액** 은 5개 지점이 다 있다
    (hr/{지점}/dailySales/{날짜}/pos/cats). 코럴 야채는 할리우드의 2.36배, 마이애미 수산은 0.51배.
@@ -338,6 +350,9 @@ async function loadSide(){
          if(sc&&sc._ref){ const h=await db.doc('sales/'+sc._ref).get();
            if(h.exists){ SALES=h.data(); SCALE=Object.assign({},sc,{_est:1}); } } }catch(e){}
   }
+  // 🏷 POS 가 적어 준 분류표 (12KB) — 연결 창에서 부서를 가리는 데 쓴다
+  try{ const src=(SCALE&&SCALE._ref)||G.my; const d=await db.doc('poscat/'+src).get();
+       POSCAT=(d.exists&&d.data())||null; if(POSCAT)delete POSCAT._id; }catch(e){ POSCAT=null; }
   // 이름 목록(408KB)은 여기서 받지 않는다 — 🔗 연결 창을 열 때만 받는다
   try{ const d=await db.doc('par/'+G.my+'_'+G.dept).get(); PAR=(d.exists&&d.data())||{}; delete PAR._id; }catch(e){ PAR={}; }
   try{ const d=await db.doc('poslink/'+G.dept).get(); LINK=(d.exists&&d.data())||{}; delete LINK._id; }catch(e){ LINK={}; }
@@ -553,7 +568,7 @@ async function openLink(id){
     <h4>🔗 POS 연결 — ${esc(it?.en||id)}</h4>
     <div class="sub">${esc(it?.ko||'')} · 한 번 고르면 모든 지점이 같이 씁니다</div>
     <input id="link-q" placeholder="POS 상품 이름이나 번호로 찾기 · search POS" autocomplete="off">
-    <div class="lhint">이름으로 찾으면 ${esc(DK[G.dept].ko)} 것이 먼저 · <b>번호를 치면 부서와 상관없이</b> 바로 나옵니다</div>
+    <div class="lhint">이름으로 찾으면 ${esc(DK[G.dept].ko)} 것이 먼저${POSCAT?' (POS 분류 기준)':''} · <b>번호를 치면 부서와 상관없이</b> 바로 나옵니다</div>
     <div class="lr" id="link-rows">${SNAMES?'이름이나 번호를 적어 보세요':'POS 목록 받는 중… · loading'}</div>
     <div class="row"><button type="button" data-pick="">연결 지우기 · Unlink</button><button type="button" class="go" data-pv="close">닫기 · Close</button></div>
   </div></div>`;
@@ -569,7 +584,6 @@ function paintLink(term){
   const t=String(term||'').trim().toUpperCase();
   if(!t){el.textContent='이름이나 번호를 적어 보세요';return}
   const words=t.split(/\s+/).filter(Boolean);
-  const re=DEPT_CODE[G.dept];
   const mine=[],other=[];
   for(const c in SNAMES){
     const n=String(SNAMES[c]).toUpperCase();
@@ -578,7 +592,7 @@ function paintLink(term){
     const s=dayAvg(c);const row={c,n:SNAMES[c],q:s?s.a:0};
     // 번호를 직접 친 것은 부서를 가리지 않는다 — 번호를 아는 사람은 이미 답을 아는 것이다.
     // (2026-10-08 전무님: "POS 에서 번호로 찾기 없어?" — 다른 부서 번호가 접힌 쪽으로 밀렸었다)
-    if(!re||re.test(c)||byCode)mine.push(row);else other.push(row);
+    if(byCode||inMyDept(c))mine.push(row);else other.push(row);
     if(mine.length+other.length>600)break;
   }
   const by=(a,b)=>b.q-a.q; mine.sort(by); other.sort(by);
