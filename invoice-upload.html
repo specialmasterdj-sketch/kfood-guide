@@ -227,14 +227,12 @@ const L={
  dlZip:{ko:'✅ {n}장을 ZIP 한 개로 받았습니다 — 다운로드 폴더에서 열어 보세요',
         en:'✅ {n} files saved as one ZIP — open it from your Downloads folder',
         es:'✅ {n} archivos guardados en un ZIP — ábralo desde Descargas'},
- dlSome:{ko:'⚠ {k}장만 묶었습니다. {n}번째는 못 받았으니 그 줄의 [⬇ 받기] 로 따로 받아 주세요.',
-         en:'⚠ Only {k} files were packed. Page {n} failed — use [⬇ Save] on that row.',
-         es:'⚠ Solo se empaquetaron {k}. La página {n} falló — use [⬇ Guardar] en esa fila.'},
- /* 왜 못 가져왔는지를 꼭 같이 보여 준다. "가져올 수 없습니다" 만으로는
-    인터넷 문제인지 저장소 설정 문제인지 구별이 안 돼 엉뚱한 데를 고치게 된다. */
- dlFail:{ko:'파일을 가져올 수 없었습니다 ({e}). 우선 [⬇ 받기] 로 한 장씩 받으시고, 이 괄호 안 글자를 매니저에게 알려 주세요.',
-         en:'Could not fetch the files ({e}). Use [⬇ Save] one at a time and report the text in brackets.',
-         es:'No se pudieron obtener los archivos ({e}). Use [⬇ Guardar] uno por uno e informe el texto entre paréntesis.'},
+ dlSome:{ko:'{k}장은 ZIP 으로, {n}번째는 따로 받습니다. 「여러 파일」 을 물으면 [허용] 을 눌러 주세요.',
+         en:'{k} files as a ZIP, page {n} separately. Tap Allow if asked about multiple files.',
+         es:'{k} en un ZIP, la página {n} por separado. Pulse Permitir si pregunta por varios archivos.'},
+ dlFrames:{ko:'📥 {n}장을 따로 받습니다. 브라우저가 「여러 파일을 다운로드하시겠습니까?」 라고 물으면 [허용] 을 한 번만 눌러 주세요.',
+           en:'📥 Saving {n} files separately. If the browser asks “Download multiple files?”, tap Allow once.',
+           es:'📥 Guardando {n} archivos por separado. Si el navegador pregunta “¿Descargar varios archivos?”, pulse Permitir una vez.'},
  needVendor:{ko:'거래처를 골라 주세요',en:'Please choose the vendor',es:'Elija el proveedor'},
  needFile:{ko:'인보이스를 올려 주세요 (사진이나 파일)',en:'Please add the invoice (photo or file)',es:'Agregue la factura (foto o archivo)'},
  preparing:{ko:'⏳ 준비 중…',en:'⏳ Preparing…',es:'⏳ Preparando…'},
@@ -718,6 +716,22 @@ function zipOf(items){                  // items = [{name, data:Uint8Array}]
     ...n16(cen.length),...n16(cen.length),...n32(off-cdAt),...n32(cdAt), 0,0]);
   return new Blob([...body,...cd,eo],{type:'application/zip'});
 }
+/* 바이트를 못 읽을 때의 길 — 숨은 틀(iframe)로 주소만 하나씩 불러 준다.
+   🔑 올릴 때 putOne() 이 contentDisposition:'attachment' 를 붙여 두기 때문에
+      브라우저가 화면에 띄우지 않고 곧바로 다운로드 폴더에 저장한다.
+      창(window.open)을 쓰지 않으니 팝업 차단에 걸리지 않고, 본문을 읽는 게 아니라
+      그냥 주소를 여는 것이라 저장소의 교차출처 설정과도 상관이 없다.
+   크롬은 '여러 파일 다운로드' 를 한 번 묻는다 — 허용 한 번이면 나머지는 자동. */
+function dlViaFrames(files){
+  files.forEach((f,i)=>setTimeout(()=>{
+    try{
+      const fr=document.createElement('iframe');
+      fr.style.display='none'; fr.src=f.u;
+      document.body.appendChild(fr);
+      setTimeout(()=>{ try{ fr.remove(); }catch(e){} }, 90000);  // 다 받기 전에 치우면 중간에 끊긴다
+    }catch(e){ console.warn('[inv] frame',i,e); }
+  }, i*500));                                   // 한꺼번에 몰면 브라우저가 뒤엣것을 버린다
+}
 async function dlAll(id){
   const r=DATA[id]; if(!r||!r.files||!r.files.length)return;
   const base=((r.vendor||'invoice')+'_'+(r.got||'')).replace(/[^\w가-힣.-]+/g,'_').replace(/^_+|_+$/g,'');
@@ -740,14 +754,24 @@ async function dlAll(id){
       bad.push(i+1);
     }
   }
-  if(!items.length){ toast(t('dlFail').replace('{e}',why||'?')); return; }
+  /* 한 장도 못 읽었으면 ZIP 은 포기하고, 그래도 전부 받게는 해 준다.
+     (저장소가 교차출처 읽기를 허용하면 위 ZIP 길로 돌아온다 — 코드는 그대로 둔다) */
+  if(!items.length){
+    console.warn('[inv] zip 불가 →  iframe 으로 전환:', why);
+    dlViaFrames(r.files);
+    toast(t('dlFrames').replace('{n}',tot));
+    return;
+  }
   const u=URL.createObjectURL(zipOf(items));
   const a=document.createElement('a');
   a.href=u; a.download=base+'_'+items.length+'.zip';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(u),10000);
-  toast(bad.length ? t('dlSome').replace('{k}',items.length).replace('{n}',bad.join(', '))
-                   : t('dlZip').replace('{n}',items.length));
+  if(bad.length){
+    /* 묶인 것은 ZIP 으로, 못 묶은 것만 따로 — 빠진 장이 생기지 않게 */
+    dlViaFrames(bad.map(n=>r.files[n-1]));
+    toast(t('dlSome').replace('{k}',items.length).replace('{n}',bad.join(', ')));
+  } else toast(t('dlZip').replace('{n}',items.length));
 }
 async function setStatus(id,st){
   try{
