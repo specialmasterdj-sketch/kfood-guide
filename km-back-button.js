@@ -34,15 +34,21 @@
       '#kmBackBar button{display:inline-flex;align-items:center;gap:4px;border:1px solid #d1d5db;background:#fff;color:#1a5c3a;' +
       'border-radius:16px;padding:5px 12px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1.2}' +
       '#kmBackBar button:hover{border-color:#1a5c3a}' +
+      '#kmBackBar .brand-logo{height:24px;width:auto;max-width:110px;object-fit:contain;display:block;flex-shrink:0}' +
       '@media print{#kmBackBar{display:none!important}}';
     document.head.appendChild(css);
     var bar = document.createElement('div');
     bar.id = 'kmBackBar';
     bar.innerHTML = '<button type="button" id="kmBackBtn" aria-label="' + L[0] + '">← ' + L[0] + '</button>' +
-                    '<button type="button" id="kmHomeBtn" aria-label="' + L[1] + '">🏠 ' + L[1] + '</button>';
+                    '<img class="brand-logo" id="kmBarLogo" src="./pwa-assets/kimchi-text-logo.png?v=2" alt="KIMCHI MART">';
     document.body.insertBefore(bar, document.body.firstChild);
     document.getElementById('kmBackBtn').onclick = goBack;
-    document.getElementById('kmHomeBtn').onclick = function(){ location.href = './hub.html'; };
+    // 로고를 눌러 앱 모음으로 가는 일과 그 밑의 '홈으로' 글자는 km-home-logo.js 가 붙인다.
+    if (!document.querySelector('script[src*="km-home-logo.js"]')){
+      var js = document.createElement('script');
+      js.src = './km-home-logo.js?v=5';
+      document.head.appendChild(js);
+    }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
