@@ -337,6 +337,24 @@ function _attachLiveProfile(user){
   } catch(e){ gateTrace('gate:onValue-attach-fail', e && e.message); }
 }
 
+// 🐢 회선이 느려 계정을 못 읽었지만 저장된 권한으로 연 경우 — 막지 않고 띠로만 알린다.
+function showSlowNetBanner(err){
+  try {
+    if (document.getElementById('__kmSlowNet')) return;
+    const b = document.createElement('div');
+    b.id = '__kmSlowNet';
+    b.innerHTML = '🐢 인터넷이 느려 계정 확인을 건너뛰고 열었습니다 — 저장된 정보로 동작 중입니다. ' +
+                  '<u style="cursor:pointer">다시 확인</u>';
+    b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99998;background:#fef3c7;color:#92400e;' +
+      'padding:7px 12px;font-size:12.5px;font-weight:800;text-align:center;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;' +
+      'box-shadow:0 1px 4px rgba(0,0,0,.12)';
+    b.title = err || '';
+    b.querySelector('u').onclick = function(){ try { location.reload(); } catch(e){} };
+    document.body.appendChild(b);
+  } catch(e){}
+}
+
 async function watchProfile(user){
   // onAuthStateChanged 다중 발화 / visibilitychange 재진입 가드
   if (__gateBusy) return;
@@ -348,8 +366,31 @@ async function watchProfile(user){
     const res = await _restGetProfile(user);
     if (!res.ok) {
       // 예전: SDK onValue 만 기다리다 무한 로딩 → escape → 강제 로그아웃 루프.
-      // 이제: 원인(HTTP 코드)을 화면에 표시하고 멈춤 — 세션은 유지 (재시도 가능).
+      // 그 다음: 원인(HTTP 코드)을 화면에 표시하고 멈춤 — 세션은 유지 (재시도 가능).
       gateTrace('gate:profile-read-fail', res.err);
+
+      // 🌐 2026-10-08 — 사무실 회선이 초당 1.5KB 로 떨어져 8초 안에 계정을 못 읽는 일이 생겼다.
+      //   그때마다 앱이 통째로 막히면 매장이 아무것도 못 한다.
+      //   같은 사람(uid)에 대해 '서버가 전에 확인해 준 답' 이 폰에 남아 있으면 그것으로 연다.
+      //   새 권한을 주는 게 아니라 마지막으로 서버가 알려준 권한을 다시 쓰는 것이다.
+      //   ⚠️ 그 사이 권한이 바뀌었다면 네트워크가 돌아온 뒤 다음 열 때 반영된다.
+      let cached = null;
+      try { cached = JSON.parse(localStorage.getItem('chat.me') || '{}'); } catch(_){}
+      if (cached && cached.uid === user.uid && cached.status === 'approved' && cached.role) {
+        gateTrace('gate:slow-net-fallback', (cached.role || '') + '/' + (cached.branch || ''));
+        applyStatus(user, {
+          email: cached.email || user.email || null,
+          name: cached.name,
+          status: 'approved',
+          role: cached.role,
+          branch: cached.branch,
+          photoURL: cached.photoURL || null,
+        });
+        showSlowNetBanner(res.err);
+        _attachLiveProfile(user);   // 회선이 돌아오면 최신 권한으로 조용히 갱신
+        return;
+      }
+
       __gateResolved = true;
       showGateError(user, res.err, '계정 정보를 불러오지 못했습니다');
       return;
