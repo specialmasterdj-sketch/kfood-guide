@@ -175,6 +175,12 @@ button{cursor:pointer}
   font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:10px}
 .card .del.back{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
 .chip[data-f="hidden"][aria-pressed="true"]{background:#64748b;border-color:#64748b}
+.rowlist .mvrow{display:flex;gap:5px;flex:none;align-items:center}
+.rowlist .mvrow button{border:1px solid var(--line);background:var(--sunk);border-radius:9px;
+  padding:7px 9px;font-size:12px;font-weight:700;color:var(--muted)}
+.rowlist .mvrow button.here{background:var(--brand);border-color:var(--brand);color:#fff}
+.rowlist .r.held{outline:3px solid var(--brand);outline-offset:-3px}
+@media (max-width:520px){ .rowlist .mvrow{flex-wrap:wrap;max-width:120px;justify-content:flex-end} }
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:86px;background:#16211b;color:#fff;border-radius:11px;padding:10px 16px;font-size:13.5px;font-weight:700;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.25)}
 .rowlist{display:flex;flex-direction:column;gap:9px}
 .rowlist .r{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;display:flex;gap:11px;align-items:center}
@@ -347,6 +353,13 @@ const T={
               'Hidden for this store only. Nothing is deleted — restore any time.',
               'Oculto solo en esta tienda. No se borra — puedes restaurarlo.'],
   editMode:  ['🔀 순서·취급 정리','🔀 Reorder / hide','🔀 Orden / ocultar'],
+  whEdit:    ['🔀 창고 순서 정리','🔀 Reorder stockroom','🔀 Ordenar bodega'],
+  whEditBar: ['🔀 창고 동선대로 옮기는 중 — <b>옮기기</b> 를 누르고, 놓을 자리의 <b>여기로</b> 를 누르세요. ✕ 는 목록에서 뺍니다.',
+              '🔀 Reordering the stockroom — tap <b>Move</b>, then <b>Here</b>. ✕ removes from the list.',
+              '🔀 Ordenando la bodega — toca <b>Mover</b>, luego <b>Aquí</b>. ✕ lo quita de la lista.'],
+  whDelAsk:  ['“%s” 를 창고 목록에서 뺄까요?\n(상품은 지워지지 않습니다)',
+              'Remove “%s” from the stockroom list?\n(The item itself is not deleted)',
+              '¿Quitar “%s” de la lista de bodega?\n(El artículo no se borra)'],
   whToday:   ['오늘','today','hoy'],
   whYday:    ['어제','yesterday','ayer'],
 };
@@ -385,7 +398,7 @@ function bandName(b){ if(b===ADDED_CAT)return t('addedBand'); const s=String(b||
   if(p.length<2)return s; return LANG==='ko'?(p[1]||p[0]):(p[0]||p[1]); }
 
 const P=lsGet('kfd3-prefs')||{};
-const G={date:today(),my:P.store||'hollywood',name:P.name||'',tab:'check',move:null,held:null,filter:'all'};
+const G={date:today(),my:P.store||'hollywood',name:P.name||'',tab:'check',move:null,held:null,filter:'all',whmove:null,whheld:null};
 let db=null,uid=null,ITEMS=null,DOCS={},MY=null,ORDER=null,SALES=null,SCALE=null,PAR={},LINK={},pending=false,saveT=null,status='';
 /* ➕ 목록에 없는 상품 — 카탈로그 파일(key-fresh-cat/produce.json)은 앱에서 못 고치니
    서버에 따로 쌓는다. 2026-10-09 전무님: "상품 추가 할 수 있게 해 줘. 없는 것들도 있네."
@@ -747,6 +760,10 @@ $('#view').addEventListener('click',async e=>{
   if(b.dataset.f){ G.filter=b.dataset.f; render(); return; }
   if(b.dataset.add){ openAdd(null,''); return; }
   if(b.dataset.whadd){ openWhPick(); return; }
+  if(b.dataset.whmove!=null){ G.whmove=b.dataset.whmove==='1'; G.whheld=null; render(); return; }
+  if(b.dataset.whhold){ G.whheld=(G.whheld===b.dataset.whhold)?null:b.dataset.whhold; render(); return; }
+  if(b.dataset.whhere){ await whMoveTo(G.whheld,b.dataset.whhere); G.whheld=null; render(); return; }
+  if(b.dataset.whup||b.dataset.whdown){ await whNudge(b.dataset.whup||b.dataset.whdown, b.dataset.whup?-1:1); render(); return; }
   if(b.dataset.whdel){ whDel(b.dataset.whdel); return; }
   if(b.dataset.hide){ setHidden(b.dataset.hide,true); return; }
   if(b.dataset.show){ setHidden(b.dataset.show,false); return; }
@@ -880,17 +897,29 @@ function renderWh(){
       <div class="kpi ${list.length-counted?'warn':''}"><span>${esc(t('whLeft'))}</span><b>${list.length-counted}</b></div>
       <div class="kpi"><span>${esc(t('whAsOf'))}</span><b style="font-size:17px">${esc(asOf)}</b></div>
     </div>
-    <div class="tools"><span class="sp"></span><button class="chip add" data-whadd="1">${esc(t('whAdd'))}</button></div>`;
+    <div class="tools"><button class="chip" data-whmove="${G.whmove?'0':'1'}" aria-pressed="${!!G.whmove}">${esc(t('whEdit'))}</button>
+      <span class="sp"></span><button class="chip add" data-whadd="1">${esc(t('whAdd'))}</button></div>`;
   if(!list.length){ v.innerHTML=h+'<div class="empty">'+esc(t('whEmpty'))+'</div>'; return; }
+  /* 🔀 창고에도 제 동선이 있다 — 냉장고 안 도는 길은 매대와 다르다.
+     WHLIST 의 차례가 곧 창고 차례라 배열만 바꾸면 된다.
+     ✕ 는 정리 모드에서만 보인다 — 2026-10-09 전무님: "실수로 바로 누르면 바로 지워지는 거 아니야?" */
+  if(G.whmove) h+=`<div class="movebar">${t('whEditBar')}<button data-whmove="0">${esc(t('moveEnd'))}</button></div>`;
   h+='<div class="rowlist">';
   for(const it of list){
     const q=whQty(it.id);
-    h+=`<div class="r" data-id="${it.id}">
+    h+=`<div class="r ${G.whheld===it.id?'held':''}" data-id="${it.id}">
       ${it.img?`<img src="${it.img}" alt="">`:'<span style="font-size:26px">🥬</span>'}
       <div class="t"><b>${esc(itemName(it))}</b><span>${esc(itemSub(it))}</span></div>
-      <input class="whi big" type="text" inputmode="numeric" id="wh-${it.id}" value="${q!=null?q:''}" placeholder="—">
-      <em class="unit">${esc(t('whBox'))}</em>
-      <button type="button" class="xbtn" data-whdel="${it.id}" title="${esc(t('whRemove'))}">✕</button></div>`;
+      ${G.whmove?`<div class="mvrow">
+          ${G.whheld&&G.whheld!==it.id?`<button type="button" class="here" data-whhere="${it.id}">${esc(t('here'))}</button>`
+            :`<button type="button" data-whhold="${it.id}">${esc(G.whheld===it.id?t('holding'):t('move'))}</button>`}
+          <button type="button" data-whup="${it.id}">▲</button>
+          <button type="button" data-whdown="${it.id}">▼</button>
+          <button type="button" class="xbtn" data-whdel="${it.id}" title="${esc(t('whRemove'))}">✕</button>
+        </div>`
+      :`<input class="whi big" type="text" inputmode="numeric" id="wh-${it.id}" value="${q!=null?q:''}" placeholder="—">
+        <em class="unit">${esc(t('whBox'))}</em>`}
+      </div>`;
   }
   h+='</div>';
   v.innerHTML=h;
@@ -940,9 +969,28 @@ async function whPick(id){
   closeSheet(); render(); toast(t('added'));
 }
 async function whDel(id){
+  // 실수로 눌러 바로 사라지지 않게 한 번 묻는다 (2026-10-09 전무님 지적)
+  const by=Object.fromEntries(allItems().map(x=>[x.id,x]));
+  const nm=by[id]?itemName(by[id]):id;
+  if(!confirm(t('whDelAsk').replace('%s',nm)))return;
   WHLIST=WHLIST.filter(x=>x!==id); await saveWhList();
   if(WH[id]!=null){ delete WH[id]; saveWh(); }
-  render();
+  toast(t('deleted')); render();
+}
+/* 🔀 창고 차례 바꾸기 — WHLIST 배열의 차례가 곧 창고 도는 길이다 */
+async function whMoveTo(fromId,toId){
+  if(!fromId||fromId===toId)return;
+  const i=WHLIST.indexOf(fromId); if(i<0)return;
+  WHLIST.splice(i,1);
+  const j=WHLIST.indexOf(toId); if(j<0){ WHLIST.splice(i,0,fromId); return; }
+  WHLIST.splice(j,0,fromId);
+  await saveWhList(); toast(t('moved'));
+}
+async function whNudge(id,d){
+  const i=WHLIST.indexOf(id), j=i+d;
+  if(i<0||j<0||j>=WHLIST.length)return;
+  [WHLIST[i],WHLIST[j]]=[WHLIST[j],WHLIST[i]];
+  await saveWhList();
 }
 
 /* ── ◎ HQ 현황 ────────────────────────────────────────────── */
