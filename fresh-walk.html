@@ -170,6 +170,11 @@ button{cursor:pointer}
 .sheet .bulk{display:block;width:100%;margin-bottom:6px;padding:12px;border:1px solid var(--brand);
   background:var(--brand-soft);color:var(--brand);border-radius:11px;font-weight:800;font-size:13.5px}
 .sheet .bulkhint{font-size:11.5px;color:var(--muted);margin-bottom:10px}
+/* 🚫 미취급 */
+.hidebar{background:var(--sunk);border:1px solid var(--line);border-radius:11px;padding:10px 13px;
+  font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:10px}
+.card .del.back{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
+.chip[data-f="hidden"][aria-pressed="true"]{background:#64748b;border-color:#64748b}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:86px;background:#16211b;color:#fff;border-radius:11px;padding:10px 16px;font-size:13.5px;font-weight:700;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.25)}
 .rowlist{display:flex;flex-direction:column;gap:9px}
 .rowlist .r{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;display:flex;gap:11px;align-items:center}
@@ -332,6 +337,16 @@ const T={
               'After that, remove what you don’t keep with ✕.',
               'Después quita con ✕ lo que no guardas.'],
   whAllDone: ['%n개를 창고 목록에 넣었습니다','%n items added to the stockroom list','%n agregados a la lista de bodega'],
+  fHidden:   ['🚫 미취급','🚫 Not carried','🚫 No se maneja'],
+  hideBtn:   ['🚫 이 지점 미취급','🚫 Not carried here','🚫 No se maneja aquí'],
+  showBtn:   ['↩ 다시 취급','↩ Carry again','↩ Manejar de nuevo'],
+  hidden:    ['가렸습니다 — 미취급 에서 되살릴 수 있습니다','Hidden — restore it under Not carried','Oculto — restáuralo en No se maneja'],
+  shown:     ['다시 목록에 넣었습니다','Back in the list','De vuelta en la lista'],
+  hideNone:  ['가린 품목이 없습니다','Nothing is hidden','Nada oculto'],
+  hideNote:  ['이 지점에서만 가려집니다. 지워지지 않으니 언제든 되살릴 수 있습니다.',
+              'Hidden for this store only. Nothing is deleted — restore any time.',
+              'Oculto solo en esta tienda. No se borra — puedes restaurarlo.'],
+  editMode:  ['🔀 순서·취급 정리','🔀 Reorder / hide','🔀 Orden / ocultar'],
   whToday:   ['오늘','today','hoy'],
   whYday:    ['어제','yesterday','ayer'],
 };
@@ -389,6 +404,13 @@ const ADDED_CAT='__added__';
          inventory/keyItems/fresh/whlist/{지점}_produce  { ids:[...] } — 창고에 두는 품목 목록 */
 let WH={}, WHLIST=[], WHDATE='';   // WHDATE = WH 가 어느 날 것인지
 
+/* 🚫 이 지점에서 안 파는 품목 — 2026-10-09 전무님:
+     "해당 지점에서 취급 안 하는 품목들 가리게 해 줘. 나중에 할 수도 있으니 지우지는 말고."
+   지우지 않고 가리기만 한다. 지점마다 다르다 (할리우드엔 있고 마이애미엔 없는 것이 있다).
+   저장: inventory/keyItems/fresh/hide/{지점}_produce  { 품목id: 1 } */
+let HIDE={};
+const isHidden=id=>!!(HIDE&&HIDE[id]);
+
 /* ── 자료 들여오기 ─────────────────────────────────────────── */
 async function boot(){
   render();
@@ -417,6 +439,7 @@ async function reload(){
               const yk=y.toISOString().slice(0,10);
               const b=okDoc(await db.doc('wh/'+G.my+'_'+yk).get());
               if(b){ WH=b; WHDATE=yk; } } }catch(e){ WH={}; }
+  try{ HIDE=okDoc(await db.doc('hide/'+G.my+'_'+DEPT).get())||{}; }catch(e){ HIDE={}; }
   try{ const l=okDoc(await db.doc('whlist/'+G.my+'_'+DEPT).get());
        WHLIST=(l&&Array.isArray(l.ids))?l.ids:[]; }catch(e){ WHLIST=[]; }
   try{ ORDER=okDoc(await db.doc('order/'+G.my+'_'+DEPT).get()); }catch(e){ ORDER=null; }
@@ -461,6 +484,16 @@ function ordered(){
   for(const it of list) if(!used.has(it.id)) out.push(it);      // 새로 생긴 품목은 뒤에
   return out;
 }
+/* 🚫 가리기 / 되살리기 — 지우지 않는다. 체크해 둔 것도 그대로 둔다(되살리면 그대로 돌아온다). */
+async function setHidden(id,on){
+  if(on) HIDE[id]=1; else delete HIDE[id];
+  if(!db){ render(); return; }
+  try{ await db.doc('hide/'+G.my+'_'+DEPT).set(HIDE); }
+  catch(e){ if(on)delete HIDE[id]; else HIDE[id]=1; toast(t('saveFail')); render(); return; }
+  toast(on?t('hidden'):t('shown'));
+  render();
+}
+
 /* ── 🧊 창고 ──────────────────────────────────────────────── */
 const whQty=id=>(WH&&WH[id]!=null&&WH[id]!=='')?+WH[id]:null;
 const whFresh=()=>WHDATE===G.date;                    // 오늘 센 것인가
@@ -582,7 +615,7 @@ async function flush(){
   catch(e){ status=''; toast(t('saveFail')); }
   pending=false; paintFoot();
 }
-function counts(){ const it=ITEMS?allItems():[]; let o=0,w=0,x=0;
+function counts(){ const it=ITEMS?allItems().filter(i=>!isHidden(i.id)):[]; let o=0,w=0,x=0;
   for(const i of it){ const v=MY&&MY.s[i.id]; if(v==='o')o++;else if(v==='w')w++;else if(v==='x')x++; }
   const need=it.filter(i=>['w','x'].includes(MY&&MY.s[i.id])&&!(MY.a&&MY.a[i.id])).length;
   return {o,w,x,t:it.length,done:o+w+x,u:it.length-o-w-x,need}; }
@@ -609,7 +642,8 @@ function renderCheck(){
   if(!ITEMS){ v.innerHTML='<div class="empty">'+esc(t('loading'))+'</div>'; return; }
   const c=counts();
   const pct=c.t?Math.round(c.done/c.t*100):0;
-  const list=ordered().filter(it=>G.filter==='all'
+  const list=ordered().filter(it=>G.filter==='hidden'?isHidden(it.id):!isHidden(it.id))
+    .filter(it=>G.filter==='all'||G.filter==='hidden'
     || (G.filter==='todo'&&!(MY&&MY.s[it.id]))
     || (G.filter==='need'&&['w','x'].includes(MY&&MY.s[it.id]))
     || (G.filter==='star'&&it.star));
@@ -631,18 +665,19 @@ function renderCheck(){
       <div class="bar"><i style="width:${pct}%"></i></div></div>
 
     <div class="tools">
-      ${[['all',t('fAll')],['todo',t('fTodo')+' '+c.u],['need',t('fNeed')+' '+(c.w+c.x)],['star',t('fStar')]]
+      ${[['all',t('fAll')],['todo',t('fTodo')+' '+c.u],['need',t('fNeed')+' '+(c.w+c.x)],['star',t('fStar')],['hidden',t('fHidden')+' '+Object.keys(HIDE||{}).length]]
         .map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${G.filter===k}">${l}</button>`).join('')}
       <span class="sp"></span>
       <button class="chip add" data-add="1">${esc(t('addBtn'))}</button>
-      <button class="chip" data-move="${G.move?'0':'1'}" aria-pressed="${!!G.move}">${esc(t('moveOn'))}</button>
+      <button class="chip" data-move="${G.move?'0':'1'}" aria-pressed="${!!G.move}">${esc(t('editMode'))}</button>
     </div>`;
 
+  if(G.filter==='hidden') h+=`<div class="hidebar">🚫 ${esc(t('hideNote'))}</div>`;
   if(G.move) h+=`<div class="movebar">${t('moveBar')}
       <button data-move="0">${esc(t('moveEnd'))}</button></div>`;
 
   h+='<div class="grid">';
-  if(!list.length) h+='<div class="empty" style="grid-column:1/-1">'+esc(t('nothing'))+'</div>';
+  if(!list.length) h+='<div class="empty" style="grid-column:1/-1">'+esc(G.filter==='hidden'?t('hideNone'):t('nothing'))+'</div>';
   let band=null;
   for(const it of list){
     if(!G.move && it.cat!==band){ band=it.cat;
@@ -685,12 +720,14 @@ function cardHtml(it){
           <option value="">${esc(t('actPick'))}</option>
           ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${esc(t(l))}</option>`).join('')}
         </select></div>`:''}
-      ${it._add&&!G.move?`<button type="button" class="del" data-del="${it.id}">🗑 ${esc(t('delItem'))}</button>`:''}
+      ${G.filter==='hidden'?`<button type="button" class="del back" data-show="${it.id}">${esc(t('showBtn'))}</button>`:''}
+      ${it._add&&!G.move&&G.filter!=='hidden'?`<button type="button" class="del" data-del="${it.id}">🗑 ${esc(t('delItem'))}</button>`:''}
       ${G.move?`<div class="mv">
         ${G.held&&G.held!==it.id?`<button class="here" data-here="${it.id}">${esc(t('here'))}</button>`
           :`<button data-hold="${it.id}">${esc(G.held===it.id?t('holding'):t('move'))}</button>`}
         <button data-up="${it.id}">▲</button><button data-down="${it.id}">▼</button>
-      </div>`:''}
+      </div>
+      <button type="button" class="del" data-hide="${it.id}">${esc(t('hideBtn'))}</button>`:''}
     </div></div>`;
 }
 
@@ -711,6 +748,8 @@ $('#view').addEventListener('click',async e=>{
   if(b.dataset.add){ openAdd(null,''); return; }
   if(b.dataset.whadd){ openWhPick(); return; }
   if(b.dataset.whdel){ whDel(b.dataset.whdel); return; }
+  if(b.dataset.hide){ setHidden(b.dataset.hide,true); return; }
+  if(b.dataset.show){ setHidden(b.dataset.show,false); return; }
   if(b.dataset.del){ delAdd(b.dataset.del); return; }
   if(b.dataset.move!=null){ G.move=b.dataset.move==='1'; G.held=null; if(G.move)G.filter='all'; render(); return; }
   const card=b.closest('.card'); const id=card&&card.dataset.id;
@@ -800,7 +839,7 @@ function renderOrder(){
   $('#foot').hidden=true;
   const v=$('#view');
   if(!ITEMS){ v.innerHTML='<div class="empty">'+esc(t('loading'))+'</div>'; return; }
-  const rows=ordered().filter(it=>['w','x'].includes(MY&&MY.s[it.id]));
+  const rows=ordered().filter(it=>!isHidden(it.id)&&['w','x'].includes(MY&&MY.s[it.id]));
   let h=`<div class="hero"><div class="t"><div class="lbl">ORDER FOLLOW-UP</div>
       <h1>${esc(t('ordTitle',rows.length))}</h1><p>${esc(t('ordSub'))}</p></div><div class="emo">🧾</div></div>`;
   if(!rows.length){ v.innerHTML=h+'<div class="empty" style="margin-top:14px">'+esc(t('ordNone'))+'</div>'; return; }
@@ -831,7 +870,7 @@ function renderWh(){
   const v=$('#view');
   if(!ITEMS){ v.innerHTML='<div class="empty">'+esc(t('loading'))+'</div>'; return; }
   const by=Object.fromEntries(allItems().map(x=>[x.id,x]));
-  const list=WHLIST.map(id=>by[id]).filter(Boolean);
+  const list=WHLIST.map(id=>by[id]).filter(x=>x&&!isHidden(x.id));
   const counted=list.filter(it=>whQty(it.id)!=null).length;
   const asOf=WHDATE?(whFresh()?t('whToday'):t('whYday')+' '+WHDATE):'—';
   let h=`<div class="hero"><div class="t"><div class="lbl">STOCKROOM · ${esc(G.date)}</div>
@@ -858,7 +897,7 @@ function renderWh(){
 }
 function openWhPick(){
   const by=new Set(WHLIST);
-  const rest=allItems().filter(x=>!by.has(x.id));
+  const rest=allItems().filter(x=>!by.has(x.id)&&!isHidden(x.id));
   $('#sheetRoot').innerHTML=`<div class="scrim" data-close="1"></div><div class="sheet" role="dialog">
     <h3>${esc(t('whAdd'))}</h3><p class="sub">${esc(t('whPick'))}</p>
     <input id="wq" autocomplete="off" placeholder="${esc(t('whSearch'))}">
@@ -873,7 +912,7 @@ function paintWhPick(term){
   const el=document.getElementById('wrows'); if(!el)return;
   const by=new Set(WHLIST);
   const q=String(term||'').trim().toUpperCase();
-  const rest=allItems().filter(x=>!by.has(x.id))
+  const rest=allItems().filter(x=>!by.has(x.id)&&!isHidden(x.id))
     .filter(x=>!q||((x.ko||'')+(x.en||'')).toUpperCase().includes(q));
   let h=rest.length?rest.slice(0,60).map(x=>
       `<button type="button" data-whpick="${x.id}"><b>${esc(itemName(x))}</b><span class="num">${esc(itemSub(x))}</span></button>`).join('')
@@ -889,7 +928,7 @@ function paintWhPick(term){
    불러온 뒤 창고에 안 두는 것은 ✕ 로 빼면 된다. */
 async function whAll(){
   const by=new Set(WHLIST);
-  const rest=allItems().filter(x=>!by.has(x.id));
+  const rest=allItems().filter(x=>!by.has(x.id)&&!isHidden(x.id));
   if(!rest.length)return;
   for(const x of rest) WHLIST.push(x.id);
   await saveWhList();
