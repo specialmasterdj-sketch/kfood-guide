@@ -1,0 +1,456 @@
+<!doctype html><html lang="ko"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>야채·과일 진열 점검 — 김치마트</title>
+<script type="module" src="./fb-auth-fetch.js?v=4"></script>
+<script type="module" src="./auth-gate.js?v=7"></script>
+<!-- 신선 데일리(key-fresh.html)와 같은 곳에 저장한다 — 두 화면이 따로 놀지 않게 -->
+<script>window.KM_KEY={base:"inventory/keyItems/fresh",prefs:"kfd3-prefs"};</script>
+<script src="./km-key-shim.js?v=1"></script>
+<script src="./km-back-button.js?v=3"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700;800&display=swap">
+<style>
+:root{
+  --bg:#f4f7f5; --surface:#fff; --sunk:#eef2ef; --line:#dde5e0; --fg:#16211b; --muted:#66776d;
+  --brand:#1a6b45; --brand-soft:#e7f3ec;
+  --ok:#1a7f4b; --ok-bg:#e4f4ea; --low:#a8690d; --low-bg:#fdf1dc; --no:#bf2f26; --no-bg:#fde6e3;
+  --f:"IBM Plex Sans KR","Apple SD Gothic Neo",system-ui,sans-serif;
+  --m:"IBM Plex Mono",ui-monospace,monospace;
+  --r:14px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#10150f; --surface:#19201b; --sunk:#222a24; --line:#36423a; --fg:#e6ede8; --muted:#9aaba0;
+  --brand:#5fbf86; --brand-soft:#17301f;
+  --ok:#6cc792; --ok-bg:#16301f; --low:#e3ac52; --low-bg:#352a13; --no:#f08a75; --no-bg:#3a1d18;
+  color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f);font-size:15px;line-height:1.45}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.wrap{max-width:900px;margin:0 auto;padding:0 14px 120px}
+.num{font-family:var(--m);font-variant-numeric:tabular-nums}
+
+/* 탭 */
+.tabs{display:flex;gap:6px;padding:10px 14px 0;max-width:900px;margin:0 auto;overflow-x:auto}
+.tabs button{flex:none;border:1px solid transparent;background:none;border-radius:11px 11px 0 0;padding:9px 15px;font-weight:700;font-size:14px;color:var(--muted)}
+.tabs button[aria-selected="true"]{background:var(--surface);border-color:var(--line);border-bottom-color:var(--surface);color:var(--fg)}
+.tabbar{border-bottom:1px solid var(--line);margin-bottom:14px}
+
+/* 머리 */
+.hero{background:var(--brand-soft);border:1px solid var(--line);border-radius:var(--r);padding:18px 18px 16px;margin-top:14px;display:flex;gap:14px;align-items:flex-start}
+.hero .t{flex:1;min-width:0}
+.hero .lbl{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--brand);margin-bottom:6px}
+.hero h1{margin:0 0 5px;font-size:22px;font-weight:800;letter-spacing:-.4px}
+.hero p{margin:0;font-size:13px;color:var(--muted)}
+.hero .emo{font-size:40px;line-height:1}
+
+/* 숫자 칸 */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.kpi span{display:block;font-size:12px;color:var(--muted);font-weight:600}
+.kpi b{display:block;font-size:26px;font-weight:800;margin-top:3px;font-family:var(--m)}
+.kpi.warn{background:var(--low-bg);border-color:#f0d9a8}.kpi.warn b{color:var(--low)}
+.kpi.bad{background:var(--no-bg);border-color:#f3c3bb}.kpi.bad b{color:var(--no)}
+
+/* 진행 띠 */
+.prog{margin-top:16px}
+.prog .row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;font-weight:700;margin-bottom:6px}
+.prog .row small{font-weight:600;color:var(--muted)}
+.bar{height:7px;background:var(--sunk);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--brand);border-radius:99px;transition:width .25s}
+
+/* 도구 줄 */
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 10px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:7px 13px;font-size:13px;font-weight:700;color:var(--muted)}
+.chip[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:#fff}
+.tools .sp{flex:1}
+
+/* 상품 카드 */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
+.card.done{border-color:#bfe0cc}
+.card.lv-w{border-color:#f0d9a8}.card.lv-x{border-color:#f3c3bb}
+.card .ph{position:relative;background:var(--sunk);height:140px;display:flex;align-items:center;justify-content:center}
+.card .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.card .flag{position:absolute;top:9px;left:9px;background:rgba(255,255,255,.93);border-radius:99px;padding:3px 10px;font-size:11px;font-weight:800;color:var(--muted)}
+.card.done .flag{background:var(--ok-bg);color:var(--ok)}
+.card .star{position:absolute;top:9px;right:9px;font-size:15px}
+.card .bd{padding:12px 13px 13px;display:flex;flex-direction:column;gap:9px;flex:1}
+.card h3{margin:0;font-size:15.5px;font-weight:800;line-height:1.25}
+.card .en{font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.card .st{font-size:12.5px;color:var(--muted)}
+.card .st b{color:var(--fg)}
+.card .sl{display:flex;gap:5px;flex-wrap:wrap}
+.card .sl span{font-size:10.5px;font-weight:700;border-radius:6px;padding:1px 6px;background:var(--sunk);color:var(--muted);border:1px solid var(--line)}
+.card .sl .sv{background:#e0f2fe;border-color:#7dd3fc;color:#075985}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .card .sl .sv{background:#0b2a3a;border-color:#1e4e68;color:#7dd3fc}}
+
+/* 충분 / 부족 / 없음 */
+.lv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.lv button{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 4px;font-size:13px;font-weight:700;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:5px}
+.lv button:active{transform:scale(.97)}
+.lv button[aria-pressed="true"].o{background:var(--ok);border-color:var(--ok);color:#fff}
+.lv button[aria-pressed="true"].w{background:var(--low);border-color:var(--low);color:#fff}
+.lv button[aria-pressed="true"].x{background:var(--no);border-color:var(--no);color:#fff}
+
+/* 후속 처리 */
+.act{border-top:1px dashed var(--line);padding-top:9px;display:flex;flex-direction:column;gap:7px}
+.act .hint{font-size:11.5px;color:var(--muted);font-weight:600}
+.act select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--sunk);font-weight:700;font-size:13px}
+.act select.set{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+
+/* 동선 바꾸기 */
+.card .mv{display:flex;gap:6px;border-top:1px dashed var(--line);padding-top:9px}
+.card .mv button{flex:1;border:1px solid var(--line);background:var(--sunk);border-radius:9px;padding:7px;font-size:12px;font-weight:700}
+.card .mv button.here{background:var(--brand);border-color:var(--brand);color:#fff}
+.card.held{outline:3px solid var(--brand);outline-offset:-3px}
+.movebar{position:sticky;top:0;z-index:20;background:var(--brand);color:#fff;border-radius:11px;padding:10px 14px;font-size:13.5px;font-weight:700;display:flex;gap:10px;align-items:center;margin-bottom:10px}
+.movebar button{margin-left:auto;background:rgba(255,255,255,.2);border:0;color:#fff;border-radius:8px;padding:6px 12px;font-weight:700}
+
+/* 묶음 머리 */
+.band{grid-column:1/-1;display:flex;justify-content:space-between;align-items:baseline;margin:8px 2px 0;font-size:13px;font-weight:800;color:var(--brand)}
+.band small{font-weight:600;color:var(--muted)}
+
+/* 아래 고정 바 */
+.foot{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));z-index:30}
+.foot .in{max-width:900px;margin:0 auto;display:flex;gap:12px;align-items:center}
+.foot .left{flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--muted)}
+.foot button.go{background:var(--brand);color:#fff;border:0;border-radius:12px;padding:12px 20px;font-weight:800;font-size:14.5px;line-height:1.2}
+.foot button.go:disabled{background:var(--sunk);color:var(--muted)}
+.foot button.go small{display:block;font-size:11px;font-weight:600;opacity:.85}
+
+.empty{background:var(--surface);border:1px dashed var(--line);border-radius:var(--r);padding:26px;text-align:center;color:var(--muted);font-weight:600}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:86px;background:#16211b;color:#fff;border-radius:11px;padding:10px 16px;font-size:13.5px;font-weight:700;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+.rowlist{display:flex;flex-direction:column;gap:9px}
+.rowlist .r{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;display:flex;gap:11px;align-items:center}
+.rowlist .r img{width:44px;height:44px;border-radius:9px;object-fit:cover;flex:none}
+.rowlist .r .t{flex:1;min-width:0}
+.rowlist .r .t b{display:block;font-size:14px}
+.rowlist .r .t span{font-size:12px;color:var(--muted)}
+.rowlist .r .tag{font-size:11.5px;font-weight:800;border-radius:7px;padding:3px 8px}
+.tag.o{background:var(--ok-bg);color:var(--ok)}.tag.w{background:var(--low-bg);color:var(--low)}.tag.x{background:var(--no-bg);color:var(--no)}
+table.mx{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13.5px}
+table.mx th,table.mx td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}
+table.mx th{background:var(--sunk);font-size:12px;color:var(--muted)}
+table.mx td.n{text-align:right;font-family:var(--m)}
+</style></head><body>
+
+<nav class="tabbar"><div class="tabs" id="tabs" role="tablist">
+  <button role="tab" data-tab="check" aria-selected="true">✓ 상품 체크</button>
+  <button role="tab" data-tab="order" aria-selected="false">🧾 주문 처리</button>
+  <button role="tab" data-tab="hq" aria-selected="false">◎ HQ 현황</button>
+</div></nav>
+
+<div class="wrap" id="view"></div>
+<div class="foot" id="foot" hidden></div>
+<div id="toastRoot"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   야채·과일 진열 점검 — 동선 따라 걸으며 체크하는 화면
+   2026-10-09 전무님: "우선 야채·과일부터 헐리우드를 시범적으로.
+     앱 열었을 때 시각적으로 보기 편하고 일하기 쉽게,
+     야채 진열 동선을 따라 내가 위치 옮길 수 있게. 사진은 기존 거 갖다 쓰고."
+
+   · 자료는 신선 데일리(key-fresh.html)와 **같은 곳**에 쓴다 (inventory/keyItems/fresh/checks).
+     두 화면 중 아무 데서나 체크해도 서로 보인다.
+   · 사진·품목은 key-fresh-cat/produce.json 그대로 쓴다 (82품목, 사진 다 있음).
+   · 동선 순서는 지점마다 따로 저장한다 (order/{지점}_{부서}).
+   ═══════════════════════════════════════════════════════════════ */
+
+const DEPT='produce', DEPT_KO='야채·과일';
+const STORES=[{key:'coral',name:'Coral Springs',ko:'코럴 스프링스'},{key:'hollywood',name:'Hollywood',ko:'할리우드'},
+  {key:'lasolas',name:'Las Olas',ko:'라스올라스'},{key:'miami',name:'Miami',ko:'마이애미'},
+  {key:'pembroke',name:'Pembroke Pines',ko:'펨브로크 파인즈'},{key:'wpb',name:'West Palm Beach',ko:'웨스트팜비치'}];
+const S=Object.fromEntries(STORES.map(s=>[s.key,s]));
+const LV={o:{ic:'●',ko:'충분'},w:{ic:'◐',ko:'부족'},x:{ic:'○',ko:'없음'}};
+/* 후속 처리 — 부족·없음이면 무엇을 할지 고른다 */
+const ACT={stock:'창고에서 보충',order:'주문 필요',incoming:'입고 예정'};
+
+const $=(s,r=document)=>r.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today=()=>{const d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10)};
+const docId=(d,s)=>`${d}_${s}_${DEPT}`;
+const lsGet=k=>{try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+function toast(m){const r=$('#toastRoot');r.innerHTML='<div class="toast">'+esc(m)+'</div>';clearTimeout(toast.h);toast.h=setTimeout(()=>r.innerHTML='',2600)}
+function okDoc(d){if(!d||!d.exists)return null;const v=d.data();if(!v||typeof v!=='object'||Array.isArray(v)||v.error)return null;delete v._id;return v}
+
+const P=lsGet('kfd3-prefs')||{};
+const G={date:today(),my:P.store||'hollywood',name:P.name||'',tab:'check',move:null,held:null,filter:'all'};
+let db=null,uid=null,ITEMS=null,DOCS={},MY=null,ORDER=null,SALES=null,SCALE=null,PAR={},LINK={},pending=false,saveT=null,status='';
+
+/* ── 자료 들여오기 ─────────────────────────────────────────── */
+async function boot(){
+  render();
+  try{ ITEMS=(await (await fetch('key-fresh-cat/produce.json')).json()).items||[]; }catch(e){ ITEMS=[]; }
+  if(window.claude&&claude.use){
+    try{ db=await claude.use('db'); }catch(e){}
+    try{ const u=await claude.use('user'); uid=await u.id(); }catch(e){}
+  }
+  await reload();
+  render();
+  setInterval(()=>{ if(!document.hidden&&!pending) reload().then(render); }, 20000);
+}
+async function reload(){
+  if(!db)return;
+  try{ const snap=await new Promise((res,rej)=>{ const un=db.collection('checks').where('date','==',G.date)
+          .onSnapshot(s=>{try{un&&un()}catch(_){ } res(s)},e=>rej(e)); });
+       DOCS={}; for(const d of snap.docs) DOCS[d.id]=d.data(); }catch(e){}
+  syncMine();
+  try{ ORDER=okDoc(await db.doc('order/'+G.my+'_'+DEPT).get()); }catch(e){ ORDER=null; }
+  try{ PAR=okDoc(await db.doc('par/'+G.my+'_'+DEPT).get())||{}; }catch(e){ PAR={}; }
+  try{ LINK=okDoc(await db.doc('poslink/'+DEPT).get())||{}; }catch(e){ LINK={}; }
+  SCALE=null;
+  try{ SALES=okDoc(await db.doc('sales/'+G.my).get()); }catch(e){ SALES=null; }
+  if(SALES && !((SALES._d&&+SALES._d[1])>=7)) SALES=null;      // 자료가 얇으면 환산을 쓴다
+  if(!SALES){ try{ const sc=okDoc(await db.doc('scale/'+G.my).get());
+      if(sc&&sc._ref){ const h=okDoc(await db.doc('sales/'+sc._ref).get()); if(h){SALES=h;SCALE=Object.assign({},sc,{_est:1});} } }catch(e){} }
+}
+function syncMine(){
+  const d=DOCS[docId(G.date,G.my)];
+  MY=d?{s:{...(d.s||{})},r:JSON.parse(JSON.stringify(d.r||{})),n:{...(d.n||{})},t:{...(d.t||{})},
+        q:{...(d.q||{})},a:{...(d.a||{})},done:!!d.done,doneAt:d.doneAt||null}
+     :{s:{},r:{},n:{},t:{},q:{},a:{},done:false,doneAt:null};
+}
+
+/* ── 판매량 · 기준 (신선 데일리와 같은 규칙) ─────────────────── */
+const scaleOf=()=>(SCALE&&+SCALE[DEPT])||1;
+function dayAvg(id){ const c=LINK[id]; if(!SALES||!c)return null; const r=SALES[c]; if(!r)return null;
+  const d7=(SALES._d&&SALES._d[0])||1,d30=(SALES._d&&SALES._d[1])||1,k=scaleOf();
+  return {a:Math.max(r[0]/d7*k, r[1]/d30*k*0.6), est:!!(SCALE&&SCALE._est)}; }
+function parOf(id){ if(PAR[id]!=null)return {v:PAR[id],from:'set'};
+  const s=dayAvg(id); if(s&&s.a>0)return {v:Math.max(1,Math.ceil(s.a*2)),from:'sales'}; return {v:null,from:''}; }
+
+/* ── 동선 순서 ─────────────────────────────────────────────── */
+function ordered(){
+  if(!ITEMS)return [];
+  const seq=(ORDER&&Array.isArray(ORDER.seq))?ORDER.seq:null;
+  if(!seq)return ITEMS.slice();
+  const by=Object.fromEntries(ITEMS.map(x=>[x.id,x]));
+  const out=[]; const used=new Set();
+  for(const id of seq){ if(by[id]&&!used.has(id)){ out.push(by[id]); used.add(id); } }
+  for(const it of ITEMS) if(!used.has(it.id)) out.push(it);     // 새로 생긴 품목은 뒤에
+  return out;
+}
+async function saveOrder(list){
+  ORDER={seq:list.map(x=>x.id),by:G.name||'',ts:Date.now()};
+  if(!db)return; try{ await db.doc('order/'+G.my+'_'+DEPT).set(ORDER); }catch(e){ toast('순서 저장 실패'); }
+}
+
+/* ── 저장 ─────────────────────────────────────────────────── */
+function queueSave(){ if(!db)return; pending=true; status='저장 중…'; paintFoot(); clearTimeout(saveT); saveT=setTimeout(flush,700); }
+async function flush(){
+  clearTimeout(saveT); if(!db)return;
+  const c=counts();
+  const body={date:G.date,store:G.my,dept:DEPT,name:(G.name||'').trim(),by:uid||null,updatedAt:Date.now(),
+    s:MY.s,r:MY.r,n:MY.n,t:MY.t,q:MY.q,a:MY.a,done:!!MY.done,doneAt:MY.doneAt,
+    total:c.t,ok:c.o,low:c.w,no:c.x};
+  try{ await db.doc('checks/'+docId(G.date,G.my)).set(body); status='저장됨'; }
+  catch(e){ status=''; toast('저장 실패 — 다시 로그인해 보세요'); }
+  pending=false; paintFoot();
+}
+function counts(){ const it=ITEMS||[]; let o=0,w=0,x=0;
+  for(const i of it){ const v=MY&&MY.s[i.id]; if(v==='o')o++;else if(v==='w')w++;else if(v==='x')x++; }
+  const need=it.filter(i=>['w','x'].includes(MY&&MY.s[i.id])&&!(MY.a&&MY.a[i.id])).length;
+  return {o,w,x,t:it.length,done:o+w+x,u:it.length-o-w-x,need}; }
+
+/* ── 그리기 ───────────────────────────────────────────────── */
+function render(){
+  for(const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', b.dataset.tab===G.tab);
+  if(G.tab==='check')renderCheck(); else if(G.tab==='order')renderOrder(); else renderHQ();
+}
+document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;G.tab=b.dataset.tab;G.held=null;render()});
+
+function renderCheck(){
+  const v=$('#view');
+  if(!ITEMS){ v.innerHTML='<div class="empty">불러오는 중…</div>'; return; }
+  const c=counts();
+  const pct=c.t?Math.round(c.done/c.t*100):0;
+  const list=ordered().filter(it=>G.filter==='all'
+    || (G.filter==='todo'&&!(MY&&MY.s[it.id]))
+    || (G.filter==='need'&&['w','x'].includes(MY&&MY.s[it.id]))
+    || (G.filter==='star'&&it.star));
+
+  let h=`<div class="hero"><div class="t">
+      <div class="lbl">FRESH CHECK · DAILY ROUTINE</div>
+      <h1>오늘도 빈 매대 없이, 신선하게.</h1>
+      <p>상품을 확인하고 필요한 주문까지 이어 가세요.</p>
+    </div><div class="emo">🥬</div></div>
+
+    <div class="kpis">
+      <div class="kpi"><span>오늘 확인</span><b>${c.done} / ${c.t}</b></div>
+      <div class="kpi ${c.u?'warn':''}"><span>미확인</span><b>${c.u}</b></div>
+      <div class="kpi ${c.need?'bad':''}"><span>후속 처리 대기</span><b>${c.need}</b></div>
+    </div>
+
+    <div class="prog"><div class="row"><span>🥬 ${DEPT_KO} · 오늘의 진열 체크</span>
+      <small>${esc(S[G.my]?.ko||G.my)} · ${pct}% 완료</small></div>
+      <div class="bar"><i style="width:${pct}%"></i></div></div>
+
+    <div class="tools">
+      ${[['all','전체'],['todo',`미확인 ${c.u}`],['need',`부족·없음 ${c.w+c.x}`],['star','★ 핵심']]
+        .map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${G.filter===k}">${l}</button>`).join('')}
+      <span class="sp"></span>
+      <button class="chip" data-move="${G.move?'0':'1'}" aria-pressed="${!!G.move}">🔀 동선 순서 바꾸기</button>
+    </div>`;
+
+  if(G.move) h+=`<div class="movebar">🔀 동선 순서 바꾸는 중 — <b>옮기기</b> 를 누르고, 놓을 자리의 <b>여기로</b> 를 누르세요
+      <button data-move="0">끝내기</button></div>`;
+
+  h+='<div class="grid">';
+  if(!list.length) h+='<div class="empty" style="grid-column:1/-1">보여 줄 것이 없습니다</div>';
+  let band=null;
+  for(const it of list){
+    if(!G.move && it.cat!==band){ band=it.cat;
+      const n=list.filter(x=>x.cat===band).length;
+      h+=`<div class="band"><span>${esc(band||'')}</span><small>${n}개</small></div>`; }
+    h+=cardHtml(it);
+  }
+  h+='</div>';
+  v.innerHTML=h;
+  paintFoot();
+}
+
+function cardHtml(it){
+  const lv=(MY&&MY.s[it.id])||'';
+  const act=(MY&&MY.a&&MY.a[it.id])||'';
+  const s=dayAvg(it.id), p=parOf(it.id);
+  const need=['w','x'].includes(lv);
+  const st=lv?`확인됨 · <b>${LV[lv].ko}</b>`:'미확인 · 오늘 현장 확인 필요';
+  let chips='';
+  if(s) chips+=`<span class="sv">📈 하루 ${s.a.toFixed(s.a<10?1:0)}개${s.est?' 환산':''}</span>`;
+  if(p.v!=null) chips+=`<span>기준 ${p.v}</span>`;
+  return `<div class="card ${lv?'done':''} ${lv?'lv-'+lv:''} ${G.held===it.id?'held':''}" data-id="${it.id}">
+    <div class="ph">${it.img?`<img src="${it.img}" alt="" loading="lazy">`:'<span style="font-size:34px">🥬</span>'}
+      <span class="flag">${lv?'✓ 확인 완료':'미확인'}</span>${it.star?'<span class="star">★</span>':''}</div>
+    <div class="bd">
+      <div><h3>${esc(it.ko||it.en)}</h3><div class="en">${esc(it.en||'')}</div></div>
+      <div class="st">${st}</div>
+      ${chips?`<div class="sl">${chips}</div>`:''}
+      <div class="lv">${['o','w','x'].map(k=>
+        `<button class="${k}" data-lv="${k}" aria-pressed="${lv===k}">${LV[k].ic} ${LV[k].ko}</button>`).join('')}</div>
+      ${need?`<div class="act"><div class="hint">창고 · 기존 주문 확인</div>
+        <select data-act="${it.id}" class="${act?'set':''}">
+          <option value="">처리 방법 선택</option>
+          ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${l}</option>`).join('')}
+        </select></div>`:''}
+      ${G.move?`<div class="mv">
+        ${G.held&&G.held!==it.id?`<button class="here" data-here="${it.id}">⬇ 여기로</button>`
+          :`<button data-hold="${it.id}">${G.held===it.id?'✋ 들고 있음':'옮기기'}</button>`}
+        <button data-up="${it.id}">▲</button><button data-down="${it.id}">▼</button>
+      </div>`:''}
+    </div></div>`;
+}
+
+function paintFoot(){
+  const f=$('#foot');
+  if(G.tab!=='check'||!ITEMS){ f.hidden=true; return; }
+  f.hidden=false;
+  const c=counts();
+  const ready=c.u===0;
+  f.innerHTML=`<div class="in"><div class="left">${status?esc(status)+' · ':''}${c.u?`미확인 ${c.u}개가 남았습니다`:`모두 확인했습니다 · 부족 ${c.w} · 없음 ${c.x}`}</div>
+    <button class="go" id="send" ${MY&&MY.done?'disabled':''}>${MY&&MY.done?'✓ 제출됨':'오늘 점검 제출'}<small>${ready?'바로 제출':'미확인이 있어도 제출 가능'}</small></button></div>`;
+}
+
+/* ── 손놀림 ───────────────────────────────────────────────── */
+$('#view').addEventListener('click',async e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  if(b.dataset.f){ G.filter=b.dataset.f; render(); return; }
+  if(b.dataset.move!=null){ G.move=b.dataset.move==='1'; G.held=null; if(G.move)G.filter='all'; render(); return; }
+  const card=b.closest('.card'); const id=card&&card.dataset.id;
+  if(b.dataset.lv&&id){
+    if(!MY)return;
+    const cur=MY.s[id]||'';
+    const next=cur===b.dataset.lv?'':b.dataset.lv;      // 같은 걸 또 누르면 해제
+    if(next)MY.s[id]=next; else delete MY.s[id];
+    MY.t[id]=Date.now();
+    if(next!=='w'&&next!=='x') delete MY.a[id];          // 충분이면 후속 처리는 지운다
+    MY.done=false; queueSave(); renderCheck(); return;
+  }
+  if(b.dataset.hold){ G.held=(G.held===b.dataset.hold)?null:b.dataset.hold; renderCheck(); return; }
+  if(b.dataset.here){ await moveTo(G.held,b.dataset.here); G.held=null; renderCheck(); return; }
+  if(b.dataset.up||b.dataset.down){ await nudge(b.dataset.up||b.dataset.down, b.dataset.up?-1:1); renderCheck(); return; }
+});
+$('#view').addEventListener('change',e=>{
+  const s=e.target.closest('select[data-act]'); if(!s||!MY)return;
+  const id=s.dataset.act;
+  if(s.value)MY.a[id]=s.value; else delete MY.a[id];
+  MY.done=false; queueSave(); renderCheck();
+});
+$('#foot').addEventListener('click',async e=>{
+  if(!e.target.closest('#send'))return;
+  MY.done=true; MY.doneAt=Date.now(); await flush();
+  toast('오늘 점검을 제출했습니다'); render();
+});
+
+async function moveTo(fromId,toId){
+  if(!fromId||fromId===toId)return;
+  const list=ordered(); const i=list.findIndex(x=>x.id===fromId), j=list.findIndex(x=>x.id===toId);
+  if(i<0||j<0)return;
+  const [it]=list.splice(i,1); list.splice(list.findIndex(x=>x.id===toId),0,it);
+  await saveOrder(list); toast('옮겼습니다');
+}
+async function nudge(id,d){
+  const list=ordered(); const i=list.findIndex(x=>x.id===id); const j=i+d;
+  if(i<0||j<0||j>=list.length)return;
+  [list[i],list[j]]=[list[j],list[i]];
+  await saveOrder(list);
+}
+
+/* ── 🧾 주문 처리 ──────────────────────────────────────────── */
+function renderOrder(){
+  $('#foot').hidden=true;
+  const v=$('#view');
+  if(!ITEMS){ v.innerHTML='<div class="empty">불러오는 중…</div>'; return; }
+  const rows=ordered().filter(it=>['w','x'].includes(MY&&MY.s[it.id]));
+  let h=`<div class="hero"><div class="t"><div class="lbl">ORDER FOLLOW-UP</div>
+      <h1>처리할 것 ${rows.length}건</h1><p>부족·없음으로 올라온 것만 모았습니다.</p></div><div class="emo">🧾</div></div>`;
+  if(!rows.length){ v.innerHTML=h+'<div class="empty" style="margin-top:14px">처리할 것이 없습니다 ✓</div>'; return; }
+  h+='<div class="rowlist" style="margin-top:14px">';
+  for(const it of rows){
+    const lv=MY.s[it.id], act=MY.a[it.id]||'';
+    const p=parOf(it.id), s=dayAvg(it.id);
+    h+=`<div class="r" data-id="${it.id}">
+      ${it.img?`<img src="${it.img}" alt="">`:'<span style="font-size:28px">🥬</span>'}
+      <div class="t"><b>${esc(it.ko||it.en)}</b>
+        <span>${esc(it.en||'')}${p.v!=null?` · 기준 ${p.v}`:''}${s?` · 하루 ${s.a.toFixed(s.a<10?1:0)}개`:''}</span></div>
+      <span class="tag ${lv}">${LV[lv].ko}</span>
+      <select data-act="${it.id}" class="${act?'set':''}" style="flex:none;width:140px;padding:8px;border:1px solid var(--line);border-radius:9px;background:var(--sunk);font-weight:700;font-size:12.5px">
+        <option value="">처리 방법</option>
+        ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${l}</option>`).join('')}
+      </select></div>`;
+  }
+  h+='</div>';
+  const need=rows.filter(it=>!MY.a[it.id]).length;
+  h+=`<p style="margin-top:12px;font-size:13px;color:var(--muted);font-weight:600">
+      ${need?`아직 처리 방법을 안 고른 것 ${need}건`:'모두 처리 방법을 골랐습니다 ✓'}</p>`;
+  v.innerHTML=h;
+}
+
+/* ── ◎ HQ 현황 ────────────────────────────────────────────── */
+function renderHQ(){
+  $('#foot').hidden=true;
+  const v=$('#view'); const t=(ITEMS||[]).length;
+  let h=`<div class="hero"><div class="t"><div class="lbl">HQ · ${esc(G.date)}</div>
+      <h1>${DEPT_KO} 점검 현황</h1><p>지점마다 오늘 어디까지 했는지.</p></div><div class="emo">◎</div></div>
+    <table class="mx" style="margin-top:14px"><thead><tr><th>지점</th><th class="n">확인</th><th class="n">부족</th><th class="n">없음</th><th class="n">미처리</th><th>제출</th></tr></thead><tbody>`;
+  for(const s of STORES){
+    const d=DOCS[docId(G.date,s.key)];
+    if(!d){ h+=`<tr><th>${esc(s.ko)}</th><td class="n" colspan="4" style="color:var(--muted)">미시작</td><td style="color:var(--muted)">—</td></tr>`; continue; }
+    const done=(d.ok||0)+(d.low||0)+(d.no||0);
+    const need=Object.keys(d.s||{}).filter(k=>['w','x'].includes(d.s[k])&&!((d.a||{})[k])).length;
+    h+=`<tr><th>${esc(s.ko)}${s.key===G.my?' · 내 지점':''}</th>
+      <td class="n">${done}/${d.total||t}</td><td class="n">${d.low||0}</td><td class="n">${d.no||0}</td>
+      <td class="n" style="${need?'color:var(--no);font-weight:700':''}">${need}</td>
+      <td>${d.done?'✓ '+new Date(d.doneAt||d.updatedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'진행 중'}</td></tr>`;
+  }
+  h+='</tbody></table>';
+  h+=`<p style="margin-top:12px;font-size:12.5px;color:var(--muted)">시범 운영 — 할리우드 ${DEPT_KO}부터. 신선 데일리(key-fresh.html)와 같은 자료를 봅니다.</p>`;
+  v.innerHTML=h;
+}
+
+boot();
+</script>
+</body></html>
