@@ -340,22 +340,36 @@ function parOf(id){ if(PAR[id]!=null) return {v:PAR[id], from:'set'};
 /* 수량을 적었으면 상태를 앱이 고른다 — 사람이 직접 누른 것은 건드리지 않는다 */
 function levelFor(id,q){ const p=parOf(id); if(q==null||p.v==null) return null;
   if(q<=0) return 'x'; if(q<p.v) return 'w'; return 'o'; }
+/* 읽기가 막히면 Firebase 가 {error:"Permission denied"} 를 돌려준다.
+   그걸 자료로 받으면 엉뚱한 칸이 하나 생긴다 — 걸러 낸다. */
+function okDoc(d){ if(!d||!d.exists)return null; const v=d.data();
+  if(!v||typeof v!=='object'||Array.isArray(v)||v.error)return null; delete v._id; return v; }
 async function loadSide(){
   if(!db||!G.my) return;
   SCALE=null;
-  try{ const d=await db.doc('sales/'+G.my).get(); SALES=d.exists?d.data():null; }catch(e){ SALES=null; }
-  // 그 지점 품목별 자료가 없으면 할리우드 것을 부서 매출 비율로 환산해 쓴다
+  try{ const d=await db.doc('sales/'+G.my).get(); SALES=okDoc(d); }catch(e){ SALES=null; }
+  /* 자료가 너무 얇으면 쓰지 않는다. 하루치로 '하루 평균' 을 내면 그날 안 팔린 것은 전부 0이 되어
+     기준이 아예 안 잡힌다. 그럴 바엔 할리우드 28일치를 환산해 쓰는 게 낫다.
+     (2026-10-09 — 할리우드 말고 네 지점은 아직 10/08 하루치뿐이다. 날마다 쌓이면 저절로 넘어간다) */
+  const MIN_DAYS=7;
+  if(SALES && !((SALES._d&&+SALES._d[1])>=MIN_DAYS)) SALES=null;
+  // 그 지점 품목별 자료가 없거나 얇으면 할리우드 것을 부서 매출 비율로 환산해 쓴다
   if(!SALES){
-    try{ const d=await db.doc('scale/'+G.my).get(); const sc=(d.exists&&d.data())||null;
-         if(sc&&sc._ref){ const h=await db.doc('sales/'+sc._ref).get();
-           if(h.exists){ SALES=h.data(); SCALE=Object.assign({},sc,{_est:1}); } } }catch(e){}
+    try{ const d=await db.doc('scale/'+G.my).get(); const sc=okDoc(d);
+         if(sc&&sc._ref){ const h=okDoc(await db.doc('sales/'+sc._ref).get());
+           if(h){ SALES=h; SCALE=Object.assign({},sc,{_est:1}); } } }catch(e){}
   }
-  // 🏷 POS 가 적어 준 분류표 (12KB) — 연결 창에서 부서를 가리는 데 쓴다
-  try{ const src=(SCALE&&SCALE._ref)||G.my; const d=await db.doc('poscat/'+src).get();
-       POSCAT=(d.exists&&d.data())||null; if(POSCAT)delete POSCAT._id; }catch(e){ POSCAT=null; }
+  /* 🏷 POS 가 적어 준 분류표 — 연결 창에서 부서를 가리는 데 쓴다.
+     지점마다 판 물건만 들어 있어 작은 지점은 얇다(마이애미 89 vs 할리우드 589).
+     분류는 체인이 같으니 할리우드 것을 밑에 깔고 내 지점 것을 덮는다. */
+  POSCAT=null;
+  for(const src of ['hollywood', G.my]){
+    try{ const v=okDoc(await db.doc('poscat/'+src).get()); if(!v)continue;
+         POSCAT=Object.assign(POSCAT||{}, v); }catch(e){}
+  }
   // 이름 목록(408KB)은 여기서 받지 않는다 — 🔗 연결 창을 열 때만 받는다
-  try{ const d=await db.doc('par/'+G.my+'_'+G.dept).get(); PAR=(d.exists&&d.data())||{}; delete PAR._id; }catch(e){ PAR={}; }
-  try{ const d=await db.doc('poslink/'+G.dept).get(); LINK=(d.exists&&d.data())||{}; delete LINK._id; }catch(e){ LINK={}; }
+  try{ PAR=okDoc(await db.doc('par/'+G.my+'_'+G.dept).get())||{}; }catch(e){ PAR={}; }
+  try{ LINK=okDoc(await db.doc('poslink/'+G.dept).get())||{}; }catch(e){ LINK={}; }
 }
 async function saveSide(col,id,obj){ if(!db)return; try{ await db.doc(col+'/'+id).set(obj); }catch(e){ toast('저장 실패 · could not save'); } }
 const byId=k=>{const c=catOf(k);if(!c)return {};return c._ix||(c._ix=Object.fromEntries(c.map(x=>[x.id,x])))};
@@ -572,9 +586,12 @@ async function openLink(id){
     <div class="lr" id="link-rows">${SNAMES?'이름이나 번호를 적어 보세요':'POS 목록 받는 중… · loading'}</div>
     <div class="row"><button type="button" data-pick="">연결 지우기 · Unlink</button><button type="button" class="go" data-pv="close">닫기 · Close</button></div>
   </div></div>`;
-  // 품목별 자료가 할리우드 것이면 이름도 할리우드 것을 받는다
-  if(!SNAMES&&db&&G.my){ const src=(SCALE&&SCALE._ref)||G.my;
-    try{ const d=await db.doc('salesNames/'+src).get(); SNAMES=(d.exists&&d.data())||{}; delete SNAMES._id; }catch(e){ SNAMES={}; } }
+  /* 이름 목록도 할리우드 것을 밑에 깔고 내 지점 것을 덮는다 —
+     작은 지점에서도 체인이 파는 물건을 다 찾아 이을 수 있게. */
+  if(!SNAMES&&db&&G.my){ SNAMES={};
+    for(const src of ['hollywood', G.my]){
+      try{ const v=okDoc(await db.doc('salesNames/'+src).get()); if(v)Object.assign(SNAMES, v); }catch(e){}
+    } }
   // 괄호 안 설명은 떼고 넣어 둔다 — POS 이름엔 보통 없다 ("Chinese Broccoli (Gai Lan)" → "Chinese Broccoli Gai Lan")
   const pre=String(it?.en||'').replace(/[()]/g,' ').replace(/\s+/g,' ').trim();
   paintLink(pre);
