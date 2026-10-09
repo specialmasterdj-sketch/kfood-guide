@@ -36,6 +36,10 @@ button{cursor:pointer}
 .tabs button{flex:none;border:1px solid transparent;background:none;border-radius:11px 11px 0 0;padding:9px 15px;font-weight:700;font-size:14px;color:var(--muted)}
 .tabs button[aria-selected="true"]{background:var(--surface);border-color:var(--line);border-bottom-color:var(--surface);color:var(--fg)}
 .tabbar{border-bottom:1px solid var(--line);margin-bottom:14px}
+/* 🌐 말 고르기 */
+.langs{flex:none;display:flex;gap:3px;align-self:center;background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:3px;margin:0 0 6px}
+.langs button{border:0;background:none;border-radius:7px;padding:5px 10px;font-size:12.5px;font-weight:700;color:var(--muted)}
+.langs button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.1)}
 
 /* 머리 */
 .hero{background:var(--brand-soft);border:1px solid var(--line);border-radius:var(--r);padding:18px 18px 16px;margin-top:14px;display:flex;gap:14px;align-items:flex-start}
@@ -137,9 +141,11 @@ table.mx td.n{text-align:right;font-family:var(--m)}
 </style></head><body>
 
 <nav class="tabbar"><div class="tabs" id="tabs" role="tablist">
-  <button role="tab" data-tab="check" aria-selected="true">✓ 상품 체크</button>
-  <button role="tab" data-tab="order" aria-selected="false">🧾 주문 처리</button>
-  <button role="tab" data-tab="hq" aria-selected="false">◎ HQ 현황</button>
+  <button role="tab" data-tab="check" aria-selected="true"></button>
+  <button role="tab" data-tab="order" aria-selected="false"></button>
+  <button role="tab" data-tab="hq" aria-selected="false"></button>
+  <span style="flex:1"></span>
+  <div class="langs" id="langs"></div>
 </div></nav>
 
 <div class="wrap" id="view"></div>
@@ -159,14 +165,95 @@ table.mx td.n{text-align:right;font-family:var(--m)}
    · 동선 순서는 지점마다 따로 저장한다 (order/{지점}_{부서}).
    ═══════════════════════════════════════════════════════════════ */
 
-const DEPT='produce', DEPT_KO='야채·과일';
+const DEPT='produce';
+
+/* 🌐 말 바꾸기 — 다른 앱과 같은 열쇠를 쓴다 (km.lang + km-lang-changed).
+   2026-10-09 전무님: "언어도 변경 할 수 있게 해 줘."
+   직원 다수가 스페인어를 쓴다. 상품 이름은 POS 등록명(영어)과 한글 둘뿐이라
+   스페인어 화면에서도 상품명은 영어로 둔다 — POS 에서 못 찾으면 소용이 없다. */
+const L3=['ko','en','es'];
+let LANG=(()=>{ try{ const v=localStorage.getItem('km.lang'); if(L3.includes(v))return v; }catch(e){} return 'ko'; })();
+const T={
+  dept:      ['야채·과일','Produce & Fruit','Verduras y Frutas'],
+  tabCheck:  ['✓ 상품 체크','✓ Check items','✓ Revisar'],
+  tabOrder:  ['🧾 주문 처리','🧾 Follow-up','🧾 Seguimiento'],
+  tabHq:     ['◎ HQ 현황','◎ HQ status','◎ Estado HQ'],
+  heroTitle: ['오늘도 빈 매대 없이, 신선하게.','No empty shelves today.','Sin estantes vacíos hoy.'],
+  heroSub:   ['상품을 확인하고 필요한 주문까지 이어 가세요.','Check each item, then restock or order.','Revisa cada artículo, luego repone o pide.'],
+  kDone:     ['오늘 확인','Checked today','Revisado hoy'],
+  kTodo:     ['미확인','Not checked','Sin revisar'],
+  kNeed:     ['후속 처리 대기','Needs follow-up','Requiere acción'],
+  todayCheck:['오늘의 진열 체크','Today’s display check','Revisión de hoy'],
+  pctDone:   ['완료','done','completado'],
+  fAll:      ['전체','All','Todo'],
+  fTodo:     ['미확인','Not checked','Sin revisar'],
+  fNeed:     ['부족·없음','Low / none','Poco / nada'],
+  fStar:     ['★ 핵심','★ Key','★ Clave'],
+  moveOn:    ['🔀 동선 순서 바꾸기','🔀 Reorder walk path','🔀 Cambiar el orden'],
+  moveBar:   ['🔀 동선 순서 바꾸는 중 — <b>옮기기</b> 를 누르고, 놓을 자리의 <b>여기로</b> 를 누르세요',
+              '🔀 Reordering — tap <b>Move</b>, then tap <b>Here</b> where it belongs',
+              '🔀 Reordenando — toca <b>Mover</b>, luego <b>Aquí</b> donde va'],
+  moveEnd:   ['끝내기','Done','Listo'],
+  move:      ['옮기기','Move','Mover'],
+  holding:   ['✋ 들고 있음','✋ Holding','✋ Sostenido'],
+  here:      ['⬇ 여기로','⬇ Here','⬇ Aquí'],
+  moved:     ['옮겼습니다','Moved','Movido'],
+  enough:    ['충분','Enough','Suficiente'],
+  low:       ['부족','Low','Poco'],
+  none:      ['없음','None','Nada'],
+  notyet:    ['미확인 · 오늘 현장 확인 필요','Not checked — check on the floor','Sin revisar — revisar en piso'],
+  checked:   ['확인됨','Checked','Revisado'],
+  flagDone:  ['✓ 확인 완료','✓ Checked','✓ Revisado'],
+  flagTodo:  ['미확인','Not checked','Sin revisar'],
+  actHint:   ['창고 · 기존 주문 확인','Check stockroom / existing order','Revisar bodega / pedido'],
+  actPick:   ['처리 방법 선택','Choose action','Elegir acción'],
+  actStock:  ['창고에서 보충','Restock from stockroom','Reponer de bodega'],
+  actOrder:  ['주문 필요','Need to order','Hay que pedir'],
+  actIncome: ['입고 예정','Delivery coming','Entrega en camino'],
+  perDay:    ['하루','per day','por día'],
+  est:       ['환산','est.','est.'],
+  par:       ['기준','Par','Par'],
+  nothing:   ['보여 줄 것이 없습니다','Nothing to show','Nada que mostrar'],
+  loading:   ['불러오는 중…','Loading…','Cargando…'],
+  leftTodo:  ['미확인 %n개가 남았습니다','%n item(s) not checked yet','Faltan %n por revisar'],
+  allDone:   ['모두 확인했습니다','All checked','Todo revisado'],
+  submit:    ['오늘 점검 제출','Submit today’s check','Enviar revisión'],
+  submitted: ['✓ 제출됨','✓ Submitted','✓ Enviado'],
+  subHint:   ['미확인이 있어도 제출 가능','You can submit with items left','Puedes enviar con pendientes'],
+  sent:      ['오늘 점검을 제출했습니다','Today’s check submitted','Revisión enviada'],
+  saving:    ['저장 중…','Saving…','Guardando…'],
+  saved:     ['저장됨','Saved','Guardado'],
+  saveFail:  ['저장 실패 — 다시 로그인해 보세요','Could not save — sign in again','No se guardó — inicia sesión'],
+  ordTitle:  ['처리할 것 %n건','%n to follow up','%n por atender'],
+  ordSub:    ['부족·없음으로 올라온 것만 모았습니다.','Only items reported low or out.','Solo artículos con poco o nada.'],
+  ordNone:   ['처리할 것이 없습니다 ✓','Nothing to follow up ✓','Nada por atender ✓'],
+  ordLeft:   ['아직 처리 방법을 안 고른 것 %n건','%n still need an action','%n sin acción elegida'],
+  hqTitle:   ['점검 현황','Check status','Estado de revisión'],
+  hqSub:     ['지점마다 오늘 어디까지 했는지.','How far each store got today.','Avance de cada tienda hoy.'],
+  hqStore:   ['지점','Store','Tienda'],
+  hqDone:    ['확인','Checked','Revisado'],
+  hqSubmit:  ['제출','Submitted','Enviado'],
+  hqNeed:    ['미처리','Pending','Pendiente'],
+  hqNot:     ['미시작','Not started','Sin iniciar'],
+  hqProg:    ['진행 중','In progress','En curso'],
+  pilot:     ['시범 운영 — 할리우드 야채·과일부터. 신선 데일리와 같은 자료를 봅니다.',
+              'Pilot — Hollywood produce first. Same data as Fresh Daily.',
+              'Piloto — Hollywood primero. Mismos datos que Fresh Daily.'],
+};
+const t=(k,n)=>{ const a=T[k]; let s=a?(a[L3.indexOf(LANG)]||a[0]):k; if(n!=null)s=s.replace('%n',n); return s; };
+function setLang(l){ if(!L3.includes(l))return; LANG=l;
+  try{ localStorage.setItem('km.lang',l); }catch(e){}
+  try{ document.documentElement.lang=l; }catch(e){}
+  try{ window.dispatchEvent(new CustomEvent('km-lang-changed',{detail:l})); }catch(e){}
+  render(); }
+window.addEventListener('km-lang-changed',e=>{ const l=e&&e.detail; if(L3.includes(l)&&l!==LANG){ LANG=l; render(); } });
 const STORES=[{key:'coral',name:'Coral Springs',ko:'코럴 스프링스'},{key:'hollywood',name:'Hollywood',ko:'할리우드'},
   {key:'lasolas',name:'Las Olas',ko:'라스올라스'},{key:'miami',name:'Miami',ko:'마이애미'},
   {key:'pembroke',name:'Pembroke Pines',ko:'펨브로크 파인즈'},{key:'wpb',name:'West Palm Beach',ko:'웨스트팜비치'}];
 const S=Object.fromEntries(STORES.map(s=>[s.key,s]));
-const LV={o:{ic:'●',ko:'충분'},w:{ic:'◐',ko:'부족'},x:{ic:'○',ko:'없음'}};
+const LV={o:{ic:'●',k:'enough'},w:{ic:'◐',k:'low'},x:{ic:'○',k:'none'}};
 /* 후속 처리 — 부족·없음이면 무엇을 할지 고른다 */
-const ACT={stock:'창고에서 보충',order:'주문 필요',incoming:'입고 예정'};
+const ACT={stock:'actStock',order:'actOrder',incoming:'actIncome'};
 
 const $=(s,r=document)=>r.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -176,6 +263,16 @@ const lsGet=k=>{try{return JSON.parse(localStorage.getItem(k))}catch(e){return n
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 function toast(m){const r=$('#toastRoot');r.innerHTML='<div class="toast">'+esc(m)+'</div>';clearTimeout(toast.h);toast.h=setTimeout(()=>r.innerHTML='',2600)}
 function okDoc(d){if(!d||!d.exists)return null;const v=d.data();if(!v||typeof v!=='object'||Array.isArray(v)||v.error)return null;delete v._id;return v}
+
+/* 이름 — 한국어 화면은 한글 이름을 크게, 그 밖에는 POS 등록명(영어)을 크게.
+   상품명을 스페인어로 바꾸지 않는 것은 일부러다: POS·주문서가 전부 영어라
+   스페인어로 적어 두면 정작 찾을 때 못 찾는다. */
+const itemName=it=>LANG==='ko'?(it.ko||it.en||''):(it.en||it.ko||'');
+const itemSub =it=>LANG==='ko'?(it.en||''):(it.ko||'');
+const storeName=()=>{const s=S[G.my];return s?(LANG==='ko'?s.ko:s.name):G.my};
+/* 묶음 이름은 카탈로그에 "Leafy greens · 엽채류" 처럼 둘이 붙어 있다 — 쓰는 말만 남긴다 */
+function bandName(b){ const s=String(b||''); const p=s.split('·').map(x=>x.trim());
+  if(p.length<2)return s; return LANG==='ko'?(p[1]||p[0]):(p[0]||p[1]); }
 
 const P=lsGet('kfd3-prefs')||{};
 const G={date:today(),my:P.store||'hollywood',name:P.name||'',tab:'check',move:null,held:null,filter:'all'};
@@ -240,15 +337,15 @@ async function saveOrder(list){
 }
 
 /* ── 저장 ─────────────────────────────────────────────────── */
-function queueSave(){ if(!db)return; pending=true; status='저장 중…'; paintFoot(); clearTimeout(saveT); saveT=setTimeout(flush,700); }
+function queueSave(){ if(!db)return; pending=true; status=t('saving'); paintFoot(); clearTimeout(saveT); saveT=setTimeout(flush,700); }
 async function flush(){
   clearTimeout(saveT); if(!db)return;
   const c=counts();
   const body={date:G.date,store:G.my,dept:DEPT,name:(G.name||'').trim(),by:uid||null,updatedAt:Date.now(),
     s:MY.s,r:MY.r,n:MY.n,t:MY.t,q:MY.q,a:MY.a,done:!!MY.done,doneAt:MY.doneAt,
     total:c.t,ok:c.o,low:c.w,no:c.x};
-  try{ await db.doc('checks/'+docId(G.date,G.my)).set(body); status='저장됨'; }
-  catch(e){ status=''; toast('저장 실패 — 다시 로그인해 보세요'); }
+  try{ await db.doc('checks/'+docId(G.date,G.my)).set(body); status=t('saved'); }
+  catch(e){ status=''; toast(t('saveFail')); }
   pending=false; paintFoot();
 }
 function counts(){ const it=ITEMS||[]; let o=0,w=0,x=0;
@@ -257,15 +354,25 @@ function counts(){ const it=ITEMS||[]; let o=0,w=0,x=0;
   return {o,w,x,t:it.length,done:o+w+x,u:it.length-o-w-x,need}; }
 
 /* ── 그리기 ───────────────────────────────────────────────── */
+const TABKEY={check:'tabCheck',order:'tabOrder',hq:'tabHq'};
 function render(){
-  for(const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', b.dataset.tab===G.tab);
+  try{ document.documentElement.lang=LANG; document.title=t('dept')+' — '+(LANG==='ko'?'진열 점검':'Display check'); }catch(e){}
+  for(const b of document.querySelectorAll('#tabs button[data-tab]')){
+    b.setAttribute('aria-selected', b.dataset.tab===G.tab);
+    b.textContent=t(TABKEY[b.dataset.tab]);
+  }
+  const lg=document.getElementById('langs');
+  if(lg) lg.innerHTML=[['ko','한국어'],['en','English'],['es','Español']]
+    .map(([k,l])=>`<button data-lang="${k}" aria-pressed="${LANG===k}">${l}</button>`).join('');
   if(G.tab==='check')renderCheck(); else if(G.tab==='order')renderOrder(); else renderHQ();
 }
-document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;G.tab=b.dataset.tab;G.held=null;render()});
+document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.lang){ setLang(b.dataset.lang); return; }
+  if(!b.dataset.tab)return; G.tab=b.dataset.tab; G.held=null; render();});
 
 function renderCheck(){
   const v=$('#view');
-  if(!ITEMS){ v.innerHTML='<div class="empty">불러오는 중…</div>'; return; }
+  if(!ITEMS){ v.innerHTML='<div class="empty">'+esc(t('loading'))+'</div>'; return; }
   const c=counts();
   const pct=c.t?Math.round(c.done/c.t*100):0;
   const list=ordered().filter(it=>G.filter==='all'
@@ -275,37 +382,37 @@ function renderCheck(){
 
   let h=`<div class="hero"><div class="t">
       <div class="lbl">FRESH CHECK · DAILY ROUTINE</div>
-      <h1>오늘도 빈 매대 없이, 신선하게.</h1>
-      <p>상품을 확인하고 필요한 주문까지 이어 가세요.</p>
+      <h1>${esc(t('heroTitle'))}</h1>
+      <p>${esc(t('heroSub'))}</p>
     </div><div class="emo">🥬</div></div>
 
     <div class="kpis">
-      <div class="kpi"><span>오늘 확인</span><b>${c.done} / ${c.t}</b></div>
-      <div class="kpi ${c.u?'warn':''}"><span>미확인</span><b>${c.u}</b></div>
-      <div class="kpi ${c.need?'bad':''}"><span>후속 처리 대기</span><b>${c.need}</b></div>
+      <div class="kpi"><span>${esc(t('kDone'))}</span><b>${c.done} / ${c.t}</b></div>
+      <div class="kpi ${c.u?'warn':''}"><span>${esc(t('kTodo'))}</span><b>${c.u}</b></div>
+      <div class="kpi ${c.need?'bad':''}"><span>${esc(t('kNeed'))}</span><b>${c.need}</b></div>
     </div>
 
-    <div class="prog"><div class="row"><span>🥬 ${DEPT_KO} · 오늘의 진열 체크</span>
-      <small>${esc(S[G.my]?.ko||G.my)} · ${pct}% 완료</small></div>
+    <div class="prog"><div class="row"><span>🥬 ${esc(t('dept'))} · ${esc(t('todayCheck'))}</span>
+      <small>${esc(storeName())} · ${pct}% ${esc(t('pctDone'))}</small></div>
       <div class="bar"><i style="width:${pct}%"></i></div></div>
 
     <div class="tools">
-      ${[['all','전체'],['todo',`미확인 ${c.u}`],['need',`부족·없음 ${c.w+c.x}`],['star','★ 핵심']]
+      ${[['all',t('fAll')],['todo',t('fTodo')+' '+c.u],['need',t('fNeed')+' '+(c.w+c.x)],['star',t('fStar')]]
         .map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${G.filter===k}">${l}</button>`).join('')}
       <span class="sp"></span>
-      <button class="chip" data-move="${G.move?'0':'1'}" aria-pressed="${!!G.move}">🔀 동선 순서 바꾸기</button>
+      <button class="chip" data-move="${G.move?'0':'1'}" aria-pressed="${!!G.move}">${esc(t('moveOn'))}</button>
     </div>`;
 
-  if(G.move) h+=`<div class="movebar">🔀 동선 순서 바꾸는 중 — <b>옮기기</b> 를 누르고, 놓을 자리의 <b>여기로</b> 를 누르세요
-      <button data-move="0">끝내기</button></div>`;
+  if(G.move) h+=`<div class="movebar">${t('moveBar')}
+      <button data-move="0">${esc(t('moveEnd'))}</button></div>`;
 
   h+='<div class="grid">';
-  if(!list.length) h+='<div class="empty" style="grid-column:1/-1">보여 줄 것이 없습니다</div>';
+  if(!list.length) h+='<div class="empty" style="grid-column:1/-1">'+esc(t('nothing'))+'</div>';
   let band=null;
   for(const it of list){
     if(!G.move && it.cat!==band){ band=it.cat;
       const n=list.filter(x=>x.cat===band).length;
-      h+=`<div class="band"><span>${esc(band||'')}</span><small>${n}개</small></div>`; }
+      h+=`<div class="band"><span>${esc(bandName(band))}</span><small>${n}</small></div>`; }
     h+=cardHtml(it);
   }
   h+='</div>';
@@ -318,27 +425,27 @@ function cardHtml(it){
   const act=(MY&&MY.a&&MY.a[it.id])||'';
   const s=dayAvg(it.id), p=parOf(it.id);
   const need=['w','x'].includes(lv);
-  const st=lv?`확인됨 · <b>${LV[lv].ko}</b>`:'미확인 · 오늘 현장 확인 필요';
+  const st=lv?`${esc(t('checked'))} · <b>${esc(t(LV[lv].k))}</b>`:esc(t('notyet'));
   let chips='';
-  if(s) chips+=`<span class="sv">📈 하루 ${s.a.toFixed(s.a<10?1:0)}개${s.est?' 환산':''}</span>`;
-  if(p.v!=null) chips+=`<span>기준 ${p.v}</span>`;
+  if(s) chips+=`<span class="sv">📈 ${esc(t('perDay'))} ${s.a.toFixed(s.a<10?1:0)}${s.est?' '+esc(t('est')):''}</span>`;
+  if(p.v!=null) chips+=`<span>${esc(t('par'))} ${p.v}</span>`;
   return `<div class="card ${lv?'done':''} ${lv?'lv-'+lv:''} ${G.held===it.id?'held':''}" data-id="${it.id}">
     <div class="ph">${it.img?`<img src="${it.img}" alt="" loading="lazy">`:'<span style="font-size:34px">🥬</span>'}
-      <span class="flag">${lv?'✓ 확인 완료':'미확인'}</span>${it.star?'<span class="star">★</span>':''}</div>
+      <span class="flag">${esc(lv?t('flagDone'):t('flagTodo'))}</span>${it.star?'<span class="star">★</span>':''}</div>
     <div class="bd">
-      <div><h3>${esc(it.ko||it.en)}</h3><div class="en">${esc(it.en||'')}</div></div>
+      <div><h3>${esc(itemName(it))}</h3><div class="en">${esc(itemSub(it))}</div></div>
       <div class="st">${st}</div>
       ${chips?`<div class="sl">${chips}</div>`:''}
       <div class="lv">${['o','w','x'].map(k=>
-        `<button class="${k}" data-lv="${k}" aria-pressed="${lv===k}">${LV[k].ic} ${LV[k].ko}</button>`).join('')}</div>
-      ${need?`<div class="act"><div class="hint">창고 · 기존 주문 확인</div>
+        `<button class="${k}" data-lv="${k}" aria-pressed="${lv===k}">${LV[k].ic} ${esc(t(LV[k].k))}</button>`).join('')}</div>
+      ${need?`<div class="act"><div class="hint">${esc(t('actHint'))}</div>
         <select data-act="${it.id}" class="${act?'set':''}">
-          <option value="">처리 방법 선택</option>
-          ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${l}</option>`).join('')}
+          <option value="">${esc(t('actPick'))}</option>
+          ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${esc(t(l))}</option>`).join('')}
         </select></div>`:''}
       ${G.move?`<div class="mv">
-        ${G.held&&G.held!==it.id?`<button class="here" data-here="${it.id}">⬇ 여기로</button>`
-          :`<button data-hold="${it.id}">${G.held===it.id?'✋ 들고 있음':'옮기기'}</button>`}
+        ${G.held&&G.held!==it.id?`<button class="here" data-here="${it.id}">${esc(t('here'))}</button>`
+          :`<button data-hold="${it.id}">${esc(G.held===it.id?t('holding'):t('move'))}</button>`}
         <button data-up="${it.id}">▲</button><button data-down="${it.id}">▼</button>
       </div>`:''}
     </div></div>`;
@@ -350,8 +457,8 @@ function paintFoot(){
   f.hidden=false;
   const c=counts();
   const ready=c.u===0;
-  f.innerHTML=`<div class="in"><div class="left">${status?esc(status)+' · ':''}${c.u?`미확인 ${c.u}개가 남았습니다`:`모두 확인했습니다 · 부족 ${c.w} · 없음 ${c.x}`}</div>
-    <button class="go" id="send" ${MY&&MY.done?'disabled':''}>${MY&&MY.done?'✓ 제출됨':'오늘 점검 제출'}<small>${ready?'바로 제출':'미확인이 있어도 제출 가능'}</small></button></div>`;
+  f.innerHTML=`<div class="in"><div class="left">${status?esc(status)+' · ':''}${esc(c.u?t('leftTodo',c.u):t('allDone')+` · ${t('low')} ${c.w} · ${t('none')} ${c.x}`)}</div>
+    <button class="go" id="send" ${MY&&MY.done?'disabled':''}>${esc(MY&&MY.done?t('submitted'):t('submit'))}<small>${esc(t('subHint'))}</small></button></div>`;
 }
 
 /* ── 손놀림 ───────────────────────────────────────────────── */
@@ -382,7 +489,7 @@ $('#view').addEventListener('change',e=>{
 $('#foot').addEventListener('click',async e=>{
   if(!e.target.closest('#send'))return;
   MY.done=true; MY.doneAt=Date.now(); await flush();
-  toast('오늘 점검을 제출했습니다'); render();
+  toast(t('sent')); render();
 });
 
 async function moveTo(fromId,toId){
@@ -390,7 +497,7 @@ async function moveTo(fromId,toId){
   const list=ordered(); const i=list.findIndex(x=>x.id===fromId), j=list.findIndex(x=>x.id===toId);
   if(i<0||j<0)return;
   const [it]=list.splice(i,1); list.splice(list.findIndex(x=>x.id===toId),0,it);
-  await saveOrder(list); toast('옮겼습니다');
+  await saveOrder(list); toast(t('moved'));
 }
 async function nudge(id,d){
   const list=ordered(); const i=list.findIndex(x=>x.id===id); const j=i+d;
@@ -403,51 +510,51 @@ async function nudge(id,d){
 function renderOrder(){
   $('#foot').hidden=true;
   const v=$('#view');
-  if(!ITEMS){ v.innerHTML='<div class="empty">불러오는 중…</div>'; return; }
+  if(!ITEMS){ v.innerHTML='<div class="empty">'+esc(t('loading'))+'</div>'; return; }
   const rows=ordered().filter(it=>['w','x'].includes(MY&&MY.s[it.id]));
   let h=`<div class="hero"><div class="t"><div class="lbl">ORDER FOLLOW-UP</div>
-      <h1>처리할 것 ${rows.length}건</h1><p>부족·없음으로 올라온 것만 모았습니다.</p></div><div class="emo">🧾</div></div>`;
-  if(!rows.length){ v.innerHTML=h+'<div class="empty" style="margin-top:14px">처리할 것이 없습니다 ✓</div>'; return; }
+      <h1>${esc(t('ordTitle',rows.length))}</h1><p>${esc(t('ordSub'))}</p></div><div class="emo">🧾</div></div>`;
+  if(!rows.length){ v.innerHTML=h+'<div class="empty" style="margin-top:14px">'+esc(t('ordNone'))+'</div>'; return; }
   h+='<div class="rowlist" style="margin-top:14px">';
   for(const it of rows){
     const lv=MY.s[it.id], act=MY.a[it.id]||'';
     const p=parOf(it.id), s=dayAvg(it.id);
     h+=`<div class="r" data-id="${it.id}">
       ${it.img?`<img src="${it.img}" alt="">`:'<span style="font-size:28px">🥬</span>'}
-      <div class="t"><b>${esc(it.ko||it.en)}</b>
-        <span>${esc(it.en||'')}${p.v!=null?` · 기준 ${p.v}`:''}${s?` · 하루 ${s.a.toFixed(s.a<10?1:0)}개`:''}</span></div>
-      <span class="tag ${lv}">${LV[lv].ko}</span>
+      <div class="t"><b>${esc(itemName(it))}</b>
+        <span>${esc(itemSub(it))}${p.v!=null?` · ${esc(t('par'))} ${p.v}`:''}${s?` · ${esc(t('perDay'))} ${s.a.toFixed(s.a<10?1:0)}`:''}</span></div>
+      <span class="tag ${lv}">${esc(t(LV[lv].k))}</span>
       <select data-act="${it.id}" class="${act?'set':''}" style="flex:none;width:140px;padding:8px;border:1px solid var(--line);border-radius:9px;background:var(--sunk);font-weight:700;font-size:12.5px">
-        <option value="">처리 방법</option>
-        ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${l}</option>`).join('')}
+        <option value="">${esc(t('actPick'))}</option>
+        ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${esc(t(l))}</option>`).join('')}
       </select></div>`;
   }
   h+='</div>';
   const need=rows.filter(it=>!MY.a[it.id]).length;
   h+=`<p style="margin-top:12px;font-size:13px;color:var(--muted);font-weight:600">
-      ${need?`아직 처리 방법을 안 고른 것 ${need}건`:'모두 처리 방법을 골랐습니다 ✓'}</p>`;
+      ${esc(need?t('ordLeft',need):t('ordNone'))}</p>`;
   v.innerHTML=h;
 }
 
 /* ── ◎ HQ 현황 ────────────────────────────────────────────── */
 function renderHQ(){
   $('#foot').hidden=true;
-  const v=$('#view'); const t=(ITEMS||[]).length;
+  const v=$('#view'); const nAll=(ITEMS||[]).length;
   let h=`<div class="hero"><div class="t"><div class="lbl">HQ · ${esc(G.date)}</div>
-      <h1>${DEPT_KO} 점검 현황</h1><p>지점마다 오늘 어디까지 했는지.</p></div><div class="emo">◎</div></div>
-    <table class="mx" style="margin-top:14px"><thead><tr><th>지점</th><th class="n">확인</th><th class="n">부족</th><th class="n">없음</th><th class="n">미처리</th><th>제출</th></tr></thead><tbody>`;
+      <h1>${esc(t('dept'))} ${esc(t('hqTitle'))}</h1><p>${esc(t('hqSub'))}</p></div><div class="emo">◎</div></div>
+    <table class="mx" style="margin-top:14px"><thead><tr><th>${esc(t('hqStore'))}</th><th class="n">${esc(t('hqDone'))}</th><th class="n">${esc(t('low'))}</th><th class="n">${esc(t('none'))}</th><th class="n">${esc(t('hqNeed'))}</th><th>${esc(t('hqSubmit'))}</th></tr></thead><tbody>`;
   for(const s of STORES){
     const d=DOCS[docId(G.date,s.key)];
-    if(!d){ h+=`<tr><th>${esc(s.ko)}</th><td class="n" colspan="4" style="color:var(--muted)">미시작</td><td style="color:var(--muted)">—</td></tr>`; continue; }
+    if(!d){ h+=`<tr><th>${esc(LANG==='ko'?s.ko:s.name)}</th><td class="n" colspan="4" style="color:var(--muted)">${esc(t('hqNot'))}</td><td style="color:var(--muted)">—</td></tr>`; continue; }
     const done=(d.ok||0)+(d.low||0)+(d.no||0);
     const need=Object.keys(d.s||{}).filter(k=>['w','x'].includes(d.s[k])&&!((d.a||{})[k])).length;
-    h+=`<tr><th>${esc(s.ko)}${s.key===G.my?' · 내 지점':''}</th>
-      <td class="n">${done}/${d.total||t}</td><td class="n">${d.low||0}</td><td class="n">${d.no||0}</td>
+    h+=`<tr><th>${esc(LANG==='ko'?s.ko:s.name)}${s.key===G.my?' ·':''}</th>
+      <td class="n">${done}/${d.total||nAll}</td><td class="n">${d.low||0}</td><td class="n">${d.no||0}</td>
       <td class="n" style="${need?'color:var(--no);font-weight:700':''}">${need}</td>
-      <td>${d.done?'✓ '+new Date(d.doneAt||d.updatedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'진행 중'}</td></tr>`;
+      <td>${d.done?'✓ '+new Date(d.doneAt||d.updatedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):esc(t('hqProg'))}</td></tr>`;
   }
   h+='</tbody></table>';
-  h+=`<p style="margin-top:12px;font-size:12.5px;color:var(--muted)">시범 운영 — 할리우드 ${DEPT_KO}부터. 신선 데일리(key-fresh.html)와 같은 자료를 봅니다.</p>`;
+  h+=`<p style="margin-top:12px;font-size:12.5px;color:var(--muted)">${esc(t('pilot'))}</p>`;
   v.innerHTML=h;
 }
 
