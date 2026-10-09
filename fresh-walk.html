@@ -125,6 +125,25 @@ button{cursor:pointer}
 .foot button.go small{display:block;font-size:11px;font-weight:600;opacity:.85}
 
 .empty{background:var(--surface);border:1px dashed var(--line);border-radius:var(--r);padding:26px;text-align:center;color:var(--muted);font-weight:600}
+/* ➕ 상품 추가 */
+.chip.add{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.card .addtag{background:var(--brand);color:#fff;border-radius:99px;padding:2px 8px;font-size:10.5px;font-weight:800}
+.card .del{border:1px solid var(--line);background:none;color:var(--muted);border-radius:9px;padding:7px;font-size:12px;font-weight:700;margin-top:2px}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:50}
+.sheet{position:fixed;left:50%;transform:translateX(-50%);bottom:0;z-index:51;width:min(520px,100%);
+  background:var(--surface);border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;
+  padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));max-height:88vh;overflow:auto}
+.sheet h3{margin:0 0 3px;font-size:18px;font-weight:800}
+.sheet .sub{margin:0 0 14px;font-size:12.5px;color:var(--muted)}
+.sheet label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:11px}
+.sheet input[type=text],.sheet input:not([type]),.sheet select{display:block;width:100%;margin-top:5px;padding:11px 12px;
+  border:1px solid var(--line);border-radius:11px;background:var(--sunk);font-size:15px;font-weight:600}
+.sheet .phrow{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+.sheet .ph{flex:1;border:1px dashed var(--line);background:var(--sunk);border-radius:11px;padding:13px;font-weight:700;font-size:13.5px;color:var(--muted)}
+.sheet .phrow img{width:66px;height:66px;object-fit:cover;border-radius:11px;border:1px solid var(--line)}
+.sheet .row{display:flex;gap:9px}
+.sheet .row button{flex:1;border-radius:12px;padding:13px;font-weight:800;font-size:15px;border:1px solid var(--line);background:var(--sunk);color:var(--muted)}
+.sheet .row button.go{background:var(--brand);border-color:var(--brand);color:#fff}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:86px;background:#16211b;color:#fff;border-radius:11px;padding:10px 16px;font-size:13.5px;font-weight:700;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.25)}
 .rowlist{display:flex;flex-direction:column;gap:9px}
 .rowlist .r{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;display:flex;gap:11px;align-items:center}
@@ -150,6 +169,7 @@ table.mx td.n{text-align:right;font-family:var(--m)}
 
 <div class="wrap" id="view"></div>
 <div class="foot" id="foot" hidden></div>
+<div id="sheetRoot"></div>
 <div id="toastRoot"></div>
 
 <script>
@@ -239,6 +259,26 @@ const T={
   pilot:     ['시범 운영 — 할리우드 야채·과일부터. 신선 데일리와 같은 자료를 봅니다.',
               'Pilot — Hollywood produce first. Same data as Fresh Daily.',
               'Piloto — Hollywood primero. Mismos datos que Fresh Daily.'],
+  addBtn:    ['➕ 상품 추가','➕ Add item','➕ Agregar'],
+  addTitle:  ['목록에 없는 상품 추가','Add an item that is missing','Agregar un artículo que falta'],
+  addSub:    ['더하면 모든 지점 목록에 같이 생깁니다.','It will appear for every store.','Aparecerá en todas las tiendas.'],
+  addKo:     ['한글 이름','Korean name','Nombre en coreano'],
+  addEn:     ['영어 이름 (POS 이름이면 더 좋습니다)','English name (POS name is best)','Nombre en inglés (mejor el de POS)'],
+  addBand:   ['묶음','Group','Grupo'],
+  addNew:    ['＋ 새 묶음 만들기','＋ New group','＋ Nuevo grupo'],
+  addPhoto:  ['📷 사진 찍기 · 고르기','📷 Take / choose photo','📷 Tomar / elegir foto'],
+  addPhotoOk:['사진 넣음','Photo added','Foto agregada'],
+  addSave:   ['추가하기','Add','Agregar'],
+  cancel:    ['취소','Cancel','Cancelar'],
+  addedTag:  ['직접 추가','Added','Agregado'],
+  addedBand: ['추가한 품목','Added items','Artículos agregados'],
+  needName:  ['이름을 적어 주세요','Please enter a name','Escribe un nombre'],
+  added:     ['추가했습니다','Added','Agregado'],
+  dupName:   ['같은 이름이 이미 있습니다','That name already exists','Ese nombre ya existe'],
+  delItem:   ['이 상품 지우기','Remove this item','Quitar este artículo'],
+  delAsk:    ['지우면 모든 지점 목록에서 사라집니다. 지울까요?','This removes it for every store. Remove?','Se quita en todas las tiendas. ¿Quitar?'],
+  deleted:   ['지웠습니다','Removed','Quitado'],
+  onlyAdded: ['직접 추가한 상품만 지울 수 있습니다','Only items you added can be removed','Solo se pueden quitar los agregados'],
 };
 const t=(k,n)=>{ const a=T[k]; let s=a?(a[L3.indexOf(LANG)]||a[0]):k; if(n!=null)s=s.replace('%n',n); return s; };
 function setLang(l){ if(!L3.includes(l))return; LANG=l;
@@ -271,12 +311,17 @@ const itemName=it=>LANG==='ko'?(it.ko||it.en||''):(it.en||it.ko||'');
 const itemSub =it=>LANG==='ko'?(it.en||''):(it.ko||'');
 const storeName=()=>{const s=S[G.my];return s?(LANG==='ko'?s.ko:s.name):G.my};
 /* 묶음 이름은 카탈로그에 "Leafy greens · 엽채류" 처럼 둘이 붙어 있다 — 쓰는 말만 남긴다 */
-function bandName(b){ const s=String(b||''); const p=s.split('·').map(x=>x.trim());
+function bandName(b){ if(b===ADDED_CAT)return t('addedBand'); const s=String(b||''); const p=s.split('·').map(x=>x.trim());
   if(p.length<2)return s; return LANG==='ko'?(p[1]||p[0]):(p[0]||p[1]); }
 
 const P=lsGet('kfd3-prefs')||{};
 const G={date:today(),my:P.store||'hollywood',name:P.name||'',tab:'check',move:null,held:null,filter:'all'};
 let db=null,uid=null,ITEMS=null,DOCS={},MY=null,ORDER=null,SALES=null,SCALE=null,PAR={},LINK={},pending=false,saveT=null,status='';
+/* ➕ 목록에 없는 상품 — 카탈로그 파일(key-fresh-cat/produce.json)은 앱에서 못 고치니
+   서버에 따로 쌓는다. 2026-10-09 전무님: "상품 추가 할 수 있게 해 줘. 없는 것들도 있네."
+   한 번 더하면 모든 지점에 같이 생긴다 (상품은 체인이 같다). 지우는 것도 직접 더한 것만. */
+let ADD={};
+const ADDED_CAT='__added__';
 
 /* ── 자료 들여오기 ─────────────────────────────────────────── */
 async function boot(){
@@ -296,6 +341,7 @@ async function reload(){
           .onSnapshot(s=>{try{un&&un()}catch(_){ } res(s)},e=>rej(e)); });
        DOCS={}; for(const d of snap.docs) DOCS[d.id]=d.data(); }catch(e){}
   syncMine();
+  try{ ADD=okDoc(await db.doc('extra/'+DEPT).get())||{}; }catch(e){ ADD={}; }
   try{ ORDER=okDoc(await db.doc('order/'+G.my+'_'+DEPT).get()); }catch(e){ ORDER=null; }
   try{ PAR=okDoc(await db.doc('par/'+G.my+'_'+DEPT).get())||{}; }catch(e){ PAR={}; }
   try{ LINK=okDoc(await db.doc('poslink/'+DEPT).get())||{}; }catch(e){ LINK={}; }
@@ -321,16 +367,94 @@ function parOf(id){ if(PAR[id]!=null)return {v:PAR[id],from:'set'};
   const s=dayAvg(id); if(s&&s.a>0)return {v:Math.max(1,Math.ceil(s.a*2)),from:'sales'}; return {v:null,from:''}; }
 
 /* ── 동선 순서 ─────────────────────────────────────────────── */
+/* 카탈로그 + 직접 더한 것 */
+function allItems(){
+  const base=ITEMS||[];
+  const extra=Object.keys(ADD||{}).map(id=>Object.assign({id},ADD[id],{_add:1}));
+  return base.concat(extra);
+}
 function ordered(){
   if(!ITEMS)return [];
+  const list=allItems();
   const seq=(ORDER&&Array.isArray(ORDER.seq))?ORDER.seq:null;
-  if(!seq)return ITEMS.slice();
-  const by=Object.fromEntries(ITEMS.map(x=>[x.id,x]));
+  if(!seq)return list;
+  const by=Object.fromEntries(list.map(x=>[x.id,x]));
   const out=[]; const used=new Set();
   for(const id of seq){ if(by[id]&&!used.has(id)){ out.push(by[id]); used.add(id); } }
-  for(const it of ITEMS) if(!used.has(it.id)) out.push(it);     // 새로 생긴 품목은 뒤에
+  for(const it of list) if(!used.has(it.id)) out.push(it);      // 새로 생긴 품목은 뒤에
   return out;
 }
+/* ── ➕ 상품 추가 ──────────────────────────────────────────── */
+let NEWPH='';                       // 추가 창에서 찍은 사진 (data:URL)
+function bandList(){
+  const seen=[]; for(const it of (ITEMS||[])) if(it.cat&&!seen.includes(it.cat)) seen.push(it.cat);
+  return seen;
+}
+function openAdd(){
+  NEWPH='';
+  const bands=bandList();
+  $('#sheetRoot').innerHTML=`<div class="scrim" data-close="1"></div><div class="sheet" role="dialog">
+    <h3>${esc(t('addTitle'))}</h3><p class="sub">${esc(t('addSub'))}</p>
+    <label>${esc(t('addKo'))}<input id="nk" autocomplete="off" placeholder="예: 깻잎"></label>
+    <label>${esc(t('addEn'))}<input id="ne" autocomplete="off" placeholder="PERILLA LEAF"></label>
+    <label>${esc(t('addBand'))}<select id="nb">
+      ${bands.map(b=>`<option value="${esc(b)}">${esc(bandName(b))}</option>`).join('')}
+      <option value="${ADDED_CAT}" selected>${esc(t('addedBand'))}</option></select></label>
+    <div class="phrow">
+      <button type="button" class="ph" id="npBtn">${esc(t('addPhoto'))}</button>
+      <img id="npImg" hidden alt="">
+    </div>
+    <input type="file" id="npFile" accept="image/*" capture="environment" hidden>
+    <div class="row">
+      <button type="button" data-close="1" class="ghost">${esc(t('cancel'))}</button>
+      <button type="button" id="nSave" class="go">${esc(t('addSave'))}</button>
+    </div></div>`;
+  setTimeout(()=>{const e=document.getElementById('nk');e&&e.focus()},60);
+}
+function closeSheet(){ $('#sheetRoot').innerHTML=''; NEWPH=''; }
+
+/* 사진은 작게 줄여 넣는다 — 원본을 그대로 담으면 목록이 무거워져 폰에서 느려진다.
+   createImageBitmap + close() 를 쓰는 것은 iOS 에서 사진 여러 장 다룰 때 뻗던 일이 있어서다. */
+async function shrinkPhoto(file){
+  const MAX=360;
+  let bmp=null;
+  try{ bmp=await createImageBitmap(file); }
+  catch(e){ bmp=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(file)}); }
+  const w=bmp.width||bmp.naturalWidth, hgt=bmp.height||bmp.naturalHeight;
+  const k=Math.min(1,MAX/Math.max(w,hgt));
+  const cv=document.createElement('canvas'); cv.width=Math.round(w*k); cv.height=Math.round(hgt*k);
+  cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);
+  try{ bmp.close&&bmp.close(); }catch(e){}
+  return cv.toDataURL('image/jpeg',0.72);
+}
+async function doAdd(){
+  const ko=(document.getElementById('nk').value||'').trim();
+  const en=(document.getElementById('ne').value||'').trim();
+  const cat=document.getElementById('nb').value||ADDED_CAT;
+  if(!ko&&!en){ toast(t('needName')); return; }
+  const norm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9가-힣]+/g,'');
+  const mine=[norm(ko),norm(en)].filter(Boolean);
+  for(const it of allItems()){ const a=[norm(it.ko),norm(it.en)].filter(Boolean);
+    if(a.some(x=>mine.includes(x))){ toast(t('dupName')); return; } }
+  const id='add_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  const row={ko:ko||en,en:en||ko,cat,img:NEWPH||'',by:(G.name||'').trim(),store:G.my,ts:Date.now()};
+  // 다른 사람이 그 사이 더했을 수 있으니 한 번 다시 읽고 덮는다
+  try{ const cur=okDoc(await db.doc('extra/'+DEPT).get()); if(cur)ADD=Object.assign(cur,ADD); }catch(e){}
+  ADD[id]=row;
+  try{ await db.doc('extra/'+DEPT).set(ADD); }catch(e){ delete ADD[id]; toast(t('saveFail')); return; }
+  closeSheet(); toast(t('added')); G.filter='all'; render();
+  setTimeout(()=>{ const el=document.querySelector(`.card[data-id="${id}"]`);
+    if(el){ el.scrollIntoView({behavior:'smooth',block:'center'}); } },120);
+}
+async function delAdd(id){
+  if(!ADD[id]){ toast(t('onlyAdded')); return; }
+  if(!confirm(t('delAsk')))return;
+  const keep=ADD[id]; delete ADD[id];
+  try{ await db.doc('extra/'+DEPT).set(ADD); }catch(e){ ADD[id]=keep; toast(t('saveFail')); return; }
+  if(MY){ delete MY.s[id]; delete MY.a[id]; delete MY.q[id]; queueSave(); }
+  toast(t('deleted')); render();
+}
+
 async function saveOrder(list){
   ORDER={seq:list.map(x=>x.id),by:G.name||'',ts:Date.now()};
   if(!db)return; try{ await db.doc('order/'+G.my+'_'+DEPT).set(ORDER); }catch(e){ toast('순서 저장 실패'); }
@@ -348,7 +472,7 @@ async function flush(){
   catch(e){ status=''; toast(t('saveFail')); }
   pending=false; paintFoot();
 }
-function counts(){ const it=ITEMS||[]; let o=0,w=0,x=0;
+function counts(){ const it=ITEMS?allItems():[]; let o=0,w=0,x=0;
   for(const i of it){ const v=MY&&MY.s[i.id]; if(v==='o')o++;else if(v==='w')w++;else if(v==='x')x++; }
   const need=it.filter(i=>['w','x'].includes(MY&&MY.s[i.id])&&!(MY.a&&MY.a[i.id])).length;
   return {o,w,x,t:it.length,done:o+w+x,u:it.length-o-w-x,need}; }
@@ -400,6 +524,7 @@ function renderCheck(){
       ${[['all',t('fAll')],['todo',t('fTodo')+' '+c.u],['need',t('fNeed')+' '+(c.w+c.x)],['star',t('fStar')]]
         .map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${G.filter===k}">${l}</button>`).join('')}
       <span class="sp"></span>
+      <button class="chip add" data-add="1">${esc(t('addBtn'))}</button>
       <button class="chip" data-move="${G.move?'0':'1'}" aria-pressed="${!!G.move}">${esc(t('moveOn'))}</button>
     </div>`;
 
@@ -431,7 +556,7 @@ function cardHtml(it){
   if(p.v!=null) chips+=`<span>${esc(t('par'))} ${p.v}</span>`;
   return `<div class="card ${lv?'done':''} ${lv?'lv-'+lv:''} ${G.held===it.id?'held':''}" data-id="${it.id}">
     <div class="ph">${it.img?`<img src="${it.img}" alt="" loading="lazy">`:'<span style="font-size:34px">🥬</span>'}
-      <span class="flag">${esc(lv?t('flagDone'):t('flagTodo'))}</span>${it.star?'<span class="star">★</span>':''}</div>
+      <span class="flag">${esc(lv?t('flagDone'):t('flagTodo'))}</span>${it._add?`<span class="star addtag">${esc(t('addedTag'))}</span>`:(it.star?'<span class="star">★</span>':'')}</div>
     <div class="bd">
       <div><h3>${esc(itemName(it))}</h3><div class="en">${esc(itemSub(it))}</div></div>
       <div class="st">${st}</div>
@@ -443,6 +568,7 @@ function cardHtml(it){
           <option value="">${esc(t('actPick'))}</option>
           ${Object.entries(ACT).map(([k,l])=>`<option value="${k}" ${act===k?'selected':''}>${esc(t(l))}</option>`).join('')}
         </select></div>`:''}
+      ${it._add&&!G.move?`<button type="button" class="del" data-del="${it.id}">🗑 ${esc(t('delItem'))}</button>`:''}
       ${G.move?`<div class="mv">
         ${G.held&&G.held!==it.id?`<button class="here" data-here="${it.id}">${esc(t('here'))}</button>`
           :`<button data-hold="${it.id}">${esc(G.held===it.id?t('holding'):t('move'))}</button>`}
@@ -465,6 +591,8 @@ function paintFoot(){
 $('#view').addEventListener('click',async e=>{
   const b=e.target.closest('button'); if(!b)return;
   if(b.dataset.f){ G.filter=b.dataset.f; render(); return; }
+  if(b.dataset.add){ openAdd(); return; }
+  if(b.dataset.del){ delAdd(b.dataset.del); return; }
   if(b.dataset.move!=null){ G.move=b.dataset.move==='1'; G.held=null; if(G.move)G.filter='all'; render(); return; }
   const card=b.closest('.card'); const id=card&&card.dataset.id;
   if(b.dataset.lv&&id){
@@ -486,6 +614,22 @@ $('#view').addEventListener('change',e=>{
   if(s.value)MY.a[id]=s.value; else delete MY.a[id];
   MY.done=false; queueSave(); renderCheck();
 });
+/* ➕ 추가 창 안 손놀림 */
+$('#sheetRoot').addEventListener('click',e=>{
+  if(e.target.dataset.close){ closeSheet(); return; }
+  if(e.target.closest('#npBtn')){ document.getElementById('npFile').click(); return; }
+  if(e.target.closest('#nSave')){ doAdd(); return; }
+});
+$('#sheetRoot').addEventListener('change',async e=>{
+  if(e.target.id!=='npFile')return;
+  const f=e.target.files&&e.target.files[0]; if(!f)return;
+  try{ NEWPH=await shrinkPhoto(f);
+       const im=document.getElementById('npImg'); if(im){ im.src=NEWPH; im.hidden=false; }
+       const b=document.getElementById('npBtn'); if(b) b.textContent='✓ '+t('addPhotoOk');
+  }catch(err){ toast('사진을 못 읽었습니다'); }
+});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape')closeSheet(); });
+
 $('#foot').addEventListener('click',async e=>{
   if(!e.target.closest('#send'))return;
   MY.done=true; MY.doneAt=Date.now(); await flush();
