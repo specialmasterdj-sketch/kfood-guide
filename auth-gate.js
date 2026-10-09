@@ -179,10 +179,30 @@ function syncToChatMe(profile){
     // 🔒 2026-05-15: 비매니저(스태프)는 RTDB users/{uid}/branch 가 권위 —
     // chat.me.branch 가 다르면 강제 보정. 코럴 직원이 헐리우드 들어가 입력하던
     // 사건 해결. profile.branch === '*' 는 글로벌 admin(DJ/B.H.K) 한정으로만 의미.
+    /* 🔒 2026-10-09 전무님: "코럴 매니저가 로그인하면 마이애미 매장으로 들어간대."
+       서버에는 KWANGHO NOH = MANAGER · CORAL_SPRINGS 로 제대로 적혀 있었다.
+       그런데 '매니저급' 이면 브라우저에 저장된 chat.me.branch 를 서버보다 먼저 쓰게 돼 있어,
+       공용 PC 에서 한 번 마이애미가 박히면 다시 로그인해도 영영 마이애미였다.
+       → 지점을 넘나드는 것은 **오너·임원만** 이다([[지점 단위 접근 제한]] 과 같은 선).
+         그 밖의 매니저·부매니저·슈퍼바이저·스태프는 서버에 적힌 지점이 이긴다.
+       그리고 **다른 사람이 로그인하면** 누구든 서버 지점으로 간다 (앞사람 지점이 남지 않게). */
+    const canRoam = ['OWNER','EXECUTIVE'].includes(authoritativeRole) || profile.branch === '*';
+    const samePerson = existing.uid && profile.uid && existing.uid === profile.uid;
     let authoritativeBranch;
-    if (isMgr) {
-      // 매니저급은 다른 지점 참고 가능 — 기존 chat.me 우선
+    if (isMgr && canRoam && samePerson) {
+      // 오너·임원이 보던 지점은 그대로 둔다 (지점 둘러보기)
       authoritativeBranch = existing.branch || (profile.branch === '*' ? 'HOLLYWOOD' : profile.branch) || 'HOLLYWOOD';
+    } else if (isMgr) {
+      // 다른 사람이 로그인했으면 앞사람 지점은 아예 안 물려받는다 (공용 PC)
+      const fallback = samePerson ? (existing.branch || 'HOLLYWOOD') : 'HOLLYWOOD';
+      authoritativeBranch = (profile.branch && profile.branch !== '*') ? profile.branch : fallback;
+      if (existing.branch && existing.branch !== authoritativeBranch) {
+        console.warn('[auth-gate] 매니저 chat.me.branch (' + existing.branch + ') ≠ RTDB (' + authoritativeBranch + ') — 서버 지점으로 보정');
+        // 다른 곳에 따로 박힌 지점도 같이 맞춘다. 지우면 앱이 '전 지점 구독' 으로 빠져
+        // 남의 매장 업무가 섞여 보인다 — 그래서 지우지 말고 올바른 값으로 덮는다.
+        try { localStorage.setItem('hub.branch', authoritativeBranch);
+              localStorage.setItem('km_branch', authoritativeBranch); } catch(_){}
+      }
     } else {
       // 스태프 — RTDB profile.branch 강제. '*' 면 폴백.
       authoritativeBranch = (profile.branch && profile.branch !== '*') ? profile.branch
@@ -681,7 +701,7 @@ window.__authGate = {
 // ⏳ 공용 컴퓨터 자동 로그아웃 (2026-10-02 전무님)
 // ------------------------------------------------------------
 //   "회사 다른 컴퓨터에서 로그아웃했는데 계정이 남아 누가 볼까 걱정된다"
-//   → 30분 동안 아무 것도 안 하면 스스로 로그아웃(auth.html?fresh=1 = 완전 삭제).
+//   → 4시간 동안 아무 것도 안 하면 스스로 로그아웃(auth.html?fresh=1 = 완전 삭제).
 //
 //   ⚠ 폰·태블릿은 일부러 제외한다. 전화번호 로그인은 다시 들어오려면 SMS 인증이
 //     필요한데 SMS 는 하루 한도가 있고, 2026-06-18 에 그 한도가 터져 전 지점이
@@ -691,8 +711,10 @@ window.__authGate = {
 // ============================================================
 (function(){
   'use strict';
-  var IDLE_MS = 30 * 60 * 1000;      // 30분
-  var WARN_MS = 60 * 1000;           // 끝나기 1분 전에 알림
+  // 2026-10-09 전무님: "코럴 매니저가 컴퓨터 안 쓰면 금방 로그아웃돼 불편하대.
+  //   너무 짧다고. 4시간 안 쓰면 로그아웃 되게 해 줘." → 30분에서 4시간으로 늘림.
+  var IDLE_MS = 4 * 60 * 60 * 1000;  // 4시간
+  var WARN_MS = 2 * 60 * 1000;       // 끝나기 2분 전에 알림 (오래 자리 비운 뒤라 1분은 짧다)
   var KEY = 'km_lastAct';
 
   function isSharedComputer(){
@@ -766,7 +788,7 @@ window.__authGate = {
     var idle = Date.now() - lastAll();
     if (idle >= IDLE_MS){
       gone = true;
-      try { console.warn('[km-idle] 30분 미사용 — 자동 로그아웃'); } catch(e){}
+      try { console.warn('[km-idle] 4시간 미사용 — 자동 로그아웃'); } catch(e){}
       location.href = './auth.html?fresh=1&idle=1';
     } else if (idle >= IDLE_MS - WARN_MS){
       showWarn(Math.max(1, Math.ceil((IDLE_MS - idle) / 1000)));
