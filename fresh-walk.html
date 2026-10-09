@@ -166,6 +166,10 @@ button{cursor:pointer}
 .sheet .lr button b{font-size:14px;font-weight:700}
 .sheet .lr button .num{font-size:11.5px;color:var(--muted);text-align:right}
 .sheet .lr .none{padding:10px;color:var(--muted);font-size:13px}
+.sheet .lr .mk{grid-template-columns:none;text-align:center;border-style:dashed;color:var(--brand);font-weight:800;font-size:13px}
+.sheet .bulk{display:block;width:100%;margin-bottom:6px;padding:12px;border:1px solid var(--brand);
+  background:var(--brand-soft);color:var(--brand);border-radius:11px;font-weight:800;font-size:13.5px}
+.sheet .bulkhint{font-size:11.5px;color:var(--muted);margin-bottom:10px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:86px;background:#16211b;color:#fff;border-radius:11px;padding:10px 16px;font-size:13.5px;font-weight:700;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.25)}
 .rowlist{display:flex;flex-direction:column;gap:9px}
 .rowlist .r{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;display:flex;gap:11px;align-items:center}
@@ -320,6 +324,14 @@ const T={
   whEmpty:   ['아직 창고 품목이 없습니다. ➕ 로 골라 주세요.','No stockroom items yet. Use ➕ to add.','Sin artículos en bodega. Usa ➕.'],
   whSaved:   ['창고 재고를 적었습니다','Stockroom count saved','Conteo guardado'],
   whAsOf:    ['기준','as of','al'],
+  noMatch:   ['찾는 품목이 없습니다','No match','Sin resultados'],
+  makeNew:   ['목록에 없는 상품 새로 만들기','Create a new item','Crear artículo nuevo'],
+  makeNamed: ['“%s” 새 상품으로 만들기','Create “%s” as a new item','Crear “%s” como nuevo'],
+  whAll:     ['📥 상품 체크에 있는 제품 전부 불러오기 (%n)','📥 Bring in all items from Check (%n)','📥 Traer todos los artículos (%n)'],
+  whAllHint: ['불러온 뒤 창고에 안 두는 것은 ✕ 로 빼면 됩니다.',
+              'After that, remove what you don’t keep with ✕.',
+              'Después quita con ✕ lo que no guardas.'],
+  whAllDone: ['%n개를 창고 목록에 넣었습니다','%n items added to the stockroom list','%n agregados a la lista de bodega'],
   whToday:   ['오늘','today','hoy'],
   whYday:    ['어제','yesterday','ayer'],
 };
@@ -483,13 +495,16 @@ function bandList(){
   const seen=[]; for(const it of (ITEMS||[])) if(it.cat&&!seen.includes(it.cat)) seen.push(it.cat);
   return seen;
 }
-function openAdd(){
-  NEWPH='';
+/* after: 만들고 나서 할 일 (창고 고르기 창에서 부르면 창고 목록에도 넣는다)
+   pre: 미리 채워 둘 이름 (찾던 말을 그대로 옮겨 적어 준다) */
+let ADDAFTER=null;
+function openAdd(after,pre){
+  NEWPH=''; ADDAFTER=after||null;
   const bands=bandList();
   $('#sheetRoot').innerHTML=`<div class="scrim" data-close="1"></div><div class="sheet" role="dialog">
     <h3>${esc(t('addTitle'))}</h3><p class="sub">${esc(t('addSub'))}</p>
-    <label>${esc(t('addKo'))}<input id="nk" autocomplete="off" placeholder="예: 깻잎"></label>
-    <label>${esc(t('addEn'))}<input id="ne" autocomplete="off" placeholder="PERILLA LEAF"></label>
+    <label>${esc(t('addKo'))}<input id="nk" autocomplete="off" placeholder="예: 깻잎" value="${esc(/[가-힣]/.test(pre||'')?(pre||''):'')}"></label>
+    <label>${esc(t('addEn'))}<input id="ne" autocomplete="off" placeholder="PERILLA LEAF" value="${esc(/[가-힣]/.test(pre||'')?'':(pre||''))}"></label>
     <label>${esc(t('addBand'))}<select id="nb">
       ${bands.map(b=>`<option value="${esc(b)}">${esc(bandName(b))}</option>`).join('')}
       <option value="${ADDED_CAT}" selected>${esc(t('addedBand'))}</option></select></label>
@@ -535,7 +550,9 @@ async function doAdd(){
   try{ const cur=okDoc(await db.doc('extra/'+DEPT).get()); if(cur)ADD=Object.assign(cur,ADD); }catch(e){}
   ADD[id]=row;
   try{ await db.doc('extra/'+DEPT).set(ADD); }catch(e){ delete ADD[id]; toast(t('saveFail')); return; }
-  closeSheet(); toast(t('added')); G.filter='all'; render();
+  const after=ADDAFTER; ADDAFTER=null;
+  if(after==='wh'){ if(!WHLIST.includes(id)){ WHLIST.push(id); await saveWhList(); } }
+  closeSheet(); toast(t('added')); if(after!=='wh')G.filter='all'; render();
   setTimeout(()=>{ const el=document.querySelector(`.card[data-id="${id}"]`);
     if(el){ el.scrollIntoView({behavior:'smooth',block:'center'}); } },120);
 }
@@ -691,7 +708,7 @@ function paintFoot(){
 $('#view').addEventListener('click',async e=>{
   const b=e.target.closest('button'); if(!b)return;
   if(b.dataset.f){ G.filter=b.dataset.f; render(); return; }
-  if(b.dataset.add){ openAdd(); return; }
+  if(b.dataset.add){ openAdd(null,''); return; }
   if(b.dataset.whadd){ openWhPick(); return; }
   if(b.dataset.whdel){ whDel(b.dataset.whdel); return; }
   if(b.dataset.del){ delAdd(b.dataset.del); return; }
@@ -740,9 +757,15 @@ $('#sheetRoot').addEventListener('click',e=>{
   if(e.target.closest('#npBtn')){ document.getElementById('npFile').click(); return; }
   if(e.target.closest('#nSave')){ doAdd(); return; }
   const wp=e.target.closest('[data-whpick]'); if(wp){ whPick(wp.dataset.whpick); return; }
+  const wn=e.target.closest('[data-whnew]'); if(wn){ openAdd('wh', wn.dataset.whnew||''); return; }
+  if(e.target.closest('[data-whall]')){ whAll(); return; }
+});
+/* 글쇠를 칠 때마다 걸러야 한다 — change 는 칸을 떠나야 터져서 찾기가 안 먹었다
+   (2026-10-09 전무님: "KOREAN PEARS" 를 쳤는데 목록이 그대로였다) */
+$('#sheetRoot').addEventListener('input',e=>{
+  if(e.target.id==='wq') paintWhPick(e.target.value);
 });
 $('#sheetRoot').addEventListener('change',async e=>{
-  if(e.target.id==='wq'){ paintWhPick(e.target.value); return; }
   if(e.target.id!=='npFile')return;
   const f=e.target.files&&e.target.files[0]; if(!f)return;
   try{ NEWPH=await shrinkPhoto(f);
@@ -839,6 +862,8 @@ function openWhPick(){
   $('#sheetRoot').innerHTML=`<div class="scrim" data-close="1"></div><div class="sheet" role="dialog">
     <h3>${esc(t('whAdd'))}</h3><p class="sub">${esc(t('whPick'))}</p>
     <input id="wq" autocomplete="off" placeholder="${esc(t('whSearch'))}">
+    ${rest.length?`<button type="button" class="bulk" data-whall="1">${esc(t('whAll').replace('%n',rest.length))}</button>
+      <div class="bulkhint">${esc(t('whAllHint'))}</div>`:''}
     <div class="lr" id="wrows"></div>
     <div class="row"><button type="button" data-close="1" class="ghost">${esc(t('cancel'))}</button></div></div>`;
   paintWhPick('');
@@ -850,9 +875,25 @@ function paintWhPick(term){
   const q=String(term||'').trim().toUpperCase();
   const rest=allItems().filter(x=>!by.has(x.id))
     .filter(x=>!q||((x.ko||'')+(x.en||'')).toUpperCase().includes(q));
-  el.innerHTML=rest.length?rest.slice(0,60).map(x=>
+  let h=rest.length?rest.slice(0,60).map(x=>
       `<button type="button" data-whpick="${x.id}"><b>${esc(itemName(x))}</b><span class="num">${esc(itemSub(x))}</span></button>`).join('')
-    :`<span class="none">${esc(t('nothing'))}</span>`;
+    :`<span class="none">${esc(t('noMatch'))}</span>`;
+  /* 목록에 아예 없는 물건이면 여기서 바로 새로 만든다 — 창까지 닫고 찾아 들어가게 하지 않는다.
+     2026-10-09 전무님: "여기에 품목이 없으면?" */
+  const typed=String(term||'').trim();
+  h+=`<button type="button" class="mk" data-whnew="${esc(typed)}">➕ ${esc(typed?t('makeNamed').replace('%s',typed):t('makeNew'))}</button>`;
+  el.innerHTML=h;
+}
+/* 📥 상품 체크에 있는 것을 한 번에 — 하나씩 고르면 82번을 눌러야 한다.
+   2026-10-09 전무님: "상품 체크에 있는 제품들 불러오기"
+   불러온 뒤 창고에 안 두는 것은 ✕ 로 빼면 된다. */
+async function whAll(){
+  const by=new Set(WHLIST);
+  const rest=allItems().filter(x=>!by.has(x.id));
+  if(!rest.length)return;
+  for(const x of rest) WHLIST.push(x.id);
+  await saveWhList();
+  closeSheet(); render(); toast(t('whAllDone').replace('%n',rest.length));
 }
 async function whPick(id){
   if(WHLIST.includes(id))return;
