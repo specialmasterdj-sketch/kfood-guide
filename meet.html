@@ -183,6 +183,11 @@ const T = {
   cIn:    ['들어온 시각','Joined','Entró'],
   cOut:   ['나간 시각','Left','Salió'],
   still:  ['참가 중','in the room','presente'],
+  gone:   ['—','—','—'],
+  leaveR: ['⏹ 나가기','⏹ Leave','⏹ Salir'],
+  clrUrl: ['회의 링크를 지웠습니다. [참가] 가 다시 꺼집니다.',
+           'Meeting link cleared. [Join] is switched off again.',
+           'Enlace borrado. [Entrar] queda apagado otra vez.'],
   ovT:    ['회의에 들어갑니다','Joining the meeting','Entrando a la reunión'],
   ovP:    ['카메라와 마이크를 켜야 할 수 있습니다. 들어가면 이름과 시각이 기록에 남습니다.\n회의가 녹화될 수 있으며, 녹화할 때는 시작하며 알려 드립니다.',
            'You may be asked for camera and microphone. Your name and time are recorded.\nThe meeting may be recorded; if so you will be told when it starts.',
@@ -190,9 +195,9 @@ const T = {
   ovC:    ['읽었고 동의합니다','I have read and agree','He leído y acepto'],
   ovGo:   ['들어가기','Join','Entrar'],
   ovNo:   ['취소','Cancel','Cancelar'],
-  askUrl: ['이 방에서 쓸 회의 링크를 넣어 주세요.\n(Google Meet 에서 회의를 만들고 그 주소를 붙여 넣으면 됩니다)',
-           'Paste the meeting link for this room.\n(Create a meeting in Google Meet and paste its address)',
-           'Pegue el enlace de la reunión.\n(Cree una reunión en Google Meet y pegue la dirección)'],
+  askUrl: ['이 방에서 쓸 회의 링크를 넣어 주세요.\n(Google Meet 에서 회의를 만들고 그 주소를 붙여 넣으면 됩니다)\n\n※ 칸을 비우고 확인을 누르면 링크가 지워지고 처음 상태로 돌아갑니다.',
+           'Paste the meeting link for this room.\n(Create a meeting in Google Meet and paste its address)\n\nNote: clear the box and press OK to remove the link and start over.',
+           'Pegue el enlace de la reunión.\n(Cree una reunión en Google Meet y pegue la dirección)\n\nNota: borre el contenido y pulse OK para quitar el enlace y volver al inicio.'],
   badUrl: ['회의 주소처럼 보이지 않습니다 (https:// 로 시작해야 합니다).',
            'That does not look like a meeting link (it must start with https://).',
            'Eso no parece un enlace (debe empezar con https://).'],
@@ -273,6 +278,8 @@ function render(){
     const who = inRoom(r.id);
     const live = who.length > 0;
     // 사람이 있을 때만 이름을 늘어놓는다 — 없을 땐 위 뱃지가 이미 '아무도 없음' 이라 두 번 쓰지 않는다
+    // 내가 지금 이 방에 들어가 있나 — 새로고침해도 알 수 있게 live 기록으로 본다
+    const iAmIn = who.some(v => nkey(v.name) === nkey(me().name));
     const whoHtml = who.length
       ? '<div class="who">' + who.map(v => '<span>'+esc(v.name)+'</span>').join('') + '</div>'
       : '';
@@ -283,7 +290,9 @@ function render(){
       + (url ? '' : '<div class="sub">⚠ '+esc(t('noUrl'))+'</div>')
       + whoHtml
       + '<div class="acts">'
-      +   '<button class="btn p" data-join="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('join'))+'</button>'
+      +   (iAmIn
+            ? '<button class="btn g" data-leave="'+esc(r.id)+'">'+esc(t('leaveR'))+'</button>'
+            : '<button class="btn p" data-join="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('join'))+'</button>')
       +   (isExec() ? '<button class="btn sm" data-call="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('call'))+'</button>' : '')
       +   (isExec() ? '<button class="btn sm" data-url="'+esc(r.id)+'">'+esc(t('setUrl'))+'</button>' : '')
       + '</div></div>';
@@ -297,11 +306,15 @@ function renderLog(){
   for (const r of list) {
     const m = LOG[r.id] || {};
     const rowsArr = Object.keys(m).map(k=>m[k]).filter(Boolean).sort((a,b)=>(a.inAt||0)-(b.inAt||0));
+    // 창을 그냥 닫으면 나간 시각이 안 적힌다 — 그런 사람을 '참가 중' 으로 두면 영영 그대로다
+    const liveNow = new Set(inRoom(r.id).map(v => nkey(v.name)));
     if (!rowsArr.length) continue;
     html += '<div style="font-weight:800;margin:10px 0 4px">'+esc(r.name)+'</div>'
       + '<table><tr><th>'+esc(t('cName'))+'</th><th>'+esc(t('cBranch'))+'</th><th>'+esc(t('cIn'))+'</th><th>'+esc(t('cOut'))+'</th></tr>'
       + rowsArr.map(v => '<tr><td>'+esc(v.name)+'</td><td>'+esc(bname(v.branch))+'</td><td>'+hhmm(v.inAt)+'</td><td>'
-          + (v.outAt ? hhmm(v.outAt) : '<b style="color:var(--live)">'+esc(t('still'))+'</b>') + '</td></tr>').join('')
+          + (v.outAt ? hhmm(v.outAt)
+             : liveNow.has(nkey(v.name)) ? '<b style="color:var(--live)">'+esc(t('still'))+'</b>'
+             : esc(t('gone'))) + '</td></tr>').join('')
       + '</table>';
   }
   document.getElementById('log').innerHTML = html || '<div class="empty">'+esc(t('logNone'))+'</div>';
@@ -392,6 +405,7 @@ async function setUrl(roomId){
   try {
     if (!u) await F.remove(F.ref(F.db, BASE+'/rooms/'+roomId));
     else await F.set(F.ref(F.db, BASE+'/rooms/'+roomId), { url:u, by: me().name||'', ts: Date.now() });
+    if (!u) alert(t('clrUrl'));
   } catch(e){ alert('저장 실패 · could not save'); }
 }
 async function callIn(roomId){
@@ -429,6 +443,7 @@ document.addEventListener('click', e => {
                         try{ window.dispatchEvent(new CustomEvent('km-lang-changed',{detail:LANG})); }catch(_){}
                         render(); return; }
   if (b.dataset.join) { askJoin(b.dataset.join); return; }
+  if (b.dataset.leave){ JOINED = b.dataset.leave; doLeave(); return; }
   if (b.dataset.url)  { setUrl(b.dataset.url);  return; }
   if (b.dataset.call) { callIn(b.dataset.call); return; }
   if (b.id === 'ovGo'){ doJoin(); return; }
