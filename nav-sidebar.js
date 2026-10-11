@@ -64,6 +64,7 @@
     // (./payroll.html?type=cash · ./payroll.html?type=cpa)
 
     { sec: { ko:'커뮤니케이션', en:'Communication', es:'Comunicación' } },
+    { ic: '📹', lbl: { ko:'화상 회의',     en:'Video meeting',  es:'Reunión por video' }, href: './meet.html', highlight: true },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true, badge: 'chat' },
     { ic: '📨', lbl: { ko:'HR 건의',      en:'HR Inquiry',     es:'Consulta RH' },        href: './chat.html?room=hr_inquiries' },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html', badge: 'updates' },
