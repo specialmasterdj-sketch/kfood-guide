@@ -197,6 +197,15 @@ const L={
  bulkMoreCam:{ko:'📷 한 장 더 찍기',en:'📷 Take one more',es:'📷 Tomar otra'},
  bulkMoreFile:{ko:'📎 사진 더 고르기',en:'📎 Add more photos',es:'📎 Agregar más fotos'},
  bulkCount:{ko:'지금 {n}건 — 인보이스 수만큼 계속 찍으세요',en:'{n} so far — keep going until all invoices are in',es:'{n} hasta ahora — siga hasta tenerlas todas'},
+ /* 2026-10-11 — 몇 '건' 으로 나가는지 먼저 보이게. 한 인보이스를 9장 찍고 9건으로 보낸 적이 있다 */
+ bulkAllOne:{ko:'📎 전부 한 건으로 (같은 인보이스)',en:'📎 All one invoice',es:'📎 Todo una factura'},
+ bulkAllSep:{ko:'✂️ 전부 따로 (다른 인보이스)',en:'✂️ Each its own',es:'✂️ Cada una aparte'},
+ bulkCount1:{ko:'✅ 사진 {p}장 → <b>인보이스 1건</b>으로 나갑니다',
+             en:'✅ {p} photos → sending as <b>1 invoice</b>',
+             es:'✅ {p} fotos → se envía como <b>1 factura</b>'},
+ bulkCountN:{ko:'⚠ 사진 {p}장 → <b>인보이스 {n}건</b>으로 나갑니다. 한 인보이스를 여러 장 찍으셨으면 위의 <b>전부 한 건으로</b> 를 눌러 주세요',
+             en:'⚠ {p} photos → sending as <b>{n} separate invoices</b>. If these are pages of one invoice, tap <b>All one invoice</b> above',
+             es:'⚠ {p} fotos → se envían como <b>{n} facturas</b>. Si son páginas de una sola, toque <b>Todo una factura</b>'},
  bulkEmpty:{ko:'위에서 📷 사진 찍기 나 📎 파일 고르기 를 눌러 인보이스를 전부 고르세요.',
             en:'Use 📷 or 📎 above and pick all the invoices.',
             es:'Use 📷 o 📎 arriba y elija todas las facturas.'},
@@ -420,6 +429,13 @@ function bulkGroups(){
 window.bulkPick=function(which){ $(which?'pick':'cam').click(); };
 window.bulkSetVendor=function(i,v){ if(FILES[i]) FILES[i].vendor=v; paint(); };   /* 빨간 테두리를 바로 풀어 주려고 다시 그린다 */
 window.bulkSetMerge=function(i,v){ if(FILES[i]) FILES[i].merge=v; paint(); };
+/* 전부 한 건으로 / 전부 따로 — 한 인보이스를 여러 장 찍었을 때 체크를 하나씩 안 누르게 (2026-10-11) */
+window.mergeAll=function(on){
+  FILES.forEach((f,i)=>{ f.merge = on ? (i>0) : false; });
+  if(on){ const v=(FILES[0].vendor||'').trim();            // 첫 장 거래처로 맞춰 둔다
+    if(v) FILES.forEach(f=>{ if(!(f.vendor||'').trim()) f.vendor=v; }); }
+  paint();
+};
 
 function paint(){
   if(BULK){ paintBulk(); return; }
@@ -461,7 +477,17 @@ function paintBulk(){
     + '<button class="btn lite" style="flex:1" onclick="bulkPick(0)">' + esc(t('bulkMoreCam')) + '</button>'
     + '<button class="btn lite" style="flex:1" onclick="bulkPick(1)">' + esc(t('bulkMoreFile')) + '</button>'
   + '</div>'
-  + '<div class="note ok" style="margin:0">' + t('bulkCount', { n: bulkGroups().length }) + '</div>';
+  /* 🔴 2026-10-11 — 묶음은 '사진 한 장 = 인보이스 한 건' 이 기본이라,
+     한 인보이스를 9장 찍어 올리면 9건으로 나간다(전무님 위스메탁 건).
+     2장째부터 체크를 여덟 번 눌러야 묶이던 것을 단추 하나로 줄인다. */
+  + (FILES.length>1
+      ? '<div style="display:flex;gap:8px;margin:0 0 9px">'
+        + '<button class="btn lite" style="flex:1" onclick="mergeAll(1)">' + esc(t('bulkAllOne')) + '</button>'
+        + '<button class="btn lite" style="flex:1" onclick="mergeAll(0)">' + esc(t('bulkAllSep')) + '</button>'
+        + '</div>'
+      : '')
+  + '<div class="note ' + (bulkGroups().length===1?'ok':'warn') + '" style="margin:0">'
+    + t(bulkGroups().length===1 ? 'bulkCount1' : 'bulkCountN', { n: bulkGroups().length, p: FILES.length }) + '</div>';
   paintSendBtn();
 }
 function rm(i){ try{ if(FILES[i].url)URL.revokeObjectURL(FILES[i].url); }catch(e){} FILES.splice(i,1); paint(); }
