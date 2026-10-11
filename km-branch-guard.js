@@ -6,6 +6,10 @@
 //   로그아웃·재설치까지 했는데도 그대로 → 폰에 남은 사이트 데이터(hub.branch /
 //   chat.me / 쿠키·IDB 백업)가 되살아나기 때문. 재설치로는 안 지워진다.
 //
+// 2026-10-11 v3 — 전무님 화면에 매일 아침 띠가 떴다. 등록이 "*"(오너·임원, 전 지점)인
+//   사람은 지점 둘러보기 때문에 km_branch 가 남의 매장으로 바뀌는 게 정상이다.
+//   canon("*") 이 null 이라 "등록 없음" 과 구별이 안 돼 경고로 오해했다 → 이제 건너뛴다.
+//
 // 2026-09-29 v2 — ALY 가 "앱을 닫았다 열었는데 아래 주황색 띠가 안 보인다" 고
 //   다시 올림. 고친 것:
 //   1) 🔴 v1 은 hub.branch 만 서버와 견줬다. 그런데 업무 앱(tasks.html)이 실제로
@@ -180,6 +184,17 @@
     try { if (sessionStorage.getItem(SKIP_KEY)) return; } catch(e){}
 
     var server = await lastServer();
+
+    // 🔴 2026-10-11 — 등록이 '*' 인 사람(오너·임원)에게는 띠를 띄우지 않는다.
+    //   증상: B.H.K 전무님 화면에 매일 아침 띠가 떴다.  hub=HOLLYWOOD · me=HOLLYWOOD · km=MIAMI · 등록=*
+    //   까닭: 임원은 지점 둘러보기로 남의 매장을 본다(=km_branch 가 그 매장으로 바뀐다).
+    //        그런데 canon('*') 이 null 이라 '등록 없음' 과 구별이 안 돼, 남은 km_branch 를
+    //        '잘못 잡힌 매장' 으로 오해하고 경고했다.
+    //   '나중에' 는 sessionStorage 라 앱을 새로 열면 되살아나고, '내 매장으로 바꾸기' 를 눌러도
+    //   다음에 또 다른 지점을 보면 그대로 다시 떴다 — 그래서 매일 떴다.
+    //   ⚠ 전 지점 권한자는 애초에 '틀린 매장' 이란 게 없다. 필요하면 #branch 로 직접 열 수 있다.
+    if (String(server || '').trim() === '*') return;
+
     var s = state();
     var cs = canon(server), ch = canon(s.hub), cm = canon(s.me), ck = canon(s.km);
 
