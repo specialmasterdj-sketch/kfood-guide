@@ -158,7 +158,12 @@ const L={
  readNo:{ko:'파일을 읽지 못했습니다',en:'Could not read the file',es:'No se pudo leer el archivo'},
  prn:{ko:'🖨 인쇄',en:'🖨 Print',es:'🖨 Imprimir'},
  askVend:{ko:'거래처를 적어 주세요',en:'Vendor name',es:'Nombre del proveedor'},
- noVend:{ko:'거래처 미입력',en:'No vendor',es:'Sin proveedor'},
+ noVend:{ko:'거래처를 적어 주세요',en:'Please enter the vendor',es:'Escriba el proveedor'},
+ /* 2026-10-11 — 지난번 거래처(해태)가 남아 위스메탁 19건이 해태로 나갔다 */
+ vSniff:{ko:'거래처를 자료에서 찾았습니다 — {v}',en:'Vendor found in the file — {v}',es:'Proveedor encontrado — {v}'},
+ vAsk:{ko:'거래처가 지난번에 쓰신 "{v}" 로 들어가 있습니다.\n\n{n}건을 "{v}" 로 내려보낼까요?\n(아니면 취소하고 거래처를 고쳐 주세요)',
+       en:'Vendor is still "{v}" from last time.\n\nSend {n} items as "{v}"?\n(Cancel to change it)',
+       es:'El proveedor sigue siendo "{v}".\n\n¿Enviar {n} artículos como "{v}"?\n(Cancele para cambiarlo)'},
  sent2:{ko:'올린날',en:'sent',es:'enviado'},
  allBr:{ko:'전체 지점',en:'All stores',es:'Todas'},
  none:{ko:'아직 내려온 가격표 교체 목록이 없습니다.',en:'No price tag lists yet.',es:'Todavía no hay listas.'},
@@ -212,6 +217,15 @@ const VND={'RHEE BROS':'리브라더스','ASSI':'리브라더스','JFC':'JFC','W
  'HAITAI':'해태','TWO BROS':'투브로스','OCM':'OCM','PULMUONE':'풀무원','WALONG':'왈롱','FAF':'FAF'};
 const vName=v=>{ const k=String(v||'').trim(); if(!k)return '';
   return (LANG==='ko'&&VND[k.toUpperCase()])?VND[k.toUpperCase()]:k; };
+/* 거래처 칸을 무엇으로 채웠는지 — '기억'(지난번 값) / '자료'(붙여넣은 자료에서 찾음) / ''(손으로) */
+let VFROM='';
+/* 붙여넣은 자료 안에 아는 거래처 이름이 있으면 찾아낸다 — POS 파일엔 VENDOR 칸이 들어 있다 */
+function sniffVendor(txt){
+  const up=String(txt||'').toUpperCase();
+  let best='';
+  Object.keys(VND).forEach(k=>{ if(k.length>best.length && up.includes(k)) best=k; });
+  return best;
+}
 
 /* HQ 직책 — 이름 대신 직책으로 적는다 (tasks.html 과 같은 명단을 쓴다) */
 const HQ_TITLE_KO={DIRECTOR:'디렉터',MANAGER:'매니저',COORDINATOR:'코디네이터',ASSISTANT:'어시스턴트'};
@@ -271,8 +285,11 @@ function pickBranch(){ BRANCH=$('br').value;
 function toggleNew(){ const b=$('newBox'); b.style.display=b.style.display==='none'?'':'none';
   if(b.style.display===''){
     if(!$('nEff').value) $('nEff').value=new Date().toISOString().slice(0,10);
-    /* 거래처는 지난번 값을 채워 둔다 — 같은 벤더를 연달아 넣는 일이 많다 */
-    if(!$('nVend').value){ try{ $('nVend').value=localStorage.getItem('km_ptag_vendor')||''; }catch(e){} }
+    /* 거래처는 지난번 값을 채워 둔다 — 같은 벤더를 연달아 넣는 일이 많다.
+       🔴 2026-10-11 — 지난번이 해태였는데 위스메탁 19건을 '해태' 로 내려보낸 적이 있다.
+          기억해서 채운 것임을 표시해 두고(VFROM), 보내기 전에 한 번 묻는다. */
+    if(!$('nVend').value){ try{ const v=localStorage.getItem('km_ptag_vendor')||'';
+      if(v){ $('nVend').value=v; VFROM='기억'; } }catch(e){} }
   } }
 
 /* ---- 목록 구독 ----
@@ -438,6 +455,11 @@ function loadFile(inp){
     return hit;
   };
   const done=(txt,n)=>{ $('nData').value=txt; const h=head(txt);
+    /* 머리말에 안 적혀 있어도 자료 안에서 거래처를 찾아 본다 (POS 파일의 VENDOR 칸) —
+       지난번 값이 그대로 남아 엉뚱한 거래처로 나가는 일을 막는다 (2026-10-11) */
+    if(!h){ const v=sniffVendor(txt);
+      if(v && String($('nVend').value).trim().toUpperCase()!==v){ $('nVend').value=v; VFROM='자료';
+        toast(t('vSniff',{v:vName(v)})); } }
     $('fName').textContent=t('readOk',{f:f.name,n:n})+(h?('  ·  '+t('headOk')):'');
     toast(t('readOk',{f:f.name,n:n})); inp.value=''; };
   const fail=e=>{ $('fName').textContent=''; toast(t('readNo')+(e?(' — '+esc(e)):'')); inp.value=''; };
@@ -488,9 +510,29 @@ async function createBatch(){
     const nums=[]; for(let i=b+1;i<c.length;i++){ const v=money(c[i]); if(v!=null&&v>0)nums.push(v); }
     if(!nums.length){ skipped++; return; }
     const now=nums[nums.length-1], old=nums.length>1?nums[nums.length-2]:0;
-    items.push({code,name:c[b+1]||'',cat:c[b+2]||'',old,now});
+    /* 🔴 2026-10-11 — 예전엔 바코드 **바로 뒤** 칸을 상품명으로 봤다.
+       그런데 가격표 교체 지시서는 이름이 바코드 **앞**에 있고, POS 파일은 바코드 뒤가 PLU(빈 칸)이다.
+       그래서 상품명이 통째로 비어 나왔다(위스메탁 19건).
+       → 줄 안에서 **글자가 들어간 가장 긴 칸**을 이름으로 본다. 숫자·금액 칸은 거른다. */
+    const isName=s=>{ s=String(s||'').trim();
+      if(s.length<2) return false;
+      if(!/[A-Za-z가-힣]/.test(s)) return false;        // 숫자·기호뿐이면 이름이 아니다
+      if(/^\$?[\d.,]+$/.test(s)) return false;          // 금액
+      return true; };
+    /* 🔴 '가장 긴 칸' 으로 하면 분류명((F)REFRIGERATED-NOODLES,RICECAKE)이 상품명보다 길어 그걸 집는다.
+       바코드에서 **가장 가까운** 글자 칸을 쓴다 — 지시서는 바로 앞, POS 파일은 PLU·수량·금액을 건너뛴 뒤 NAME 이다. */
+    let name='';
+    for(let d=1; d<c.length && !name; d++){
+      if(isName(c[b-d])) { name=String(c[b-d]).trim(); break; }
+      if(isName(c[b+d])) { name=String(c[b+d]).trim(); break; }
+    }
+    items.push({code,name,cat:'',old,now});
   });
   if(!items.length){ toast(t('bad',{n:1})); return; }
+  /* 🔴 거래처를 지난번 값에서 그대로 들고 왔으면 한 번 묻는다 (2026-10-11 해태/위스메탁 건) */
+  const vNow=$('nVend').value.trim();
+  if(!vNow){ toast(t('noVend')); $('nVend').focus(); return; }
+  if(VFROM==='기억' && !confirm(t('vAsk',{v:vName(vNow),n:items.length}))){ $('nVend').focus(); return; }
   const F=window.__fb;
   try{
     const r=F.push(F.ref(F.db,'expiry/'+BRANCH+'/priceTags'));
