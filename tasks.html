@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_09_stockroom';   // 🌅 업무 0건인 날에도 첫 화면
+    var BUST = 'tasks_2026_10_11_meet';   // 🌅 업무 0건인 날에도 첫 화면
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -8786,6 +8786,7 @@ function renderEmp(){
     window.__empPrefetch = true;
     setTimeout(function(){
       try { if (!EMP_CHAT  && EMP_CHAT  !== 0) empLoadChat(); } catch(_){}
+      try { if (!EMP_MEET  && EMP_MEET  !== 0) empLoadMeet(); } catch(_){}
       try { if (!EMP_STAFF) empLoadStaff(); } catch(_){}
       try { if (!EMP_HQPH)  empLoadHqPhotos(); } catch(_){}
       try { if (!EMP_OOS)   empLoadOos(); } catch(_){}
@@ -8832,6 +8833,10 @@ const EMP_VIEWS = {
   hq:    { ic:'🏛', ko:'본사(HQ) 지시', en:'HQ requests', es:'Solicitudes HQ', bg:'#e0e7ff', fg:'#3730a3' },
   photo: { ic:'📸', ko:'오늘 올린 사진', en:'Photos today', es:'Fotos de hoy', bg:'#fae8ff', fg:'#86198f' },
   chat:  { ic:'💬', ko:'채팅', en:'Chat', es:'Chat', bg:'#dbeafe', fg:'#1e40af', go:'./chat.html' },
+  // 📹 2026-10-11 전무님: 첫 화면 칸에도 넣어 달라 는 요청.
+  //   숫자는 지금 회의에 들어와 있는 사람 수다. 아무도 없으면 오너·임원에게만 보인다
+  //   (회의를 여는 사람은 그들이다). 나머지는 회의가 돌아갈 때만 보여 칸을 어지르지 않는다.
+  meet:  { ic:'📹', ko:'화상 회의', en:'Video meeting', es:'Reunión', bg:'#e0e7ff', fg:'#1d4ed8', go:'./meet.html' },
   // ⭐ 핵심 품목 점검 — 사장님이 2026-10-07 에 만드신 것(key-fresh / key-grocery).
   //    같은 날 "KEY ITEMS REPORT 라는 긴 이름 때문에 카드 줄이 화면보다 넓어져 깜빡인다" 며 빼셨다(b718832).
   //    2026-10-08 전무님 지시로 되살리되 이름을 짧게 줄여 같은 일이 안 생기게 한다.
@@ -8878,6 +8883,20 @@ function empKeyPanel(){
      : LANG==='es' ? 'Su tienda se elige sola. Las revisiones se guardan y todas las tiendas las ven.'
      : '내 지점이 자동으로 선택됩니다. 점검 내용은 저장되고 모든 지점이 실시간으로 봅니다.') + '</div>';
 }
+// 📹 지금 회의에 들어와 있는 사람 수 — meet.html 이 2분마다 숨을 쉬어 넣는다
+let EMP_MEET = null;
+async function empLoadMeet(){
+  EMP_MEET = 0;
+  try {
+    const live = await fetch(FB_DB_URL + '/inventory/meet/live.json', { cache:'no-store' }).then(r => r.json()) || {};
+    const now = Date.now();
+    Object.keys(live).forEach(room => {
+      const m = live[room] || {};
+      Object.keys(m).forEach(k => { const v = m[k]; if (v && v.ts && now - v.ts < 120000) EMP_MEET++; });
+    });
+  } catch(e){ console.warn('[meet]', e); }
+  if (document.getElementById('empList')) renderEmp();
+}
 // 💬 안 읽은 방 수 — 앱 모음과 같은 방식(chat/rooms 의 lastTs 와 내 마지막 방문 비교)
 let EMP_CHAT = null;
 async function empLoadChat(){
@@ -8923,6 +8942,9 @@ function empStatCards(my){
                  sub: EMP_REF ? escHtml(localizeBranch(EMP_REF))
                       : (LANG==='en'?'from our store':LANG==='es'?'de la tienda':'우리 매장') };
   nums.key   = { v: KEY_REPORTS.length, sub: LANG==='en'?'Fresh · Grocery':LANG==='es'?'Frescos · Abarrotes':'신선 · 그로서리' };
+  nums.meet  = { v: EMP_MEET == null ? '…' : EMP_MEET,
+                 sub: EMP_MEET ? (LANG==='en'?'in the room now':LANG==='es'?'en la sala':'지금 참가 중')
+                      : (LANG==='en'?'start a meeting':LANG==='es'?'iniciar reunión':'회의 열기') };
   nums.chat  = { v: EMP_CHAT == null ? '…' : EMP_CHAT,
                  sub: EMP_CHAT ? (LANG==='en'?'unread rooms':LANG==='es'?'salas sin leer':'안 읽은 방') : (LANG==='en'?'all read':LANG==='es'?'todo leído':'모두 읽음') };
   // 🙈 숫자가 안 나오는 칸은 아예 숨긴다 (전무님: "안 나오면 없애버려")
@@ -8931,10 +8953,12 @@ function empStatCards(my){
   //   · 채팅 — 매장별로 갈라지지 않으므로 남의 매장을 볼 때는 숨긴다
   const myBr = empViewBranch();
   const show = { staff: !(EMP_STAFF && EMP_STAFF.length === 0), my: true,
-                 stock: myBr === 'HOLLYWOOD', hq: true, photo: true, chat: !EMP_REF, key: true };
-  return '<div class="emp-cards">' + ['staff','my','key','stock','hq','photo','chat'].filter(k => show[k]).map(k => {
+                 stock: myBr === 'HOLLYWOOD', hq: true, photo: true, chat: !EMP_REF, key: true,
+                 // 📹 회의가 돌아가면 모두에게, 안 돌아가면 회의를 여는 오너·임원에게만
+                 meet: !EMP_REF && (EMP_MEET > 0 || isOwner()) };
+  return '<div class="emp-cards">' + ['staff','my','key','stock','hq','photo','chat','meet'].filter(k => show[k]).map(k => {
     const v = EMP_VIEWS[k], n = nums[k], on = (EMP_VIEW === k);
-    const warn = (k === 'hq' && hqWait) || (k === 'my' && (myTot - myDone) > 0) || (k === 'chat' && EMP_CHAT);
+    const warn = (k === 'hq' && hqWait) || (k === 'my' && (myTot - myDone) > 0) || (k === 'chat' && EMP_CHAT) || (k === 'meet' && EMP_MEET);
     const act = v.go ? ('location.href=\'' + v.go + '\'') : ('empSetView(\'' + k + '\')');
     return '<button class="emp-card' + (on ? ' on' : '') + '" onclick="' + act + '">' +
       '<span class="ic" style="background:' + v.bg + ';color:' + v.fg + '">' + v.ic + '</span>' +
