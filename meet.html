@@ -1,0 +1,447 @@
+<!doctype html><html lang="ko"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>화상 회의 — 김치마트</title>
+<link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
+<script type="module" src="./fb-auth-fetch.js?v=4"></script>
+<script type="module" src="./auth-gate.js?v=8"></script>
+<script src="./km-back-button.js?v=3"></script>
+<!--
+  📹 화상 회의 (2026-10-11)
+  전무님: "각 지점 매니저나 슈퍼바이저들과 화상통화를 해 업무지시나 보고를 받고 싶은데"
+          "일대일밖에 안 돼? 동시에 5지점이 같이해야 하는데?"
+
+  ■ 왜 영상 자체는 남의 것을 쓰나
+    회사 메일이 Google Workspace 위에 있다(MX 가 전부 aspmx.l.google.com).
+    유료 Workspace 는 Meet 그룹 통화에 시간 제한이 없고 100명까지 들어온다 — 5지점은 넉넉하다.
+    우리가 WebRTC 를 직접 만들면 3명째부터 중계 서버(SFU)와 TURN 이 필요해 돈과 손이 든다.
+    얻을 게 없어 안 만든다.
+
+  ■ 그런데 왜 이 화면이 필요한가 — Meet 가 못 하는 것을 한다
+    · 누가 들어왔는지 **남는다** (5지점 중 어디가 빠졌는지 기록)
+    · 회의 방이 지점별로 **고정**돼 매번 링크를 찾아 보내지 않아도 된다
+    · 회의 중에도 업무지시 앱 안이라 바로 업무를 찍어 내려보낼 수 있다
+    · 🔴 플로리다는 녹음·녹화에 **양쪽 동의**가 필요한 주다 — 참가 직전에 고지하고 동의를 받는다
+
+  ■ 저장 (전부 inventory 아래 — 승인된 직원이면 읽고 써서 규칙을 새로 게시할 필요가 없다)
+    inventory/meet/rooms/{방}            { url, by, ts }        회의 링크 (임원만 고침)
+    inventory/meet/live/{방}/{이름키}     { name, branch, ts }   지금 들어와 있는 사람 (2분 넘으면 나간 것)
+    inventory/meet/log/{방}/{날짜}/{이름키} { name, branch, role, inAt, outAt }  참석 기록
+
+  ■ 알림에 대해
+    완전 종료 푸시(FCM)는 사장님이 **일부러 꺼 두신 것**이다 (PUSH-SETUP.md, 2026-08-30:
+    "앱을 완전히 꺼 두었다면 쉬고 싶다는 뜻이니 방해하고 싶지 않아").
+    그래서 여기서도 푸시를 쓰지 않는다. 대신 [회의 소집] 은 **매니저 채팅방에 글을 올린다** —
+    앱이 열려 있거나 백그라운드인 사람에게는 기존 채팅 알림이 그대로 뜬다.
+
+  ■ 나중에 앱 안에 영상까지 넣고 싶어지면
+    km-meet-config.js 의 window.KM_MEET.dailyDomain 을 채우면 iframe 으로 이 화면 안에서 열린다.
+    비어 있는 동안은 완전 무동작 — Meet 링크를 새 창으로 여는 지금 방식 그대로다.
+-->
+<script src="./km-chat-queue.js?v=1"></script>
+<script src="./km-meet-config.js?v=1"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700;800&display=swap">
+<style>
+:root{
+  --bg:#f4f6f8; --surface:#fff; --sunk:#eef1f4; --line:#dfe5ea; --fg:#18202a; --muted:#64748b;
+  --brand:#1d4ed8; --brand-soft:#e6edfd; --live:#16a34a; --live-bg:#e3f6ea;
+  --warn:#b45309; --warn-bg:#fdf3e2; --bad:#dc2626;
+  --f:"IBM Plex Sans KR","Apple SD Gothic Neo",system-ui,sans-serif; --r:14px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e1319; --surface:#182029; --sunk:#212b36; --line:#333f4b; --fg:#e6ecf2; --muted:#94a3b8;
+  --brand:#7aa2f7; --brand-soft:#17243d; --live:#5fbf86; --live-bg:#14301f;
+  --warn:#e3ac52; --warn-bg:#352a13; --bad:#f08a75; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f);font-size:15px;line-height:1.45}
+button,select,input{font:inherit;color:inherit}button{cursor:pointer}
+header{background:linear-gradient(135deg,#1e3a8a,#1d4ed8);color:#fff;padding:14px 16px 16px;position:sticky;top:0;z-index:20}
+header .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+header h1{font-size:1.12em;margin:0;flex:1}
+.hbtn{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:18px;padding:6px 12px;font-weight:700;font-size:.86em}
+.hbtn.on{background:#fff;color:#1d4ed8}
+.hsub{font-size:.78em;opacity:.92;margin-top:6px}
+main{max-width:780px;margin:0 auto;padding:12px 12px 90px}
+.card{background:var(--surface);border:1.5px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:12px}
+.room{background:var(--surface);border:1.5px solid var(--line);border-radius:var(--r);padding:13px 14px;margin-bottom:10px}
+.room.all{border-color:var(--brand);background:var(--brand-soft)}
+.room .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.room .nm{font-weight:800;flex:1 1 140px}
+.room .sub{font-size:.8em;color:var(--muted);margin-top:3px}
+.badge{font-size:.72em;font-weight:800;padding:2px 9px;border-radius:11px;background:var(--sunk);color:var(--muted)}
+.badge.live{background:var(--live-bg);color:var(--live)}
+.who{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+.who span{font-size:.75em;font-weight:700;padding:3px 9px;border-radius:11px;background:var(--live-bg);color:var(--live)}
+.who span.off{background:var(--sunk);color:var(--muted)}
+.acts{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}
+.btn{border:1.5px solid var(--line);background:var(--surface);border-radius:11px;padding:10px 14px;font-weight:800;font-size:.9em}
+.btn.p{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.g{background:var(--live);border-color:var(--live);color:#fff}
+.btn.sm{padding:6px 11px;font-size:.8em;border-radius:9px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.note{background:var(--warn-bg);border:1.5px solid var(--warn);border-radius:12px;padding:11px 13px;font-size:.84em;color:var(--warn);margin-bottom:12px;line-height:1.55}
+.note b{display:block;margin-bottom:3px}
+label{display:block;font-size:.8em;font-weight:800;color:var(--muted);margin:10px 0 4px}
+input[type=url],input[type=text]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--surface)}
+h2{font-size:.86em;color:var(--muted);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.04em}
+table{width:100%;border-collapse:collapse;font-size:.86em}
+th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line)}
+th{font-size:.84em;color:var(--muted);font-weight:700}
+.empty{color:var(--muted);font-size:.88em;padding:14px 2px}
+/* 동의 창 */
+.ov{position:fixed;inset:0;background:rgba(10,15,22,.6);display:none;align-items:center;justify-content:center;padding:16px;z-index:60}
+.ov.on{display:flex}
+.ov .box{background:var(--surface);border-radius:16px;padding:18px;max-width:430px;width:100%}
+.ov h3{margin:0 0 8px;font-size:1.04em}
+.ov p{font-size:.88em;color:var(--muted);line-height:1.6;margin:0 0 12px}
+.chk{display:flex;gap:9px;align-items:flex-start;font-size:.88em;font-weight:700;margin-bottom:14px}
+.chk input{width:19px;height:19px;margin:1px 0 0;flex:0 0 auto}
+/* 앱 안 영상 (Daily 를 쓸 때만) */
+#stage{display:none;margin-bottom:12px}
+#stage.on{display:block}
+#stage iframe{width:100%;height:min(62vh,460px);border:0;border-radius:var(--r);background:#000}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1 id="hTitle">📹 화상 회의</h1>
+    <button class="hbtn" data-l="ko">KO</button>
+    <button class="hbtn" data-l="en">EN</button>
+    <button class="hbtn" data-l="es">ES</button>
+  </div>
+  <div class="hsub" id="hSub"></div>
+</header>
+
+<main>
+  <div class="note" id="legal"></div>
+  <div id="stage"><div id="stageIn"></div>
+    <div class="acts"><button class="btn" id="leaveBtn"></button></div></div>
+  <div id="rooms"></div>
+  <h2 id="hLog"></h2>
+  <div class="card" id="log"></div>
+</main>
+
+<div class="ov" id="ov"><div class="box">
+  <h3 id="ovT"></h3>
+  <p id="ovP"></p>
+  <label class="chk"><input type="checkbox" id="ovChk"><span id="ovC"></span></label>
+  <div class="acts">
+    <button class="btn p" id="ovGo"></button>
+    <button class="btn" id="ovNo"></button>
+  </div>
+</div></div>
+
+<script type="module">
+  import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getDatabase, ref, set, update, remove, onValue, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com",
+                databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order",
+                storageBucket:"kimchi-mart-order.firebasestorage.app" };
+  const app = getApps().length ? getApp() : initializeApp(cfg);
+  window.__fb = { db:getDatabase(app), ref, set, update, remove, onValue, get };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<script>
+const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const BASE = 'inventory/meet';
+const BRANCHES = [
+  { id:'HOLLYWOOD',      ko:'할리우드',        en:'Hollywood' },
+  { id:'MIAMI',          ko:'마이애미',        en:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines' },
+  { id:'CORAL_SPRINGS',  ko:'코럴 스프링스',   en:'Coral Springs' },
+  { id:'LASOLAS',        ko:'라스올라스',      en:'Las Olas' },
+];
+const L3 = ['ko','en','es'];
+let LANG = (()=>{ try{ const v=localStorage.getItem('km.lang'); if(L3.includes(v)) return v; }catch(e){} return 'ko'; })();
+const T = {
+  title:  ['📹 화상 회의','📹 Video meeting','📹 Reunión por video'],
+  sub:    ['지점 매니저들과 얼굴 보며 지시하고 보고받습니다. 누가 들어왔는지 남습니다.',
+           'Meet the branch managers face to face. Attendance is recorded.',
+           'Reúnase con los gerentes cara a cara. La asistencia queda registrada.'],
+  legalT: ['녹화 안내','About recording','Sobre la grabación'],
+  legalB: ['플로리다는 녹음·녹화에 참가자 모두의 동의가 필요합니다. 녹화하실 때는 회의를 시작하며 반드시 알려 주세요.',
+           'Florida requires everyone’s consent to record. If you record, say so out loud when the meeting starts.',
+           'Florida exige el consentimiento de todos para grabar. Si graba, avísele al grupo al comenzar.'],
+  roomAll:['🏛 전 지점 회의','🏛 All-branch meeting','🏛 Reunión de todas las tiendas'],
+  roomAllS:['5개 지점 매니저가 함께 들어옵니다','All five branch managers join here','Los cinco gerentes entran aquí'],
+  roomOne:['지점 회의','Branch meeting','Reunión de tienda'],
+  join:   ['📹 참가','📹 Join','📹 Entrar'],
+  call:   ['🔔 회의 소집','🔔 Call everyone in','🔔 Convocar'],
+  setUrl: ['⚙ 회의 링크','⚙ Meeting link','⚙ Enlace'],
+  noUrl:  ['회의 링크가 아직 없습니다','No meeting link yet','Aún no hay enlace'],
+  live:   ['진행 중','live','en curso'],
+  nobody: ['아무도 없음','nobody here','nadie'],
+  inRoom: ['%n명 참가 중','%n in the room','%n presentes'],
+  leave:  ['⏹ 회의에서 나가기','⏹ Leave the meeting','⏹ Salir'],
+  logH:   ['오늘 참석','Today’s attendance','Asistencia de hoy'],
+  logNone:['오늘은 아직 회의가 없습니다.','No meetings yet today.','Aún no hay reuniones hoy.'],
+  cName:  ['이름','Name','Nombre'],
+  cBranch:['지점','Branch','Tienda'],
+  cIn:    ['들어온 시각','Joined','Entró'],
+  cOut:   ['나간 시각','Left','Salió'],
+  still:  ['참가 중','in the room','presente'],
+  ovT:    ['회의에 들어갑니다','Joining the meeting','Entrando a la reunión'],
+  ovP:    ['카메라와 마이크를 켜야 할 수 있습니다. 들어가면 이름과 시각이 기록에 남습니다.\n회의가 녹화될 수 있으며, 녹화할 때는 시작하며 알려 드립니다.',
+           'You may be asked for camera and microphone. Your name and time are recorded.\nThe meeting may be recorded; if so you will be told when it starts.',
+           'Puede que le pidan cámara y micrófono. Su nombre y hora quedan registrados.\nLa reunión puede grabarse; si es así, se le avisará al comenzar.'],
+  ovC:    ['읽었고 동의합니다','I have read and agree','He leído y acepto'],
+  ovGo:   ['들어가기','Join','Entrar'],
+  ovNo:   ['취소','Cancel','Cancelar'],
+  askUrl: ['이 방에서 쓸 회의 링크를 넣어 주세요.\n(Google Meet 에서 회의를 만들고 그 주소를 붙여 넣으면 됩니다)',
+           'Paste the meeting link for this room.\n(Create a meeting in Google Meet and paste its address)',
+           'Pegue el enlace de la reunión.\n(Cree una reunión en Google Meet y pegue la dirección)'],
+  badUrl: ['회의 주소처럼 보이지 않습니다 (https:// 로 시작해야 합니다).',
+           'That does not look like a meeting link (it must start with https://).',
+           'Eso no parece un enlace (debe empezar con https://).'],
+  called: ['매니저 채팅방에 회의 소집을 올렸습니다.','Posted the call in the manager chat room.','Se publicó la convocatoria en el chat de gerentes.'],
+  callFail:['채팅방에 올리지 못했습니다 — 직접 알려 주세요.','Could not post to chat — please tell them directly.','No se pudo publicar — avíseles directamente.'],
+  callMsg:['📹 화상 회의를 시작합니다 — %s\n업무지시 앱 ▸ 📹 화상 회의 에서 [참가] 를 눌러 주세요.',
+           '📹 Starting a video meeting — %s\nOpen the Tasks app ▸ 📹 Video meeting and tap [Join].',
+           '📹 Empezamos una reunión por video — %s\nAbra la app de Tareas ▸ 📹 Reunión y toque [Entrar].'],
+  onlyExec:['오너·임원만 할 수 있습니다.','Owners and executives only.','Solo dueños y ejecutivos.'],
+};
+const t = (k,n)=>{ const a=T[k]; let s=a?(a[L3.indexOf(LANG)]||a[0]):k; if(n!=null) s=s.split('%n').join(n); return s; };
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const bname = id => { const b = BRANCHES.find(x=>x.id===id); return b ? (LANG==='ko'?b.ko:b.en) : id; };
+
+/* 내가 누구인가 — auth-gate.js 가 세워 준 값이 먼저다 */
+function me(){ try { return window.__currentUser || JSON.parse(localStorage.getItem('chat.me')||'{}'); } catch(e){ return {}; } }
+const ROLE   = () => String(me().role || '').toUpperCase();
+/* ⚠️ isOwner() 류가 EXECUTIVE 를 빠뜨린 적이 여러 번 있었다 — 두 토큰을 다 본다
+   ([[project_exec_permission_pattern]], [[project_exec_branch_browse]]) */
+const isExec = () => ['OWNER','EXECUTIVE'].includes(ROLE());
+const myBranch = () => {
+  const m = me();
+  if (BRANCHES.some(b=>b.id===m.branch)) return m.branch;
+  try { const b = localStorage.getItem('km_branch'); if (BRANCHES.some(x=>x.id===b)) return b; } catch(e){}
+  return 'HOLLYWOOD';
+};
+/* RTDB 열쇠로 쓸 수 있게 이름을 다듬는다 — 점·#·$·[·]·/ 는 열쇠에 못 쓴다
+   (급여 명단에서 "B.H.K" 가 B_H_K 가 된 것과 같은 규칙) */
+const nkey = s => String(s||'').trim().replace(/\s+/g,'_').replace(/[.#$\[\]\/]/g,'_').toUpperCase() || 'UNKNOWN';
+const today = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+const hhmm = ts => { if(!ts) return '-'; const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+
+/* 방 목록 — 전 지점 1개 + 지점마다 1개 */
+function rooms(){
+  const out = [{ id:'all', all:true, name:t('roomAll'), sub:t('roomAllS') }];
+  for (const b of BRANCHES) out.push({ id:b.id, all:false, name:bname(b.id)+' '+t('roomOne'), sub:'' });
+  return out;
+}
+/* 내가 들어갈 수 있는 방 — 임원은 전부, 나머지는 전 지점 회의 + 내 지점
+   ([[project_branch_scoped_access]] 와 같은 규칙) */
+const canSee = r => isExec() || r.all || r.id === myBranch();
+
+let URLS = {}, LIVE = {}, LOG = {}, JOINED = null, beat = null;
+
+/* ── 읽기 ─────────────────────────────────────────────────────────── */
+function watch(){
+  const F = window.__fb; if (!F) return;
+  F.onValue(F.ref(F.db, BASE+'/rooms'), s => { URLS = s.val() || {}; render(); });
+  F.onValue(F.ref(F.db, BASE+'/live'),  s => { LIVE = s.val() || {}; render(); });
+  F.onValue(F.ref(F.db, BASE+'/log/'+'all'), ()=>{});   // (전체 로그는 아래에서 날짜별로 읽는다)
+  for (const r of rooms()) {
+    F.onValue(F.ref(F.db, BASE+'/log/'+r.id+'/'+today()), s => {
+      LOG[r.id] = s.val() || {}; renderLog();
+    });
+  }
+}
+/* 2분 넘게 소식이 없으면 나간 것으로 본다 (브라우저를 그냥 닫는 사람이 많다) */
+const FRESH = 120000;
+function inRoom(roomId){
+  const m = LIVE[roomId] || {};
+  const now = Date.now();
+  return Object.keys(m).map(k=>m[k]).filter(v => v && v.ts && now - v.ts < FRESH);
+}
+
+/* ── 그리기 ───────────────────────────────────────────────────────── */
+function render(){
+  document.documentElement.lang = LANG;
+  document.getElementById('hTitle').textContent = t('title');
+  document.getElementById('hSub').textContent  = t('sub');
+  document.getElementById('legal').innerHTML = '<b>⚖️ '+esc(t('legalT'))+'</b>'+esc(t('legalB'));
+  document.getElementById('hLog').textContent = t('logH');
+  document.getElementById('leaveBtn').textContent = t('leave');
+  document.querySelectorAll('.hbtn[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l===LANG));
+
+  const list = rooms().filter(canSee);
+  document.getElementById('rooms').innerHTML = list.map(r => {
+    const url = (URLS[r.id] || {}).url || '';
+    const who = inRoom(r.id);
+    const live = who.length > 0;
+    // 사람이 있을 때만 이름을 늘어놓는다 — 없을 땐 위 뱃지가 이미 '아무도 없음' 이라 두 번 쓰지 않는다
+    const whoHtml = who.length
+      ? '<div class="who">' + who.map(v => '<span>'+esc(v.name)+'</span>').join('') + '</div>'
+      : '';
+    return '<div class="room '+(r.all?'all':'')+'">'
+      + '<div class="top"><div class="nm">'+esc(r.name)+'</div>'
+      + '<span class="badge '+(live?'live':'')+'">'+(live ? '● '+esc(t('live'))+' · '+esc(t('inRoom', who.length)) : esc(t('nobody')))+'</span></div>'
+      + (r.sub ? '<div class="sub">'+esc(r.sub)+'</div>' : '')
+      + (url ? '' : '<div class="sub">⚠ '+esc(t('noUrl'))+'</div>')
+      + whoHtml
+      + '<div class="acts">'
+      +   '<button class="btn p" data-join="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('join'))+'</button>'
+      +   (isExec() ? '<button class="btn sm" data-call="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('call'))+'</button>' : '')
+      +   (isExec() ? '<button class="btn sm" data-url="'+esc(r.id)+'">'+esc(t('setUrl'))+'</button>' : '')
+      + '</div></div>';
+  }).join('');
+  renderLog();
+}
+
+function renderLog(){
+  const list = rooms().filter(canSee);
+  let html = '';
+  for (const r of list) {
+    const m = LOG[r.id] || {};
+    const rowsArr = Object.keys(m).map(k=>m[k]).filter(Boolean).sort((a,b)=>(a.inAt||0)-(b.inAt||0));
+    if (!rowsArr.length) continue;
+    html += '<div style="font-weight:800;margin:10px 0 4px">'+esc(r.name)+'</div>'
+      + '<table><tr><th>'+esc(t('cName'))+'</th><th>'+esc(t('cBranch'))+'</th><th>'+esc(t('cIn'))+'</th><th>'+esc(t('cOut'))+'</th></tr>'
+      + rowsArr.map(v => '<tr><td>'+esc(v.name)+'</td><td>'+esc(bname(v.branch))+'</td><td>'+hhmm(v.inAt)+'</td><td>'
+          + (v.outAt ? hhmm(v.outAt) : '<b style="color:var(--live)">'+esc(t('still'))+'</b>') + '</td></tr>').join('')
+      + '</table>';
+  }
+  document.getElementById('log').innerHTML = html || '<div class="empty">'+esc(t('logNone'))+'</div>';
+}
+
+/* ── 들어가기 / 나가기 ─────────────────────────────────────────────── */
+let PENDING = null;
+function askJoin(roomId){
+  PENDING = roomId;
+  document.getElementById('ovT').textContent = t('ovT');
+  document.getElementById('ovP').textContent = t('ovP');
+  document.getElementById('ovC').textContent = t('ovC');
+  document.getElementById('ovGo').textContent = t('ovGo');
+  document.getElementById('ovNo').textContent = t('ovNo');
+  document.getElementById('ovChk').checked = false;
+  document.getElementById('ov').classList.add('on');
+}
+async function doJoin(){
+  const roomId = PENDING; if (!roomId) return;
+  if (!document.getElementById('ovChk').checked) return;
+  document.getElementById('ov').classList.remove('on');
+  const F = window.__fb; const m = me();
+  const k = nkey(m.name);
+  const rec = { name: m.name || '', branch: m.branch || myBranch(), role: ROLE(), ts: Date.now() };
+  JOINED = roomId;
+  try {
+    await F.set(F.ref(F.db, BASE+'/live/'+roomId+'/'+k), rec);
+    // 들어온 시각은 처음 한 번만 적는다 (끊겼다 다시 들어와도 첫 시각을 지키려고)
+    const g = await F.get(F.ref(F.db, BASE+'/log/'+roomId+'/'+today()+'/'+k));
+    if (!g.exists()) {
+      await F.set(F.ref(F.db, BASE+'/log/'+roomId+'/'+today()+'/'+k),
+        { name: rec.name, branch: rec.branch, role: rec.role, inAt: Date.now(), outAt: 0 });
+    } else {
+      await F.update(F.ref(F.db, BASE+'/log/'+roomId+'/'+today()+'/'+k), { outAt: 0 });
+    }
+  } catch(e){ console.warn('[meet] 기록 실패', e); }
+
+  if (beat) clearInterval(beat);
+  beat = setInterval(() => {
+    try { F.update(F.ref(F.db, BASE+'/live/'+JOINED+'/'+k), { ts: Date.now() }); } catch(e){}
+  }, 45000);
+
+  const url = (URLS[roomId]||{}).url || '';
+  const dom = (window.KM_MEET && window.KM_MEET.dailyDomain) || '';
+  if (dom) {
+    // 앱 안에서 열기 — Daily 를 붙였을 때만 (Google Meet 은 iframe 을 막는다)
+    document.getElementById('stageIn').innerHTML =
+      '<iframe allow="camera;microphone;fullscreen;display-capture;autoplay" src="'
+      + esc('https://'+dom+'.daily.co/'+encodeURIComponent(roomId)) + '"></iframe>';
+    document.getElementById('stage').classList.add('on');
+    window.scrollTo({ top:0, behavior:'smooth' });
+  } else if (url) {
+    document.getElementById('stage').classList.add('on');
+    document.getElementById('stageIn').innerHTML =
+      '<div class="card" style="margin:0"><div style="font-weight:800;margin-bottom:6px">📹 '
+      + esc(rooms().find(r=>r.id===roomId).name) + '</div><div class="sub">'
+      + esc(url) + '</div></div>';
+    window.open(url, '_blank', 'noopener');
+  }
+  render();
+}
+async function doLeave(){
+  const F = window.__fb; const k = nkey(me().name);
+  if (beat) { clearInterval(beat); beat = null; }
+  if (JOINED) {
+    try {
+      await F.remove(F.ref(F.db, BASE+'/live/'+JOINED+'/'+k));
+      await F.update(F.ref(F.db, BASE+'/log/'+JOINED+'/'+today()+'/'+k), { outAt: Date.now() });
+    } catch(e){}
+  }
+  JOINED = null;
+  document.getElementById('stage').classList.remove('on');
+  document.getElementById('stageIn').innerHTML = '';
+  render();
+}
+// 창을 그냥 닫아도 나간 것으로 남긴다 (sendBeacon 은 토큰을 못 붙여 쓰지 않는다)
+window.addEventListener('pagehide', () => { if (JOINED) { try { doLeave(); } catch(e){} } });
+
+/* ── 임원 전용 — 회의 링크 넣기 / 회의 소집 ─────────────────────────── */
+async function setUrl(roomId){
+  if (!isExec()) { alert(t('onlyExec')); return; }
+  const cur = (URLS[roomId]||{}).url || '';
+  const v = prompt(t('askUrl'), cur);
+  if (v === null) return;
+  const u = String(v).trim();
+  if (u && !/^https:\/\//i.test(u)) { alert(t('badUrl')); return; }
+  const F = window.__fb;
+  try {
+    if (!u) await F.remove(F.ref(F.db, BASE+'/rooms/'+roomId));
+    else await F.set(F.ref(F.db, BASE+'/rooms/'+roomId), { url:u, by: me().name||'', ts: Date.now() });
+  } catch(e){ alert('저장 실패 · could not save'); }
+}
+async function callIn(roomId){
+  if (!isExec()) { alert(t('onlyExec')); return; }
+  const r = rooms().find(x=>x.id===roomId);
+  const m = me();
+  const ts = Date.now();
+  const msgId = 'meet_' + ts;
+  const text = t('callMsg').split('%s').join(r.name);
+  const msg = {
+    sender: m.name || '', senderBranch: m.branch || myBranch(), senderRole: ROLE(),
+    isManager: true, color: m.color || '#1d4ed8', text, ts, photos: [],
+    meta: { kind:'meet_call', room: roomId }
+  };
+  try {
+    if (window.kmChatQueue && typeof window.kmChatQueue.send === 'function') {
+      await window.kmChatQueue.send({ room:'managers', msgId, msg,
+        roomPatch: { lastMsg:'📹 '+r.name, lastTs: ts, lastSender: msg.sender } });
+    } else {
+      await fetch(FB+'/chat/messages/managers/'+msgId+'.json',
+        { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg) });
+      await fetch(FB+'/chat/rooms/managers.json',
+        { method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ lastMsg:'📹 '+r.name, lastTs: ts, lastSender: msg.sender }) });
+    }
+    alert(t('called'));
+  } catch(e){ console.warn('[meet] 소집 실패', e); alert(t('callFail')); }
+}
+
+/* ── 이어 붙이기 ──────────────────────────────────────────────────── */
+document.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.l)    { LANG = b.dataset.l;
+                        try{ localStorage.setItem('km.lang', LANG); }catch(_){}
+                        try{ window.dispatchEvent(new CustomEvent('km-lang-changed',{detail:LANG})); }catch(_){}
+                        render(); return; }
+  if (b.dataset.join) { askJoin(b.dataset.join); return; }
+  if (b.dataset.url)  { setUrl(b.dataset.url);  return; }
+  if (b.dataset.call) { callIn(b.dataset.call); return; }
+  if (b.id === 'ovGo'){ doJoin(); return; }
+  if (b.id === 'ovNo'){ document.getElementById('ov').classList.remove('on'); PENDING=null; return; }
+  if (b.id === 'leaveBtn'){ doLeave(); return; }
+});
+window.addEventListener('km-lang-changed', e => {
+  const l = e && e.detail; if (L3.includes(l) && l !== LANG) { LANG = l; render(); }
+});
+// 누가 들어오고 나가는지 시계도 같이 흘러야 하므로 30초마다 다시 그린다
+setInterval(() => { if (document.visibilityState === 'visible') render(); }, 30000);
+
+render();
+if (window.__fb) watch(); else window.addEventListener('fb-ready', watch, { once:true });
+</script>
+</body></html>
