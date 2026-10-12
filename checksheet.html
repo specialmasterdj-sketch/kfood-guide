@@ -179,6 +179,15 @@ const L={
 let LANG='ko'; try{ LANG=localStorage.getItem('kimchi_lang')||'ko'; }catch(e){}
 function t(k,v){ const o=L[k]; let s=o?(o[LANG]||o.ko):k; if(v)for(const x in v)s=s.split('{'+x+'}').join(v[x]); return s; }
 
+/* 🔴 2026-10-12 전무님 — "언어 전환 해줘, 한국인은 소수라".
+   화면 틀은 3개 언어였는데 **자료 안쪽 글**(묶음 제목·까닭·묻는 말·칸 이름)이 한국어로만 박혀 있었다.
+   그래서 자료 쪽 글은 {ko,en,es} 로도 받을 수 있게 한다. 그냥 글자면 그대로 쓴다
+   (상품명·금액처럼 번역할 필요가 없는 것). */
+function tx(v){
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v[LANG] || v.ko || v.en || '';
+  return v == null ? '' : String(v);
+}
+
 const BRANCHES=[{id:'HOLLYWOOD',ko:'할리우드',en:'Hollywood'},{id:'MIAMI',ko:'마이애미',en:'Miami'},
   {id:'PEMBROKE',ko:'펨브로크',en:'Pembroke'},{id:'CORAL',ko:'코럴스프링스',en:'Coral Springs'},
   {id:'LASOLAS',ko:'라스올라스',en:'Las Olas'}];
@@ -252,21 +261,22 @@ function body(id,b){
     +'<button class="btn go sm" onclick="doPrint(\''+id+'\')">'+esc(t('print'))+'</button>'
     +(isBoss()?'<button class="btn sm" onclick="delB(\''+id+'\')">'+esc(t('del'))+'</button>':'')+'</div>';
   (b.groups||[]).forEach((g,gi)=>{
-    h+='<div class="grp"><div class="gh"><div class="gt">'+esc(g.title||'')+'</div>'
-      +(g.why?'<div class="gw">'+esc(g.why)+'</div>':'')
-      +(g.how?'<div class="gx">👉 '+esc(g.how)+'</div>':'')+'</div>'
+    h+='<div class="grp"><div class="gh"><div class="gt">'+esc(tx(g.title))+'</div>'
+      +(g.why?'<div class="gw">'+esc(tx(g.why))+'</div>':'')
+      +(g.how?'<div class="gx">👉 '+esc(tx(g.how))+'</div>':'')+'</div>'
       +'<table><tr><th style="width:38%">'+esc(t('hName'))+'</th><th style="width:28%">'+esc(t('hInfo'))+'</th>'
       +'<th>'+esc(t('hAns'))+'</th></tr>';
     (g.rows||[]).forEach((r,ri)=>{
       const key=gi+'_'+ri, got=(b.ans||{})[key]||{};
-      const any=(r.ask||[]).some(q=>String(got[q]||'').trim());
+      /* 🔑 답을 담는 열쇠는 **묻는 말의 차례(q0,q1)** 다. 말 자체를 열쇠로 쓰면
+         언어를 바꾸는 순간 적어 둔 답이 사라진 것처럼 보인다. */
+      const any=(r.ask||[]).some((q,qi)=>String(got['q'+qi]||'').trim());
       h+='<tr class="'+(any?'done':'')+'">'
         +'<td><b>'+esc(r.name||'')+'</b>'+(r.code?'<div class="bc">'+esc(r.code)+'</div>':'')+'</td>'
-        +'<td><div class="inf">'+(r.info||[]).map(p=>'<b>'+esc(p[0])+'</b> '+esc(p[1])).join('<br>')+'</div></td>'
-        +'<td>'+(r.ask||[]).map(q=>'<div style="margin-bottom:6px"><div class="ansq">'+esc(q)+'</div>'
-            +'<input class="ans" value="'+esc(got[q]||'')+'" '
-            +'onchange="saveAns(\''+id+'\',\''+key+'\',this.getAttribute(\'data-q\'),this.value)" '
-            +'data-q="'+esc(q)+'"></div>').join('')
+        +'<td><div class="inf">'+(r.info||[]).map(p=>'<b>'+esc(tx(p[0]))+'</b> '+esc(tx(p[1]))).join('<br>')+'</div></td>'
+        +'<td>'+(r.ask||[]).map((q,qi)=>'<div style="margin-bottom:6px"><div class="ansq">'+esc(tx(q))+'</div>'
+            +'<input class="ans" value="'+esc(got['q'+qi]||'')+'" '
+            +'onchange="saveAns(\''+id+'\',\''+key+'\',\'q'+qi+'\',this.value)"></div>').join('')
           +(got._by?'<div class="who">— '+esc(got._by)+'</div>':'')+'</td></tr>';
     });
     h+='</table></div>';
@@ -325,17 +335,17 @@ function doPrint(id){
     +'<div class="sub">'+esc([b.vendor,b.inv].filter(Boolean).join(' · '))
     +(b.src?'<br>'+esc(b.src):'')+'<br>'+esc(t('eff',{d:(b.got||'')}))+'</div>';
   (b.groups||[]).forEach((g,gi)=>{
-    h+='<div class="gh"><div class="gt">'+esc(g.title||'')+'</div>'
-      +(g.why?'<div class="gw">'+esc(g.why)+'</div>':'')
-      +(g.how?'<div class="gx">👉 '+esc(g.how)+'</div>':'')+'</div>'
+    h+='<div class="gh"><div class="gt">'+esc(tx(g.title))+'</div>'
+      +(g.why?'<div class="gw">'+esc(tx(g.why))+'</div>':'')
+      +(g.how?'<div class="gx">👉 '+esc(tx(g.how))+'</div>':'')+'</div>'
       +'<table><tr><th style="width:34%">'+esc(t('hName'))+'</th><th style="width:26%">'+esc(t('hInfo'))+'</th>'
       +'<th>'+esc(t('hAns'))+'</th></tr>';
     (g.rows||[]).forEach((r,ri)=>{
       const got=(b.ans||{})[gi+'_'+ri]||{};
       h+='<tr><td><b>'+esc(r.name||'')+'</b>'+(r.code?'<br><span class="inf">'+esc(r.code)+'</span>':'')+'</td>'
-        +'<td><span class="inf">'+(r.info||[]).map(p=>esc(p[0])+' '+esc(p[1])).join('<br>')+'</span></td>'
-        +'<td class="wbox">'+(r.ask||[]).map(q=>'<div class="inf">'+esc(q)+'</div>'
-            +(String(got[q]||'').trim()?'<div><b>'+esc(got[q])+'</b></div>':'')).join('')+'</td></tr>';
+        +'<td><span class="inf">'+(r.info||[]).map(p=>esc(tx(p[0]))+' '+esc(tx(p[1]))).join('<br>')+'</span></td>'
+        +'<td class="wbox">'+(r.ask||[]).map((q,qi)=>'<div class="inf">'+esc(tx(q))+'</div>'
+            +(String(got['q'+qi]||'').trim()?'<div><b>'+esc(got['q'+qi])+'</b></div>':'')).join('')+'</td></tr>';
     });
     h+='</table>';
   });
