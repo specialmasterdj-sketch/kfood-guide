@@ -177,9 +177,10 @@ const L={
  sign:{ko:'확인한 사람 / 날짜',en:'Checked by / Date',es:'Revisado por / Fecha'},
  /* 업무지시로 보내기 — 가격표 교체(price-tags.html)와 같은 얼개 (2026-10-12 전무님 요청) */
  task:{ko:'📋 업무지시 보냄',en:'📋 Send as task',es:'📋 Enviar como tarea'},
- tskQ:{ko:'{b} 직원 업무지시로 보냅니다. 오늘 날짜로 들어갑니다.',
-       en:'This will be sent to {b} staff as a task, dated today.',
-       es:'Se enviará al personal de {b} como tarea, con la fecha de hoy.'},
+ toAll:{ko:'— 전체에게 —',en:'— everyone —',es:'— a todos —'},
+ tskQ:{ko:'{b} · {w} 앞으로 업무지시를 보냅니다. 오늘 날짜로 들어갑니다.',
+       en:'Send as a task to {b} · {w}, dated today.',
+       es:'Enviar como tarea a {b} · {w}, con la fecha de hoy.'},
  tskA:{ko:'이미 업무지시로 보낸 확인서입니다. 다시 보낼까요?',
        en:'This sheet was already sent as a task. Send again?',
        es:'Esta hoja ya se envió como tarea. ¿Enviar de nuevo?'},
@@ -217,6 +218,28 @@ let BRANCH=(function(){
   return (m&&BRANCHES.some(x=>x.id===m.branch))?m.branch:'HOLLYWOOD'; })();
 let DATA={}, OPEN=null, F=null, SUBS=[], tt=null;
 
+/* 👤 누구에게 보낼지 고르는 명단 — 스케줄 앱의 직원 목록을 그대로 쓴다
+   (schedules/{지점}/employees · 업무지시 앱도 같은 곳을 본다). 2026-10-12 전무님 "매니저 선택은 없나?"
+   직책이 매니저·슈퍼바이저인 사람을 위로 올린다 — 확인서는 보통 매니저가 돈다. */
+const FB_DB='https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const TOPROLE=/MANAGER|SUPERVISOR|직원관리|점장/i;
+let ROSTER=[], ROSTER_BR=null;
+async function loadRoster(br){
+  if(ROSTER_BR===br) return ROSTER;
+  ROSTER_BR=br; ROSTER=[];
+  try{
+    const r=await fetch(FB_DB+'/schedules/'+br+'/employees.json',{cache:'no-store'});
+    const d=await r.json();
+    const arr=Array.isArray(d)?d:(d&&typeof d==='object'?Object.values(d):[]);
+    const seen=new Set();
+    arr.forEach(e=>{ const n=String((e&&e.name)||'').trim(); if(!n||seen.has(n))return; seen.add(n);
+      ROSTER.push({name:n, role:String((e&&e.role)||'').trim()}); });
+    ROSTER.sort((a,b)=>(TOPROLE.test(b.role)?1:0)-(TOPROLE.test(a.role)?1:0)
+      || a.name.localeCompare(b.name));
+  }catch(e){ console.warn('[chk] roster',e); }
+  return ROSTER;
+}
+
 function toast(m){ const el=$('toast'); el.innerHTML=m; el.classList.add('on'); clearTimeout(tt);
   tt=setTimeout(()=>el.classList.remove('on'),2400); }
 function setLang(l){ LANG=l; try{ localStorage.setItem('kimchi_lang',l); }catch(e){} paint(); render(); }
@@ -239,6 +262,8 @@ function watch(){
   if(!F) return;
   SUBS.forEach(u=>{try{u()}catch(e){}}); SUBS=[]; DATA={};
   $('list').innerHTML='<div class="empty">⏳</div>';
+  /* 명단은 지점이 바뀔 때 한 번만 받아 둔다 — 받아 오면 고르는 칸이 채워지도록 다시 그린다 */
+  if(isBoss()) loadRoster(BRANCH).then(()=>{ if(OPEN) render(); });
   SUBS.push(F.onValue(F.ref(F.db,'expiry/'+BRANCH+'/checkSheets'), s=>{
     DATA={}; const v=s.val()||{};
     Object.entries(v).forEach(([k,o])=>{ if(o) DATA[k]={...o,_id:k,_br:BRANCH}; });
@@ -263,15 +288,23 @@ function render(){
       +'</div>'
       +'<div class="ttl">'+esc(t('items',{n}))+'</div>'
       +'<div class="sub">'+esc(t('eff',{d:(b.got||'')}))+' · '+esc(b.by||'')
-        +(b.taskId?' · 📋 '+esc(t('sent')):'')+'</div></div>'
+        +(b.taskId?' · 📋 '+esc(t('sent'))+' → '+esc(b.taskTo&&b.taskTo!=='*'?b.taskTo:t('toAll')):'')+'</div></div>'
       +'<span class="pill '+(a>=n?'a':'b')+'">'+esc(t('doneN',{a,n}))+'</span></div>'
       +(OPEN===id?body(id,b):'')+'</div>';
   }).join('');
 }
 
 function body(id,b){
-  let h='<div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap">'
+  /* 👤 받을 사람 고르기 — 비워 두면 그 지점 전체에게 간다 */
+  const asg=isBoss()
+    ? '<select class="btn sm" id="asg_'+id+'" style="min-width:160px">'
+      +'<option value="*">'+esc(t('toAll'))+'</option>'
+      +ROSTER.map(p=>'<option value="'+esc(p.name)+'"'+(b.taskTo===p.name?' selected':'')+'>'
+        +esc(p.name)+(p.role?' · '+esc(p.role):'')+'</option>').join('')+'</select>'
+    : '';
+  let h='<div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap;align-items:center">'
     +'<button class="btn go sm" onclick="doPrint(\''+id+'\')">'+esc(t('print'))+'</button>'
+    +asg
     +(isBoss()?'<button class="btn sm" onclick="sendTask(\''+id+'\')"'
         +(b.taskId?' style="opacity:.65"':'')+'>'+esc(t('task'))+(b.taskId?' ✓':'')+'</button>':'')
     +(isBoss()?'<button class="btn sm" onclick="delB(\''+id+'\')">'+esc(t('del'))+'</button>':'')+'</div>';
@@ -318,8 +351,11 @@ const today10=()=>{ const d=new Date();
 async function sendTask(id){
   const b=DATA[id]; if(!b) return;
   if(!isBoss()){ toast(t('noPerm')); return; }
-  if(b.taskId){ if(!confirm(t('tskA'))) return; }
-  else if(!confirm(t('tskQ',{b:bname(b.branch||BRANCH)}))) return;
+  const sel=$('asg_'+id);
+  const who=(sel&&sel.value)||'*';
+  const whoLbl=who==='*'?t('toAll'):who;
+  if(b.taskId&&b.taskTo===who){ if(!confirm(t('tskA'))) return; }
+  else if(!confirm(t('tskQ',{b:bname(b.branch||BRANCH),w:whoLbl}))) return;
 
   const n=total(b), v=String(b.vendor||'').trim(), inv=String(b.inv||'').trim();
   const nm={ ko:'📋 매대 확인서 — '+(v||'확인')+' '+n+'가지',
@@ -344,18 +380,21 @@ async function sendTask(id){
   const task={ name:nm.ko, nameTr:nm, deadline:'18:00', category:'매대 확인서',
     requirePhoto:false, place:'매장 매대',
     locationNote:note.ko, locationNoteTr:note,
-    assignedTo:'*', assignedToId:null,
+    assignedTo:who, assignedToId:(who==='*'?null:who),
     from:(m.name||'HQ')+' (HQ 매대 확인서)', fromRole:(m.role||'EXECUTIVE'),
     createdAt:Date.now(),
     appLink:'./checksheet.html',
     appLinkLabel:{ko:'📋 확인서 열기',en:'📋 Open check sheet',es:'📋 Abrir hoja'},
     points:2, checkSheet:b._id, checkSheetBranch:b._br };
 
-  const tid='chks_'+b._id;
+  /* 받는 사람마다 다른 열쇠 — 한 확인서를 매니저와 슈퍼바이저에게 따로 보낼 수 있다.
+     같은 사람에게 같은 날 다시 보내면 덮어쓰므로 중복 업무가 쌓이지 않는다. */
+  const tid='chks_'+b._id+'_'+(who==='*'?'all':String(who).replace(/[^A-Za-z0-9가-힣]+/g,'_'));
   try{
     await F.set(F.ref(F.db,'tasks/'+b._br+'/'+today10()+'/'+tid),task);
-    await F.update(F.ref(F.db,'expiry/'+b._br+'/checkSheets/'+b._id),{taskId:tid,taskAt:Date.now()});
-    toast(t('tskOk')+' — '+esc(bname(b._br)));
+    await F.update(F.ref(F.db,'expiry/'+b._br+'/checkSheets/'+b._id),
+      {taskId:tid,taskTo:who,taskAt:Date.now()});
+    toast(t('tskOk')+' — '+esc(whoLbl));
   }catch(e){ toast(t('tskNo')+' — '+esc(e.message||'')); }
 }
 
