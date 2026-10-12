@@ -141,13 +141,23 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getDatabase, ref, push, set, update, remove, onValue, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
   import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+  /* 🔴 2026-10-12 — 로그인 토큰을 그 자리에서 되살리려고 auth 를 꺼내 둔다.
+     묵은 토큰 때문에 사진 올리기가 막혔을 때, 새로고침하면 **골라 둔 사진이 다 날아간다**(전무님).
+     그래서 화면을 그대로 두고 토큰만 새로 받아 다시 보낸다. */
+  import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com",
                 databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order",
                 storageBucket:"kimchi-mart-order.firebasestorage.app" };
   const app = getApps().length ? getApp() : initializeApp(cfg);
   // 버킷을 명시한다 — 다른 스크립트가 버킷 없이 앱을 먼저 만들어도 안전 (2026-09-20 사고)
   window.__fb = { db: getDatabase(app), ref, push, set, update, remove, onValue, get,
-                  st: getStorage(app, 'gs://kimchi-mart-order.firebasestorage.app'), sRef, uploadBytes, getDownloadURL };
+                  st: getStorage(app, 'gs://kimchi-mart-order.firebasestorage.app'), sRef, uploadBytes, getDownloadURL,
+                  auth: getAuth(app),
+                  /* 토큰을 강제로 새로 받는다. 로그인이 아예 안 돼 있으면 false. */
+                  freshToken: async function(){
+                    try{ const u=getAuth(app).currentUser; if(!u) return false;
+                         await u.getIdToken(true); return true; }catch(e){ return false; }
+                  } };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 
@@ -218,9 +228,10 @@ const L={
             es:'Use 📷 o 📎 arriba y elija todas las facturas.'},
  bulkDone:{ko:'✅ {n}건 보냈습니다. HQ 운영본부가 확인합니다.',en:'✅ Sent {n} invoices. HQ Operations will review.',es:'✅ Enviadas {n} facturas. HQ las revisará.'},
  whyFail:{ko:'까닭:',en:'Reason:',es:'Motivo:'},
- whyStale:{ko:'👉 로그인이 묵은 것 같습니다. 이 화면을 한 번 새로고침하고 다시 눌러 주세요. 사진은 그대로 남아 있습니다.',
-           en:'👉 Your sign-in looks stale. Refresh this page and press send again. Your photos are still here.',
-           es:'👉 Su sesión parece vencida. Actualice esta página y vuelva a enviar. Sus fotos siguen aquí.'},
+ reauth:{ko:'🔑 로그인 되살리는 중…',en:'🔑 Refreshing sign-in…',es:'🔑 Renovando sesión…'},
+ whyStale:{ko:'👉 로그인이 묵어서 막혔습니다. 되살려서 한 번 더 해 봤는데도 안 됐습니다.\n사진은 화면에 그대로 있으니, 잠시 뒤 [보내기] 를 다시 눌러 보세요. 그래도 안 되면 이 글을 그대로 매니저에게 보여 주세요.',
+           en:'👉 Blocked by a stale sign-in. We refreshed it and tried once more, without success.\nYour photos are still on screen — wait a moment and press Send again. If it still fails, show this message to the manager.',
+           es:'👉 Bloqueado por una sesión vencida. La renovamos y lo intentamos otra vez, sin éxito.\nSus fotos siguen en pantalla — espere un momento y pulse Enviar otra vez. Si sigue fallando, muestre este mensaje al gerente.'},
  bulkPart:{ko:'⚠ {n}건 보냈고 {m}건은 실패했습니다 — 실패한 것만 화면에 남겨 두었습니다. 다시 눌러 주세요.',
            en:'⚠ Sent {n}, {m} failed — only the failed ones are left on screen. Tap send again.',
            es:'⚠ Enviadas {n}, {m} fallaron — solo quedan las fallidas. Toque enviar otra vez.'},
@@ -568,6 +579,9 @@ $('pages').oninput=checkPages;
 
 $('btnBulk').onclick=function(){ BULK=!BULK; applyBulkUI(); paint(); };
 
+/* 로그인이 묵어서 막힌 것인지 가리는 잣대 — 알림 글과 되살리기 둘 다 이걸 쓴다 (2026-10-12) */
+const AUTHY=/unauthoriz|unauthenticated|permission|403|401|token|expired|app-check/i;
+
 /* 파일 하나를 Storage 에 올리고 {n,u} 를 돌려준다 (한 장씩·묶음 공용) */
 async function putOne(f,path,safe){
   const r=window.__fb.sRef(window.__fb.st,path);
@@ -593,7 +607,7 @@ async function sendBulk(btn){
     return;
   }
   const m=me(), got=$('dt').value||today(), memo=$('memo').value.trim();
-  const keep=[]; let ok=0, why='';          // why = 처음 터진 오류 (화면에 보여 준다)
+  const keep=[]; let ok=0, why='', retried=false;   // why = 처음 터진 오류, retried = 토큰 되살리기 한 번만
   for(let gi=0; gi<groups.length; gi++){
     const idx=groups[gi];
     btn.textContent=t('uploading')+' ('+(gi+1)+'/'+groups.length+')';
@@ -615,19 +629,28 @@ async function sendBulk(btn){
       ok++;
     }catch(e){
       console.warn('[inv] bulk',e);
-      /* 🔴 2026-10-12 — 여태 까닭을 삼켜서 "왜 안 올라가지?" 가 됐다. 첫 오류를 적어 두고 화면에 띄운다.
-         로그인 토큰이 묵으면 사진 올리기만 막히는 일이 있어, 그럴 땐 새로고침하라고 같이 알려 준다. */
-      if(!why) why=String((e&&(e.code||e.message))||e);
+      /* 🔴 2026-10-12 — 여태 까닭을 삼켜서 "왜 안 올라가지?" 가 됐다. 첫 오류를 적어 둔다. */
+      const msg=String((e&&(e.code||e.message))||e);
+      if(!why) why=msg;
+
+      /* 🔴 로그인이 묵어서 막힌 것이면 **토큰만 새로 받아 그 자리에서 한 번 더** 해 본다.
+         새로고침하면 골라 둔 사진이 다 날아가서 처음부터 다시 찍어야 한다(전무님 2026-10-12).
+         토큰 되살리기는 묶음당 한 번만 — 안 되면 그냥 실패로 남긴다(무한 되풀이 금지). */
+      if(AUTHY.test(msg) && !retried && window.__fb.freshToken){
+        retried=true;
+        btn.textContent=t('reauth');
+        const got2=await window.__fb.freshToken();
+        if(got2){ gi--; continue; }            // 같은 건을 한 번 더
+      }
       idx.forEach((i,k)=>{ const f=FILES[i]; keep.push(Object.assign({},f,{merge:k>0})); });
     }
   }
   FILES=keep; paint();
   if(!keep.length){ $('memo').value=''; toast(t('bulkDone',{n:ok})); }
   else {
-    const stale=/unauthoriz|unauthenticated|permission|403|401|token|expired/i.test(why);
     alert(t('bulkPart',{n:ok,m:groups.length-ok}).replace(/<[^>]+>/g,'')
       + (why ? '\n\n' + t('whyFail') + '\n' + why : '')
-      + (stale ? '\n\n' + t('whyStale') : ''));
+      + (AUTHY.test(why) ? '\n\n' + t('whyStale') : ''));
   }
 }
 
