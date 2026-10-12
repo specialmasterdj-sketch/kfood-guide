@@ -117,6 +117,8 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
 
     <div class="files" id="files"></div>
     <div id="pageWarn"></div>
+    <!-- 🔴 PDF·엑셀은 아직 저장소 규칙이 막는다 (2026-10-12) — 고르는 자리에서 미리 알려 준다 -->
+    <div id="fileWarn"></div>
 
     <label id="tMemo"></label>
     <textarea id="memo"></textarea>
@@ -166,9 +168,12 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
 const HQ={ko:'HQ 운영본부',en:'HQ Operations',es:'Operaciones HQ'};
 const L={
  title:{ko:'🧾 인보이스 접수',en:'🧾 Invoice Intake',es:'🧾 Recepción de Facturas'},
- sub:{ko:'배달과 함께 온 인보이스를 올려 주세요. <b>사진·PDF·엑셀 무엇이든</b> 됩니다.<br>올리시면 <b>HQ 운영본부</b>가 받아서 가격 대조까지 진행합니다.',
-      en:'Upload the invoice that came with the delivery. <b>Photo, PDF or Excel — anything works.</b><br>Once uploaded, <b>HQ Operations</b> takes it from there and runs the price audit.',
-      es:'Suba la factura que llegó con la entrega. <b>Foto, PDF o Excel — cualquiera sirve.</b><br>Una vez subida, <b>Operaciones HQ</b> se encarga y hace la auditoría de precios.'},
+ /* 🔴 2026-10-12 — 전엔 "사진·PDF·엑셀 무엇이든 됩니다" 라고 적혀 있었지만 지키지 못할 약속이었다.
+    저장소 규칙이 이미지만 받아서 PDF 는 여태 **한 개도** 올라간 적이 없다(올라간 83개가 전부 .jpg/.png).
+    규칙이 풀리면 이 글을 되돌릴 것. */
+ sub:{ko:'배달과 함께 온 인보이스를 올려 주세요. 지금은 <b>사진</b>으로 올려 주시면 됩니다.<br>올리시면 <b>HQ 운영본부</b>가 받아서 가격 대조까지 진행합니다.',
+      en:'Upload the invoice that came with the delivery. For now please upload it as a <b>photo</b>.<br>Once uploaded, <b>HQ Operations</b> takes it from there and runs the price audit.',
+      es:'Suba la factura que llegó con la entrega. Por ahora súbala como <b>foto</b>.<br>Una vez subida, <b>Operaciones HQ</b> se encarga y hace la auditoría de precios.'},
  note:{ko:'📷 <b>사진으로 올리실 때</b> — 한 장에 한 페이지씩, <b>밝은 곳에서 똑바로</b> 찍어 주세요. 글씨가 흐리면 금액을 못 읽어서 되돌려 드리게 됩니다.<br>📄 벤더가 <b>메일로 PDF·엑셀을 보내준 경우</b>엔 그 파일을 그대로 올리시는 게 가장 정확합니다.',
       en:'📷 <b>If you photograph it</b> — one page per photo, <b>straight on and in good light</b>. Blurry numbers cannot be read and we will have to send it back.<br>📄 If the vendor <b>emailed a PDF or Excel</b>, uploading that file is the most accurate.',
       es:'📷 <b>Si la fotografía</b> — una página por foto, <b>derecha y con buena luz</b>. Si los números salen borrosos no se pueden leer y habrá que repetirla.<br>📄 Si el proveedor <b>envió un PDF o Excel por correo</b>, subir ese archivo es lo más exacto.'},
@@ -227,6 +232,9 @@ const L={
             en:'Use 📷 or 📎 above and pick all the invoices.',
             es:'Use 📷 o 📎 arriba y elija todas las facturas.'},
  bulkDone:{ko:'✅ {n}건 보냈습니다. HQ 운영본부가 확인합니다.',en:'✅ Sent {n} invoices. HQ Operations will review.',es:'✅ Enviadas {n} facturas. HQ las revisará.'},
+ noPdf:{ko:'⚠ <b>{f}</b> 는 아직 못 올립니다 — 지금은 <b>사진만</b> 됩니다.<br>인보이스를 <b>사진으로 찍어</b> 올려 주세요. (PDF·엑셀은 열어 두었지만 저장소가 아직 막고 있습니다 — HQ가 푸는 중입니다)',
+        en:'⚠ <b>{f}</b> cannot be uploaded yet — <b>photos only</b> for now.<br>Please take a photo of the invoice instead. (PDF/Excel are still blocked by storage — HQ is working on it)',
+        es:'⚠ <b>{f}</b> todavía no se puede subir — por ahora <b>solo fotos</b>.<br>Tome una foto de la factura. (PDF/Excel siguen bloqueados por el almacenamiento — HQ lo está resolviendo)'},
  whyFail:{ko:'까닭:',en:'Reason:',es:'Motivo:'},
  reauth:{ko:'🔑 로그인 되살리는 중…',en:'🔑 Refreshing sign-in…',es:'🔑 Renovando sesión…'},
  whyStale:{ko:'👉 로그인·권한 때문에 막혔습니다. 사진은 화면에 그대로 있으니 다시 고르실 필요 없습니다.\n아래 상태를 그대로 매니저에게 보여 주세요.',
@@ -456,8 +464,21 @@ $('cam').onchange=async function(){ if(this.files&&this.files.length){ toast(t('
 $('pick').onchange=async function(){ if(this.files&&this.files.length){ toast(t('preparing')); await addFiles([...this.files]); afterAdd(); } this.value=''; };
 // 묶음 모드에서는 방금 들어온 장과 '한 장 더' 단추가 바로 보이게 내려 준다
 function afterAdd(){
+  nonImgWarn();
   if(!BULK) return;
   try{ const b=$('files'); b.scrollIntoView({block:'end',behavior:'smooth'}); }catch(e){}
+}
+
+/* 🔴 2026-10-12 — PDF·엑셀을 고르면 보내기가 storage/unauthorized 로 막힌다.
+   사진 저장소 규칙이 이미지만 받기 때문이다 (여태 올라간 83개가 전부 .jpg/.png, PDF 는 0개).
+   앱 맨 위에는 "사진·PDF·엑셀 무엇이든 됩니다" 라고 적혀 있어서 지키지 못할 약속이었다.
+   규칙이 고쳐질 때까지 **고르는 자리에서 미리** 알려 준다 — 막지는 않는다(규칙이 풀리면 바로 되게). */
+function nonImgWarn(){
+  const el=$('fileWarn'); if(!el) return;
+  const bad=FILES.filter(f=>!f.isImg).map(f=>f.name);
+  el.innerHTML = bad.length
+    ? '<div class="note warn" style="margin:11px 0 0">'+t('noPdf').replace('{f}',esc(bad.join(', ')))+'</div>'
+    : '';
 }
 
 function icon(ty,n){ if(/pdf/i.test(ty)||/\.pdf$/i.test(n))return '📕'; if(/sheet|excel|csv/i.test(ty)||/\.(xlsx?|csv)$/i.test(n))return '📗'; return '📄'; }
@@ -507,6 +528,7 @@ window.mergeAll=function(on){
 };
 
 function paint(){
+  nonImgWarn();                      // ✕ 로 지웠을 때도 경고가 따라 사라지게 (2026-10-12)
   if(BULK){ paintBulk(); return; }
   $('files').className='files';          // 한 장씩 모드 — 작은 네모 여러 개
   $('files').innerHTML=FILES.map((f,i)=>
