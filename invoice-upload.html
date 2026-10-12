@@ -133,7 +133,10 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
       <input id="aVend" placeholder="거래처">
       <input id="aInv" placeholder="인보이스 번호 (몰라도 됨)">
     </div>
-    <input id="aMemo" style="margin-top:8px" placeholder="무엇이 필요한지 — 예: 3쪽이 안 왔습니다 / 오른쪽이 잘려 총액이 안 보입니다">
+    <label id="tRWhy" style="display:block;margin-top:10px;font-size:.86em;font-weight:800"></label>
+    <select id="aWhy" style="width:100%;margin-top:4px"></select>
+    <label id="tRPage" style="display:block;margin-top:8px;font-size:.8em;color:var(--sub)"></label>
+    <input id="aMemo" style="margin-top:4px" placeholder="3, 4">
     <button class="btn big" id="btnAsk" style="margin-top:10px;background:#b91c1c"></button>
   </div>
 
@@ -272,6 +275,34 @@ const L={
  askOk:{ko:'🔴 요청을 보냈습니다 — {b}',en:'🔴 Request sent — {b}',es:'🔴 Solicitud enviada — {b}'},
  askTag:{ko:'🔴 다시 보내 주세요',en:'🔴 PLEASE RESEND',es:'🔴 REENVÍE POR FAVOR'},
  askFrom:{ko:'HQ 운영본부 요청',en:'Request from HQ',es:'Solicitud de HQ'},
+ /* 🔴 2026-10-11 전무님 — 까닭을 손으로 적으면 한국어로만 나가서 스페인어 직원이 못 읽었다.
+    골라서 보내게 하고, 보는 사람 말로 번역해 띄운다. 쪽 번호 같은 숫자만 따로 적는다. */
+ rWhy:{ko:'무엇이 필요한가요',en:'What do you need?',es:'¿Qué necesita?'},
+ rPage:{ko:'쪽 번호 등 (숫자만 — 모든 말에 그대로 보입니다)',
+        en:'Page numbers etc. (numbers only — shown as-is in every language)',
+        es:'Números de página (solo números — se muestran igual en todos los idiomas)'},
+ r_notArrived:{ko:'이 인보이스가 아직 안 왔습니다. 찾아서 올려 주세요.',
+               en:'This invoice has not arrived yet. Please find it and upload it.',
+               es:'Esta factura todavía no llegó. Búsquela y súbala.'},
+ r_missingPage:{ko:'쪽이 빠졌습니다. 빠진 쪽을 찍어 보내 주세요.',
+                en:'Pages are missing. Please photograph the missing pages.',
+                es:'Faltan páginas. Tome fotos de las páginas que faltan.'},
+ r_cutOff:{ko:'사진 가장자리가 잘렸습니다. 종이 전체가 들어가게 조금 멀리서 다시 찍어 주세요.',
+           en:'The photo is cut off at the edge. Step back and retake with the whole page in frame.',
+           es:'La foto está cortada en el borde. Aléjese y tome la foto con toda la hoja.'},
+ r_noTotal:{ko:'맨 아래 합계(Total)가 안 보입니다. 합계까지 보이게 다시 찍어 주세요.',
+            en:'The Total at the bottom is not visible. Retake so the Total shows.',
+            es:'No se ve el Total abajo. Tómela de nuevo mostrando el Total.'},
+ r_blurry:{ko:'글씨가 흐려서 못 읽습니다. 밝은 곳에서 다시 찍어 주세요.',
+           en:'Too blurry to read. Please retake in better light.',
+           es:'Está borrosa y no se puede leer. Tómela de nuevo con más luz.'},
+ r_other:{ko:'아래 내용을 봐 주세요.',en:'Please see the note below.',es:'Vea la nota abajo.'},
+ rPick:{ko:'번호를 고르세요:\n1 쪽이 빠짐\n2 가장자리가 잘림\n3 합계가 안 보임\n4 흐려서 못 읽음\n5 직접 쓰기',
+        en:'Pick a number:\n1 pages missing\n2 cut off at edge\n3 total not visible\n4 too blurry\n5 write my own',
+        es:'Elija un número:\n1 faltan páginas\n2 cortada en el borde\n3 no se ve el total\n4 borrosa\n5 escribir'},
+ rPage2:{ko:'쪽 번호 등을 적어 주세요 (없으면 비워 두세요)',
+         en:'Page numbers etc. (leave blank if none)',
+         es:'Números de página (deje vacío si no hay)'},
  redo:{ko:'🔴 다시 찍어 달라고 하기',en:'🔴 Ask for a new photo',es:'🔴 Pedir nueva foto'},
  redoAsk:{ko:'무엇이 잘못됐는지 적어 주세요 — 그 지점 화면에 빨갛게 뜹니다',
           en:'What is wrong? It will show in red on that store’s screen',
@@ -371,6 +402,10 @@ function applyLang(){
   $('tAskHint').textContent=t('askHint');
   $('btnAsk').textContent=t('askSend',{b:(BRANCH==='*'?'…':bname(BRANCH))});
   $('askCard').style.display=(isBoss()&&BRANCH!=='*')?'':'none';
+  $('tRWhy').textContent=t('rWhy'); $('tRPage').textContent=t('rPage');
+  const keepWhy=$('aWhy').value;
+  $('aWhy').innerHTML=WHY.map(k=>'<option value="'+k+'">'+esc(t('r_'+k))+'</option>').join('');
+  if(keepWhy) $('aWhy').value=keepWhy;
   const keep=$('vendorSel').value;
   $('vendorSel').innerHTML='<option value="">'+esc(t('pick'))+'</option>'
     +VENDORS.map(v=>'<option'+(v===keep?' selected':'')+'>'+esc(v)+'</option>').join('')
@@ -693,7 +728,7 @@ function rows(){
   return Object.keys(DATA).map(id=>Object.assign({id},DATA[id])).filter(r=>r)
     .filter(r=>FILTER==='all'?true:(r.status||'new')===FILTER)
     /* 🔴 다시 보내 달라는 것(요청·재촬영)은 맨 위로 — 지점이 바로 보게 (2026-10-11) */
-    .sort((a,b)=>((b.ask||b.redo)?1:0)-((a.ask||a.redo)?1:0)||(b.ts||0)-(a.ts||0));
+    .sort((a,b)=>((b.ask||b.redo||b.redoWhy)?1:0)-((a.ask||a.redo||a.redoWhy)?1:0)||(b.ts||0)-(a.ts||0));
 }
 function render(){
   /* 탭마다 몇 건인지 숫자를 같이 보여준다 — 상태를 바꾸면 다른 칸으로 가는데,
@@ -726,15 +761,20 @@ function render(){
       ? '<span style="color:#b91c1c">'+esc(t('noVendor'))+'</span>'
       : esc(r.vendor);
     /* 🔴 다시 보내 달라는 것 — 빨간 띠로 크게 (2026-10-11 전무님) */
-    const askMsg = r.ask ? (r.memo||'') : (r.redo||'');
-    const red = (r.ask||r.redo)
+    /* 🔴 까닭은 코드로 저장돼 있다 — **보는 사람 말**로 띄운다 (2026-10-11 전무님:
+       "번역이 안 돼. 스페니쉬 직원들은 글을 못 읽어"). 코드가 없는 옛 기록은 적힌 글 그대로 보인다. */
+    const why   = r.ask ? r.why : r.redoWhy;
+    const line1 = why ? t('r_'+why) : '';
+    const note  = String((r.ask ? r.memo : r.redo) || '').replace(/\*\*/g,'').trim();
+    const red = (r.ask||r.redo||r.redoWhy)
       ? '<div style="background:#b91c1c;color:#fff;border-radius:10px;padding:10px 12px;margin:0 0 9px;'
         +'font-weight:900;font-size:1.02em;line-height:1.45">'+esc(t('askTag'))
-        +(askMsg?('<div style="font-weight:700;font-size:.92em;margin-top:5px">'+esc(askMsg)+'</div>'):'')
+        +(line1?('<div style="font-weight:800;font-size:.95em;margin-top:5px">'+esc(line1)+'</div>'):'')
+        +(note?('<div style="font-weight:700;font-size:.92em;margin-top:4px">'+esc(note)+'</div>'):'')
         +'<div style="font-weight:600;font-size:.78em;opacity:.9;margin-top:4px">'+esc(t('askFrom'))
         +' · '+esc(r.redoBy||r.by||'')+'</div></div>'
       : '';
-    return '<div class="it"'+((r.ask||r.redo)?' style="border:2px solid #dc2626;background:#fff5f5"'
+    return '<div class="it"'+((r.ask||r.redo||r.redoWhy)?' style="border:2px solid #dc2626;background:#fff5f5"'
         :(noV?' style="border-color:#fca5a5;background:#fff8f8"':''))
       +'>'+red+'<div class="h"><div class="v">'+brTag+vLabel+(r.invNo?' <span style="font-weight:400;color:#64748b">#'+esc(r.invNo)+'</span>':'')
       +'</div><span class="bdg '+st[1]+'">'+esc(t(st[0]))+'</span></div>'
@@ -745,9 +785,9 @@ function render(){
       +'<div style="margin-top:9px;display:flex;gap:7px;flex-wrap:wrap">'
       +(noV?'<button class="btn" style="padding:7px 13px;font-size:.82em;background:#b91c1c" onclick="setVendor(\''+r.id+'\')">'+esc(t('fixVendor'))+'</button>':'')
       /* 🔴 HQ 는 "다시 찍어 주세요" 를 붙이고, 붙은 뒤엔 해결됨으로 끌 수 있다 */
-      +(isBoss()&&!r.ask?'<button class="btn'+(r.redo?' lite':'')+'" style="padding:7px 13px;font-size:.82em'
-        +(r.redo?'':';background:#b91c1c')+'" onclick="askRedo(\''+r.id+'\')">'
-        +esc(t(r.redo?'redoDone':'redo'))+'</button>':'')
+      +(isBoss()&&!r.ask?'<button class="btn'+((r.redo||r.redoWhy)?' lite':'')+'" style="padding:7px 13px;font-size:.82em'
+        +((r.redo||r.redoWhy)?'':';background:#b91c1c')+'" onclick="askRedo(\''+r.id+'\')">'
+        +esc(t((r.redo||r.redoWhy)?'redoDone':'redo'))+'</button>':'')
       +(nf>1?'<button class="btn lite" style="padding:7px 13px;font-size:.82em" onclick="dlAll(\''+r.id+'\')">'+esc(t('dlAll'))+'</button>':'')
       +(isBoss()?'<button class="btn g" style="padding:7px 13px;font-size:.82em" onclick="setStatus(\''+r.id+'\',\''+next+'\')">'+esc(t(nextL))+'</button>':'')
       +'</div></div>';
@@ -885,6 +925,9 @@ async function dlAll(id){
 /* 🔴 2026-10-11 전무님 — 안 온 인보이스 / 잘린 사진을 지점에 다시 보내 달라고 한다.
    기록은 같은 곳(expiry/{지점}/invoices)에 넣는다 — 지점이 이미 보고 있는 목록이라 바로 눈에 띈다.
    ask:true 인 줄은 '올라온 인보이스' 가 아니라 '요청' 이다. */
+/* 고를 수 있는 까닭 — 글은 r_<코드> 에 3개 언어로 들어 있다. 보는 사람 말로 나온다. */
+const WHY=['notArrived','missingPage','cutOff','noTotal','blurry','other'];
+
 async function sendAsk(){
   if(BRANCH==='*'){ toast(t('askNeedB')); return; }
   const v=$('aVend').value.trim();
@@ -893,6 +936,7 @@ async function sendAsk(){
   try{
     const r=window.__fb.push(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices'));
     await window.__fb.set(r,{ ask:true, vendor:v, invNo:$('aInv').value.trim()||'',
+      why:$('aWhy').value||'other',                 /* 코드로 저장 — 보는 사람 말로 번역된다 */
       got:today(), pages:0, files:[], memo:$('aMemo').value.trim(),
       by:(m.name||''), byUid:(m.uid||''), branch:BRANCH, ts:Date.now(), status:'new' });
     $('aVend').value=''; $('aInv').value=''; $('aMemo').value='';
@@ -902,15 +946,27 @@ async function sendAsk(){
 /* 이미 올라온 기록에 "다시 찍어 주세요" 를 붙인다 */
 async function askRedo(id){
   const rec=DATA[id]||{};
-  const msg=prompt(t('redoAsk'), rec.redo || t('redoDflt'));
-  if(msg===null) return;
-  const s=String(msg).trim();
+  const br=rec._br||BRANCH, rid=rec._id||id;
+  /* 이미 붙어 있으면 끄기 */
+  if(rec.redoWhy||rec.redo){
+    try{ await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+br+'/invoices/'+rid),
+      { redo:null, redoWhy:null, redoBy:null, redoTs:null });
+      render(); toast(t('moved',{s:t('fNew')})); }catch(e){ alert(t('failStat')+': '+(e.message||e)); }
+    return;
+  }
+  /* 🔴 손으로 적으면 한 가지 말로만 나간다 — 번호로 고르게 해서 3개 언어로 나가게 한다 (2026-10-11) */
+  const PICK=['missingPage','cutOff','noTotal','blurry','other'];
+  const n=prompt(t('rPick'),'2');
+  if(n===null) return;
+  const why=PICK[(parseInt(n,10)||0)-1];
+  if(!why){ toast(t('rPick').split('\n')[0]); return; }
+  let note='';
+  if(why==='other'){ const s=prompt(t('redoAsk'),''); if(s===null) return; note=String(s).trim(); }
+  else { const s=prompt(t('rPage2'),''); if(s===null) return; note=String(s).trim(); }
   try{
-    const br=rec._br||BRANCH, rid=rec._id||id;
     await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+br+'/invoices/'+rid),
-      s ? { redo:s, redoBy:(me().name||''), redoTs:Date.now() }
-        : { redo:null, redoBy:null, redoTs:null });
-    render(); toast(s?t('redoOk'):t('moved',{s:t('fNew')}));
+      { redoWhy:why, redo:note, redoBy:(me().name||''), redoTs:Date.now() });
+    render(); toast(t('redoOk'));
   }catch(e){ alert(t('failStat')+': '+(e.message||e)); }
 }
 
