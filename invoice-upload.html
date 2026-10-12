@@ -400,8 +400,7 @@ function applyLang(){
   /* 🔴 요청 칸 — 오너·임원만, 지점을 하나 골랐을 때만 (전 지점 보기에선 어디로 보낼지 모른다) */
   $('tAsk').textContent=t('ask');
   $('tAskHint').textContent=t('askHint');
-  $('btnAsk').textContent=t('askSend',{b:(BRANCH==='*'?'…':bname(BRANCH))});
-  $('askCard').style.display=(isBoss()&&BRANCH!=='*')?'':'none';
+  syncAskCard();
   $('tRWhy').textContent=t('rWhy'); $('tRPage').textContent=t('rPage');
   const keepWhy=$('aWhy').value;
   $('aWhy').innerHTML=WHY.map(k=>'<option value="'+k+'">'+esc(t('r_'+k))+'</option>').join('');
@@ -423,12 +422,24 @@ document.querySelectorAll('[data-l]').forEach(b=>b.addEventListener('click',()=>
 /* ===== 화면 준비 ===== */
 $('dt').value=today();
 $('branch').disabled=!isBoss();          // 지점 직원은 자기 지점 고정
+/* 🔴 2026-10-12 전무님 — 라스올라스를 보고 있는데 버튼엔 "마이애미 에 요청 보내기" 가 떴다.
+   까닭: 이 글씨를 applyLang() 안에서만 정해 놔서 **페이지를 처음 열 때 한 번** 박히고,
+   지점을 바꿔도 그대로 남았다. 목록은 subscribe() 로 제대로 바뀌는데 글씨만 안 바뀐 것이다.
+   🔴 보이는 곳과 가는 곳이 달라서 위험했다 — sendAsk() 는 바뀐 BRANCH 를 쓰므로
+      "마이애미" 라 적힌 버튼을 눌러도 요청은 라스올라스로 갔다.
+   그래서 글씨·보임 여부를 한 군데(syncAskCard)로 모으고 지점을 바꿀 때도 부른다. */
+function syncAskCard(){
+  $('btnAsk').textContent=t('askSend',{b:(BRANCH==='*'?'…':bname(BRANCH))});
+  $('askCard').style.display=(isBoss()&&BRANCH!=='*')?'':'none';
+}
+
 $('branch').onchange=function(){
   BRANCH=this.value;
   try{
     localStorage.setItem('inv_branch',BRANCH);                       // 이 앱에서 고른 것은 그대로 기억
     if(BRANCH!=='*') localStorage.setItem('km_branch',BRANCH);       // 다른 앱과 같이 쓰는 칸에는 '*' 를 넣지 않는다
   }catch(e){}
+  syncAskCard();                                                     // 버튼 글씨가 보고 있는 지점을 따라가게
   applyAllMode(); subscribe();
 };
 $('vendorSel').onchange=function(){ $('vendorEtc').style.display=this.value==='__etc'?'':'none'; if(this.value==='__etc')$('vendorEtc').focus(); };
@@ -929,6 +940,10 @@ async function dlAll(id){
 const WHY=['notArrived','missingPage','cutOff','noTotal','blurry','other'];
 
 async function sendAsk(){
+  /* 🔴 보내기 직전에 화면의 지점 칸을 다시 본다. 요청은 그 지점 직원에게 가는 것이라
+     "보이는 곳" 과 "가는 곳" 이 다르면 엉뚱한 매장이 찾으러 다니게 된다. (2026-10-12) */
+  const sel=$('branch').value;
+  if(sel && sel!==BRANCH){ BRANCH=sel; syncAskCard(); }
   if(BRANCH==='*'){ toast(t('askNeedB')); return; }
   const v=$('aVend').value.trim();
   if(!v){ toast(t('askNeedV')); $('aVend').focus(); return; }
