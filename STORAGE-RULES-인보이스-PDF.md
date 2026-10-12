@@ -25,12 +25,12 @@
 
 ### 1. 콘솔 열기
 
-```
-https://console.firebase.google.com/project/kimchi-mart-order/storage/rules
-```🔴 **주소에 `/u/3/` 이 꼭 들어가야 한다.** 이게 빠지면 `/u/0`(afmp)으로 열려서
+🔴 **주소에 `/u/3/` 이 꼭 들어가야 한다.** 이게 빠지면 `/u/0`(afmp)으로 열려서
 "The project does not exist or you do not have permission" 이 뜬다 (2026-10-12 실제로 겪음).
 
-
+```
+https://console.firebase.google.com/u/3/project/kimchi-mart-order/storage/rules
+```
 
 **이 브라우저의 구글 계정 자리**
 | 자리 | 계정 | kimchi-mart-order |
