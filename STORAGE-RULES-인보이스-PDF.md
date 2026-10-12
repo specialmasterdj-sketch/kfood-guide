@@ -27,12 +27,20 @@
 
 ```
 https://console.firebase.google.com/project/kimchi-mart-order/storage/rules
-```
+```🔴 **주소에 `/u/3/` 이 꼭 들어가야 한다.** 이게 빠지면 `/u/0`(afmp)으로 열려서
+"The project does not exist or you do not have permission" 이 뜬다 (2026-10-12 실제로 겪음).
 
+
+
+**이 브라우저의 구글 계정 자리**
+| 자리 | 계정 | kimchi-mart-order |
+|---|---|---|
+| `/u/0` | afmp | ❌ 없음 |
+| `/u/1` | Byungho (byhoki64) | ❌ 없음 |
+| **`/u/3`** | **DJ 사장님** | ✅ **있음** |
+
+이미 "권한 없음" 화면이 떴다면 **주소창에서 `/u/0/` 을 `/u/3/` 으로 고치고 Enter** 하면 된다.
 왼쪽 메뉴로 가시려면 **빌드(Build) → Storage → 규칙(Rules)** 탭.
-
-⚠ **사장님 계정(/u/3)** 으로 들어가셔야 한다. byhoki64 는 이 프로젝트 권한이 없다.
-계정이 섞여 있으면 주소의 `/u/3/` 를 확인할 것.
 
 ### 2. 지금 글을 먼저 복사해 둔다 (되돌리기용)
 
