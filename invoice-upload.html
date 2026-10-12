@@ -229,9 +229,9 @@ const L={
  bulkDone:{ko:'✅ {n}건 보냈습니다. HQ 운영본부가 확인합니다.',en:'✅ Sent {n} invoices. HQ Operations will review.',es:'✅ Enviadas {n} facturas. HQ las revisará.'},
  whyFail:{ko:'까닭:',en:'Reason:',es:'Motivo:'},
  reauth:{ko:'🔑 로그인 되살리는 중…',en:'🔑 Refreshing sign-in…',es:'🔑 Renovando sesión…'},
- whyStale:{ko:'👉 로그인이 묵어서 막혔습니다. 되살려서 한 번 더 해 봤는데도 안 됐습니다.\n사진은 화면에 그대로 있으니, 잠시 뒤 [보내기] 를 다시 눌러 보세요. 그래도 안 되면 이 글을 그대로 매니저에게 보여 주세요.',
-           en:'👉 Blocked by a stale sign-in. We refreshed it and tried once more, without success.\nYour photos are still on screen — wait a moment and press Send again. If it still fails, show this message to the manager.',
-           es:'👉 Bloqueado por una sesión vencida. La renovamos y lo intentamos otra vez, sin éxito.\nSus fotos siguen en pantalla — espere un momento y pulse Enviar otra vez. Si sigue fallando, muestre este mensaje al gerente.'},
+ whyStale:{ko:'👉 로그인·권한 때문에 막혔습니다. 사진은 화면에 그대로 있으니 다시 고르실 필요 없습니다.\n아래 상태를 그대로 매니저에게 보여 주세요.',
+           en:'👉 Blocked by sign-in or permissions. Your photos are still on screen — no need to pick them again.\nShow the status below to the manager as it is.',
+           es:'👉 Bloqueado por la sesión o los permisos. Sus fotos siguen en pantalla — no hace falta elegirlas otra vez.\nMuestre el estado de abajo al gerente tal cual.'},
  bulkPart:{ko:'⚠ {n}건 보냈고 {m}건은 실패했습니다 — 실패한 것만 화면에 남겨 두었습니다. 다시 눌러 주세요.',
            en:'⚠ Sent {n}, {m} failed — only the failed ones are left on screen. Tap send again.',
            es:'⚠ Enviadas {n}, {m} fallaron — solo quedan las fallidas. Toque enviar otra vez.'},
@@ -607,7 +607,8 @@ async function sendBulk(btn){
     return;
   }
   const m=me(), got=$('dt').value||today(), memo=$('memo').value.trim();
-  const keep=[]; let ok=0, why='', retried=false;   // why = 처음 터진 오류, retried = 토큰 되살리기 한 번만
+  /* why=처음 터진 오류 · retried=토큰 되살리기 한 번만 · reauthed=되살리기 결과(null=안 해 봄) · lastPath=막힌 자리 */
+  const keep=[]; let ok=0, why='', retried=false, reauthed=null, lastPath='';
   for(let gi=0; gi<groups.length; gi++){
     const idx=groups[gi];
     btn.textContent=t('uploading')+' ('+(gi+1)+'/'+groups.length+')';
@@ -620,7 +621,8 @@ async function sendBulk(btn){
         const f=FILES[idx[k]];
         const ext=(f.name.match(/\.[a-z0-9]+$/i)||[f.isImg?'.jpg':''])[0]||'';
         const safe=('INV_'+(vendor||'UNKNOWN')+'_'+got+'_'+(k+1)+ext).replace(/[^A-Za-z0-9._-]+/g,'_');
-        out.push(await putOne(f,'invoices/'+BRANCH+'/'+ts+'_'+k+ext,safe));
+        lastPath='invoices/'+BRANCH+'/'+ts+'_'+k+ext;   /* 막히면 어느 자리에서 막혔는지 알려 주려고 */
+        out.push(await putOne(f,lastPath,safe));
       }
       const r=window.__fb.push(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices'));
       await window.__fb.set(r,{ vendor, invNo, got, pages:idx.length, files:out, memo,
@@ -639,8 +641,8 @@ async function sendBulk(btn){
       if(AUTHY.test(msg) && !retried && window.__fb.freshToken){
         retried=true;
         btn.textContent=t('reauth');
-        const got2=await window.__fb.freshToken();
-        if(got2){ gi--; continue; }            // 같은 건을 한 번 더
+        reauthed=await window.__fb.freshToken();      // true=토큰 새로 받음 / false=로그인이 아예 없음
+        if(reauthed){ gi--; continue; }               // 같은 건을 한 번 더
       }
       idx.forEach((i,k)=>{ const f=FILES[i]; keep.push(Object.assign({},f,{merge:k>0})); });
     }
@@ -648,9 +650,21 @@ async function sendBulk(btn){
   FILES=keep; paint();
   if(!keep.length){ $('memo').value=''; toast(t('bulkDone',{n:ok})); }
   else {
+    /* 🔴 2026-10-12 — 짐작을 끝내려고 상태를 그대로 적어 준다. 이 몇 줄이면
+       "로그인이 아예 없는 것" 과 "로그인은 돼 있는데 규칙이 막는 것" 이 갈린다. */
+    let diag='';
+    if(AUTHY.test(why)){
+      const u=(window.__fb.auth&&window.__fb.auth.currentUser)||null;
+      diag='\n\n— — —\n'
+        + '로그인: ' + (u ? ((u.email||u.phoneNumber||('uid '+String(u.uid).slice(0,8)))+(u.isAnonymous?' (익명)':'')) : '없음 (로그인 안 돼 있음)') + '\n'
+        + '토큰 되살리기: ' + (reauthed===null ? '안 해 봄' : (reauthed ? '새로 받았는데도 막힘' : '못 받음 — 로그인이 없다')) + '\n'
+        + '지점: ' + BRANCH + '\n'
+        + '막힌 자리: ' + (lastPath||'-');
+    }
     alert(t('bulkPart',{n:ok,m:groups.length-ok}).replace(/<[^>]+>/g,'')
       + (why ? '\n\n' + t('whyFail') + '\n' + why : '')
-      + (AUTHY.test(why) ? '\n\n' + t('whyStale') : ''));
+      + (AUTHY.test(why) ? '\n\n' + t('whyStale') : '')
+      + diag);
   }
 }
 
