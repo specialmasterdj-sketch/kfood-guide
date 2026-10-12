@@ -124,6 +124,19 @@ h2{font-size:1em;font-weight:900;color:var(--brand);margin-bottom:4px}
     <button class="btn big" id="btnSend"></button>
   </div>
 
+  <!-- 🔴 2026-10-11 전무님 — 인보이스가 안 왔거나 사진이 잘렸을 때 지점에 다시 보내 달라고 하는 칸.
+       눈에 확 띄어야 하므로 빨간 글씨로 띄운다. 오너·임원만 보인다. -->
+  <div class="card" id="askCard" style="display:none;border:2px solid #dc2626">
+    <h2 id="tAsk" style="color:#b91c1c"></h2>
+    <div class="hint" id="tAskHint"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="aVend" placeholder="거래처">
+      <input id="aInv" placeholder="인보이스 번호 (몰라도 됨)">
+    </div>
+    <input id="aMemo" style="margin-top:8px" placeholder="무엇이 필요한지 — 예: 3쪽이 안 왔습니다 / 오른쪽이 잘려 총액이 안 보입니다">
+    <button class="btn big" id="btnAsk" style="margin-top:10px;background:#b91c1c"></button>
+  </div>
+
   <div class="card">
     <h2 id="tS3"></h2>
     <div class="fl" id="filters"></div>
@@ -248,6 +261,26 @@ const L={
                  en:'⚠ {n} invoice(s) have no vendor — please fill the red boxes',
                  es:'⚠ {n} factura(s) sin proveedor — complete las casillas rojas'},
  noVendor:{ko:'⚠ 거래처 없음',en:'⚠ No vendor',es:'⚠ Sin proveedor'},
+ /* 🔴 2026-10-11 — 다시 보내 달라고 하는 칸 */
+ ask:{ko:'🔴 다시 보내 달라고 하기',en:'🔴 Ask the store to resend',es:'🔴 Pedir que lo reenvíen'},
+ askHint:{ko:'인보이스가 안 왔거나 사진이 잘렸을 때. 그 지점 화면 맨 위에 빨갛게 뜹니다.',
+          en:'When an invoice never arrived or the photo is cut off. It shows in red at the top of that store’s screen.',
+          es:'Cuando no llegó una factura o la foto está cortada. Aparece en rojo arriba en la pantalla de esa tienda.'},
+ askSend:{ko:'🔴 {b} 에 요청 보내기',en:'🔴 Send request to {b}',es:'🔴 Enviar solicitud a {b}'},
+ askNeedV:{ko:'거래처를 적어 주세요',en:'Please enter the vendor',es:'Escriba el proveedor'},
+ askNeedB:{ko:'위에서 지점을 하나 골라 주세요',en:'Pick one store above',es:'Elija una tienda arriba'},
+ askOk:{ko:'🔴 요청을 보냈습니다 — {b}',en:'🔴 Request sent — {b}',es:'🔴 Solicitud enviada — {b}'},
+ askTag:{ko:'🔴 다시 보내 주세요',en:'🔴 PLEASE RESEND',es:'🔴 REENVÍE POR FAVOR'},
+ askFrom:{ko:'HQ 운영본부 요청',en:'Request from HQ',es:'Solicitud de HQ'},
+ redo:{ko:'🔴 다시 찍어 달라고 하기',en:'🔴 Ask for a new photo',es:'🔴 Pedir nueva foto'},
+ redoAsk:{ko:'무엇이 잘못됐는지 적어 주세요 — 그 지점 화면에 빨갛게 뜹니다',
+          en:'What is wrong? It will show in red on that store’s screen',
+          es:'¿Qué está mal? Se mostrará en rojo en la pantalla de esa tienda'},
+ redoDflt:{ko:'사진이 잘려 총액이 안 보입니다 — 다시 찍어 주세요',
+           en:'The photo is cut off and the total is not visible — please retake',
+           es:'La foto está cortada y no se ve el total — tómela de nuevo'},
+ redoOk:{ko:'🔴 다시 찍어 달라고 보냈습니다',en:'🔴 Asked for a new photo',es:'🔴 Pedido enviado'},
+ redoDone:{ko:'✅ 해결됨으로 표시',en:'✅ Mark resolved',es:'✅ Marcar resuelto'},
  fixVendor:{ko:'✏️ 거래처 적기',en:'✏️ Set vendor',es:'✏️ Poner proveedor'},
  askVendor:{ko:'이 인보이스의 거래처를 적어 주세요',en:'Type the vendor for this invoice',es:'Escriba el proveedor de esta factura'},
  vendorSaved:{ko:'✅ 거래처를 {v} 로 적었습니다',en:'✅ Vendor set to {v}',es:'✅ Proveedor guardado: {v}'},
@@ -333,6 +366,11 @@ function applyLang(){
   $('btnSend').textContent=t('send');
   applyBulkUI();
   $('tS3').textContent=t('s3');
+  /* 🔴 요청 칸 — 오너·임원만, 지점을 하나 골랐을 때만 (전 지점 보기에선 어디로 보낼지 모른다) */
+  $('tAsk').textContent=t('ask');
+  $('tAskHint').textContent=t('askHint');
+  $('btnAsk').textContent=t('askSend',{b:(BRANCH==='*'?'…':bname(BRANCH))});
+  $('askCard').style.display=(isBoss()&&BRANCH!=='*')?'':'none';
   const keep=$('vendorSel').value;
   $('vendorSel').innerHTML='<option value="">'+esc(t('pick'))+'</option>'
     +VENDORS.map(v=>'<option'+(v===keep?' selected':'')+'>'+esc(v)+'</option>').join('')
@@ -654,7 +692,8 @@ const STAT={new:['fNew','b0'],doing:['fDoing','b1'],done:['fDone','b2']};
 function rows(){
   return Object.keys(DATA).map(id=>Object.assign({id},DATA[id])).filter(r=>r)
     .filter(r=>FILTER==='all'?true:(r.status||'new')===FILTER)
-    .sort((a,b)=>(b.ts||0)-(a.ts||0));
+    /* 🔴 다시 보내 달라는 것(요청·재촬영)은 맨 위로 — 지점이 바로 보게 (2026-10-11) */
+    .sort((a,b)=>((b.ask||b.redo)?1:0)-((a.ask||a.redo)?1:0)||(b.ts||0)-(a.ts||0));
 }
 function render(){
   /* 탭마다 몇 건인지 숫자를 같이 보여준다 — 상태를 바꾸면 다른 칸으로 가는데,
@@ -686,8 +725,18 @@ function render(){
     const vLabel=noV
       ? '<span style="color:#b91c1c">'+esc(t('noVendor'))+'</span>'
       : esc(r.vendor);
-    return '<div class="it"'+(noV?' style="border-color:#fca5a5;background:#fff8f8"':'')
-      +'><div class="h"><div class="v">'+brTag+vLabel+(r.invNo?' <span style="font-weight:400;color:#64748b">#'+esc(r.invNo)+'</span>':'')
+    /* 🔴 다시 보내 달라는 것 — 빨간 띠로 크게 (2026-10-11 전무님) */
+    const askMsg = r.ask ? (r.memo||'') : (r.redo||'');
+    const red = (r.ask||r.redo)
+      ? '<div style="background:#b91c1c;color:#fff;border-radius:10px;padding:10px 12px;margin:0 0 9px;'
+        +'font-weight:900;font-size:1.02em;line-height:1.45">'+esc(t('askTag'))
+        +(askMsg?('<div style="font-weight:700;font-size:.92em;margin-top:5px">'+esc(askMsg)+'</div>'):'')
+        +'<div style="font-weight:600;font-size:.78em;opacity:.9;margin-top:4px">'+esc(t('askFrom'))
+        +' · '+esc(r.redoBy||r.by||'')+'</div></div>'
+      : '';
+    return '<div class="it"'+((r.ask||r.redo)?' style="border:2px solid #dc2626;background:#fff5f5"'
+        :(noV?' style="border-color:#fca5a5;background:#fff8f8"':''))
+      +'>'+red+'<div class="h"><div class="v">'+brTag+vLabel+(r.invNo?' <span style="font-weight:400;color:#64748b">#'+esc(r.invNo)+'</span>':'')
       +'</div><span class="bdg '+st[1]+'">'+esc(t(st[0]))+'</span></div>'
       +'<div class="m">'+esc(t('gotL'))+' '+esc(r.got||'')+' · '+esc(t('filesL',{n:nf}))
       +(r.pages&&r.pages!==nf?' <b style="color:#b91c1c">'+esc(t('diffL',{n:r.pages}))+'</b>':'')
@@ -695,6 +744,10 @@ function render(){
       +links
       +'<div style="margin-top:9px;display:flex;gap:7px;flex-wrap:wrap">'
       +(noV?'<button class="btn" style="padding:7px 13px;font-size:.82em;background:#b91c1c" onclick="setVendor(\''+r.id+'\')">'+esc(t('fixVendor'))+'</button>':'')
+      /* 🔴 HQ 는 "다시 찍어 주세요" 를 붙이고, 붙은 뒤엔 해결됨으로 끌 수 있다 */
+      +(isBoss()&&!r.ask?'<button class="btn'+(r.redo?' lite':'')+'" style="padding:7px 13px;font-size:.82em'
+        +(r.redo?'':';background:#b91c1c')+'" onclick="askRedo(\''+r.id+'\')">'
+        +esc(t(r.redo?'redoDone':'redo'))+'</button>':'')
       +(nf>1?'<button class="btn lite" style="padding:7px 13px;font-size:.82em" onclick="dlAll(\''+r.id+'\')">'+esc(t('dlAll'))+'</button>':'')
       +(isBoss()?'<button class="btn g" style="padding:7px 13px;font-size:.82em" onclick="setStatus(\''+r.id+'\',\''+next+'\')">'+esc(t(nextL))+'</button>':'')
       +'</div></div>';
@@ -829,6 +882,38 @@ async function dlAll(id){
     toast(t('dlSome').replace('{k}',items.length).replace('{n}',bad.join(', ')));
   } else toast(t('dlZip').replace('{n}',items.length));
 }
+/* 🔴 2026-10-11 전무님 — 안 온 인보이스 / 잘린 사진을 지점에 다시 보내 달라고 한다.
+   기록은 같은 곳(expiry/{지점}/invoices)에 넣는다 — 지점이 이미 보고 있는 목록이라 바로 눈에 띈다.
+   ask:true 인 줄은 '올라온 인보이스' 가 아니라 '요청' 이다. */
+async function sendAsk(){
+  if(BRANCH==='*'){ toast(t('askNeedB')); return; }
+  const v=$('aVend').value.trim();
+  if(!v){ toast(t('askNeedV')); $('aVend').focus(); return; }
+  const m=me();
+  try{
+    const r=window.__fb.push(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices'));
+    await window.__fb.set(r,{ ask:true, vendor:v, invNo:$('aInv').value.trim()||'',
+      got:today(), pages:0, files:[], memo:$('aMemo').value.trim(),
+      by:(m.name||''), byUid:(m.uid||''), branch:BRANCH, ts:Date.now(), status:'new' });
+    $('aVend').value=''; $('aInv').value=''; $('aMemo').value='';
+    toast(t('askOk',{b:bname(BRANCH)}));
+  }catch(e){ alert(t('failSave')+': '+(e.message||e)); }
+}
+/* 이미 올라온 기록에 "다시 찍어 주세요" 를 붙인다 */
+async function askRedo(id){
+  const rec=DATA[id]||{};
+  const msg=prompt(t('redoAsk'), rec.redo || t('redoDflt'));
+  if(msg===null) return;
+  const s=String(msg).trim();
+  try{
+    const br=rec._br||BRANCH, rid=rec._id||id;
+    await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+br+'/invoices/'+rid),
+      s ? { redo:s, redoBy:(me().name||''), redoTs:Date.now() }
+        : { redo:null, redoBy:null, redoTs:null });
+    render(); toast(s?t('redoOk'):t('moved',{s:t('fNew')}));
+  }catch(e){ alert(t('failStat')+': '+(e.message||e)); }
+}
+
 /* 거래처가 빈 기록을 그 자리에서 채운다 — 올라온 사진을 버리지 않으려고 (2026-10-11) */
 async function setVendor(id){
   const rec=DATA[id]||{};
@@ -860,6 +945,8 @@ async function setStatus(id,st){
   catch(e){ alert(t('failStat')+': '+(e.message||e)); }
 }
 window.rm=rm; window.setF=setF; window.setStatus=setStatus; window.setVendor=setVendor; window.dlOne=dlOne; window.dlAll=dlAll;
+window.askRedo=askRedo;
+$('btnAsk').onclick=function(){ const b=this; b.disabled=true; sendAsk().finally(()=>{ b.disabled=false; }); };
 
 applyLang();
 /* 위 module 스크립트가 __fb 를 올린 뒤에 구독한다.
