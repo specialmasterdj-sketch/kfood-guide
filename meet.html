@@ -82,6 +82,8 @@ main{max-width:780px;margin:0 auto;padding:12px 12px 90px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .note{background:var(--warn-bg);border:1.5px solid var(--warn);border-radius:12px;padding:11px 13px;font-size:.84em;color:var(--warn);margin-bottom:12px;line-height:1.55}
 .note b{display:block;margin-bottom:3px}
+.acct{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.8em;color:var(--muted);margin:-4px 0 12px;padding:0 2px}
+.acct b{color:var(--fg)}
 label{display:block;font-size:.8em;font-weight:800;color:var(--muted);margin:10px 0 4px}
 input[type=url],input[type=text]{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--surface)}
 h2{font-size:.86em;color:var(--muted);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.04em}
@@ -116,6 +118,7 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 
 <main>
   <div class="note" id="legal"></div>
+  <div class="acct" id="acct"></div>
   <div id="stage"><div id="stageIn"></div>
     <div class="acts"><button class="btn" id="leaveBtn"></button></div></div>
   <div id="rooms"></div>
@@ -185,6 +188,13 @@ const T = {
   still:  ['참가 중','in the room','presente'],
   gone:   ['—','—','—'],
   leaveR: ['⏹ 나가기','⏹ Leave','⏹ Salir'],
+  acctL:  ['📧 회의를 열 구글 계정','📧 Google account for meetings','📧 Cuenta de Google'],
+  acctNo: ['정하지 않음 (브라우저 기본 계정)','not set (browser default)','sin definir (cuenta por defecto)'],
+  acctSet:['바꾸기','Change','Cambiar'],
+  acctAsk:['브라우저에 구글 계정이 여러 개면, 회의를 열 때 쓸 계정을 적어 두세요.\n여기 적은 계정으로 회의가 열립니다.\n\n예) info@miamikimchi.com\n\n※ 비우고 확인하면 브라우저 기본 계정으로 돌아갑니다.\n※ 이 기기에서만 쓰입니다. 다른 사람에게는 영향이 없습니다.',
+           'If your browser has several Google accounts, set which one opens meetings.\nMeetings will open with the account you type here.\n\ne.g. info@miamikimchi.com\n\nNote: clear it to go back to the browser default.\nNote: this is kept on this device only.',
+           'Si su navegador tiene varias cuentas de Google, indique cuál abre las reuniones.\nLas reuniones se abrirán con la cuenta que escriba aquí.\n\nej. info@miamikimchi.com\n\nNota: bórrelo para volver a la cuenta por defecto.\nNota: solo se guarda en este dispositivo.'],
+  acctBad:['이메일 주소처럼 보이지 않습니다.','That does not look like an email address.','Eso no parece un correo.'],
   clrUrl: ['회의 링크를 지웠습니다. [참가] 가 다시 꺼집니다.',
            'Meeting link cleared. [Join] is switched off again.',
            'Enlace borrado. [Entrar] queda apagado otra vez.'],
@@ -242,6 +252,27 @@ const canSee = r => isExec() || r.all || r.id === myBranch();
 
 let URLS = {}, LIVE = {}, LOG = {}, JOINED = null, beat = null;
 
+/* 📧 브라우저에 구글 계정이 여러 개면 회의 링크가 '기본 계정' 으로 열린다.
+   2026-10-12 전무님: 회사 계정(info@miamikimchi.com)으로 만든 방인데 앱에서 열면
+   개인 Gmail 로 열려 [Ask to join] 이 떴다. 방 주인인데 문을 두드리는 꼴이다.
+   → 이 기기에서 쓸 계정을 한 번 적어 두면 회의를 그 계정으로 연다 (authuser).
+   기기마다 따로 둔다 — 매니저 폰에는 그 사람 계정이 없으니 건드리지 않는다. */
+const ACCT_KEY = 'km.meet.gacct';
+const getAcct = () => { try { return localStorage.getItem(ACCT_KEY) || ''; } catch(e){ return ''; } };
+function withAcct(u){
+  const a = getAcct();
+  if (!a || !u || /[?&]authuser=/.test(u)) return u;
+  return u + (u.indexOf('?') < 0 ? '?' : '&') + 'authuser=' + encodeURIComponent(a);
+}
+function askAcct(){
+  const v = prompt(t('acctAsk'), getAcct());
+  if (v === null) return;
+  const a = String(v).trim();
+  if (a && a.indexOf('@') < 1) { alert(t('acctBad')); return; }
+  try { if (a) localStorage.setItem(ACCT_KEY, a); else localStorage.removeItem(ACCT_KEY); } catch(e){}
+  render();
+}
+
 /* ── 읽기 ─────────────────────────────────────────────────────────── */
 function watch(){
   const F = window.__fb; if (!F) return;
@@ -269,6 +300,9 @@ function render(){
   document.getElementById('hSub').textContent  = t('sub');
   document.getElementById('legal').innerHTML = '<b>⚖️ '+esc(t('legalT'))+'</b>'+esc(t('legalB'));
   document.getElementById('hLog').textContent = t('logH');
+  const ab = document.getElementById('acct');
+  if (ab) ab.innerHTML = '<span>' + esc(t('acctL')) + ' · <b>' + esc(getAcct() || t('acctNo'))
+        + '</b></span> <button class="btn sm" id="acctBtn">' + esc(t('acctSet')) + '</button>';
   document.getElementById('leaveBtn').textContent = t('leave');
   document.querySelectorAll('.hbtn[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l===LANG));
 
@@ -372,7 +406,7 @@ async function doJoin(){
       '<div class="card" style="margin:0"><div style="font-weight:800;margin-bottom:6px">📹 '
       + esc(rooms().find(r=>r.id===roomId).name) + '</div><div class="sub">'
       + esc(url) + '</div></div>';
-    window.open(url, '_blank', 'noopener');
+    window.open(withAcct(url), '_blank', 'noopener');
   }
   render();
 }
@@ -442,6 +476,7 @@ document.addEventListener('click', e => {
                         try{ localStorage.setItem('km.lang', LANG); }catch(_){}
                         try{ window.dispatchEvent(new CustomEvent('km-lang-changed',{detail:LANG})); }catch(_){}
                         render(); return; }
+  if (b.id === 'acctBtn'){ askAcct(); return; }
   if (b.dataset.join) { askJoin(b.dataset.join); return; }
   if (b.dataset.leave){ JOINED = b.dataset.leave; doLeave(); return; }
   if (b.dataset.url)  { setUrl(b.dataset.url);  return; }
