@@ -217,6 +217,10 @@ const L={
             en:'Use 📷 or 📎 above and pick all the invoices.',
             es:'Use 📷 o 📎 arriba y elija todas las facturas.'},
  bulkDone:{ko:'✅ {n}건 보냈습니다. HQ 운영본부가 확인합니다.',en:'✅ Sent {n} invoices. HQ Operations will review.',es:'✅ Enviadas {n} facturas. HQ las revisará.'},
+ whyFail:{ko:'까닭:',en:'Reason:',es:'Motivo:'},
+ whyStale:{ko:'👉 로그인이 묵은 것 같습니다. 이 화면을 한 번 새로고침하고 다시 눌러 주세요. 사진은 그대로 남아 있습니다.',
+           en:'👉 Your sign-in looks stale. Refresh this page and press send again. Your photos are still here.',
+           es:'👉 Su sesión parece vencida. Actualice esta página y vuelva a enviar. Sus fotos siguen aquí.'},
  bulkPart:{ko:'⚠ {n}건 보냈고 {m}건은 실패했습니다 — 실패한 것만 화면에 남겨 두었습니다. 다시 눌러 주세요.',
            en:'⚠ Sent {n}, {m} failed — only the failed ones are left on screen. Tap send again.',
            es:'⚠ Enviadas {n}, {m} fallaron — solo quedan las fallidas. Toque enviar otra vez.'},
@@ -589,7 +593,7 @@ async function sendBulk(btn){
     return;
   }
   const m=me(), got=$('dt').value||today(), memo=$('memo').value.trim();
-  const keep=[]; let ok=0;
+  const keep=[]; let ok=0, why='';          // why = 처음 터진 오류 (화면에 보여 준다)
   for(let gi=0; gi<groups.length; gi++){
     const idx=groups[gi];
     btn.textContent=t('uploading')+' ('+(gi+1)+'/'+groups.length+')';
@@ -611,12 +615,20 @@ async function sendBulk(btn){
       ok++;
     }catch(e){
       console.warn('[inv] bulk',e);
+      /* 🔴 2026-10-12 — 여태 까닭을 삼켜서 "왜 안 올라가지?" 가 됐다. 첫 오류를 적어 두고 화면에 띄운다.
+         로그인 토큰이 묵으면 사진 올리기만 막히는 일이 있어, 그럴 땐 새로고침하라고 같이 알려 준다. */
+      if(!why) why=String((e&&(e.code||e.message))||e);
       idx.forEach((i,k)=>{ const f=FILES[i]; keep.push(Object.assign({},f,{merge:k>0})); });
     }
   }
   FILES=keep; paint();
   if(!keep.length){ $('memo').value=''; toast(t('bulkDone',{n:ok})); }
-  else alert(t('bulkPart',{n:ok,m:groups.length-ok}).replace(/<[^>]+>/g,''));
+  else {
+    const stale=/unauthoriz|unauthenticated|permission|403|401|token|expired/i.test(why);
+    alert(t('bulkPart',{n:ok,m:groups.length-ok}).replace(/<[^>]+>/g,'')
+      + (why ? '\n\n' + t('whyFail') + '\n' + why : '')
+      + (stale ? '\n\n' + t('whyStale') : ''));
+  }
 }
 
 /* ===== 보내기 ===== */
