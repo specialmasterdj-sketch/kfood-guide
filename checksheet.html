@@ -174,7 +174,19 @@ const L={
       en:'The data does not look right — paste the .json from HQ as it is',
       es:'Los datos no son válidos — pegue el .json de HQ tal cual'},
  ok:{ko:'올렸습니다',en:'Uploaded',es:'Subido'},
- sign:{ko:'확인한 사람 / 날짜',en:'Checked by / Date',es:'Revisado por / Fecha'}
+ sign:{ko:'확인한 사람 / 날짜',en:'Checked by / Date',es:'Revisado por / Fecha'},
+ /* 업무지시로 보내기 — 가격표 교체(price-tags.html)와 같은 얼개 (2026-10-12 전무님 요청) */
+ task:{ko:'📋 업무지시 보냄',en:'📋 Send as task',es:'📋 Enviar como tarea'},
+ tskQ:{ko:'{b} 직원 업무지시로 보냅니다. 오늘 날짜로 들어갑니다.',
+       en:'This will be sent to {b} staff as a task, dated today.',
+       es:'Se enviará al personal de {b} como tarea, con la fecha de hoy.'},
+ tskA:{ko:'이미 업무지시로 보낸 확인서입니다. 다시 보낼까요?',
+       en:'This sheet was already sent as a task. Send again?',
+       es:'Esta hoja ya se envió como tarea. ¿Enviar de nuevo?'},
+ tskOk:{ko:'✅ 업무지시를 보냈습니다',en:'✅ Task sent',es:'✅ Tarea enviada'},
+ tskNo:{ko:'업무지시를 보내지 못했습니다',en:'Could not send the task',es:'No se pudo enviar la tarea'},
+ noPerm:{ko:'권한이 없습니다',en:'Not allowed',es:'Sin permiso'},
+ sent:{ko:'업무지시 보냄',en:'task sent',es:'tarea enviada'}
 };
 let LANG='ko'; try{ LANG=localStorage.getItem('kimchi_lang')||'ko'; }catch(e){}
 function t(k,v){ const o=L[k]; let s=o?(o[LANG]||o.ko):k; if(v)for(const x in v)s=s.split('{'+x+'}').join(v[x]); return s; }
@@ -250,7 +262,8 @@ function render(){
         +(b.inv?'<span class="tag iv">'+esc(b.inv)+'</span>':'')
       +'</div>'
       +'<div class="ttl">'+esc(t('items',{n}))+'</div>'
-      +'<div class="sub">'+esc(t('eff',{d:(b.got||'')}))+' · '+esc(b.by||'')+'</div></div>'
+      +'<div class="sub">'+esc(t('eff',{d:(b.got||'')}))+' · '+esc(b.by||'')
+        +(b.taskId?' · 📋 '+esc(t('sent')):'')+'</div></div>'
       +'<span class="pill '+(a>=n?'a':'b')+'">'+esc(t('doneN',{a,n}))+'</span></div>'
       +(OPEN===id?body(id,b):'')+'</div>';
   }).join('');
@@ -259,6 +272,8 @@ function render(){
 function body(id,b){
   let h='<div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap">'
     +'<button class="btn go sm" onclick="doPrint(\''+id+'\')">'+esc(t('print'))+'</button>'
+    +(isBoss()?'<button class="btn sm" onclick="sendTask(\''+id+'\')"'
+        +(b.taskId?' style="opacity:.65"':'')+'>'+esc(t('task'))+(b.taskId?' ✓':'')+'</button>':'')
     +(isBoss()?'<button class="btn sm" onclick="delB(\''+id+'\')">'+esc(t('del'))+'</button>':'')+'</div>';
   (b.groups||[]).forEach((g,gi)=>{
     h+='<div class="grp"><div class="gh"><div class="gt">'+esc(tx(g.title))+'</div>'
@@ -294,6 +309,56 @@ async function saveAns(id,key,q,val){
     toast(t('saved'));
   }catch(e){ alert(String(e.message||e)); }
 }
+/* 📋 업무지시로 보내기 — 가격표 교체(price-tags.html sendTask)와 같은 얼개.
+   확인서는 "가서 보고 적어 오는" 일이라 **사진은 요구하지 않는다**(가격표 교체와 다른 점).
+   대신 appLink 로 이 화면을 바로 열어 준다 — 직원이 찾아 헤매지 않게.  (2026-10-12 전무님 요청) */
+const today10=()=>{ const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+
+async function sendTask(id){
+  const b=DATA[id]; if(!b) return;
+  if(!isBoss()){ toast(t('noPerm')); return; }
+  if(b.taskId){ if(!confirm(t('tskA'))) return; }
+  else if(!confirm(t('tskQ',{b:bname(b.branch||BRANCH)}))) return;
+
+  const n=total(b), v=String(b.vendor||'').trim(), inv=String(b.inv||'').trim();
+  const nm={ ko:'📋 매대 확인서 — '+(v||'확인')+' '+n+'가지',
+             en:'📋 Shelf check — '+(v||'items')+' ('+n+')',
+             es:'📋 Verificación en estante — '+(v||'productos')+' ('+n+')' };
+  const tail=inv?(' ('+inv+')'):'';
+  const note={
+   ko:'HQ 가 인보이스와 POS 를 맞춰 보다가 **확인이 필요한 '+n+'가지**가 나왔습니다. '
+     +'아래 [📋 확인서 열기] 를 눌러 목록을 보고, 매대에서 실물을 보고 **노란 칸에 적어** 주세요. '
+     +'인쇄해서 들고 다니셔도 됩니다. 묶음마다 무엇을 왜 묻는지 적어 두었습니다. '
+     +'모르는 것은 비워 두고, 아는 것만 적어 주셔도 됩니다.'+tail,
+   en:'While matching the invoice against POS, HQ found **'+n+' items that need checking**. '
+     +'Tap [📋 Open check sheet] below, look at the actual items on the shelf and **write in the yellow boxes**. '
+     +'You can print it and carry it. Each section says what we ask and why. '
+     +'Leave blank anything you are unsure about — partial answers are fine.'+(inv?(' ('+inv+')'):''),
+   es:'Al comparar la factura con el POS, HQ encontró **'+n+' productos que hay que verificar**. '
+     +'Toque [📋 Abrir hoja] abajo, mire los productos en el estante y **escriba en las casillas amarillas**. '
+     +'Puede imprimirla y llevarla. Cada sección explica qué preguntamos y por qué. '
+     +'Deje en blanco lo que no sepa — respuestas parciales están bien.'+(inv?(' ('+inv+')'):'') };
+
+  const m=me();
+  const task={ name:nm.ko, nameTr:nm, deadline:'18:00', category:'매대 확인서',
+    requirePhoto:false, place:'매장 매대',
+    locationNote:note.ko, locationNoteTr:note,
+    assignedTo:'*', assignedToId:null,
+    from:(m.name||'HQ')+' (HQ 매대 확인서)', fromRole:(m.role||'EXECUTIVE'),
+    createdAt:Date.now(),
+    appLink:'./checksheet.html',
+    appLinkLabel:{ko:'📋 확인서 열기',en:'📋 Open check sheet',es:'📋 Abrir hoja'},
+    points:2, checkSheet:b._id, checkSheetBranch:b._br };
+
+  const tid='chks_'+b._id;
+  try{
+    await F.set(F.ref(F.db,'tasks/'+b._br+'/'+today10()+'/'+tid),task);
+    await F.update(F.ref(F.db,'expiry/'+b._br+'/checkSheets/'+b._id),{taskId:tid,taskAt:Date.now()});
+    toast(t('tskOk')+' — '+esc(bname(b._br)));
+  }catch(e){ toast(t('tskNo')+' — '+esc(e.message||'')); }
+}
+
 async function delB(id){ if(!confirm(t('delQ')))return;
   try{ await F.remove(F.ref(F.db,'expiry/'+DATA[id]._br+'/checkSheets/'+DATA[id]._id)); OPEN=null; }
   catch(e){ alert(String(e.message||e)); } }
