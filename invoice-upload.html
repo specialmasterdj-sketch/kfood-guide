@@ -191,9 +191,11 @@ const L={
  /* 📚 여러 장 한 번에 */
  bulkOn:{ko:'📚 여러 장 한 번에 올리기',en:'📚 Upload many at once',es:'📚 Subir varias a la vez'},
  bulkOff:{ko:'📄 한 장씩 올리기로 돌아가기',en:'📄 Back to one at a time',es:'📄 Volver a una por una'},
- bulkNote:{ko:'인보이스를 <b>전부 한꺼번에</b> 고르세요. <b>사진 한 장 = 인보이스 한 건</b>으로 접수됩니다.<br>두 장짜리 인보이스는 뒷장에 <b>「앞 장과 한 건」</b>을 눌러 묶어 주세요. 거래처는 비워 두셔도 됩니다 — HQ가 보고 채웁니다.',
-          en:'Pick <b>all of them at once</b>. <b>One photo = one invoice.</b><br>For a two-page invoice, tick <b>“same as previous”</b> on the second page. Vendor can be left blank — HQ will fill it in.',
-          es:'Elija <b>todas a la vez</b>. <b>Una foto = una factura.</b><br>Para una factura de dos páginas, marque <b>“igual que la anterior”</b> en la segunda. Puede dejar el proveedor vacío — HQ lo completa.'},
+ /* 🔴 2026-10-12 — 전엔 "거래처는 비워 두셔도 됩니다" 라고 적혀 있었는데, 2026-10-11 에 거래처 검사를
+    넣으면서 **비우면 못 보내게** 바뀌었다. 글만 옛말로 남아 있어 고친다. 인보이스 번호 칸 안내도 더한다. */
+ bulkNote:{ko:'인보이스를 <b>전부 한꺼번에</b> 고르세요. <b>사진 한 장 = 인보이스 한 건</b>으로 접수됩니다.<br>두 장짜리 인보이스는 뒷장에 <b>「앞 장과 한 건」</b>을 눌러 묶어 주세요. <b>거래처는 꼭 골라 주세요.</b> 인보이스 번호는 비워 두셔도 됩니다.',
+          en:'Pick <b>all of them at once</b>. <b>One photo = one invoice.</b><br>For a two-page invoice, tick <b>“same as previous”</b> on the second page. <b>Vendor is required.</b> Invoice number may be left blank.',
+          es:'Elija <b>todas a la vez</b>. <b>Una foto = una factura.</b><br>Para una factura de dos páginas, marque <b>“igual que la anterior”</b> en la segunda. <b>El proveedor es obligatorio.</b> El número de factura puede quedar vacío.'},
  bulkSend:{ko:'☁️ {n}건 한 번에 보내기',en:'☁️ Send {n} invoices',es:'☁️ Enviar {n} facturas'},
  bulkMerge:{ko:'앞 장과 한 건',en:'same as previous',es:'igual que la anterior'},
  bulkVendor:{ko:'거래처 (비워도 됨)',en:'Vendor (optional)',es:'Proveedor (opcional)'},
@@ -472,12 +474,20 @@ function bulkGroups(){
 // 📷 찍기 / 📎 고르기 — 목록 밑 단추에서도 부른다 (찍고 바로 또 찍는 흐름)
 window.bulkPick=function(which){ $(which?'pick':'cam').click(); };
 window.bulkSetVendor=function(i,v){ if(FILES[i]) FILES[i].vendor=v; paint(); };   /* 빨간 테두리를 바로 풀어 주려고 다시 그린다 */
+/* 🔴 번호 칸은 **다시 그리지 않는다** — 글자 한 자 칠 때마다 paint() 하면 칸에서 커서가 튕겨 나간다.
+   값만 담아 두고, 다른 일로 다시 그려질 때 value 로 되살아난다. (2026-10-12) */
+window.bulkSetInv=function(i,v){ if(FILES[i]) FILES[i].invNo=v; };
 window.bulkSetMerge=function(i,v){ if(FILES[i]) FILES[i].merge=v; paint(); };
 /* 전부 한 건으로 / 전부 따로 — 한 인보이스를 여러 장 찍었을 때 체크를 하나씩 안 누르게 (2026-10-11) */
 window.mergeAll=function(on){
   FILES.forEach((f,i)=>{ f.merge = on ? (i>0) : false; });
   if(on){ const v=(FILES[0].vendor||'').trim();            // 첫 장 거래처로 맞춰 둔다
-    if(v) FILES.forEach(f=>{ if(!(f.vendor||'').trim()) f.vendor=v; }); }
+    if(v) FILES.forEach(f=>{ if(!(f.vendor||'').trim()) f.vendor=v; });
+    /* 번호는 묶음의 첫 장 것만 나간다. 뒷장에 적어 둔 번호가 조용히 날아가지 않게 끌어온다. (2026-10-12) */
+    if(!(FILES[0].invNo||'').trim()){
+      const got=FILES.map(f=>(f.invNo||'').trim()).find(Boolean);
+      if(got) FILES[0].invNo=got;
+    } }
   paint();
 };
 
@@ -511,6 +521,13 @@ function paintBulk(){
         /* 거래처를 안 고르면 보낼 수 없다 — 빈 칸은 빨갛게 해서 눈에 띄게 한다 (2026-10-11) */
         +(merged?'':'<select data-vsel="'+i+'" onchange="bulkSetVendor('+i+',this.value)" style="width:100%;margin:0 0 6px;padding:7px 9px;font-size:.88em'
           +((f.vendor||'').trim()?'':';border:2px solid #dc2626;background:#fff1f2')+'">'+opts(f)+'</select>')
+        /* 🔴 2026-10-12 전무님 — 묶음 모드에만 인보이스 번호 칸이 없었다(한 장씩 모드엔 있다).
+           번호가 없으면 접수 내역에서 어느 건인지 가릴 수 없고, 같은 거래처가 하루 두 장 오면 분간이 안 된다.
+           묶음의 **첫 장에만** 둔다 — 뒷장은 같은 인보이스이므로 번호도 하나다. */
+        +(merged?'':'<input data-isel="'+i+'" value="'+esc(f.invNo||'')+'" '
+          +'placeholder="'+esc(t('invNo'))+' ('+esc(t('optional'))+')" '
+          +'oninput="bulkSetInv('+i+',this.value)" '
+          +'style="width:100%;margin:0 0 6px;padding:7px 9px;font-size:.88em">')
         +(i>0?'<label style="display:inline-flex;align-items:center;gap:6px;font-size:.82em;font-weight:800;color:#475569;white-space:nowrap">'
           +'<input type="checkbox" '+(f.merge?'checked':'')+' onchange="bulkSetMerge('+i+',this.checked)"> '+esc(t('bulkMerge'))+'</label>':'')
       +'</div>'
@@ -577,6 +594,7 @@ async function sendBulk(btn){
     const idx=groups[gi];
     btn.textContent=t('uploading')+' ('+(gi+1)+'/'+groups.length+')';
     const vendor=(FILES[idx[0]].vendor||'').trim();
+    const invNo=(FILES[idx[0]].invNo||'').trim();     /* 번호는 묶음의 첫 장에만 적는다 (2026-10-12) */
     const ts=Date.now()+gi;
     try{
       const out=[];
@@ -587,7 +605,7 @@ async function sendBulk(btn){
         out.push(await putOne(f,'invoices/'+BRANCH+'/'+ts+'_'+k+ext,safe));
       }
       const r=window.__fb.push(window.__fb.ref(window.__fb.db,'expiry/'+BRANCH+'/invoices'));
-      await window.__fb.set(r,{ vendor, invNo:'', got, pages:idx.length, files:out, memo,
+      await window.__fb.set(r,{ vendor, invNo, got, pages:idx.length, files:out, memo,
         by:(m.name||''), byUid:(m.uid||''), branch:BRANCH, ts, status:'new' });
       idx.forEach(i=>{ try{ if(FILES[i].url)URL.revokeObjectURL(FILES[i].url); }catch(e){} });
       ok++;
