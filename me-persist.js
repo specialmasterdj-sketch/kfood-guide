@@ -325,6 +325,9 @@
   var pendingReloadReason = null;
   function tryPendingReload(force){
     if (reloaded || !pendingReloadReason) return;
+    // 🔴 2026-10-13 — 보고 있는 화면은 새로고침하지 않는다 (DJ "계속 깜빡입니다").
+    //    안 보일 때(아래 visibilitychange → hidden) 조용히 적용한다.
+    if (!force && document.visibilityState === 'visible') return;
     if (!force && userBusy()) { setTimeout(tryPendingReload, 60000); return; }
     reloaded = true;
     try { console.log('[sw-autoreload]', pendingReloadReason); } catch(e){}
@@ -338,6 +341,10 @@
     tryPendingReload(true);
   });
   function safeReload(reason){
+    /* 🔴 2026-10-13 — 새 버전 적용은 fb-auth-fetch.js 가 혼자 맡는다.
+       전에는 두 파일이 각자 새로고침해 한 번 올릴 때 두 번 깜빡일 수 있었다.
+       그쪽은 '보고 있는 동안에는 띠만 띄우고 안 보일 때 적용' 으로 되어 있다. */
+    try { if (typeof window.__kmUpdateReady === 'function') { window.__kmUpdateReady(reason); return; } } catch (e) {}
     if (reloaded) return;
     pendingReloadReason = reason;
     tryPendingReload();

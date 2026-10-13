@@ -197,8 +197,44 @@ if ('serviceWorker' in navigator) {
     } catch (_) {}
     return false;
   }
+  // 🔔 새 버전 알림 띠 — 보고 있는 동안에는 이것만 띄우고 새로고침은 하지 않는다
+  function __swBanner(){
+    try {
+      if (document.getElementById('__kmNewVer')) return;
+      let L = 'ko'; try { L = localStorage.getItem('km.lang') || 'ko'; } catch (_) {}
+      const T = ({ ko: ['새 버전이 있습니다', '지금 새로고침', '나중에'],
+                   en: ['A new version is ready', 'Refresh now', 'Later'],
+                   es: ['Hay una versión nueva', 'Actualizar', 'Luego'] })[L]
+                || ['새 버전이 있습니다', '지금 새로고침', '나중에'];
+      const b = document.createElement('div');
+      b.id = '__kmNewVer';
+      b.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483000;'
+        + 'background:#1f2937;color:#fff;border-radius:12px;padding:10px 12px;display:flex;'
+        + 'align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 6px 20px rgba(0,0,0,.25);'
+        + 'font:600 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+      const t = document.createElement('span');
+      t.textContent = '🔄 ' + T[0];
+      t.style.cssText = 'flex:1 1 150px';
+      const go = document.createElement('button');
+      go.textContent = T[1];
+      go.style.cssText = 'background:#22c55e;color:#06240f;border:0;border-radius:9px;padding:7px 12px;font:inherit;cursor:pointer';
+      go.onclick = () => __swApplyReload(true);
+      const no = document.createElement('button');
+      no.textContent = T[2];
+      no.style.cssText = 'background:transparent;color:#cbd5e1;border:0;padding:7px 6px;font:inherit;cursor:pointer';
+      no.onclick = () => { try { b.remove(); } catch (_) {} };
+      b.appendChild(t); b.appendChild(go); b.appendChild(no);
+      (document.body || document.documentElement).appendChild(b);
+    } catch (_) {}
+  }
   function __swApplyReload(force){
     if (!__swReloadPending) return;
+    /* 🔴 2026-10-13 — 보고 있는 화면은 절대 새로고침하지 않는다.
+       DJ(마이애미) 신고: "모든 페이지가 열리고 난 뒤 계속 깜빡입니다."
+       전에는 "2분간 손을 안 댔으면" 새로고침했는데, 화면을 들여다보기만 하는 동안에도
+       그 조건이 참이 되어 눈앞에서 페이지가 다시 그려졌다. 새 버전을 올릴 때마다 그랬다.
+       → 보고 있을 땐 띠로 알리기만 하고, 안 보일 때(아래 hidden) 조용히 적용한다. */
+    if (!force && document.visibilityState === 'visible') { __swBanner(); return; }
     if (!force && __swUserBusy()) { setTimeout(__swApplyReload, 60000); return; }
     try { if (typeof window.__kmSaveResumeState === 'function') window.__kmSaveResumeState(); } catch (_) {}
     location.reload();
@@ -210,6 +246,9 @@ if ('serviceWorker' in navigator) {
     try { const tas = document.querySelectorAll('textarea'); for (let i = 0; i < tas.length; i++) if (tas[i].value) return; } catch (_) {}
     __swApplyReload(true);
   });
+  // 새 버전 적용은 이 파일이 혼자 맡는다 — me-persist.js 도 여기로 넘긴다
+  // (둘이 따로 새로고침해서 한 번 올릴 때 두 번 깜빡일 수 있었다)
+  try { window.__kmUpdateReady = function(){ __swReloadPending = true; __swApplyReload(); }; } catch (_) {}
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e && e.data && e.data.type === 'sw-updated') {
       try {
