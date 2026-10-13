@@ -36,6 +36,12 @@ select.btn{min-width:150px}
 .pill{font-size:.76em;font-weight:900;padding:4px 10px;border-radius:20px;white-space:nowrap}
 .pill.a{background:#dcfce7;color:#15803d}
 .pill.b{background:#fef3c7;color:#92400e}
+/* ✅ 확인 완료 — 지점이 "다 적었습니다" 를 누른 확인서 (2026-10-12 전무님 요청).
+   진행률만 보여서는 "아직 적는 중" 인지 "다 끝났는데 몇 칸은 모르겠다" 인지 구별이 안 됐다. */
+.pill.ok{background:#16a34a;color:#fff}
+.card.fin{border-color:#16a34a;background:#f6fdf8}
+.finbar{margin-top:9px;padding:7px 11px;border-radius:9px;background:#dcfce7;color:#14532d;
+        font-size:.84em;font-weight:800;line-height:1.5}
 .tag{font-size:.74em;font-weight:900;padding:3px 8px;border-radius:6px;white-space:nowrap}
 .tag.br{background:#1a5c3a;color:#fff}
 .tag.vd{background:#e0e7ff;color:#1e3a8a}
@@ -163,6 +169,18 @@ const L={
        es:'¿Borrar esta hoja? Las respuestas también se perderán.'},
  items:{ko:'{n}가지 확인',en:'{n} to check',es:'{n} para revisar'},
  doneN:{ko:'{a} / {n} 적음',en:'{a} / {n} answered',es:'{a} / {n} respondidas'},
+ /* ✅ 확인 완료 — 2026-10-12 전무님 "여기에 확인 완료 표시하게해줘" */
+ finP:{ko:'✅ 확인 완료',en:'✅ Done',es:'✅ Completado'},
+ finBtn:{ko:'✅ 다 적었습니다',en:'✅ I am done',es:'✅ Terminé'},
+ finUndo:{ko:'↩️ 완료 취소',en:'↩️ Undo done',es:'↩️ Deshacer'},
+ finBy:{ko:'✅ 확인 완료 — {w} · {d}',en:'✅ Checked — {w} · {d}',es:'✅ Verificado — {w} · {d}'},
+ finQ:{ko:'다 적으셨나요? HQ 에 "확인 완료" 로 올라갑니다. 모르는 칸은 비워 두셔도 됩니다.',
+       en:'All done? HQ will see this as completed. You may leave boxes you are unsure about empty.',
+       es:'¿Terminó? HQ lo verá como completado. Puede dejar vacías las casillas que no sepa.'},
+ finQ0:{ko:'아직 한 칸도 안 적으셨습니다. 그래도 완료로 올릴까요?',
+        en:'Nothing has been written yet. Mark as done anyway?',
+        es:'Todavía no escribió nada. ¿Marcar como completado igual?'},
+ finOk:{ko:'확인 완료로 올렸습니다',en:'Marked as done',es:'Marcado como completado'},
  eff:{ko:'올린날 {d}',en:'Uploaded {d}',es:'Subido {d}'},
  none:{ko:'아직 확인서가 없습니다.',en:'No check sheets yet.',es:'Todavía no hay hojas.'},
  hName:{ko:'상품',en:'Item',es:'Producto'},
@@ -278,8 +296,8 @@ function render(){
   const ids=Object.keys(DATA).sort((a,b)=>(DATA[b].ts||0)-(DATA[a].ts||0));
   if(!ids.length){ $('list').innerHTML='<div class="empty">'+esc(t('none'))+'</div>'; return; }
   $('list').innerHTML=ids.map(id=>{
-    const b=DATA[id], n=total(b), a=answered(b);
-    return '<div class="card">'
+    const b=DATA[id], n=total(b), a=answered(b), fin=b.fin;
+    return '<div class="card'+(fin?' fin':'')+'">'
       +'<div class="h" onclick="openB(\''+id+'\')">'
       +'<div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:5px">'
         +'<span class="tag br">'+esc(bname(b.branch||BRANCH))+'</span>'
@@ -289,7 +307,11 @@ function render(){
       +'<div class="ttl">'+esc(t('items',{n}))+'</div>'
       +'<div class="sub">'+esc(t('eff',{d:(b.got||'')}))+' · '+esc(b.by||'')
         +(b.taskId?' · 📋 '+esc(t('sent'))+' → '+esc(b.taskTo&&b.taskTo!=='*'?b.taskTo:t('toAll')):'')+'</div></div>'
-      +'<span class="pill '+(a>=n?'a':'b')+'">'+esc(t('doneN',{a,n}))+'</span></div>'
+      +(fin?'<span class="pill ok">'+esc(t('finP'))+'</span>'
+           :'<span class="pill '+(a>=n?'a':'b')+'">'+esc(t('doneN',{a,n}))+'</span>')+'</div>'
+      /* 완료 띠 — 누가 언제 끝냈는지. 접혀 있어도 보이게 머리 바로 아래에 둔다 */
+      +(fin?'<div class="finbar">'+esc(t('finBy',{w:(fin.by||'—'),d:(fin.at||'')}))
+            +'  ('+esc(t('doneN',{a,n}))+')</div>':'')
       +(OPEN===id?body(id,b):'')+'</div>';
   }).join('');
 }
@@ -304,6 +326,10 @@ function body(id,b){
     : '';
   let h='<div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap;align-items:center">'
     +'<button class="btn go sm" onclick="doPrint(\''+id+'\')">'+esc(t('print'))+'</button>'
+    /* ✅ 다 적었습니다 — 지점 누구나 누를 수 있다. 실수로 눌러도 되돌릴 수 있게 취소도 둔다 */
+    +'<button class="btn sm" onclick="markFin(\''+id+'\','+(b.fin?'false':'true')+')"'
+      +(b.fin?'':' style="background:#16a34a;color:#fff;border-color:#16a34a"')+'>'
+      +esc(b.fin?t('finUndo'):t('finBtn'))+'</button>'
     +asg
     +(isBoss()?'<button class="btn sm" onclick="sendTask(\''+id+'\')"'
         +(b.taskId?' style="opacity:.65"':'')+'>'+esc(t('task'))+(b.taskId?' ✓':'')+'</button>':'')
@@ -347,6 +373,25 @@ async function saveAns(id,key,q,val){
    대신 appLink 로 이 화면을 바로 열어 준다 — 직원이 찾아 헤매지 않게.  (2026-10-12 전무님 요청) */
 const today10=()=>{ const d=new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+
+/* ✅ 확인 완료 표시 (2026-10-12 전무님 "여기에 확인 완료 표시하게해줘")
+   왜 — 진행률(3/16)만 보여서는 **아직 적는 중**인지 **다 돌았는데 몇 칸은 모르겠다** 인지
+   HQ 가 구별할 수 없었다. 모르는 칸은 비워 두라고 안내했으니 끝까지 안 차는 게 정상이다.
+   🔑 지점 누구나 누를 수 있다 — 매대를 돈 사람이 누르는 것이 맞다. 실수를 대비해 취소도 둔다.
+   저장은 `fin:{by,at,ts}` 한 칸뿐이라 **규칙 게시가 필요 없다**(expiry 규칙 그대로). */
+async function markFin(id, on){
+  const b=DATA[id]; if(!b) return;
+  if(on){
+    const n=total(b), a=answered(b);
+    if(!confirm(a===0?t('finQ0'):t('finQ'))) return;
+  }
+  const m=me();
+  try{
+    await F.update(F.ref(F.db,'expiry/'+(b._br||BRANCH)+'/checkSheets/'+(b._id||id)),
+      { fin: on ? { by:(m.name||''), at:today(), ts:Date.now() } : null });
+    toast(on?t('finOk'):t('finUndo'));
+  }catch(e){ alert(String(e.message||e)); }
+}
 
 async function sendTask(id){
   const b=DATA[id]; if(!b) return;
