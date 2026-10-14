@@ -348,11 +348,34 @@ const BRANCHES=[
   {id:'HOLLYWOOD',ko:'할리우드',en:'Hollywood'},{id:'MIAMI',ko:'마이애미',en:'Miami'},
   {id:'PEMBROKE_PINES',ko:'펨브로크 파인즈',en:'Pembroke Pines'},{id:'CORAL_SPRINGS',ko:'코럴 스프링스',en:'Coral Springs'},
   {id:'LASOLAS',ko:'라스올라스',en:'Las Olas'}];
-/* 자주 오는 거래처 — 없으면 '기타' 로 직접 적으면 그대로 저장된다 */
-const VENDORS=['JFC','SEOULTRADING','WG HANMI','WISMETTAC','NDM (남대문)','BANDI FOOD','EASTLAND',
+/* 자주 오는 거래처 — 없으면 '기타' 로 직접 적으면 그대로 저장된다.
+   🔴 2026-10-14 전무님: "밴더 폰에서는 기타입력이 없네" — '기타' 가 31개 중 **맨 마지막**이라
+      폰 목록에서 한참 굴려야 나와 못 찾으셨다. → 목록 **맨 위**로 올렸다.
+   🔴 "한번넣은 것은 저장해주고" — 직접 적은 거래처는 이 기기에 기억해 두고 다음부터는
+      목록에 그냥 뜬다(아래 CUSTOM). 같은 거래처를 매번 다시 타자 치지 않아도 된다. */
+const VENDORS_BASE=['JFC','SEOULTRADING','WG HANMI','WISMETTAC','NDM (남대문)','BANDI FOOD','EASTLAND',
   'K.C TRADING','RHEE BROS','WEI CHUAN','HAITAI','TWO BROS','WELL LUCK','OCM','SKY HARVEST',
   'WALONG','ASSI','CJ','FAF','AAF IMPORT','PULMUONE','POCAS','BANZAI','EDEN','KOCO','JB',
   'FRESHPOINT','A & D FOOD','LINK TRADING','MY-A & COMPANY','BZLB'];
+
+/* 직접 적은 거래처 — 이 기기에 기억한다 (localStorage).
+   목록에 없는 새 거래처를 매번 다시 타자 치게 하지 않으려고 넣었다. */
+const CKEY='inv_vendors_custom';
+function customVendors(){
+  try{ const a=JSON.parse(localStorage.getItem(CKEY)||'[]');
+       return Array.isArray(a)?a.filter(x=>typeof x==='string'&&x.trim()):[]; }catch(e){ return []; }
+}
+function rememberVendor(name){
+  const v=String(name||'').trim(); if(!v) return;
+  /* 이미 기본 목록에 있으면 기억할 것 없다 (대소문자·앞뒤 공백 무시하고 본다) */
+  const same=s=>String(s).trim().toUpperCase()===v.toUpperCase();
+  if(VENDORS_BASE.some(same)) return;
+  const cur=customVendors();
+  if(cur.some(same)) return;
+  try{ localStorage.setItem(CKEY,JSON.stringify(cur.concat([v]).slice(-40))); }catch(e){}
+}
+/* 고를 수 있는 거래처 = 직접 적어 둔 것 먼저, 그다음 기본 목록 */
+function vendorList(){ return customVendors().concat(VENDORS_BASE); }
 
 function me(){ try{ return window.__currentUser||JSON.parse(localStorage.getItem('chat.me')||'{}'); }catch(e){ return {}; } }
 const isBoss=()=>{ const m=me(); return m.branch==='*'||['OWNER','EXECUTIVE'].includes(m.role); };
@@ -400,9 +423,12 @@ function applyLang(){
   applyBulkUI();
   $('tS3').textContent=t('s3');
   const keep=$('vendorSel').value;
+  /* 🔴 '기타(직접 입력)' 은 **맨 위**에 둔다 — 맨 아래 두었더니 폰에서 못 찾으셨다(2026-10-14) */
   $('vendorSel').innerHTML='<option value="">'+esc(t('pick'))+'</option>'
-    +VENDORS.map(v=>'<option'+(v===keep?' selected':'')+'>'+esc(v)+'</option>').join('')
-    +'<option value="__etc"'+(keep==='__etc'?' selected':'')+'>'+esc(t('etc'))+'</option>';
+    +'<option value="__etc"'+(keep==='__etc'?' selected':'')+'>'+esc(t('etc'))+'</option>'
+    +vendorList().map(v=>'<option'+(v===keep?' selected':'')+'>'+esc(v)+'</option>').join('');
+  /* 다시 그리면 직접 입력 칸이 숨겨진 채 남는다 — 고른 값에 맞춰 되살린다 */
+  $('vendorEtc').style.display=($('vendorSel').value==='__etc')?'':'none';
   $('branch').innerHTML=(isBoss()?'<option value="*"'+(BRANCH==='*'?' selected':'')+'>'+esc(t('allBr'))+'</option>':'')
     +BRANCHES.map(b=>'<option value="'+b.id+'"'+(b.id===BRANCH?' selected':'')+'>'+esc(bname(b.id))+'</option>').join('');
   applyAllMode();
@@ -532,8 +558,13 @@ function paintBulk(){
   box.className='';                      // 묶음 모드 — 한 줄에 한 건씩 (작은 네모 배치를 끈다)
   box.style.marginTop='11px';
   if(!FILES.length){ box.innerHTML='<div class="empty" style="padding:18px 6px">'+esc(t('bulkEmpty'))+'</div>'; paintSendBtn(); return; }
-  const opts=f=>'<option value="">'+esc(t('bulkNone'))+'</option>'
-    +VENDORS.map(v=>'<option'+(v===f.vendor?' selected':'')+'>'+esc(v)+'</option>').join('');
+  /* 묶음 모드의 줄별 거래처 — 직접 적어 둔 것도 같이 뜬다.
+     목록에 없는 값(옛 기록 등)은 맨 앞에 넣어 줘야 고른 게 풀리지 않는다. */
+  const opts=f=>{ const cur=(f.vendor||'').trim();
+    const list=vendorList();
+    const all=(cur&&!list.some(v=>v===cur))?[cur].concat(list):list;
+    return '<option value="">'+esc(t('bulkNone'))+'</option>'
+      +all.map(v=>'<option'+(v===cur?' selected':'')+'>'+esc(v)+'</option>').join(''); };
   let no=0;
   box.innerHTML=FILES.map((f,i)=>{
     const merged=i>0&&f.merge;
@@ -688,6 +719,8 @@ $('btnSend').onclick=async function(){
     finally{ btn.disabled=false; paintSendBtn(); }
     return; }
   const vendor=($('vendorSel').value==='__etc'?$('vendorEtc').value.trim():$('vendorSel').value).trim();
+  /* 직접 적은 거래처는 이 기기에 기억해 둔다 — 다음부터는 목록에서 바로 고른다 */
+  if($('vendorSel').value==='__etc') rememberVendor(vendor);
   if(!vendor){ toast(t('needVendor')); $('vendorSel').focus(); return; }
   if(!FILES.length){ toast(t('needFile')); return; }
   btn.disabled=true; const old=btn.textContent;
@@ -1011,10 +1044,11 @@ async function askRedo(id){
 async function setVendor(id){
   const rec=DATA[id]||{};
   const cur=String(rec.vendor||'');
-  const v=prompt(t('askVendor')+'\n\n'+VENDORS.join(' · '),cur);
+  const v=prompt(t('askVendor')+'\n\n'+vendorList().join(' · '),cur);
   if(v===null) return;
   const nv=String(v).trim();
   if(!nv){ toast(t('needVendor')); return; }
+  rememberVendor(nv);                     /* 여기서 적은 거래처도 다음부터 목록에 뜨게 */
   try{
     const br=rec._br||BRANCH, rid=rec._id||id;
     await window.__fb.update(window.__fb.ref(window.__fb.db,'expiry/'+br+'/invoices/'+rid),
