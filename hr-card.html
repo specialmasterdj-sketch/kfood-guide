@@ -73,7 +73,7 @@
 <div id="gateBlock"><div>
   <div style="font-size:3em">🔒</div>
   <h2 style="margin:10px 0 6px">직원 기록 카드</h2>
-  <p style="color:#64748b">사장님·전무님 전용 앱입니다.<br>채팅 앱에서 본인 이름(DJ / B.H.K)으로 로그인된 브라우저에서 열어주세요.</p>
+  <p style="color:#64748b">사장님·Sun Kim·김병호 전무님 전용입니다.<br>본인 계정(이메일 또는 등록된 전화번호)으로 로그인한 기기에서만 열립니다.</p>
 </div></div>
 
 <div class="top">
@@ -190,8 +190,9 @@
   import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order", storageBucket:"kimchi-mart-order.firebasestorage.app", appId:"1:903841418321:web:5c0d9f3e6a5a1b2c3d4e5f" };
   const app = getApps().length ? getApp() : initializeApp(cfg);   // fb-auth-fetch.js 가 먼저 초기화해도 충돌 없이 재사용
-  window.__fb = { db:getDatabase(app), ref, get, set, push, remove, onValue, update };
   const auth = getAuth(app);
+  // 🔐 2026-10-25: 열람 판정은 Firebase 로그인 계정(이메일·전화)으로만 — 화면에서 고르는 이름(chat.me)은 신뢰 안 함
+  window.__fb = { db:getDatabase(app), ref, get, set, push, remove, onValue, update, authUser: () => auth.currentUser };
   onAuthStateChanged(auth, () => { try{ window.__hrBoot && window.__hrBoot(); }catch(e){} });
   setTimeout(() => { try{ window.__hrBoot && window.__hrBoot(); }catch(e){} }, 1600);
 </script>
@@ -347,14 +348,17 @@ const BRANCHES = [
   { id:'LASOLAS', ko:'라스올라스' },
 ];
 function me(){ try{ return JSON.parse(localStorage.getItem('chat.me')||'null'); }catch(_){ return null; } }
+// 🔐 2026-10-25 사장님 지시: 매출·인사카드는 딱 세 명 — DJ(사장님) · Sun Kim · 김병호 전무님. 그 외 누구도 절대 불가.
+//   이름은 직원이 화면에서 고를 수 있어 사칭 가능 → 이름 판정 폐지, Firebase 로그인 계정만 본다.
+//   (전화번호 = auth.html BOOTSTRAP_PHONES 의 DJ·B.H.K 번호)
+const HR_OWNER_EMAILS = ['specialmasterdj@gmail.com', 'kdaisy81@yahoo.com', 'byhoki64@gmail.com'];
+const HR_OWNER_PHONES = ['+19544945025', '+13059264744'];
 function isAdmin(){
-  const m = me(); if(!m) return false;
-  const em = String(m.email||'').toLowerCase().trim();
-  const key = String(m.name||'').toUpperCase().replace(/[^A-Z0-9가-힣]/g,'');
-  // 🆕 2026-10-25 사장님 지시: Sun Kim(공동 오너)도 DJ와 동일하게 매출·인사카드 열람
-  return em==='specialmasterdj@gmail.com' || em==='byhoki64@gmail.com' || em==='kdaisy81@yahoo.com'
-      || key==='DJ' || key==='BHK' || key==='비에이치케이'
-      || key==='SUNKIM' || key==='SUNACCOUNTINGDEPKIM' || key==='선킴' || key==='썬킴';
+  const u = window.__fb && window.__fb.authUser && window.__fb.authUser();
+  if (!u) return false;
+  const em = String(u.email||'').toLowerCase().trim();
+  const ph = String(u.phoneNumber||'').trim();
+  return (!!em && HR_OWNER_EMAILS.includes(em)) || (!!ph && HR_OWNER_PHONES.includes(ph));
 }
 function slug(n){ return String(n||'').toLowerCase().replace(/[.#$\[\]\/\s]+/g,'_').replace(/[^a-z0-9가-힣_]/g,'').slice(0,50); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -389,8 +393,11 @@ function renderSummary(){
 window.__hrBoot = function(){
   if (booted) return;
   if (!window.__fb) return;
+  // 로그인 확인 전에는 잠금 화면 유지 (booted 안 함 → 로그인 확인되면 다시 판정)
+  if (!(window.__fb.authUser && window.__fb.authUser())){ document.getElementById('gateBlock').style.display='flex'; return; }
   booted = true;
   if (!isAdmin()){ document.getElementById('gateBlock').style.display='flex'; return; }
+  document.getElementById('gateBlock').style.display='none';
   applyLang();
   const sel = document.getElementById('branchSel');
   sel.innerHTML = BRANCHES.map(b=>`<option value="${b.id}">🏢 ${b.ko}</option>`).join('');
