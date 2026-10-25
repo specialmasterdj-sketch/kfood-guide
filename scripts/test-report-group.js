@@ -159,7 +159,8 @@ chk('리액션 없는 보고는 집계 제외', Object.keys(a).length === 2);
 
 console.log('6) 오너 알림 스트립 (2026-08-30 — 1:1·매니저룸 새 메시지 한눈 표시)');
 chk('오너 게이트(isStrictOwner)', src.includes("isStrictOwner === 'function' && isStrictOwner()"));
-chk('대상 = managers + 내 1:1 (unread>0)', src.includes("id === 'managers' || (id.indexOf('dm__') === 0 && isMyDmRoom(id, r))"));
+// 2026-10-24: 매니징 룸(managing)도 오너 스트립 대상에 추가
+chk('대상 = managers + managing + 내 1:1 (unread>0)', src.includes("((id === 'managers' || id === 'managing') || (id.indexOf('dm__') === 0 && isMyDmRoom(id, r)))"));
 chk('스트립이 목록 맨 위에 prepend', src.includes('ownerStrip + ownerMsgStrip + otherItems.map(renderRoomItem)'));
 chk('알림 권한 켜기 버튼(권한 default 시)', src.includes("Notification.permission === 'default'") && src.includes('requestNotifPermission();renderRooms()'));
 chk("👑 직원측 Owner's Message 스트립 (오너 발신+unread 인 내 1:1)", src.includes('ownerMsgStrip') && src.includes('_isOwnerSender(r.lastSender)'));

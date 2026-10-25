@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a5c3a">
+<title>일일 보고 현황 — KIMCHI MART</title>
+<link rel="manifest" href="pwa-assets/manifest.webmanifest">
+<link rel="icon" type="image/png" href="pwa-assets/icon-192.png">
+<link rel="apple-touch-icon" href="pwa-assets/apple-touch-icon.png">
+<!-- 📊 2026-10-24 사장님 지시: "어느 지점의 어느 관리자가 보고를 안 했는지 한눈에".
+     일일 매니저 보고(daily-report.html)는 채팅 메시지(_dailyReport)로만 남는다
+     (dailyReports/ 경로는 RTDB 규칙이 없어 저장이 매번 401 로 실패해 왔음).
+     그래서 이 페이지는 매니징 룸(managing) + 예전 매니저 룸(managers) 메시지에서 보고를 모은다.
+     열람: 수퍼바이저 이상 (사장님 지시 "수퍼바이저까지 다 볼 수 있어야"). -->
+<script type="module" src="./fb-auth-fetch.js?v=4"></script>
+<script type="module" src="./auth-gate.js?v=8"></script>
+<script src="./me-persist.js?v=1"></script>
+<script src="./lang-sync.js?v=1"></script>
+<script src="./nav-sidebar.js?v=25-meet" defer></script>
+<script src="./back-nav.js?v=1"></script>
+<script src="./km-back-button.js?v=1" defer></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Pretendard Variable','Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;color:#1f2937;font-size:14px}
+.wrap{max-width:900px;margin:0 auto;padding:14px 14px 60px;padding-left:54px}
+@media(min-width:761px){.wrap{padding-left:14px;margin-left:240px}}
+h1{font-size:1.3em;font-weight:800;color:#1a5c3a}
+.sub{color:#6b7280;font-size:.85em;margin:2px 0 14px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.seg{display:flex;gap:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:3px}
+.seg button{background:transparent;border:0;padding:5px 10px;border-radius:6px;font-family:inherit;font-size:.8em;font-weight:700;color:#6b7280;cursor:pointer}
+.seg button.on{background:#1a5c3a;color:#fff}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px}
+.card h2{font-size:.98em;font-weight:800;color:#1a5c3a;margin-bottom:10px}
+/* 오늘 */
+.today{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tile{border-radius:12px;padding:10px 12px;border:2px solid}
+.tile .b{font-weight:800;font-size:.95em}
+.tile .s{font-size:.82em;margin-top:4px;font-weight:600}
+.tile.ok{background:#f0fdf4;border-color:#22c55e;color:#166534}
+.tile.wait{background:#fffbeb;border-color:#f59e0b;color:#92400e}
+/* 표 */
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{border-bottom:1px solid #f1f5f9;padding:6px 4px;text-align:center;font-size:.82em}
+th{font-weight:800;color:#374151;background:#f9fafb;position:sticky;top:0}
+td.d{text-align:left;font-weight:700;color:#374151;white-space:nowrap}
+td.d .dow{color:#9ca3af;font-weight:600;margin-left:4px}
+.c{display:inline-block;min-width:74px;padding:4px 6px;border-radius:7px;font-weight:700;line-height:1.2}
+.c.ok{background:#dcfce7;color:#166534;cursor:pointer}
+.c.ok:hover{outline:2px solid #22c55e}
+.c.no{background:#fee2e2;color:#b91c1c}
+.c.wait{background:#fef3c7;color:#92400e}
+tr.sum td{font-weight:800;background:#f9fafb;border-top:2px solid #e5e7eb}
+.pct{font-size:.9em}
+/* 관리자 명단 */
+.roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.rb{border:1px solid #e5e7eb;border-radius:10px;padding:10px}
+.rb h3{font-size:.9em;font-weight:800;margin-bottom:6px}
+.rp{display:flex;justify-content:space-between;gap:6px;font-size:.82em;padding:4px 0;border-top:1px dashed #f1f5f9}
+.rp .n{font-weight:700}
+.rp .r{color:#9ca3af;font-size:.88em;margin-left:4px}
+.rp .v{font-weight:800;white-space:nowrap}
+.rp .v.zero{color:#b91c1c}
+.rp .v.some{color:#166534}
+.msg{padding:30px;text-align:center;color:#6b7280}
+/* 상세 */
+.ov{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;z-index:9999;padding:14px}
+.ov.show{display:flex}
+.dlg{background:#fff;border-radius:14px;max-width:640px;width:100%;max-height:88vh;overflow:auto;padding:16px}
+.dlg pre{white-space:pre-wrap;font-family:inherit;font-size:.9em;line-height:1.55}
+.dlg .ph{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.dlg .ph img{width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer}
+.dlg .x{float:right;background:#f3f4f6;border:0;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;font-family:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1 id="tTitle">📊 일일 보고 현황</h1>
+      <div class="sub" id="tSub">지점별로 매일 보고했는지 한눈에 · 초록 칸을 누르면 보고 내용</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div class="seg" id="rangeSeg">
+        <button data-d="7">7</button><button data-d="14" class="on">14</button><button data-d="30">30</button>
+      </div>
+      <div class="seg" id="langSeg">
+        <button data-l="ko">한국어</button><button data-l="en">EN</button><button data-l="es">ES</button>
+      </div>
+    </div>
+  </div>
+  <div id="root"><div class="msg" id="loadingMsg">…</div></div>
+</div>
+<div class="ov" id="ov"><div class="dlg" id="dlg"></div></div>
+
+<script>
+const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+const ROOMS = ['managing', 'managers'];   // 새 보고 = managing, 2026-10-24 이전 = managers
+const BRANCHES = [
+  {id:'MIAMI',         ko:'마이애미',      en:'Miami',          es:'Miami'},
+  {id:'PEMBROKE_PINES',ko:'펨브로크',      en:'Pembroke Pines', es:'Pembroke Pines'},
+  {id:'HOLLYWOOD',     ko:'헐리우드',      en:'Hollywood',      es:'Hollywood'},
+  {id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs',  es:'Coral Springs'},
+  {id:'LASOLAS',       ko:'라스올라스',    en:'Las Olas',       es:'Las Olas'},
+];
+const I18N = {
+  title:   {ko:'📊 일일 보고 현황', en:'📊 Daily Report Status', es:'📊 Estado de Reportes Diarios'},
+  sub:     {ko:'지점별로 매일 보고했는지 한눈에 · 초록 칸을 누르면 보고 내용', en:'Did each store report every day? · Tap a green cell to read it', es:'¿Cada tienda reportó cada día? · Toca una celda verde para leer'},
+  today:   {ko:'오늘', en:'Today', es:'Hoy'},
+  notYet:  {ko:'⏳ 아직 보고 없음', en:'⏳ No report yet', es:'⏳ Sin reporte aún'},
+  grid:    {ko:'날짜별 보고', en:'Reports by day', es:'Reportes por día'},
+  date:    {ko:'날짜', en:'Date', es:'Fecha'},
+  missing: {ko:'✖ 안 함', en:'✖ Missing', es:'✖ Falta'},
+  total:   {ko:'보고한 날', en:'Days reported', es:'Días reportados'},
+  roster:  {ko:'관리자별 보고 횟수', en:'Reports per manager', es:'Reportes por gerente'},
+  rosterHint:{ko:'기간 안에 몇 번 보고했는지. 빨간 0 = 한 번도 안 함', en:'How many times each person reported in this period. Red 0 = never', es:'Cuántas veces reportó cada persona. 0 rojo = nunca'},
+  times:   {ko:'회', en:'×', es:'×'},
+  last:    {ko:'마지막', en:'last', es:'último'},
+  none:    {ko:'보고 없음', en:'never', es:'nunca'},
+  noName:  {ko:'이름 미등록', en:'no name', es:'sin nombre'},
+  denied:  {ko:'수퍼바이저 이상만 볼 수 있습니다.', en:'Supervisors and above only.', es:'Solo supervisores y superiores.'},
+  loadErr: {ko:'불러오기 실패 — 새로고침 해주세요', en:'Could not load — please refresh', es:'Error al cargar — recarga la página'},
+  close:   {ko:'닫기', en:'Close', es:'Cerrar'},
+  loading: {ko:'불러오는 중…', en:'Loading…', es:'Cargando…'},
+};
+const DOW = {ko:['일','월','화','수','목','금','토'], en:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], es:['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']};
+let LANG = 'ko';
+try { LANG = localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){}
+if (!I18N.title[LANG]) LANG = 'ko';
+let DAYS = 14;
+try { DAYS = parseInt(localStorage.getItem('reportBoard.days') || '14', 10) || 14; } catch(e){}
+const t = k => (I18N[k] && (I18N[k][LANG] || I18N[k].ko)) || k;
+const bname = b => b[LANG] || b.ko;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9가-힣]/g, '');
+
+let me = null;
+let REPORTS = [];   // {date, branch, sender, role, ts, text, photos}
+let USERS = null;
+let loadedDays = 0;
+
+function nyDate(ts){ return new Date(ts).toLocaleDateString('en-CA', {timeZone:'America/New_York'}); }
+function todayStr(){ return nyDate(Date.now()); }
+function dateList(n){
+  const out = [];
+  const [y, m, d] = todayStr().split('-').map(Number);
+  for (let i = 0; i < n; i++) {
+    const dt = new Date(Date.UTC(y, m - 1, d - i, 12));
+    out.push(dt.toISOString().slice(0, 10));
+  }
+  return out;
+}
+function dowOf(ds){ const [y,m,d] = ds.split('-').map(Number); return new Date(Date.UTC(y, m-1, d, 12)).getUTCDay(); }
+
+// 수퍼바이저 이상 (VICE/SENIOR SUPERVISOR 포함)
+function canView(){
+  if (!me) return false;
+  const r = String(me.role || '').toUpperCase();
+  if (/OWNER|EXECUTIVE|MANAGER|SUPERVISOR|GERENTE|DIRECTOR|오너|사장|대표|전무|매니저|점장|감독/.test(r)) return true;
+  return ['DJ','BHK','SUNKIM','김병호'].includes(norm(me.name));
+}
+
+async function authQ(){
+  const tok = window.__getAuthToken ? await window.__getAuthToken() : null;
+  if (!tok) throw new Error('no token');
+  return 'auth=' + encodeURIComponent(tok);
+}
+
+async function loadReports(days){
+  const q = await authQ();
+  // 메시지 키 = 'm' + ts + 난수 → 키 범위로 기간만 받음 (ts 인덱스 없음). 소급 보고 대비 5일 여유.
+  const since = Date.now() - (days + 5) * 86400000;
+  const all = [];
+  for (const room of ROOMS) {
+    const url = FB_DB_URL + '/chat/messages/' + room + '.json?' + q + '&orderBy=%22$key%22&startAt=%22m' + since + '%22';
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(room + ' HTTP ' + r.status);
+    const d = await r.json();
+    Object.values(d || {}).forEach(m => {
+      if (!m || !m._dailyReport || m.deleted) return;
+      const mm = /📅\s*(\d{4}-\d{2}-\d{2})/.exec(m.text || '');
+      all.push({
+        date: mm ? mm[1] : nyDate(m.ts),
+        branch: m.senderBranch || '',
+        sender: m.sender || '?',
+        role: m.senderRole || '',
+        ts: m.ts || 0,
+        text: m.text || '',
+        photos: Array.isArray(m.photos) ? m.photos.filter(p => typeof p === 'string' && /^https:/.test(p)) : [],
+      });
+    });
+  }
+  all.sort((a, b) => a.ts - b.ts);
+  return all;
+}
+
+async function loadUsers(){
+  try {
+    const q = await authQ();
+    const r = await fetch(FB_DB_URL + '/users.json?' + q);
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Object.values(d || {});
+  } catch(e){ return []; }
+}
+
+// 지점별 관리자 명단 (MANAGER·ASSISTANT MANAGER·SUPERVISOR). 같은 이름 중복 계정은 하나로.
+function rosterFor(branchId){
+  const seen = {};
+  (USERS || []).forEach(u => {
+    if (!u || u.status !== 'approved' || u.branch !== branchId) return;
+    const r = String(u.role || '').toUpperCase();
+    if (/OWNER|EXECUTIVE/.test(r)) return;
+    if (!/MANAGER|SUPERVISOR/.test(r)) return;
+    const nm = String(u.name || '').trim();
+    if (!nm || /^(staff|manager)$/i.test(nm)) return;
+    const key = norm(nm);
+    if (seen[key]) return;
+    seen[key] = { name: nm, role: r.replace(/_/g, ' '), isPhone: /^\+?\d{7,}$/.test(nm) };
+  });
+  const rank = r => /SUPERVISOR/.test(r) && !/MANAGER/.test(r) ? 2 : (/ASSISTANT/.test(r) ? 1 : 0);
+  return Object.values(seen).sort((a, b) => rank(a.role) - rank(b.role) || a.name.localeCompare(b.name));
+}
+
+// 보고 보낸 사람 ↔ 명단 매칭: 이름 정확히 같거나, 보낸 이름이 한 단어고 그 지점에 첫 이름이 같은 사람이 딱 1명
+function matchPerson(sender, roster){
+  const s = norm(sender);
+  let hit = roster.find(p => norm(p.name) === s);
+  if (hit) return hit;
+  const first = String(sender).trim().split(/\s+/);
+  if (first.length === 1) {
+    const cands = roster.filter(p => norm(String(p.name).trim().split(/\s+/)[0]) === s);
+    if (cands.length === 1) return cands[0];
+  }
+  return null;
+}
+
+function firstName(n){ return String(n || '').trim().split(/\s+/)[0]; }
+function timeOf(ts){ return new Date(ts).toLocaleTimeString(LANG === 'ko' ? 'ko-KR' : 'en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'}); }
+
+function render(){
+  document.getElementById('tTitle').textContent = t('title');
+  document.getElementById('tSub').textContent = t('sub');
+  document.querySelectorAll('#langSeg button').forEach(b => b.classList.toggle('on', b.dataset.l === LANG));
+  document.querySelectorAll('#rangeSeg button').forEach(b => b.classList.toggle('on', +b.dataset.d === DAYS));
+  const root = document.getElementById('root');
+  const dates = dateList(DAYS);
+  const today = dates[0];
+  const inRange = new Set(dates);
+  // by[date][branch] = [reports]
+  const by = {};
+  REPORTS.forEach((r, i) => {
+    if (!inRange.has(r.date)) return;
+    ((by[r.date] = by[r.date] || {})[r.branch] = by[r.date][r.branch] || []).push(i);
+  });
+  const cellFor = (ds, b) => (by[ds] && by[ds][b.id]) || [];
+
+  let h = '';
+  // 1) 오늘
+  h += '<div class="card"><h2>' + esc(t('today')) + ' · ' + esc(today) + '</h2><div class="today">';
+  BRANCHES.forEach(b => {
+    const ids = cellFor(today, b);
+    if (ids.length) {
+      const r = REPORTS[ids[ids.length - 1]];
+      h += '<div class="tile ok" style="cursor:pointer" data-r="' + ids[ids.length - 1] + '"><div class="b">✅ ' + esc(bname(b)) + '</div><div class="s">' + esc(r.sender) + ' · ' + esc(timeOf(r.ts)) + '</div></div>';
+    } else {
+      h += '<div class="tile wait"><div class="b">' + esc(bname(b)) + '</div><div class="s">' + esc(t('notYet')) + '</div></div>';
+    }
+  });
+  h += '</div></div>';
+
+  // 2) 날짜 × 지점 표
+  h += '<div class="card"><h2>' + esc(t('grid')) + '</h2><div class="tbl-wrap"><table><thead><tr><th>' + esc(t('date')) + '</th>';
+  BRANCHES.forEach(b => { h += '<th>' + esc(bname(b)) + '</th>'; });
+  h += '</tr></thead><tbody>';
+  const cnt = {};
+  dates.forEach(ds => {
+    h += '<tr><td class="d">' + esc(ds.slice(5).replace('-', '/')) + '<span class="dow">' + DOW[LANG][dowOf(ds)] + '</span></td>';
+    BRANCHES.forEach(b => {
+      const ids = cellFor(ds, b);
+      if (ids.length) {
+        cnt[b.id] = (cnt[b.id] || 0) + 1;
+        const names = [...new Set(ids.map(i => firstName(REPORTS[i].sender)))].join(', ');
+        h += '<td><span class="c ok" data-r="' + ids[ids.length - 1] + '">✅ ' + esc(names) + '</span></td>';
+      } else if (ds === today) {
+        h += '<td><span class="c wait">⏳</span></td>';
+      } else {
+        h += '<td><span class="c no">' + esc(t('missing')) + '</span></td>';
+      }
+    });
+    h += '</tr>';
+  });
+  // 합계 (오늘은 아직 진행 중이라 분모에서 뺌, 단 오늘 보고했으면 포함)
+  h += '<tr class="sum"><td class="d">' + esc(t('total')) + '</td>';
+  BRANCHES.forEach(b => {
+    const n = cnt[b.id] || 0;
+    const denom = DAYS - 1 + (cellFor(today, b).length ? 1 : 0);
+    const pct = denom ? Math.round(n / denom * 100) : 0;
+    const col = pct >= 80 ? '#166534' : pct >= 40 ? '#92400e' : '#b91c1c';
+    h += '<td style="color:' + col + '">' + n + '/' + denom + ' <span class="pct">(' + pct + '%)</span></td>';
+  });
+  h += '</tr></tbody></table></div></div>';
+
+  // 3) 관리자별
+  h += '<div class="card"><h2>' + esc(t('roster')) + '</h2><div class="sub" style="margin-top:-6px">' + esc(t('rosterHint')) + '</div><div class="roster">';
+  BRANCHES.forEach(b => {
+    const roster = rosterFor(b.id);
+    const stats = new Map();   // person → {n, last}
+    const extra = {};          // 명단에 없는 보낸 사람
+    REPORTS.forEach(r => {
+      if (r.branch !== b.id || !inRange.has(r.date)) return;
+      const p = matchPerson(r.sender, roster);
+      if (p) {
+        const s = stats.get(p) || {days:new Set(), last:''};
+        s.days.add(r.date); if (r.date > s.last) s.last = r.date; stats.set(p, s);
+      } else {
+        const k = norm(r.sender);
+        const s = extra[k] || (extra[k] = {name:r.sender, role:String(r.role).replace(/_/g,' '), days:new Set(), last:''});
+        s.days.add(r.date); if (r.date > s.last) s.last = r.date;
+      }
+    });
+    h += '<div class="rb"><h3>🏪 ' + esc(bname(b)) + '</h3>';
+    const row = (name, role, s) => {
+      const n = s ? s.days.size : 0;
+      h += '<div class="rp"><div><span class="n">' + esc(name) + '</span><span class="r">' + esc(role) + '</span></div>' +
+        '<div class="v ' + (n ? 'some' : 'zero') + '">' + (n ? n + t('times') + ' · ' + esc(t('last')) + ' ' + esc(s.last.slice(5).replace('-', '/')) : '0 · ' + esc(t('none'))) + '</div></div>';
+    };
+    roster.forEach(p => row(p.isPhone ? '(' + t('noName') + ' …' + p.name.slice(-4) + ')' : p.name, p.role, stats.get(p)));
+    Object.values(extra).forEach(s => row(s.name, s.role, s));
+    if (!roster.length && !Object.keys(extra).length) h += '<div class="rp"><span class="r">—</span></div>';
+    h += '</div>';
+  });
+  h += '</div></div>';
+
+  root.innerHTML = h;
+  root.querySelectorAll('[data-r]').forEach(el => el.addEventListener('click', () => openReport(+el.dataset.r)));
+}
+
+function openReport(i){
+  const r = REPORTS[i];
+  if (!r) return;
+  const dlg = document.getElementById('dlg');
+  let h = '<button class="x" id="dlgX">' + esc(t('close')) + '</button><pre>' + esc(r.text) + '</pre>';
+  if (r.photos.length) {
+    h += '<div class="ph">' + r.photos.map(u => '<a href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" loading="lazy" alt=""></a>').join('') + '</div>';
+  }
+  dlg.innerHTML = h;
+  document.getElementById('ov').classList.add('show');
+  document.getElementById('dlgX').onclick = closeReport;
+}
+function closeReport(){ document.getElementById('ov').classList.remove('show'); }
+document.getElementById('ov').addEventListener('click', e => { if (e.target.id === 'ov') closeReport(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReport(); });
+
+document.getElementById('langSeg').addEventListener('click', e => {
+  const l = e.target.dataset && e.target.dataset.l; if (!l) return;
+  LANG = l;
+  try { localStorage.setItem('kimchi_lang', l); } catch(_){}
+  try { if (window.__langSync) window.__langSync.set(l); } catch(_){}
+  render();
+});
+document.getElementById('rangeSeg').addEventListener('click', async e => {
+  const d = +(e.target.dataset && e.target.dataset.d); if (!d) return;
+  DAYS = d;
+  try { localStorage.setItem('reportBoard.days', String(d)); } catch(_){}
+  if (d > loadedDays) await refresh(); else render();
+});
+
+async function refresh(){
+  const root = document.getElementById('root');
+  if (!REPORTS.length) root.innerHTML = '<div class="msg">' + esc(t('loading')) + '</div>';
+  try {
+    const [reps, users] = await Promise.all([loadReports(DAYS), USERS ? Promise.resolve(USERS) : loadUsers()]);
+    REPORTS = reps; USERS = users; loadedDays = DAYS;
+    render();
+  } catch(e) {
+    console.error('[report-board]', e);
+    root.innerHTML = '<div class="msg">⚠️ ' + esc(t('loadErr')) + '</div>';
+  }
+}
+
+function tryInit(tries){
+  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
+  if ((!me || !me.name || !window.__getAuthToken) && tries < 80) { setTimeout(() => tryInit(tries + 1), 250); return; }
+  document.getElementById('tTitle').textContent = t('title');
+  document.getElementById('tSub').textContent = t('sub');
+  if (!canView()) { document.getElementById('root').innerHTML = '<div class="msg">🔒 ' + esc(t('denied')) + '</div>'; return; }
+  refresh();
+}
+// 다른 탭에서 돌아오면 최신으로
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && canView()) refresh(); });
+tryInit(0);
+</script>
+</body>
+</html>

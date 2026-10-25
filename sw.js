@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v1140';   // 인보이스 접수앱: 기타(직접 입력) 맨 위로 + 적은 거래처 기억 (2026-10-14)
+const CACHE = 'kmtools-v1141';   // 매니징 룸(수퍼바이저+) + 일일 보고 현황판 (2026-10-24)
 // 버전 고정(불변) 크로스오리진 의존성 전용 — 앱 버전 바뀌어도 지우지 않음.
 // firebasejs 10.14.1 / pretendard@v1.3.9 처럼 URL 에 버전이 박힌 파일만 담는다.
 const CDN_CACHE = 'kmtools-cdn-v1';
@@ -30,6 +30,7 @@ const CORE = [
   './updates.html',
   './tasks.html',
   './daily-report.html',
+  './report-board.html',
   './store-map.html',
   './expiry.html',
   './share-order.html',

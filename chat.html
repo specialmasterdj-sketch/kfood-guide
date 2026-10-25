@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_09_19_photo_many';   // 📸 사진 여러 장 업로드 안정화 (메모리 해제·실패분만 재전송)
+    var BUST = 'chat_2026_10_24_managing_room';   // 📋 매니징 룸 (수퍼바이저 이상·일일 보고)
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1130,6 +1130,9 @@ const DEFAULT_ROOMS = [
   { id:'need_overstock',name:{ko:'재고 부족/과다',          en:'Need and over stock',         es:'Exceso/Falta de stock'},      desc:{ko:'재고 부족/과다 보고',        en:'Stock shortage / overstock',  es:'Reporte de inventario'}, icon:'📦' },
   // 🔒 2026-05-11 부터 슈퍼바이저 입장 불가(전무님 지시, 315cea5) — 2026-09-19 이름·설명도 그에 맞춤 (Micaela 문의)
   { id:'managers',      name:{ko:'매니저 룸',               en:'Managers',      es:'Gerentes'},    desc:{ko:'매니저 이상 (슈퍼바이저 제외)',        en:'Managers and above (not supervisors)',      es:'Gerentes y superiores (sin supervisores)'}, icon:'👔' },
+  // 📋 2026-10-24 사장님 지시: 매니징 룸 — 수퍼바이저 이상 모두 보기·업로드. 일일 매니저 보고가 여기로 온다.
+  //    (매니저 룸 기존 대화는 그대로 매니저 이상만 — 수퍼바이저에게 열지 않음)
+  { id:'managing',      name:{ko:'매니징 룸',               en:'Managing Room', es:'Sala de Gestión'}, desc:{ko:'수퍼바이저 이상 · 일일 보고', en:'Supervisors and above · daily reports', es:'Supervisores y superiores · reportes diarios'}, icon:'📋' },
   // 🔒 2026-05-27 전무님 지시: 채팅 방 목록에서 현금 급여 보고 방 완전 제거.
   // (별도 앱으로 분리 — 매니저는 직접 URL 로만 접근.)
   // { id:'payroll',       name:{ko:'현금 급여 보고', ... }, icon:'💵', managersOnly:true },
@@ -1695,6 +1698,12 @@ function canAccessPayrollRoom(){
 })();
 // 매니저 룸 / 매니저 전용 방 — SUPERVISOR 제외.
 function canAccessManagerRoom(){ return _hasMgrAccess(); }
+// 매니징 룸 = 수퍼바이저 이상 (VICE/SENIOR SUPERVISOR 포함). 매니저 룸보다 넓다.
+function canAccessManagingRoom(){
+  if (!me) return false;
+  if (_hasMgrAccess()) return true;
+  return /SUPERVISOR|SUPERVISORA|감독/.test(String(me.role || '').toUpperCase());
+}
 // HR 룸: 🔒 2026-05-28 사장님 명시: OWNER + SUN KIM 만 열람.
 // 옛 payroll 룸 메시지 31개 마이그레이션 (현금 지급자 명단) — 매우 민감 → 엄격 제한.
 // 누구나 제출(submitHRInquiry) 가능, 본문 열람만 좁힘.
@@ -1950,6 +1959,7 @@ function renderRooms(){
       //    별도 앱 (payroll.html) 으로 분리 운영. 메시지는 Firebase 에 남되 채팅 UI 에선 안 보임.
       if (id === 'payroll') return false;
       if (id === 'managers' && !canAccessManagerRoom()) return false;
+      if (id === 'managing' && !canAccessManagingRoom()) return false;
       // 🆕 2026-05-28 사장님 지시: HR Inquiries 방은 모든 직원에게 사이드바 표시.
       // 비권한자가 클릭하면 openRoom 핸들러가 자동으로 HR 건의 모달 띄움 (메시지 리스트는 못 봄).
       // 메시지 본문 읽기 권한은 canAccessHRRoom() 안의 OWNER/EXECUTIVE/HR MANAGER/SUN KIM/KENDELL 만.
@@ -2008,7 +2018,7 @@ function renderRooms(){
   // 평가 방 고정 순서
   const EVAL_ORDER = ['closing','grocery_eval','meat_evalution_room','seafood_evalution_room','produce','kfood_eval','sushi','bakery_eval','temp_eval'];
   // 일반 방 고정 순서
-  const OTHER_ORDER = ['managers','expired','need_overstock','supply_req','general','hr_inquiries','payroll','kimchi_mart_app_lab'];
+  const OTHER_ORDER = ['managing','managers','expired','need_overstock','supply_req','general','hr_inquiries','payroll','kimchi_mart_app_lab'];
   function sortByFixed(arr, order){
     return arr.sort((a, b) => {
       const ai = order.indexOf(a[0]), bi = order.indexOf(b[0]);
@@ -2056,7 +2066,7 @@ function renderRooms(){
   let ownerStrip = '';
   try {
     if (typeof isStrictOwner === 'function' && isStrictOwner()) {
-      const hot = items.filter(([id, r]) => r && r.unread > 0 && (id === 'managers' || (id.indexOf('dm__') === 0 && isMyDmRoom(id, r))));
+      const hot = items.filter(([id, r]) => r && r.unread > 0 && ((id === 'managers' || id === 'managing') || (id.indexOf('dm__') === 0 && isMyDmRoom(id, r))));
       const needPerm = ('Notification' in window) && Notification.permission === 'default';
       if (hot.length || needPerm) {
         const chips = hot.map(([id, r]) =>
@@ -2274,6 +2284,11 @@ function openRoom(id){
     if (!canAccessManagerRoom()){
       const m = ({ko:'매니저 전용 방입니다.\nOWNER · 전무 · MANAGER · ASSISTANT MANAGER만 입장 가능합니다.\n(슈퍼바이저·직원은 입장할 수 없습니다)', en:'Manager-only room.\nOWNER · EXEC · MANAGER · ASSISTANT MANAGER only.\n(Supervisors and staff cannot enter)', es:'Sala solo para gerentes.\nSolo OWNER · EJECUTIVO · GERENTE · GERENTE ASISTENTE.\n(Los supervisores y empleados no pueden entrar)'})[LANG] || '';
       alert(m);
+      return;
+    }
+  } else if (id === 'managing') {
+    if (!canAccessManagingRoom()){
+      alert(({ko:'매니징 룸은 수퍼바이저 이상만 입장 가능합니다.', en:'Managing Room: supervisors and above only.', es:'Sala de Gestión: solo supervisores y superiores.'})[LANG] || '');
       return;
     }
   } else if (id === 'admin' || id === 'devlab') {
@@ -5350,7 +5365,7 @@ function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&am
 // 매니저 룸 / 매니저 전용 방에서는 URL 을 클릭 불가능한 텍스트로만 표시 —
 // 매니저가 본인 폰에서 가입 페이지 링크 눌러도 본인 매니저 계정으로 자동
 // 로그인되어 'HUB 화면' 만 떠서 직원에게 잘못된 링크 보낸 줄 오해함.
-const NO_LINK_ROOMS = ['managers','payroll'];
+const NO_LINK_ROOMS = ['managers','managing','payroll'];
 function linkifyText(s){
   const safe = escapeHtml(s);
   const noClick = NO_LINK_ROOMS.includes(ACTIVE_ROOM);

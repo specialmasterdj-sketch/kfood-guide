@@ -76,6 +76,8 @@
     { ic: '👥', lbl: { ko:'직원 승인',       en:'Approvals',      es:'Aprobaciones' },    href: './approve.html', mgr: true },
     { ic: '📇', lbl: { ko:'직원 디렉토리',   en:'Staff Directory', es:'Directorio' },      href: './hub.html#directory', mgr: true },
     { ic: '🏆', lbl: { ko:'활동 순위',       en:'Leaderboard',    es:'Clasificación' },   href: './leaderboard.html', own: true },
+    // 📊 2026-10-24 사장님: 지점별 일일 보고 했는지 한눈에 — 수퍼바이저 이상 (페이지 자체도 게이트)
+    { ic: '📊', lbl: { ko:'일일 보고 현황',  en:'Report Status',  es:'Estado de Reportes' }, href: './report-board.html', mgr: true },
 
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
     { ic: '🏆', lbl: { ko:'Top 500 재고',  en:'Top 500 Stock', es:'Top 500 Inventario' }, href: './top500.html', highlight: true },
