@@ -12,86 +12,53 @@
 <script src="./nav-sidebar.js?v=25-meet" defer></script>
 <script src="./back-nav.js?v=1"></script>
 <script>
-// 🔒 입장 권한: Firebase /config/payrollAccess 화이트리스트 인원만
-(function(){
-  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-  // 🚫 슈퍼바이저(SUPERVISOR) 는 급여 접근 금지 — 2026-05-18 전무님 지시.
-  // Mirna / Anderson / Odalys 제외. 매니저급(MANAGER+ASSISTANT_MANAGER) 만 통과.
-  const PW_DEFAULT = [
-    'BHK','DJ','SUNKIM',
-    'HKIM','HEEJAEKIM','HEEKIM',
-    'CHOI','CHOIHJ','JCHOI',
-    'HRMANAGER','HRMGR','HR',
-    'SHREYA','SHRESTHA','SHREYASHRESTHA',
-  ];
-  // localStorage 캐시에 슈퍼바이저들이 누적돼 있을 수 있어 강제 청소.
-  // 캐시 union 이 PW_DEFAULT 변경을 무력화하는 케이스 방지.
-  const PURGE_FROM_WHITELIST = ['MIRNA','MIRNAMONTOYA','ANDERSON','ANDERSONGODOY','ODALYS','ODALYSLEDESMA'];
-  // 매니저급 role 자동 허용 — 화이트리스트 누락돼도 통과
-  const MGR_ROLE_TOKENS = ['OWNER','EXEC','MANAGER','ASSISTANT','전무','상무','이사'];
-  const STAFF_DENY_TOKENS = ['CASHIER','STOCKER','STAFF','직원','SUSHI','KITCHEN','MEAT','DELI','PRODUCE'];
-  function norm(n){ return String(n||'').toUpperCase().replace(/\([^)]*\)/g,'').replace(/\./g,'').replace(/\s+/g,''); }
-  function hasMgrRole(role){
-    const r = (role||'').toUpperCase();
-    if (!r) return false;
-    if (STAFF_DENY_TOKENS.some(t => r === t || r.includes(t))) {
-      // SUPERVISOR 는 staff 명단에 없으므로 MGR 로 인정 안 함 (요구 시 별도 화이트리스트 추가)
-      return MGR_ROLE_TOKENS.some(t => r.includes(t));
-    }
-    return MGR_ROLE_TOKENS.some(t => r.includes(t));
-  }
-  let me = null;
-  try { me = JSON.parse(localStorage.getItem('chat.me') || 'null'); } catch(e){}
-  let wl = PW_DEFAULT.slice();
-  try {
-    let c = JSON.parse(localStorage.getItem('km.payrollWhitelist')||'null');
-    if (Array.isArray(c) && c.length) {
-      // 🚫 슈퍼바이저 이름들 캐시에서 강제 제거 — 누적 시 PW_DEFAULT 변경 무력화 방지.
-      const cleaned = c.filter(n => !PURGE_FROM_WHITELIST.includes(norm(n)));
-      if (cleaned.length !== c.length) {
-        localStorage.setItem('km.payrollWhitelist', JSON.stringify(cleaned));
-      }
-      wl = [...new Set([...PW_DEFAULT, ...cleaned])];
-    }
-  } catch(e){}
-  // 1) 이름 화이트리스트 매칭
-  if (me && wl.includes(norm(me.name))) return;
-  // 2) 매니저급 role 통과 — chat.me 에 등록된 role 기준
-  if (me && hasMgrRole(me.role)) return;
-
-  // 비동기로 Firebase 최신 화이트리스트 확인 — 캐시 미스 커버
-  window.__payrollGateAsync = fetch(FB+'/config/payrollAccess.json?t='+Date.now(),{cache:'no-store'})
-    .then(r=>r.json()).then(d=>{
-      if(Array.isArray(d)&&d.length) {
-        // 🚫 Firebase config 에 슈퍼바이저 잔재 있어도 강제 제거.
-        const fbList = d.map(n=>norm(n)).filter(n => !PURGE_FROM_WHITELIST.includes(n));
-        wl=[...new Set([...PW_DEFAULT,...fbList])];
-      } else {
-        wl=PW_DEFAULT;
-      }
-      localStorage.setItem('km.payrollWhitelist',JSON.stringify(wl));
-      if(me && wl.includes(norm(me.name))){ location.reload(); return; }
-    }).catch(()=>{});
-
-  document.addEventListener('DOMContentLoaded', () => {
+// 🔐 2026-10-25 사장님 지시: 급여는 딱 3명 — DJ(사장님) · Sun Kim · 김병호 전무님. 그 외(매니저·HR 포함) 절대 불가.
+//   예전 이름 명단·직급 판정은 직원이 화면에서 고르는 이름(chat.me)이라 사칭 가능 → 폐지.
+//   Firebase 로그인 계정(이메일·전화)이 확인될 때까지 화면 전체를 가린다.
+document.documentElement.style.visibility = 'hidden';
+window.__payrollAuthOk = new Promise(r => { window.__payrollAuthResolve = r; });
+</script>
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+const PAY_OWNER_EMAILS = ['specialmasterdj@gmail.com', 'kdaisy81@yahoo.com', 'byhoki64@gmail.com'];
+const PAY_OWNER_PHONES = ['+19544945025', '+13059264744', '+15613290722'];
+function isPayOwner(u){
+  if (!u) return false;
+  const em = String(u.email||'').toLowerCase().trim();
+  const ph = String(u.phoneNumber||'').trim();
+  return (!!em && PAY_OWNER_EMAILS.includes(em)) || (!!ph && PAY_OWNER_PHONES.includes(ph));
+}
+const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com", databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order", storageBucket:"kimchi-mart-order.firebasestorage.app", appId:"1:903841418321:web:5c0d9f3e6a5a1b2c3d4e5f" };
+const auth = getAuth(getApps().length ? getApp() : initializeApp(cfg));
+let decided = false;
+function deny(u){
+  window.__payrollDenied = true;
+  const show = () => {
     document.body.innerHTML = `
       <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9">
         <div style="background:#fff;border-radius:16px;padding:36px 28px;max-width:420px;width:100%;text-align:center;box-shadow:0 4px 18px rgba(0,0,0,.08)">
           <div style="font-size:3.5em;margin-bottom:10px">🔒</div>
-          <h1 style="font-size:1.4em;color:#1a5c3a;margin-bottom:10px">급여 보고 — 접근 제한</h1>
-          <p style="color:#6b7280;font-size:.95em;line-height:1.5;margin-bottom:18px">
-            이 페이지는 <b>지정된 인원</b>만 열람할 수 있습니다.
-          </p>
-          <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:.85em;color:#92400e;margin-bottom:18px">
-            현재: <b>${me?.name || '미등록'}</b>${me?.role ? ' · '+me.role : ''}
-          </div>
-          <a href="./chat.html" style="display:inline-block;background:#1a5c3a;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600">← 채팅으로 돌아가기</a>
-          ${!me ? '<div style="margin-top:14px;font-size:.82em;color:#9ca3af">먼저 채팅에서 본인 이름을 등록해 주세요</div>' : ''}
+          <h1 style="font-size:1.4em;color:#1a5c3a;margin-bottom:10px">급여 — 접근 제한</h1>
+          <p style="color:#6b7280;font-size:.95em;line-height:1.5;margin-bottom:18px">사장님·Sun Kim·김병호 전무님 전용입니다.<br>본인 계정으로 로그인한 기기에서만 열립니다.</p>
+          <a href="./hub.html" style="display:inline-block;background:#1a5c3a;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600">← 돌아가기</a>
         </div>
       </div>`;
     document.title = '권한 없음 — 급여';
-  });
-})();
+    document.documentElement.style.visibility = '';
+  };
+  if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+}
+onAuthStateChanged(auth, u => {
+  if (decided) return;
+  decided = true;
+  const ok = isPayOwner(u);
+  window.__payrollAuthResolve && window.__payrollAuthResolve(ok);
+  if (ok) document.documentElement.style.visibility = '';
+  else deny(u);
+});
+// 로그인 확인이 10초 넘게 안 되면 잠금 화면으로 (가려진 채 멈추지 않게)
+setTimeout(() => { if (!decided) { decided = true; window.__payrollAuthResolve && window.__payrollAuthResolve(false); deny(null); } }, 10000);
 </script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -1755,7 +1722,8 @@ function checkLoginState(){
 window.addEventListener('storage', e => {
   if (e.key === 'chat.me') applyReadonlyMode();
 });
-loadReportWithRoster();
+// 🔐 급여 데이터는 3명 계정 확인 뒤에만 불러온다 (2026-10-25)
+window.__payrollAuthOk.then(ok => { if (ok) loadReportWithRoster(); });
 checkLoginState();
 </script>
 </body>
