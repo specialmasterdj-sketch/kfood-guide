@@ -71,7 +71,7 @@
     { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
     { ic: '📅', lbl: { ko:'유통기한 관리',  en:'Expiry tracker', es:'Caducidad' },        href: './expiry.html', highlight: true },
     { ic: '🧾', lbl: { ko:'유통기한 크레딧',  en:'Vendor credit',  es:'Crédito proveedor' }, href: './credit.html', highlight: true },
-    { ic: '🌡', lbl: { ko:'온도 관리',       en:'Temp tracker',   es:'Temperatura' },     href: './temp.html', highlight: true },
+    // 🗑️ 2026-10-25 사장님 '없애줘': 온도 관리(Temp tracker) 메뉴 제거 — temp.html·기록은 보존
     { ic: '📦', lbl: { ko:'입고 스캔',       en:'Receiving scan', es:'Escaneo entrada' }, href: './receiving-scan.html', highlight: true },
     { ic: '👥', lbl: { ko:'직원 승인',       en:'Approvals',      es:'Aprobaciones' },    href: './approve.html', mgr: true },
     { ic: '📇', lbl: { ko:'직원 디렉토리',   en:'Staff Directory', es:'Directorio' },      href: './hub.html#directory', mgr: true },
