@@ -54,6 +54,18 @@ td.d .dow{color:#9ca3af;font-weight:600;margin-left:4px}
 .c.wait{background:#fef3c7;color:#92400e}
 tr.sum td{font-weight:800;background:#f9fafb;border-top:2px solid #e5e7eb}
 .pct{font-size:.9em}
+/* 🛒🥬 핵심 품목 점검 제출 칩 (2026-10-25) */
+.cell{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:2px;border-radius:8px}
+.cell:hover{background:#f1f5f9}
+.kc{display:flex;gap:3px;justify-content:center;margin-top:4px}
+.k{font-size:.82em;font-weight:800;padding:1px 5px;border-radius:6px;background:#f1f5f9;color:#94a3b8;white-space:nowrap}
+.k.part{background:#fef3c7;color:#92400e}
+.k.full{background:#dcfce7;color:#166534}
+.legend{font-size:.8em;color:#6b7280;margin:-4px 0 10px}
+.dlg h4{margin:14px 0 6px;font-size:.95em;color:#1a5c3a}
+.kr{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px dashed #e5e7eb;font-size:.88em}
+.kr b{font-weight:800}
+.kr span{color:#6b7280}
 /* 관리자 명단 */
 .roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
 .rb{border:1px solid #e5e7eb;border-radius:10px;padding:10px}
@@ -98,6 +110,12 @@ tr.sum td{font-weight:800;background:#f9fafb;border-top:2px solid #e5e7eb}
 <script>
 const FB_DB_URL = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
 const ROOMS = ['managing', 'managers'];   // 새 보고 = managing, 2026-10-24 이전 = managers
+// 🛒🥬 2026-10-25 사장님: 그로서리 Top 500·신선 데일리 제출도 같은 표에서 (km-key-report.js 가 기록)
+const KINDS = [
+  {key:'grocery', ic:'🛒', ko:'그로서리 Top 500', en:'Grocery Top 500', n:5},
+  {key:'fresh',   ic:'🥬', ko:'신선 데일리',     en:'Fresh Daily',     n:7},
+];
+const STORE2BR = { coral:'CORAL_SPRINGS', hollywood:'HOLLYWOOD', lasolas:'LASOLAS', miami:'MIAMI', pembroke:'PEMBROKE_PINES' };
 const BRANCHES = [
   {id:'MIAMI',         ko:'마이애미',      en:'Miami',          es:'Miami'},
   {id:'PEMBROKE_PINES',ko:'펨브로크',      en:'Pembroke Pines', es:'Pembroke Pines'},
@@ -123,6 +141,9 @@ const I18N = {
   denied:  {ko:'수퍼바이저 이상만 볼 수 있습니다.', en:'Supervisors and above only.', es:'Solo supervisores y superiores.'},
   loadErr: {ko:'불러오기 실패 — 새로고침 해주세요', en:'Could not load — please refresh', es:'Error al cargar — recarga la página'},
   close:   {ko:'닫기', en:'Close', es:'Cerrar'},
+  legend:  {ko:'✅ 매니저 일일 보고 · 🛒 그로서리 Top 500 제출 구역 수(5) · 🥬 신선 데일리 제출 부서 수(7) — 칸을 누르면 자세히', en:'✅ Daily manager report · 🛒 Grocery Top 500 zones sent (of 5) · 🥬 Fresh Daily depts sent (of 7) — tap a cell for details', es:'✅ Reporte diario · 🛒 Top 500 zonas enviadas (de 5) · 🥬 Frescos departamentos enviados (de 7) — toca una celda'},
+  daily:   {ko:'📋 매니저 일일 보고', en:'📋 Daily manager report', es:'📋 Reporte diario'},
+  noSend:  {ko:'제출 없음', en:'Nothing sent', es:'Nada enviado'},
   loading: {ko:'불러오는 중…', en:'Loading…', es:'Cargando…'},
 };
 const DOW = {ko:['일','월','화','수','목','금','토'], en:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], es:['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']};
@@ -138,6 +159,7 @@ const norm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9가-힣]/g, '')
 
 let me = null;
 let REPORTS = [];   // {date, branch, sender, role, ts, text, photos}
+let KEYSENT = {};   // KEYSENT[kind][date][branchId] = [rec, ...]
 let USERS = null;
 let loadedDays = 0;
 
@@ -194,6 +216,34 @@ async function loadReports(days){
   }
   all.sort((a, b) => a.ts - b.ts);
   return all;
+}
+
+async function loadKeySent(days){
+  const q = await authQ();
+  const sinceD = dateList(days + 1).pop();
+  const out = {};
+  for (const k of KINDS) {
+    out[k.key] = {};
+    try {
+      const r = await fetch(FB_DB_URL + '/inventory/keyItems/' + k.key + '/sent.json?' + q + '&orderBy=%22$key%22&startAt=%22' + sinceD + '%22');
+      if (!r.ok) continue;
+      const d = await r.json() || {};
+      for (const [ds, docs] of Object.entries(d)) {
+        for (const rec of Object.values(docs || {})) {
+          const br = rec && STORE2BR[rec.store]; if (!br) continue;
+          ((out[k.key][ds] = out[k.key][ds] || {})[br] = out[k.key][ds][br] || []).push(rec);
+        }
+      }
+    } catch(e){ console.warn('[report-board] keySent', k.key, e); }
+  }
+  return out;
+}
+const keyRecs = (kind, ds, br) => ((KEYSENT[kind] || {})[ds] || {})[br] || [];
+function keyChips(ds, br){
+  return '<div class="kc">' + KINDS.map(k => {
+    const n = new Set(keyRecs(k.key, ds, br).map(r => r.zone)).size;
+    return '<span class="k ' + (n >= k.n ? 'full' : n ? 'part' : '') + '">' + k.ic + n + '/' + k.n + '</span>';
+  }).join('') + '</div>';
 }
 
 async function loadUsers(){
@@ -264,15 +314,15 @@ function render(){
     const ids = cellFor(today, b);
     if (ids.length) {
       const r = REPORTS[ids[ids.length - 1]];
-      h += '<div class="tile ok" style="cursor:pointer" data-r="' + ids[ids.length - 1] + '"><div class="b">✅ ' + esc(bname(b)) + '</div><div class="s">' + esc(r.sender) + ' · ' + esc(timeOf(r.ts)) + '</div></div>';
+      h += '<div class="tile ok" style="cursor:pointer" data-cell="' + today + '|' + b.id + '"><div class="b">✅ ' + esc(bname(b)) + '</div><div class="s">' + esc(r.sender) + ' · ' + esc(timeOf(r.ts)) + '</div>' + keyChips(today, b.id) + '</div>';
     } else {
-      h += '<div class="tile wait"><div class="b">' + esc(bname(b)) + '</div><div class="s">' + esc(t('notYet')) + '</div></div>';
+      h += '<div class="tile wait" style="cursor:pointer" data-cell="' + today + '|' + b.id + '"><div class="b">' + esc(bname(b)) + '</div><div class="s">' + esc(t('notYet')) + '</div>' + keyChips(today, b.id) + '</div>';
     }
   });
   h += '</div></div>';
 
   // 2) 날짜 × 지점 표
-  h += '<div class="card"><h2>' + esc(t('grid')) + '</h2><div class="tbl-wrap"><table><thead><tr><th>' + esc(t('date')) + '</th>';
+  h += '<div class="card"><h2>' + esc(t('grid')) + '</h2><div class="legend">' + esc(t('legend')) + '</div><div class="tbl-wrap"><table><thead><tr><th>' + esc(t('date')) + '</th>';
   BRANCHES.forEach(b => { h += '<th>' + esc(bname(b)) + '</th>'; });
   h += '</tr></thead><tbody>';
   const cnt = {};
@@ -280,15 +330,17 @@ function render(){
     h += '<tr><td class="d">' + esc(ds.slice(5).replace('-', '/')) + '<span class="dow">' + DOW[LANG][dowOf(ds)] + '</span></td>';
     BRANCHES.forEach(b => {
       const ids = cellFor(ds, b);
+      let main;
       if (ids.length) {
         cnt[b.id] = (cnt[b.id] || 0) + 1;
         const names = [...new Set(ids.map(i => firstName(REPORTS[i].sender)))].join(', ');
-        h += '<td><span class="c ok" data-r="' + ids[ids.length - 1] + '">✅ ' + esc(names) + '</span></td>';
+        main = '<span class="c ok">✅ ' + esc(names) + '</span>';
       } else if (ds === today) {
-        h += '<td><span class="c wait">⏳</span></td>';
+        main = '<span class="c wait">⏳</span>';
       } else {
-        h += '<td><span class="c no">' + esc(t('missing')) + '</span></td>';
+        main = '<span class="c no">' + esc(t('missing')) + '</span>';
       }
+      h += '<td><div class="cell" data-cell="' + ds + '|' + b.id + '">' + main + keyChips(ds, b.id) + '</div></td>';
     });
     h += '</tr>';
   });
@@ -335,17 +387,31 @@ function render(){
   h += '</div></div>';
 
   root.innerHTML = h;
-  root.querySelectorAll('[data-r]').forEach(el => el.addEventListener('click', () => openReport(+el.dataset.r)));
+  root.querySelectorAll('[data-cell]').forEach(el => el.addEventListener('click', () => { const [ds, br] = el.dataset.cell.split('|'); openCell(ds, br); }));
 }
 
-function openReport(i){
-  const r = REPORTS[i];
-  if (!r) return;
+// 칸 하나 = 그 날짜·지점의 매니저 일일 보고 전문 + 핵심 품목 점검 제출 목록
+function openCell(ds, br){
+  const b = BRANCHES.find(x => x.id === br) || {ko:br};
   const dlg = document.getElementById('dlg');
-  let h = '<button class="x" id="dlgX">' + esc(t('close')) + '</button><pre>' + esc(r.text) + '</pre>';
-  if (r.photos.length) {
-    h += '<div class="ph">' + r.photos.map(u => '<a href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" loading="lazy" alt=""></a>').join('') + '</div>';
-  }
+  let h = '<button class="x" id="dlgX">' + esc(t('close')) + '</button><h3 style="margin:0 0 8px;color:#1a5c3a">' + esc(bname(b)) + ' · ' + esc(ds) + '</h3>';
+  h += '<h4>' + esc(t('daily')) + '</h4>';
+  const reps = REPORTS.filter(r => r.date === ds && r.branch === br);
+  if (!reps.length) h += '<div class="kr"><span>' + esc(t('noSend')) + '</span></div>';
+  reps.forEach(r => {
+    h += '<pre>' + esc(r.text) + '</pre>';
+    if (r.photos.length) h += '<div class="ph">' + r.photos.map(u => '<a href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" loading="lazy" alt=""></a>').join('') + '</div>';
+  });
+  KINDS.forEach(k => {
+    const recs = keyRecs(k.key, ds, br).slice().sort((a, b2) => a.at - b2.at);
+    h += '<h4>' + k.ic + ' ' + esc(LANG === 'ko' ? k.ko : k.en) + ' (' + new Set(recs.map(r => r.zone)).size + '/' + k.n + ')</h4>';
+    if (!recs.length) h += '<div class="kr"><span>' + esc(t('noSend')) + '</span></div>';
+    recs.forEach(r => {
+      const chk = r.top ? 'Top ' + r.topDone + '/' + r.top : (r.total ? ((r.ok || 0) + (r.low || 0) + (r.no || 0)) + '/' + r.total : '');
+      h += '<div class="kr"><div><b>' + esc(r.zoneKo || r.zone) + '</b> <span>· ' + esc(r.name || '?') + ' · ' + esc(timeOf(r.at)) + '</span></div><div>' +
+        esc(chk) + (r.low ? ' · 🟡' + r.low : '') + (r.no ? ' · <b style="color:#b91c1c">✗' + r.no + '</b>' : '') + '</div></div>';
+    });
+  });
   dlg.innerHTML = h;
   document.getElementById('ov').classList.add('show');
   document.getElementById('dlgX').onclick = closeReport;
@@ -372,8 +438,8 @@ async function refresh(){
   const root = document.getElementById('root');
   if (!REPORTS.length) root.innerHTML = '<div class="msg">' + esc(t('loading')) + '</div>';
   try {
-    const [reps, users] = await Promise.all([loadReports(DAYS), USERS ? Promise.resolve(USERS) : loadUsers()]);
-    REPORTS = reps; USERS = users; loadedDays = DAYS;
+    const [reps, users, ks] = await Promise.all([loadReports(DAYS), USERS ? Promise.resolve(USERS) : loadUsers(), loadKeySent(DAYS)]);
+    REPORTS = reps; USERS = users; KEYSENT = ks; loadedDays = DAYS;
     render();
   } catch(e) {
     console.error('[report-board]', e);

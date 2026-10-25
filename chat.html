@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_10_24_managing_room';   // 📋 매니징 룸 (수퍼바이저 이상·일일 보고)
+    var BUST = 'chat_2026_10_25_managing_unify';   // 📋 매니징 룸 통일 + 지점별 보고 현황판 고정
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1958,7 +1958,8 @@ function renderRooms(){
       // 🔒 2026-05-27 전무님 지시: payroll 방은 채팅 어디서도 노출 금지 (매니저도).
       //    별도 앱 (payroll.html) 으로 분리 운영. 메시지는 Firebase 에 남되 채팅 UI 에선 안 보임.
       if (id === 'payroll') return false;
-      if (id === 'managers' && !canAccessManagerRoom()) return false;
+      // 📋 2026-10-25 사장님: 매니징 룸으로 통일 — 매니저 룸은 목록에서 숨김 (기록은 그대로 보존)
+      if (id === 'managers') return false;
       if (id === 'managing' && !canAccessManagingRoom()) return false;
       // 🆕 2026-05-28 사장님 지시: HR Inquiries 방은 모든 직원에게 사이드바 표시.
       // 비권한자가 클릭하면 openRoom 핸들러가 자동으로 HR 건의 모달 띄움 (메시지 리스트는 못 봄).
@@ -2267,6 +2268,7 @@ function createRoom(){
   openRoom(id);
 }
 function openRoom(id){
+  if (id === 'managers') id = 'managing';   // 2026-10-25 매니징 룸 통일
   console.log('[openRoom]', id, 'me=', me?.name);
   // 자동 노출된 본인등록 모달이 룸 클릭을 가렸을 가능성 — 미리 닫기 (가시성 문제 해결)
   try { document.getElementById('meOverlay')?.classList.remove('show'); } catch(e){}
@@ -3144,7 +3146,73 @@ function togglePinNotice(){
   localStorage.setItem('chat.pinNoticeOpen', PIN_NOTICE_OPEN ? '1' : '0');
   try { renderMessages(); } catch(_){}
 }
+// 📋 2026-10-25 사장님: "부끄러움을 느끼도록 객관적으로 공표 — 매니징 룸을 통해서"
+//   매니징 룸 맨 위에 오늘·어제 지점별 보고 현황판을 고정한다 (수퍼바이저 이상 모두 같은 화면을 본다).
+//   ✅ 매니저 일일 보고(_dailyReport) · 🛒 그로서리 Top 500 · 🥬 신선 데일리(_keyReport) — 방에 올라온 메시지로 집계.
+function managingBoardHTML(){
+  const L = (typeof LANG !== 'undefined') ? LANG : 'ko';
+  const BRS = [['MIAMI','마이애미','Miami'],['PEMBROKE_PINES','펨브로크','Pembroke'],['HOLLYWOOD','헐리우드','Hollywood'],['CORAL_SPRINGS','코럴 스프링스','Coral Springs'],['LASOLAS','라스올라스','Las Olas']];
+  const S2B = { miami:'MIAMI', pembroke:'PEMBROKE_PINES', hollywood:'HOLLYWOOD', coral:'CORAL_SPRINGS', lasolas:'LASOLAS' };
+  const nyDay = off => new Date(Date.now() - off*86400000).toLocaleDateString('en-CA', {timeZone:'America/New_York'});
+  const days = [nyDay(0), nyDay(1)];
+  const daily = {}, key = {};
+  (MSGS || []).forEach(m => {
+    if (!m || m.deleted) return;
+    if (m._dailyReport) {
+      const mm = /📅\s*(\d{4}-\d{2}-\d{2})/.exec(m.text || '');
+      const d = mm ? mm[1] : new Date(m.ts).toLocaleDateString('en-CA', {timeZone:'America/New_York'});
+      ((daily[d] = daily[d] || {})[m.senderBranch] = daily[d][m.senderBranch] || []).push(m);
+    } else if (m._keyReport) {
+      const k = m._keyReport, br = S2B[k.store]; if (!br) return;
+      const o = ((key[k.date] = key[k.date] || {})[br] = key[k.date][br] || {grocery:new Set(), fresh:new Set()});
+      (o[k.kind] || new Set()).add(k.zone);
+    }
+  });
+  const T = { title:{ko:'📊 지점별 보고 현황 — 모두가 봅니다', en:'📊 Report status by store — everyone can see this', es:'📊 Reportes por tienda — todos lo ven'},
+    today:{ko:'오늘', en:'Today', es:'Hoy'}, yday:{ko:'어제', en:'Yesterday', es:'Ayer'},
+    none:{ko:'✖ 보고 안 함', en:'✖ No report', es:'✖ Sin reporte'}, wait:{ko:'⏳ 아직', en:'⏳ Not yet', es:'⏳ Aún no'},
+    more:{ko:'30일 기록 보기 →', en:'30-day history →', es:'Historial 30 días →'} };
+  const tt = k => T[k][L] || T[k].ko;
+  // 🔗 2026-10-25 사장님: "핵심 3개 점검을 매니징 룸 위에 작은 링크로, 깜빡이면서 매일 꼭 해야 하는 것처럼"
+  //   내 지점이 오늘 그 점검을 제출하면 깜빡임이 멈추고 ✓ 로 바뀐다. 누르면 내 지점으로 바로 열린다.
+  let myStore = '';
+  try { const b = String((me && me.branch) || '').toUpperCase(); myStore = Object.keys(S2B).find(k => S2B[k] === b) || ''; } catch(_){}
+  const myKey = (key[days[0]] || {})[S2B[myStore]] || {grocery:new Set(), fresh:new Set()};
+  const LINKS = [
+    { ic:'🚶', ko:'야채 동선 점검', en:'Produce Walk', es:'Recorrido frescos', url:'./fresh-walk.html', done: myKey.fresh.has('produce') },
+    { ic:'🥬', ko:'신선 데일리',   en:'Fresh Daily',  es:'Frescos diario',    url:'./key-fresh.html',  done: [...myKey.fresh].some(z => z !== 'produce') },
+    { ic:'🛒', ko:'그로서리 Top 500', en:'Grocery Top 500', es:'Top 500 abarrotes', url:'./key-grocery.html', done: myKey.grocery.size > 0 },
+  ];
+  const todo = {ko:'오늘 꼭!', en:'Do today!', es:'¡Hoy!'}[L] || '오늘 꼭!';
+  let h = '<style>@keyframes kmBlink{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{opacity:.55;box-shadow:0 0 0 6px rgba(220,38,38,0)}}' +
+    '.kmKeyLnk{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:999px;font-weight:800;font-size:12.5px;text-decoration:none;white-space:nowrap}' +
+    '.kmKeyLnk.todo{background:#dc2626;color:#fff;animation:kmBlink 1.2s ease-in-out infinite}.kmKeyLnk.ok{background:#dcfce7;color:#166534}' +
+    '@media (prefers-reduced-motion:reduce){.kmKeyLnk.todo{animation:none}}</style>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 10px 0">' +
+    LINKS.map(x => '<a class="kmKeyLnk ' + (x.done ? 'ok' : 'todo') + '" href="' + x.url + (myStore ? '?store=' + myStore : '') + '">' +
+      x.ic + ' ' + escapeHtml(x[L] || x.ko) + ' ' + (x.done ? '✓' : '· ' + escapeHtml(todo)) + '</a>').join('') + '</div>';
+  h += '<div style="margin:8px 10px 12px;border:2px solid #1a5c3a;border-radius:12px;background:#f6fbf8;padding:10px 12px;font-size:13px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px"><b style="color:#1a5c3a">' + escapeHtml(tt('title')) + '</b>' +
+    '<a href="./report-board.html" style="font-size:12px;font-weight:700;color:#1a5c3a">' + escapeHtml(tt('more')) + '</a></div>' +
+    '<table style="width:100%;border-collapse:collapse"><tr><th></th><th style="text-align:left;padding:3px 6px">' + escapeHtml(tt('today')) + ' ' + days[0].slice(5) + '</th><th style="text-align:left;padding:3px 6px">' + escapeHtml(tt('yday')) + ' ' + days[1].slice(5) + '</th></tr>';
+  BRS.forEach(([id, ko, en]) => {
+    h += '<tr style="border-top:1px solid #e2e8f0"><td style="padding:4px 6px;font-weight:800;white-space:nowrap">' + escapeHtml(L === 'ko' ? ko : en) + '</td>';
+    days.forEach((d, i) => {
+      const reps = (daily[d] || {})[id] || [];
+      const k = (key[d] || {})[id];
+      const g = k ? k.grocery.size : 0, f = k ? k.fresh.size : 0;
+      const who = [...new Set(reps.map(m => String(m.sender || '').split(' ')[0]))].join(', ');
+      const main = reps.length ? '<span style="color:#166534;font-weight:800">✅ ' + escapeHtml(who) + '</span>'
+        : (i === 0 ? '<span style="color:#92400e;font-weight:700">' + escapeHtml(tt('wait')) + '</span>' : '<span style="color:#b91c1c;font-weight:800">' + escapeHtml(tt('none')) + '</span>');
+      const chip = (ic, n, all) => '<span style="margin-left:6px;font-weight:700;color:' + (n >= all ? '#166534' : n ? '#92400e' : '#94a3b8') + '">' + ic + n + '/' + all + '</span>';
+      h += '<td style="padding:4px 6px">' + main + chip('🛒', g, 5) + chip('🥬', f, 7) + '</td>';
+    });
+    h += '</tr>';
+  });
+  return h + '</table></div>';
+}
 function pinnedNoticeHTML(){
+  if (ACTIVE_ROOM === 'managing') { try { return managingBoardHTML(); } catch(e){ console.warn('[managing board]', e); return ''; } }
   if (ACTIVE_ROOM !== 'google_review_praise') return '';
   const L = (typeof LANG !== 'undefined') ? LANG : 'ko';
   const T = {

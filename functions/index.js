@@ -33,7 +33,7 @@ exports.chatPush = onValueCreated(
       const parts = roomId.slice(4).split('__');
       targets = parts.filter((p) => p && p !== senderKey);
       title = isOwner(m.sender) ? "👑 Owner's Message" : '💬 ' + m.sender;
-    } else if (roomId === 'managers') {
+    } else if (roomId === 'managers' || roomId === 'managing') {
       targets = OWNER_NAMES.filter((n) => n !== senderKey);
       title = '👔 Managers: ' + m.sender;
     } else {
@@ -1318,11 +1318,11 @@ exports.dailyTaskReport = onSchedule(
       (slow.length ? ('\n\n남은 업무\n' + slow.join('\n')) : '\n\n✅ 남은 업무 없음') +
       '\n\n(매일 밤 9시 자동 집계 — 내일 아침 지점별로 확인해 주세요)';
     const ts = Date.now(), id = 'm' + ts + Math.floor(Math.random() * 900);
-    await db.ref('chat/messages/managers/' + id).set({
+    await db.ref('chat/messages/managing/' + id).set({
       sender: '📋 업무 마감 집계', senderBranch: '', senderRole: '', isManager: false, color: '#1d4ed8',
       text, ts, photos: [], meta: { kind: 'task_daily', day },
     });
-    await db.ref('chat/rooms/managers').update({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: '📋 업무 마감 집계' }).catch(() => {});
+    await db.ref('chat/rooms/managing').update({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: '📋 업무 마감 집계' }).catch(() => {});
     console.log('[rpt] posted', day, doneAll + '/' + totAll);
   }
 );
@@ -1420,11 +1420,11 @@ async function wbAwardAndPost(db, res, dry){
     '\n\n(매주 일요일 밤 자동 집계 — 점수는 활동순위에 반영됩니다)';
   if (!dry){
     const id = 'm' + ts + Math.floor(Math.random() * 900);
-    await db.ref('chat/messages/managers/' + id).set({
+    await db.ref('chat/messages/managing/' + id).set({
       sender: '🏅 주간 집계', senderBranch: '', senderRole: '', isManager: false, color: '#b45309',
       text, ts, photos: [], meta: { kind: 'task_weekly' },
     });
-    await db.ref('chat/rooms/managers').update({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: '🏅 주간 집계' }).catch(() => {});
+    await db.ref('chat/rooms/managing').update({ lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: '🏅 주간 집계' }).catch(() => {});
   }
   return { paid, text };
 }
