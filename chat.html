@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_10_25_managing_unify';   // 📋 매니징 룸 통일 + 지점별 보고 현황판 고정
+    var BUST = 'chat_2026_10_25_board_fold';   // 📱 매니징 룸 보고 현황: 폰에서 한 줄로 접힘
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3179,37 +3179,39 @@ function managingBoardHTML(){
   try { const b = String((me && me.branch) || '').toUpperCase(); myStore = Object.keys(S2B).find(k => S2B[k] === b) || ''; } catch(_){}
   const myKey = (key[days[0]] || {})[S2B[myStore]] || {grocery:new Set(), fresh:new Set()};
   const LINKS = [
-    { ic:'🚶', ko:'야채 동선 점검', en:'Produce Walk', es:'Recorrido frescos', url:'./fresh-walk.html', done: myKey.fresh.has('produce') },
-    { ic:'🥬', ko:'신선 데일리',   en:'Fresh Daily',  es:'Frescos diario',    url:'./key-fresh.html',  done: [...myKey.fresh].some(z => z !== 'produce') },
-    { ic:'🛒', ko:'그로서리 Top 500', en:'Grocery Top 500', es:'Top 500 abarrotes', url:'./key-grocery.html', done: myKey.grocery.size > 0 },
+    { ic:'🚶', ko:'야채 동선', en:'Produce Walk', es:'Recorrido', url:'./fresh-walk.html', done: myKey.fresh.has('produce') },
+    { ic:'🥬', ko:'신선 데일리',   en:'Fresh Daily',  es:'Frescos',    url:'./key-fresh.html',  done: [...myKey.fresh].some(z => z !== 'produce') },
+    { ic:'🛒', ko:'Top 500', en:'Top 500', es:'Top 500', url:'./key-grocery.html', done: myKey.grocery.size > 0 },
   ];
   const todo = {ko:'오늘 꼭!', en:'Do today!', es:'¡Hoy!'}[L] || '오늘 꼭!';
   let h = '<style>@keyframes kmBlink{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{opacity:.55;box-shadow:0 0 0 6px rgba(220,38,38,0)}}' +
     '.kmKeyLnk{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:999px;font-weight:800;font-size:12.5px;text-decoration:none;white-space:nowrap}' +
     '.kmKeyLnk.todo{background:#dc2626;color:#fff;animation:kmBlink 1.2s ease-in-out infinite}.kmKeyLnk.ok{background:#dcfce7;color:#166534}' +
-    '@media (prefers-reduced-motion:reduce){.kmKeyLnk.todo{animation:none}}</style>' +
+    '@media (prefers-reduced-motion:reduce){.kmKeyLnk.todo{animation:none}}' +
+    '@media (max-width:560px){.kmKeyLnk{padding:5px 8px;font-size:11.5px}.kmKeyLnk .kmLong{display:none}}</style>' +
     '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 10px 0">' +
     LINKS.map(x => '<a class="kmKeyLnk ' + (x.done ? 'ok' : 'todo') + '" href="' + x.url + (myStore ? '?store=' + myStore : '') + '">' +
-      x.ic + ' ' + escapeHtml(x[L] || x.ko) + ' ' + (x.done ? '✓' : '· ' + escapeHtml(todo)) + '</a>').join('') + '</div>';
-  h += '<div style="margin:8px 10px 12px;border:2px solid #1a5c3a;border-radius:12px;background:#f6fbf8;padding:10px 12px;font-size:13px">' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px"><b style="color:#1a5c3a">' + escapeHtml(tt('title')) + '</b>' +
-    '<a href="./report-board.html" style="font-size:12px;font-weight:700;color:#1a5c3a">' + escapeHtml(tt('more')) + '</a></div>' +
-    '<table style="width:100%;border-collapse:collapse"><tr><th></th><th style="text-align:left;padding:3px 6px">' + escapeHtml(tt('today')) + ' ' + days[0].slice(5) + '</th><th style="text-align:left;padding:3px 6px">' + escapeHtml(tt('yday')) + ' ' + days[1].slice(5) + '</th></tr>';
-  BRS.forEach(([id, ko, en]) => {
-    h += '<tr style="border-top:1px solid #e2e8f0"><td style="padding:4px 6px;font-weight:800;white-space:nowrap">' + escapeHtml(L === 'ko' ? ko : en) + '</td>';
-    days.forEach((d, i) => {
+      x.ic + ' ' + escapeHtml(x[L] || x.ko) + ' ' + (x.done ? '✓' : '<span class="kmLong">· ' + escapeHtml(todo) + '</span>') + '</a>').join('') + '</div>';
+  // 📱 2026-10-25 사장님: "핸드폰에서 너무 전체를 차지해" → "M P H C L 순서로 간략하게 줄여서 상단에 같이"
+  //   지점 머리글자 한 줄(오늘·어제). 초록=보고함, 노랑=오늘 아직, 빨강=안 함. 누르면 30일 현황판.
+  //   글자에 손가락을 대면(title) 보고자 이름과 🛒·🥬 제출 수가 보인다.
+  const ABBR = { MIAMI:'M', PEMBROKE_PINES:'P', HOLLYWOOD:'H', CORAL_SPRINGS:'C', LASOLAS:'L' };
+  const row = (d, i) => {
+    let r = '<span style="font-weight:800;color:#475569;min-width:34px">' + escapeHtml(i === 0 ? tt('today') : tt('yday')) + '</span>';
+    BRS.forEach(([id, ko, en]) => {
       const reps = (daily[d] || {})[id] || [];
       const k = (key[d] || {})[id];
       const g = k ? k.grocery.size : 0, f = k ? k.fresh.size : 0;
       const who = [...new Set(reps.map(m => String(m.sender || '').split(' ')[0]))].join(', ');
-      const main = reps.length ? '<span style="color:#166534;font-weight:800">✅ ' + escapeHtml(who) + '</span>'
-        : (i === 0 ? '<span style="color:#92400e;font-weight:700">' + escapeHtml(tt('wait')) + '</span>' : '<span style="color:#b91c1c;font-weight:800">' + escapeHtml(tt('none')) + '</span>');
-      const chip = (ic, n, all) => '<span style="margin-left:6px;font-weight:700;color:' + (n >= all ? '#166534' : n ? '#92400e' : '#94a3b8') + '">' + ic + n + '/' + all + '</span>';
-      h += '<td style="padding:4px 6px">' + main + chip('🛒', g, 5) + chip('🥬', f, 7) + '</td>';
+      const st = reps.length ? ['#16a34a', '#fff'] : (i === 0 ? ['#fde68a', '#92400e'] : ['#dc2626', '#fff']);
+      const tip = (L === 'ko' ? ko : en) + ' · ' + (reps.length ? '✅ ' + who : (i === 0 ? tt('wait') : tt('none'))) + ' · 🛒' + g + '/5 🥬' + f + '/7';
+      r += '<span title="' + escapeHtml(tip) + '" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;font-weight:900;font-size:12px;background:' + st[0] + ';color:' + st[1] + '">' + ABBR[id] + '</span>';
     });
-    h += '</tr>';
-  });
-  return h + '</table></div>';
+    return '<div style="display:flex;align-items:center;gap:5px">' + r + '</div>';
+  };
+  h += '<a href="./report-board.html" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:6px 10px 10px;padding:6px 10px;border:1.5px solid #1a5c3a;border-radius:10px;background:#f6fbf8;text-decoration:none;font-size:12px">' +
+    '<b style="color:#1a5c3a">📊</b>' + row(days[0], 0) + row(days[1], 1) + '</a>';
+  return h;
 }
 function pinnedNoticeHTML(){
   if (ACTIVE_ROOM === 'managing') { try { return managingBoardHTML(); } catch(e){ console.warn('[managing board]', e); return ''; } }
