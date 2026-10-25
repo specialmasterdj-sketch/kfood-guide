@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_10_25_board_fold';   // 📱 매니징 룸 보고 현황: 폰에서 한 줄로 접힘
+    var BUST = 'chat_2026_10_25_report_rules';   // 📏 매일 필수 업무 보고 3가지 + 마감 시간
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -3178,20 +3178,34 @@ function managingBoardHTML(){
   let myStore = '';
   try { const b = String((me && me.branch) || '').toUpperCase(); myStore = Object.keys(S2B).find(k => S2B[k] === b) || ''; } catch(_){}
   const myKey = (key[days[0]] || {})[S2B[myStore]] || {grocery:new Set(), fresh:new Set()};
-  const LINKS = [
-    { ic:'🚶', ko:'야채 동선', en:'Produce Walk', es:'Recorrido', url:'./fresh-walk.html', done: myKey.fresh.has('produce') },
-    { ic:'🥬', ko:'신선 데일리',   en:'Fresh Daily',  es:'Frescos',    url:'./key-fresh.html',  done: [...myKey.fresh].some(z => z !== 'produce') },
-    { ic:'🛒', ko:'Top 500', en:'Top 500', es:'Top 500', url:'./key-grocery.html', done: myKey.grocery.size > 0 },
+  // 📝 2026-10-25 사장님: "업무 보고라는 느낌이 들어야지 — 매장 상황 보고 등의 말이 있어야 해"
+  //   맨 앞에 매장 상황 보고(매니저 일일 보고) 링크, 줄 머리에 '오늘의 업무 보고', 현황 줄에 '매장 상황 보고'.
+  // 📏 2026-10-25 사장님 결정: 전 지점 공통 「매일 필수 업무 보고」 3가지 (책임 = 그날 근무 최고 책임자)
+  //   ① 10:00 🥬 신선 데일리(7부서 진열·영업준비 — 야채 동선 점검도 여기 야채 칸으로 들어감)
+  //   ② 17:00 🛒 그로서리 Top 500   ③ 21:30 📝 매장 상황 보고(매니저 일일 보고)
+  //   마감 시간이 지났는데 안 냈으면 '⏰ 지남'. 현황 줄 색깔도 같은 기준.
+  const RULES = [
+    { k:'fresh',   ic:'🥬', ko:'신선 데일리',   en:'Fresh Daily',  es:'Frescos',        url:'./key-fresh.html',    due:'10:00', dko:'10시', den:'10AM' },
+    { k:'grocery', ic:'🛒', ko:'Top 500',      en:'Top 500',      es:'Top 500',        url:'./key-grocery.html',  due:'17:00', dko:'5시',  den:'5PM' },
+    { k:'daily',   ic:'📝', ko:'매장 상황 보고', en:'Store Report', es:'Reporte tienda', url:'./daily-report.html', due:'21:30', dko:'9:30', den:'9:30PM', noStore:true },
   ];
-  const todo = {ko:'오늘 꼭!', en:'Do today!', es:'¡Hoy!'}[L] || '오늘 꼭!';
+  const nowNY = new Date().toLocaleTimeString('en-GB', {timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', hour12:false});
+  const doneOf = (d, br) => {
+    const k = (key[d] || {})[br];
+    return { fresh: !!(k && k.fresh.size), grocery: !!(k && k.grocery.size), daily: !!(((daily[d] || {})[br] || []).length) };
+  };
+  const myDone = doneOf(days[0], S2B[myStore]);
+  const LINKS = RULES.map(r => Object.assign({}, r, { done: myDone[r.k], late: !myDone[r.k] && nowNY >= r.due }));
+  const dueTxt = x => x.late ? ({ko:'⏰ 지남', en:'⏰ late', es:'⏰ tarde'}[L] || '⏰ 지남') : (L === 'ko' ? x.dko + '까지' : 'by ' + x.den);
   let h = '<style>@keyframes kmBlink{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{opacity:.55;box-shadow:0 0 0 6px rgba(220,38,38,0)}}' +
     '.kmKeyLnk{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:999px;font-weight:800;font-size:12.5px;text-decoration:none;white-space:nowrap}' +
     '.kmKeyLnk.todo{background:#dc2626;color:#fff;animation:kmBlink 1.2s ease-in-out infinite}.kmKeyLnk.ok{background:#dcfce7;color:#166534}' +
     '@media (prefers-reduced-motion:reduce){.kmKeyLnk.todo{animation:none}}' +
     '@media (max-width:560px){.kmKeyLnk{padding:5px 8px;font-size:11.5px}.kmKeyLnk .kmLong{display:none}}</style>' +
-    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 10px 0">' +
-    LINKS.map(x => '<a class="kmKeyLnk ' + (x.done ? 'ok' : 'todo') + '" href="' + x.url + (myStore ? '?store=' + myStore : '') + '">' +
-      x.ic + ' ' + escapeHtml(x[L] || x.ko) + ' ' + (x.done ? '✓' : '<span class="kmLong">· ' + escapeHtml(todo) + '</span>') + '</a>').join('') + '</div>';
+    '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 10px 0">' +
+    '<b style="color:#1a5c3a;font-size:12.5px;white-space:nowrap">' + escapeHtml({ko:'📋 오늘의 업무 보고', en:'📋 Today’s work reports', es:'📋 Reportes de hoy'}[L] || '📋 오늘의 업무 보고') + '</b>' +
+    LINKS.map(x => '<a class="kmKeyLnk ' + (x.done ? 'ok' : 'todo') + '" href="' + x.url + (myStore && !x.noStore ? '?store=' + myStore : '') + '">' +
+      x.ic + ' ' + escapeHtml(x[L] || x.ko) + ' ' + (x.done ? '✓' : '<span' + (x.late ? '' : ' class="kmLong"') + '>· ' + escapeHtml(dueTxt(x)) + '</span>') + '</a>').join('') + '</div>';
   // 📱 2026-10-25 사장님: "핸드폰에서 너무 전체를 차지해" → "M P H C L 순서로 간략하게 줄여서 상단에 같이"
   //   지점 머리글자 한 줄(오늘·어제). 초록=보고함, 노랑=오늘 아직, 빨강=안 함. 누르면 30일 현황판.
   //   글자에 손가락을 대면(title) 보고자 이름과 🛒·🥬 제출 수가 보인다.
@@ -3203,14 +3217,18 @@ function managingBoardHTML(){
       const k = (key[d] || {})[id];
       const g = k ? k.grocery.size : 0, f = k ? k.fresh.size : 0;
       const who = [...new Set(reps.map(m => String(m.sender || '').split(' ')[0]))].join(', ');
-      const st = reps.length ? ['#16a34a', '#fff'] : (i === 0 ? ['#fde68a', '#92400e'] : ['#dc2626', '#fff']);
-      const tip = (L === 'ko' ? ko : en) + ' · ' + (reps.length ? '✅ ' + who : (i === 0 ? tt('wait') : tt('none'))) + ' · 🛒' + g + '/5 🥬' + f + '/7';
-      r += '<span title="' + escapeHtml(tip) + '" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;font-weight:900;font-size:12px;background:' + st[0] + ';color:' + st[1] + '">' + ABBR[id] + '</span>';
+      // 색 = 필수 3가지 기준: 다 냄=초록 · 오늘 마감 지난 것 없이 진행 중=노랑 · 마감 지났는데 빠진 것 있음(어제는 하나라도 빠짐)=빨강
+      const dn = doneOf(d, id);
+      const n = RULES.filter(x => dn[x.k]).length;
+      const missedLate = RULES.some(x => !dn[x.k] && (i > 0 || nowNY >= x.due));
+      const st = n === RULES.length ? ['#16a34a', '#fff'] : (missedLate ? ['#dc2626', '#fff'] : ['#fde68a', '#92400e']);
+      const tip = (L === 'ko' ? ko : en) + ' · ' + n + '/3 · 🥬' + f + '/7 🛒' + g + '/5 · 📝 ' + (reps.length ? who : '✖');
+      r += '<span title="' + escapeHtml(tip) + '" style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 4px;border-radius:12px;font-weight:900;font-size:12px;background:' + st[0] + ';color:' + st[1] + '">' + ABBR[id] + '<small style="font-size:8.5px;margin-left:1px;vertical-align:super;line-height:0;opacity:.85">' + n + '</small></span>';
     });
     return '<div style="display:flex;align-items:center;gap:5px">' + r + '</div>';
   };
   h += '<a href="./report-board.html" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:6px 10px 10px;padding:6px 10px;border:1.5px solid #1a5c3a;border-radius:10px;background:#f6fbf8;text-decoration:none;font-size:12px">' +
-    '<b style="color:#1a5c3a">📊</b>' + row(days[0], 0) + row(days[1], 1) + '</a>';
+    '<b style="color:#1a5c3a;white-space:nowrap">' + escapeHtml({ko:'📊 매장 상황 보고', en:'📊 Store reports', es:'📊 Reportes de tiendas'}[L] || '📊 매장 상황 보고') + '</b>' + row(days[0], 0) + row(days[1], 1) + '</a>';
   return h;
 }
 function pinnedNoticeHTML(){
