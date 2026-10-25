@@ -115,6 +115,8 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f5f5f5;
   </div>
 </div>
 
+<!-- 🔴 2026-10-25 사장님: Top 500 점검에서 ✗(매장에 없음) 나온 품목을 오더 첫 화면에서 바로 — 오더하면 사라진다 -->
+<div id="t5-box" style="display:none"></div>
 <div class="apps">
 
 <div class="section-note" data-t="pick">원하는 공급사를 선택해서 주문을 시작하세요.</div>
@@ -469,5 +471,88 @@ window.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
 </script>
 
+<script>
+/* 🔴 Top 500 매장에 없음 — 오더센터 첫 화면 요약 (2026-10-25)
+   kimchi-mart-order/recommend.js 와 같은 규칙:
+     내 지점 오늘 ✗ + 오늘 아직 안 본 품목의 어제 ✗ 중, ✗ 표시 이후 그 품목을 오더한 기록(ordRecent)이 없는 것.
+   연결표 = kimchi-mart-order/top500-map.json (바코드·POS 벤더 품번으로만 연결). */
+(function(){
+  const ORD = 'https://specialmasterdj-sketch.github.io/kimchi-mart-order/';
+  const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com/';
+  const STORE = { CORAL_SPRINGS:'coral', HOLLYWOOD:'hollywood', LASOLAS:'lasolas', LAS_OLAS:'lasolas', MIAMI:'miami', PEMBROKE_PINES:'pembroke', WEST_PALM_BEACH:'wpb' };
+  const ZONES = ['dry', 'drinks', 'cold', 'frozen', 'alcohol'];
+  const PAGE = { rhee_full:'rheebros.html', wismettac:'wismettac.html', wang:'hanmi.html', namdaemun:'namdaemun.html' };
+  const VNAME = { rhee_full:'Rhee Bros', wismettac:'Wismettac', wang:'Wang Global', jfc:'JFC', eastland:'Eastland', seoul_trading:'Seoul Trading',
+    well_luck:'Well Luck', walong:'Walong', ocm:'OCM', eastern_wine:'Eastern Wine', faf:'FAF', aaf:'AAF', pocas:'Pocas', two_bros_food:'Two Bros', haitai:'Haitai', link:'Link' };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  const day = off => new Date(Date.now() - off * 86400000).toLocaleDateString('en-CA', { timeZone:'America/New_York' });
+  let MAP = null, lastKey = '';
+  async function q(){ for (let i = 0; i < 50 && !window.__getAuthToken; i++) await new Promise(r => setTimeout(r, 200));
+    const t = window.__getAuthToken ? await window.__getAuthToken() : null; return t ? '?auth=' + encodeURIComponent(t) : ''; }
+  async function load(branch){
+    const store = STORE[branch]; if (!store) return [];
+    if (!MAP) MAP = await fetch(ORD + 'top500-map.json?v=20261025d').then(r => r.json()).catch(() => null);
+    if (!MAP) return [];
+    const a = await q(); if (!a) return [];
+    const T = day(0), Y = day(1), marks = new Map(), seen = new Set();
+    const docs = await Promise.all([T, Y].flatMap(d => ZONES.map(z => fetch(FB + 'inventory/keyItems/grocery/checks/' + d + '/' + d + '_' + store + '_' + z + '.json' + a).then(r => r.ok ? r.json() : null).catch(() => null).then(v => [d, v]))));
+    for (const [d, v] of docs) if (d === T && v) for (const [id, st] of Object.entries(v.s || {})) { seen.add(id); if (st === 'x') marks.set(id, +((v.t || {})[id]) || 0); }
+    for (const [d, v] of docs) if (d === Y && v) for (const [id, st] of Object.entries(v.s || {})) if (st === 'x' && !seen.has(id)) marks.set(id, +((v.t || {})[id]) || 0);
+    if (!marks.size) return [];
+    const ordered = await fetch(FB + 'expiry/' + branch + '/ordRecent.json' + a).then(r => r.ok ? r.json() : {}).catch(() => ({})) || {};
+    const out = [];
+    for (const [v, m] of Object.entries(MAP.vendors || {})) for (const [pid, item] of Object.entries(m)) {
+      if (!marks.has(item)) continue;
+      const keys = Object.entries(MAP.vendors).flatMap(([v2, m2]) => Object.entries(m2).filter(([, it]) => it === item).map(([p2]) => (v2 + '::' + p2).replace(/[.#$\[\]\/]/g, '_')));
+      if (keys.some(k => ordered[k] && +ordered[k].ts >= marks.get(item))) continue;
+      out.push({ v, pid, item, nm: (MAP.names || {})[item] || ['', ''] });
+    }
+    return out;
+  }
+  function link(branch, v, pid){
+    const page = PAGE[v] || '';
+    return ORD + (page || '') + (page ? '?' : '?vendor=' + encodeURIComponent(v) + '&') + 'branch=' + encodeURIComponent(branch) + '&t5q=' + encodeURIComponent(pid);
+  }
+  function vendorOfCard(a){
+    const h = a.getAttribute('data-base-href') || a.getAttribute('href') || '';
+    for (const [v, pg] of Object.entries(PAGE)) if (h.indexOf(pg) >= 0) return v;
+    const m = h.match(/[?&]vendor=([^&]+)/); return m ? decodeURIComponent(m[1]) : '';
+  }
+  async function refresh(){
+    const branch = (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || '';
+    const box = document.getElementById('t5-box'); if (!box) return;
+    const list = await load(branch);
+    const byV = {}; for (const x of list) (byV[x.v] = byV[x.v] || []).push(x);
+    // 벤더 카드마다 🔴 개수
+    document.querySelectorAll('a.app-card').forEach(a => {
+      const v = vendorOfCard(a); let chip = a.querySelector('.t5-chip');
+      const n = (byV[v] || []).length;
+      if (!n) { if (chip) chip.remove(); return; }
+      if (!chip) { chip = document.createElement('span'); chip.className = 't5-chip'; a.appendChild(chip); }
+      chip.textContent = '🔴 ' + n;
+    });
+    if (!list.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    let h = '<div class="t5-hd">🔴 Top 500 매장에 없음 · ' + list.length + ' — 오더하세요 <small>(' + esc(branch) + ' · 그로서리 Top 500 점검 ✗ · 오더하면 사라집니다)</small></div>';
+    for (const [v, xs] of Object.entries(byV)) {
+      h += '<div class="t5-v">' + esc(VNAME[v] || v) + ' · ' + xs.length + '</div>';
+      for (const x of xs) h += '<a class="t5-it" target="_blank" href="' + esc(link(branch, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + '</span></a>';
+    }
+    box.innerHTML = h; box.style.display = '';
+  }
+  const css = document.createElement('style');
+  css.textContent = '@keyframes t5f{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.9)}50%{box-shadow:0 0 0 3px rgba(220,38,38,.15)}}' +
+    '#t5-box{max-width:640px;margin:12px auto;padding:12px 14px;border-radius:14px;background:#fff5f5;border:2px solid #dc2626;animation:t5f 1.2s ease-in-out infinite}' +
+    '#t5-box .t5-hd{font-weight:900;color:#b91c1c;font-size:15px}#t5-box .t5-hd small{display:block;font-weight:600;color:#64748b;font-size:11.5px;margin-top:2px}' +
+    '#t5-box .t5-v{margin:10px 0 3px;font-weight:900;font-size:13px;color:#1a5c3a}' +
+    '#t5-box .t5-it{display:flex;flex-direction:column;padding:7px 10px;margin:4px 0;border-radius:10px;background:#fff;border:1.5px solid #fecaca;text-decoration:none;color:#111}' +
+    '#t5-box .t5-it b{font-size:13.5px}#t5-box .t5-it span{font-size:12px;color:#64748b}' +
+    'a.app-card .t5-chip{margin-left:6px;background:#dc2626;color:#fff;border-radius:999px;padding:3px 8px;font-weight:900;font-size:12px;white-space:nowrap}' +
+    '@media (prefers-reduced-motion:reduce){#t5-box{animation:none}}';
+  document.head.appendChild(css);
+  // 지점이 바뀌거나 화면으로 돌아오면 다시 계산
+  setInterval(() => { const b = (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || ''; if (b !== lastKey) { lastKey = b; refresh(); } }, 1000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+})();
+</script>
 </body>
 </html>
