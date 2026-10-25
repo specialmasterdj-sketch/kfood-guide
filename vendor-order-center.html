@@ -544,16 +544,21 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
   }
   document.addEventListener('click', e => {
     const b = e.target && e.target.closest && e.target.closest('#t5-box .t5-done'); if (!b) return;
-    e.preventDefault(); markDone((typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || '', b.dataset.v, b.dataset.p);
+    e.preventDefault(); markDone(b.dataset.b, b.dataset.v, b.dataset.p);
   });
 
+  // 오너·전무는 이 화면이 늘 '전 지점(ALL)' 으로 열린다 → 다섯 지점을 다 모아 지점별로 보여 준다
+  const ALL_BRANCHES = [['MIAMI','마이애미'], ['PEMBROKE_PINES','펨브로크'], ['HOLLYWOOD','헐리우드'], ['CORAL_SPRINGS','코럴 스프링스'], ['LASOLAS','라스올라스']];
   async function refresh(){
     const branch = (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || '';
     const box = document.getElementById('t5-box'); if (!box) return;
-    const all = await load(branch);
+    const isAll = branch === 'ALL';
+    const groups = isAll ? await Promise.all(ALL_BRANCHES.map(async ([b, ko]) => [b, ko, (await load(b)).map(x => Object.assign(x, { br: b }))]))
+                         : [[branch, '', (await load(branch)).map(x => Object.assign(x, { br: branch }))]];
+    const all = groups.flatMap(g => g[2]);
     const list = all.filter(x => x.st !== 'wait');      // 할 일 = 🔴 없음 + 🟠 지연
     const byV = {}; for (const x of list) (byV[x.v] = byV[x.v] || []).push(x);
-    // 벤더 카드마다 🔴 개수
+    // 벤더 카드마다 🔴 개수 (전 지점이면 다 합친 수)
     document.querySelectorAll('a.app-card').forEach(a => {
       const v = vendorOfCard(a); let chip = a.querySelector('.t5-chip');
       const n = (byV[v] || []).length;
@@ -563,28 +568,34 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
     });
     if (!all.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
     const md = ts => { const d = new Date(ts); return (d.getMonth() + 1) + '/' + d.getDate(); };
-    const items = st => new Set(all.filter(x => x.st === st).map(x => x.item)).size;
-    const nOut = items('out'), nLate = items('late'), nWait = items('wait');
-    let h = '<div class="t5-hd">' + (nOut + nLate ? '🔴 Top 500 매장에 없음 · ' + (nOut + nLate) + '개 품목 — 오더하세요' : '🟡 Top 500 — 오더한 품목 입고 대기 중') +
-      ' <small>(' + esc(branch) + ' · 그로서리 Top 500 점검 ✗ · 오더하면 🟡 입고 대기(1주일)로 바뀝니다)</small></div>';
+    // 품목 수 = (지점, 품목) 쌍 — 같은 품목을 여러 벤더에서 팔아도 한 번
+    const cnt = (xs, st) => new Set(xs.filter(x => !st || x.st === st).map(x => x.br + '|' + x.item)).size;
+    const nAct = cnt(all, 'out') + cnt(all, 'late');
+    let h = '<div class="t5-hd">' + (nAct ? '🔴 Top 500 매장에 없음 · ' + nAct + '개 품목 — 오더하세요' : '🟡 Top 500 — 오더한 품목 입고 대기 중') +
+      ' <small>(' + (isAll ? '전 지점' : esc(branch)) + ' · 그로서리 Top 500 점검 ✗ · 오더하면 🟡 입고 대기(1주일)로 바뀝니다)</small></div>';
     const SEC = [['out', '🔴 없음 · 오더하세요', ''], ['late', '🟠 입고 지연 — 1주일이 지나도 없음 · 다시 시키기 전에 벤더 확인', ' late'], ['wait', '🟡 주문함 · 입고 대기 — 다시 시키지 마세요', ' wait']];
-    for (const [st, title, cls] of SEC) {
-      const xs = all.filter(x => x.st === st); if (!xs.length) continue;
-      h += '<div class="t5-sec' + cls + '">' + esc(title) + ' · ' + items(st) + '</div>';
-      const g = {}; for (const x of xs) (g[x.v] = g[x.v] || []).push(x);
-      for (const [v, ys] of Object.entries(g)) {
-        h += '<div class="t5-v">' + esc(VNAME[v] || v) + ' · ' + ys.length + '</div>';
-        for (const x of ys) h += '<div class="t5-row"><a class="t5-it' + cls + '" target="_blank" href="' + esc(link(branch, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + (x.ts ? ' · ' + md(x.ts) + ' 주문' + (st === 'wait' ? ' → ' + md(x.ts + 7 * 86400000) + '까지 대기' : '') : '') + '</span></a>' +
-          (st !== 'wait' && canClear(branch) ? '<button type="button" class="t5-done" data-v="' + esc(x.v) + '" data-p="' + esc(x.pid) + '">✓ 오더 완료</button>' : '') + '</div>';
+    for (const [br, ko, xsAll] of groups) {
+      if (!xsAll.length) continue;
+      if (isAll) h += '<div class="t5-br">📍 ' + esc(ko) + ' · ' + cnt(xsAll.filter(x => x.st !== 'wait')) + '</div>';
+      for (const [st, title, cls] of SEC) {
+        const xs = xsAll.filter(x => x.st === st); if (!xs.length) continue;
+        h += '<div class="t5-sec' + cls + '">' + esc(title) + ' · ' + cnt(xs) + '</div>';
+        const g = {}; for (const x of xs) (g[x.v] = g[x.v] || []).push(x);
+        for (const [v, ys] of Object.entries(g)) {
+          h += '<div class="t5-v">' + esc(VNAME[v] || v) + ' · ' + ys.length + '</div>';
+          for (const x of ys) h += '<div class="t5-row"><a class="t5-it' + cls + '" target="_blank" href="' + esc(link(br, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + (x.ts ? ' · ' + md(x.ts) + ' 주문' + (st === 'wait' ? ' → ' + md(x.ts + 7 * 86400000) + '까지 대기' : '') : '') + '</span></a>' +
+            (st !== 'wait' && canClear(br) ? '<button type="button" class="t5-done" data-b="' + esc(br) + '" data-v="' + esc(x.v) + '" data-p="' + esc(x.pid) + '">✓ 오더 완료</button>' : '') + '</div>';
+        }
       }
     }
-    box.className = nOut + nLate ? '' : 'calm';
+    box.className = nAct ? '' : 'calm';
     box.innerHTML = h; box.style.display = '';
   }
   const css = document.createElement('style');
   css.textContent = '@keyframes t5f{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.9)}50%{box-shadow:0 0 0 3px rgba(220,38,38,.15)}}' +
     '#t5-box{max-width:640px;margin:12px auto;padding:12px 14px;border-radius:14px;background:#fff5f5;border:2px solid #dc2626;animation:t5f 1.2s ease-in-out infinite}' +
     '#t5-box .t5-hd{font-weight:900;color:#b91c1c;font-size:15px}#t5-box .t5-hd small{display:block;font-weight:600;color:#64748b;font-size:11.5px;margin-top:2px}' +
+    '#t5-box .t5-br{margin:14px 0 0;padding:6px 10px;border-radius:8px;background:#1a5c3a;color:#fff;font-weight:900;font-size:14px}' +
     '#t5-box .t5-v{margin:10px 0 3px;font-weight:900;font-size:13px;color:#1a5c3a}' +
     '#t5-box .t5-it{display:flex;flex-direction:column;padding:7px 10px;margin:4px 0;border-radius:10px;background:#fff;border:1.5px solid #fecaca;text-decoration:none;color:#111}' +
     '#t5-box .t5-it b{font-size:13.5px}#t5-box .t5-it span{font-size:12px;color:#64748b}' +
