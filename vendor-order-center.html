@@ -521,6 +521,32 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
     for (const [v, pg] of Object.entries(PAGE)) if (h.indexOf(pg) >= 0) return v;
     const m = h.match(/[?&]vendor=([^&]+)/); return m ? decodeURIComponent(m[1]) : '';
   }
+  /* ✓ 오더 완료 — 2026-10-25 사장님: "오더를 완료했으면 관련 매니저가 지울 수 있는 권한도"
+     전화·벤더 사이트처럼 앱 밖에서 주문했을 때. 누르면 그 상품의 주문 기록(ordRecent)을 남겨
+     🟡 입고 대기(1주일)로 옮긴다 — 지우는 게 아니라 '기다림'으로 넘기는 것이라 1주일 뒤에도 ✗ 면 🟠 지연으로 다시 뜬다.
+     권한: 그 지점의 수퍼바이저 이상(오너·전무는 모든 지점). 누가 눌렀는지 이름을 남긴다. */
+  function me(){ try { return JSON.parse(localStorage.getItem('chat.me') || 'null') || {}; } catch(e){ return {}; } }
+  function canClear(branch){
+    const m = me(), r = String(m.role || '').toUpperCase();
+    if (/OWNER|EXECUTIVE|오너|사장|대표|전무/.test(r)) return true;
+    if (!/MANAGER|SUPERVISOR|GERENTE|매니저|점장|감독/.test(r)) return false;
+    return String(m.branch || '').toUpperCase() === String(branch || '').toUpperCase();
+  }
+  async function markDone(branch, v, pid){
+    const nm = (MAP && MAP.names && MAP.vendors[v] && MAP.names[MAP.vendors[v][pid]]) || [pid, ''];
+    if (!confirm('「' + (nm[0] || pid) + '」\n오더 완료로 표시할까요?\n\n→ 🟡 입고 대기(1주일)로 바뀌고 빨간 목록에서 빠집니다.\n   1주일이 지나도 매장에 없으면 🟠 입고 지연으로 다시 뜹니다.')) return;
+    const a = await q(); if (!a) { alert('로그인 정보를 못 읽었습니다. 새로고침 후 다시 해 주세요.'); return; }
+    const ts = Date.now(), key = (v + '::' + pid).replace(/[.#$\[\]\/]/g, '_');
+    const r = await fetch(FB + 'expiry/' + branch + '/ordRecent/' + key + '.json' + a, { method:'PUT', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ d: day(0), q: 0, ts, by: me().name || '', manual: true }) }).catch(() => null);
+    if (!r || !r.ok) { alert('저장하지 못했습니다 (' + (r ? r.status : '네트워크') + '). 다시 해 주세요.'); return; }
+    refresh();
+  }
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest && e.target.closest('#t5-box .t5-done'); if (!b) return;
+    e.preventDefault(); markDone((typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || '', b.dataset.v, b.dataset.p);
+  });
+
   async function refresh(){
     const branch = (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || '';
     const box = document.getElementById('t5-box'); if (!box) return;
@@ -548,7 +574,8 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
       const g = {}; for (const x of xs) (g[x.v] = g[x.v] || []).push(x);
       for (const [v, ys] of Object.entries(g)) {
         h += '<div class="t5-v">' + esc(VNAME[v] || v) + ' · ' + ys.length + '</div>';
-        for (const x of ys) h += '<a class="t5-it' + cls + '" target="_blank" href="' + esc(link(branch, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + (x.ts ? ' · ' + md(x.ts) + ' 주문' + (st === 'wait' ? ' → ' + md(x.ts + 7 * 86400000) + '까지 대기' : '') : '') + '</span></a>';
+        for (const x of ys) h += '<div class="t5-row"><a class="t5-it' + cls + '" target="_blank" href="' + esc(link(branch, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + (x.ts ? ' · ' + md(x.ts) + ' 주문' + (st === 'wait' ? ' → ' + md(x.ts + 7 * 86400000) + '까지 대기' : '') : '') + '</span></a>' +
+          (st !== 'wait' && canClear(branch) ? '<button type="button" class="t5-done" data-v="' + esc(x.v) + '" data-p="' + esc(x.pid) + '">✓ 오더 완료</button>' : '') + '</div>';
       }
     }
     box.className = nOut + nLate ? '' : 'calm';
@@ -564,6 +591,8 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
     '#t5-box.calm{animation:none;border-color:#facc15;background:#fefce8}#t5-box.calm .t5-hd{color:#854d0e}' +
     '#t5-box .t5-sec{margin:12px 0 2px;font-weight:900;font-size:13.5px;color:#b91c1c}#t5-box .t5-sec.late{color:#c2410c}#t5-box .t5-sec.wait{color:#854d0e}' +
     '#t5-box .t5-it.late{border-color:#fdba74;background:#fff7ed}#t5-box .t5-it.wait{border-color:#fde68a;background:#fefce8}' +
+    '#t5-box .t5-row{display:flex;gap:6px;align-items:stretch}#t5-box .t5-row .t5-it{flex:1;min-width:0}' +
+    '#t5-box .t5-done{flex:none;margin:4px 0;border:0;border-radius:10px;padding:0 12px;background:#16a34a;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;white-space:nowrap}' +
     'a.app-card .t5-chip{margin-left:6px;background:#dc2626;color:#fff;border-radius:999px;padding:3px 8px;font-weight:900;font-size:12px;white-space:nowrap}' +
     '@media (prefers-reduced-motion:reduce){#t5-box{animation:none}}';
   document.head.appendChild(css);
