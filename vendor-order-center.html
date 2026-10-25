@@ -500,12 +500,15 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
     for (const [d, v] of docs) if (d === Y && v) for (const [id, st] of Object.entries(v.s || {})) if (st === 'x' && !seen.has(id)) marks.set(id, +((v.t || {})[id]) || 0);
     if (!marks.size) return [];
     const ordered = await fetch(FB + 'expiry/' + branch + '/ordRecent.json' + a).then(r => r.ok ? r.json() : {}).catch(() => ({})) || {};
-    const out = [];
+    // ⏳ 오더 뒤 1주일은 🟡 입고 대기, 1~2주 지나도 ✗ 면 🟠 입고 지연, 그 밖은 🔴 없음 (recommend.js 와 같은 규칙)
+    const WAIT = 7 * 86400000, now = Date.now(), out = [];
     for (const [v, m] of Object.entries(MAP.vendors || {})) for (const [pid, item] of Object.entries(m)) {
       if (!marks.has(item)) continue;
       const keys = Object.entries(MAP.vendors).flatMap(([v2, m2]) => Object.entries(m2).filter(([, it]) => it === item).map(([p2]) => (v2 + '::' + p2).replace(/[.#$\[\]\/]/g, '_')));
-      if (keys.some(k => ordered[k] && +ordered[k].ts >= marks.get(item))) continue;
-      out.push({ v, pid, item, nm: (MAP.names || {})[item] || ['', ''] });
+      let last = 0; for (const k of keys) if (ordered[k] && +ordered[k].ts > last) last = +ordered[k].ts;
+      const age = last ? now - last : Infinity;
+      const st = age < WAIT ? 'wait' : age < WAIT * 2 ? 'late' : 'out';
+      out.push({ v, pid, item, st, ts: last, nm: (MAP.names || {})[item] || ['', ''] });
     }
     return out;
   }
@@ -521,7 +524,8 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
   async function refresh(){
     const branch = (typeof CURRENT_BRANCH !== 'undefined' && CURRENT_BRANCH) || '';
     const box = document.getElementById('t5-box'); if (!box) return;
-    const list = await load(branch);
+    const all = await load(branch);
+    const list = all.filter(x => x.st !== 'wait');      // 할 일 = 🔴 없음 + 🟠 지연
     const byV = {}; for (const x of list) (byV[x.v] = byV[x.v] || []).push(x);
     // 벤더 카드마다 🔴 개수
     document.querySelectorAll('a.app-card').forEach(a => {
@@ -531,14 +535,23 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
       if (!chip) { chip = document.createElement('span'); chip.className = 't5-chip'; a.appendChild(chip); }
       chip.textContent = '🔴 ' + n;
     });
-    if (!list.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
-    // 같은 품목을 여러 벤더에서 팔면 벤더마다 한 줄씩 나오므로, 머리 숫자는 품목 수로 센다
-    const nItems = new Set(list.map(x => x.item)).size;
-    let h = '<div class="t5-hd">🔴 Top 500 매장에 없음 · ' + nItems + '개 품목 — 오더하세요 <small>(' + esc(branch) + ' · 그로서리 Top 500 점검 ✗ · 아래 아무 벤더에서나 오더하면 모두 사라집니다)</small></div>';
-    for (const [v, xs] of Object.entries(byV)) {
-      h += '<div class="t5-v">' + esc(VNAME[v] || v) + ' · ' + xs.length + '</div>';
-      for (const x of xs) h += '<a class="t5-it" target="_blank" href="' + esc(link(branch, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + '</span></a>';
+    if (!all.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    const md = ts => { const d = new Date(ts); return (d.getMonth() + 1) + '/' + d.getDate(); };
+    const items = st => new Set(all.filter(x => x.st === st).map(x => x.item)).size;
+    const nOut = items('out'), nLate = items('late'), nWait = items('wait');
+    let h = '<div class="t5-hd">' + (nOut + nLate ? '🔴 Top 500 매장에 없음 · ' + (nOut + nLate) + '개 품목 — 오더하세요' : '🟡 Top 500 — 오더한 품목 입고 대기 중') +
+      ' <small>(' + esc(branch) + ' · 그로서리 Top 500 점검 ✗ · 오더하면 🟡 입고 대기(1주일)로 바뀝니다)</small></div>';
+    const SEC = [['out', '🔴 없음 · 오더하세요', ''], ['late', '🟠 입고 지연 — 1주일이 지나도 없음 · 다시 시키기 전에 벤더 확인', ' late'], ['wait', '🟡 주문함 · 입고 대기 — 다시 시키지 마세요', ' wait']];
+    for (const [st, title, cls] of SEC) {
+      const xs = all.filter(x => x.st === st); if (!xs.length) continue;
+      h += '<div class="t5-sec' + cls + '">' + esc(title) + ' · ' + items(st) + '</div>';
+      const g = {}; for (const x of xs) (g[x.v] = g[x.v] || []).push(x);
+      for (const [v, ys] of Object.entries(g)) {
+        h += '<div class="t5-v">' + esc(VNAME[v] || v) + ' · ' + ys.length + '</div>';
+        for (const x of ys) h += '<a class="t5-it' + cls + '" target="_blank" href="' + esc(link(branch, x.v, x.pid)) + '"><b>' + esc(x.nm[0] || x.pid) + '</b><span>' + esc(x.nm[1]) + ' · #' + esc(x.pid) + (x.ts ? ' · ' + md(x.ts) + ' 주문' + (st === 'wait' ? ' → ' + md(x.ts + 7 * 86400000) + '까지 대기' : '') : '') + '</span></a>';
+      }
     }
+    box.className = nOut + nLate ? '' : 'calm';
     box.innerHTML = h; box.style.display = '';
   }
   const css = document.createElement('style');
@@ -548,6 +561,9 @@ window.addEventListener('load', () => setTimeout(decorateVendorLinks, 100));
     '#t5-box .t5-v{margin:10px 0 3px;font-weight:900;font-size:13px;color:#1a5c3a}' +
     '#t5-box .t5-it{display:flex;flex-direction:column;padding:7px 10px;margin:4px 0;border-radius:10px;background:#fff;border:1.5px solid #fecaca;text-decoration:none;color:#111}' +
     '#t5-box .t5-it b{font-size:13.5px}#t5-box .t5-it span{font-size:12px;color:#64748b}' +
+    '#t5-box.calm{animation:none;border-color:#facc15;background:#fefce8}#t5-box.calm .t5-hd{color:#854d0e}' +
+    '#t5-box .t5-sec{margin:12px 0 2px;font-weight:900;font-size:13.5px;color:#b91c1c}#t5-box .t5-sec.late{color:#c2410c}#t5-box .t5-sec.wait{color:#854d0e}' +
+    '#t5-box .t5-it.late{border-color:#fdba74;background:#fff7ed}#t5-box .t5-it.wait{border-color:#fde68a;background:#fefce8}' +
     'a.app-card .t5-chip{margin-left:6px;background:#dc2626;color:#fff;border-radius:999px;padding:3px 8px;font-weight:900;font-size:12px;white-space:nowrap}' +
     '@media (prefers-reduced-motion:reduce){#t5-box{animation:none}}';
   document.head.appendChild(css);
