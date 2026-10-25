@@ -13,7 +13,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'chat_2026_10_25_report_rules';   // 📏 매일 필수 업무 보고 3가지 + 마감 시간
+    var BUST = 'chat_2026_10_25_pin_bottom';   // 📌 방 열면 최신글 고정 강화 + 리뷰·재고 방 숨김
     var KEY = 'kmtools_bust_chat';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -1960,6 +1960,8 @@ function renderRooms(){
       if (id === 'payroll') return false;
       // 📋 2026-10-25 사장님: 매니징 룸으로 통일 — 매니저 룸은 목록에서 숨김 (기록은 그대로 보존)
       if (id === 'managers') return false;
+      // 🙈 2026-10-25 사장님 "없애줘": 구글 리뷰 칭찬·재고 파악 방 목록에서 숨김 (기록·링크 진입은 보존)
+      if (id === 'google_review_praise' || id === 'stock_count') return false;
       if (id === 'managing' && !canAccessManagingRoom()) return false;
       // 🆕 2026-05-28 사장님 지시: HR Inquiries 방은 모든 직원에게 사이드바 표시.
       // 비권한자가 클릭하면 openRoom 핸들러가 자동으로 HR 건의 모달 띄움 (메시지 리스트는 못 봄).
@@ -2431,7 +2433,10 @@ function _kmTryResumeScroll(cont){
     if (rs.room !== ACTIVE_ROOM) return;   // 다른 방을 열었으면 그대로 두고, 그 방 오면 복귀
     if (rs.anchor) {
       const el = cont.querySelector('.msg[data-msg-id="' + rs.anchor + '"]');
-      if (el) cont.scrollTop = el.offsetTop + (rs.delta || 0);
+      if (el) {
+        cont.scrollTop = el.offsetTop + (rs.delta || 0);
+        window.__kmPinBottom = (cont.scrollHeight - cont.scrollTop - cont.clientHeight) < 120;
+      }
     }
     window.__kmResumeDone = true;
     sessionStorage.removeItem('km.resume');
@@ -3611,15 +3616,45 @@ function renderMessages(){
 //   옛 글 위치로 밀려남 → 이후 렌더는 '아래 근처 아님' 판정으로 그 자리에 고정.
 //   수정 = '맨 아래 고정' 플래그: 방을 열면 ON, 사용자가 위로 스크롤하면 OFF,
 //   고정 중에는 사진이 로드될 때마다 다시 맨 아래로.
+// 📌 2026-10-25 사장님 재신고: 그래도 옛 글(7월)에서 멈춤 → 강화.
+//   ① 고정 해제는 '사람이 직접 위로 올릴 때'만 (휠·터치·스크롤바·키). 사진 로딩 중
+//      브라우저가 스스로 낸 스크롤 이벤트로 해제되던 구멍 차단.
+//   ② 사진뿐 아니라 번역문·깨진 사진·영상·화면 숨김→복귀 등 높이가 바뀌면 무조건
+//      다시 맨 아래로 (ResizeObserver).
 (function(){
   const c = document.getElementById('msgs');
   if (!c) return;
+  let lastInput = 0;
+  const mark = function(){ lastInput = Date.now(); };
+  ['wheel','touchstart','touchmove','pointerdown'].forEach(function(ev){
+    c.addEventListener(ev, mark, {passive:true});
+  });
+  document.addEventListener('keydown', function(e){
+    if (/^(PageUp|PageDown|ArrowUp|ArrowDown|Home|End| )$/.test(e.key) && !/^(TEXTAREA|INPUT)$/.test((e.target||{}).tagName)) mark();
+  }, {passive:true});
+  const toBottom = function(){ if (window.__kmPinBottom) c.scrollTop = c.scrollHeight; };
   c.addEventListener('scroll', function(){
-    window.__kmPinBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 120;
+    const near = (c.scrollHeight - c.scrollTop - c.clientHeight) < 120;
+    if (near) window.__kmPinBottom = true;
+    else if (Date.now() - lastInput < 1500) window.__kmPinBottom = false;   // 사람이 올린 것만
+    else toBottom();                                                         // 브라우저가 밀어낸 것 → 되돌림
   }, {passive:true});
   c.addEventListener('load', function(e){
-    if (window.__kmPinBottom && e.target && e.target.tagName === 'IMG') c.scrollTop = c.scrollHeight;
+    if (e.target && e.target.tagName === 'IMG') toBottom();
   }, true);
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(toBottom);
+    const watch = function(){
+      ro.disconnect();
+      ro.observe(c);
+      for (const ch of c.children) ro.observe(ch);
+    };
+    watch();
+    new MutationObserver(watch).observe(c, {childList:true});
+  }
+  // 다른 앱/창 갔다 돌아오면 고정 상태일 때 맨 아래 재확인
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') toBottom(); });
+  window.addEventListener('pageshow', toBottom);
 })();
 // 시간만 (HH:MM) — 시간은 항상 메시지 하단에 단독 표시
 function fmtMsgTime(d){
@@ -4921,6 +4956,7 @@ function goToRef(roomId, msgId){
 window.goToRef = goToRef;
 function scrollToMsg(msgId){
   if (!msgId) return;
+  window.__kmPinBottom = false;   // 원본 메시지로 이동 중엔 맨 아래 고정 해제
   const el = document.querySelector('[data-msg-id="'+msgId+'"]');
   if (el) {
     el.scrollIntoView({ behavior:'smooth', block:'center' });
@@ -5390,7 +5426,7 @@ function applySearch(){
     el.classList.toggle('match', hit);
     if (hit && !firstMatch) firstMatch = el;
   });
-  if (firstMatch) firstMatch.scrollIntoView({block:'center', behavior:'smooth'});
+  if (firstMatch) { window.__kmPinBottom = false; firstMatch.scrollIntoView({block:'center', behavior:'smooth'}); }
 }
 
 // ============ GALLERY ============
