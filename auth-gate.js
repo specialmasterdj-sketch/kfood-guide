@@ -67,6 +67,17 @@ function bootstrapForUser(user){ return bootstrapFor(user && user.email) || boot
 // store-floor barcode scanning keeps working without forcing auth on
 // shared kiosks). Add more here if needed.
 const EXEMPT_PATHS = ['/auth.html', '/lookup.html'];
+// 📱 2026-10-28 사장님: "폰에서 화면이 액정보다 커서 옆으로 돌려 봐야 한다"
+//   어느 화면이든 무언가 하나가 폰 폭보다 넓으면 페이지 전체가 옆으로 밀린다.
+//   안전망 — 페이지 자체는 폰 폭을 넘지 않게(옆 스크롤 금지). 표·칩 줄처럼 원래 옆으로 넘기는 칸은 그대로.
+try {
+  if (!document.getElementById('km-fit-style')) {
+    const st = document.createElement('style');
+    st.id = 'km-fit-style';
+    st.textContent = 'html,body{max-width:100%;overflow-x:clip}';
+    (document.head || document.documentElement).appendChild(st);
+  }
+} catch(_){}
 function isExemptPath(){
   const p = location.pathname.toLowerCase();
   return EXEMPT_PATHS.some(x => p.endsWith(x));
