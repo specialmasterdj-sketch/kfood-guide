@@ -977,21 +977,35 @@ async function __wipeThisComputer(){
     if (lang) localStorage.setItem('km.lang', lang);
   } catch(_){}
   try { sessionStorage.clear(); } catch(_){}
-  // ③ IndexedDB — Firebase 세션 + me-persist/recv-persist 백업(kimchi_persist)
+  // ③ IndexedDB — me-persist/recv-persist 백업(kimchi_persist)
+  // 📱 2026-10-28 사장님: "직원 로그인 때 핸드폰 인증을 두 번 연속 요구한다"
+  //   원인 — 여기서 Firebase 로그인 저장소(firebaseLocalStorageDb)도 지웠는데, 이 페이지의
+  //   Firebase 가 그 저장소를 열어 둔 상태라 삭제가 '예약'만 됐다. 직원이 문자 인증을 하면
+  //   새 로그인이 그 저장소에 저장되고, 앱으로 넘어가는 순간 예약된 삭제가 실행돼
+  //   방금 한 로그인이 지워졌다 → 두 번째 인증. (로컬 시험으로 재현 확인)
+  //   → Firebase 세션은 위의 signOut 이 이미 지운다. 저장소 자체는 지우지 않는다.
+  //     kimchi_persist 는 삭제가 끝날 때까지(최대 1.5초) 기다려 나중에 터지지 않게 한다.
+  function _delDb(name){
+    return new Promise(function(res){
+      var done = false, fin = function(){ if (!done){ done = true; res(); } };
+      try {
+        var q = indexedDB.deleteDatabase(name);
+        q.onsuccess = fin; q.onerror = fin; q.onblocked = fin;
+      } catch(_){ fin(); }
+      setTimeout(fin, 1500);
+    });
+  }
   try {
-    try { indexedDB.deleteDatabase('kimchi_persist'); } catch(_){}
+    var names = ['kimchi_persist'];
     if (indexedDB.databases) {
       var dbs = await indexedDB.databases();
       dbs.forEach(function(d){
         if (!d.name) return;
         var n = d.name.toLowerCase();
-        if (n.indexOf('firebase') >= 0 || n.indexOf('kimchi') >= 0) {
-          try { indexedDB.deleteDatabase(d.name); } catch(_){}
-        }
+        if (n.indexOf('kimchi') >= 0 && names.indexOf(d.name) < 0) names.push(d.name);
       });
-    } else {
-      try { indexedDB.deleteDatabase('firebaseLocalStorageDb'); } catch(_){}
     }
+    await Promise.all(names.map(_delDb));
   } catch(_){}
 }
 async function __doFreshSignout(){
@@ -1086,13 +1100,16 @@ onAuthStateChanged(auth, async (user) => {
   show('loadingView');
   // 🛡️ Safety net — 10초 이상 loadingView 머무르면 자동으로 signinView 복귀 +
   // 진단 메시지 표시. 이전엔 onValue 가 null 던지면 무한 spinner 였음.
+  // 📱 2026-10-28 — 10초는 폰 회선에서 짧았다. 로그인은 뒤에서 계속 진행 중인데 로그인 화면을
+  //   다시 보여 줘서 직원이 문자를 한 번 더 받았다(두 번 인증). 30초로 늘리고, 그 뒤에도
+  //   번호 입력 화면이 아니라 '새로고침' 안내만 띄운다 — 이미 인증된 세션이면 새로고침으로 바로 들어간다.
   const __loadingGuard = setTimeout(() => {
     if (document.getElementById('loadingView').style.display === '') {
-      trace('auth:timeout-10s');
+      trace('auth:timeout-30s');
       show('signinView');
-      showError('로그인이 완료되지 않았습니다. 다시 시도하거나 로그아웃 후 재로그인 해주세요. (timeout)');
+      showError('연결이 느립니다. 문자를 다시 받지 말고 화면을 새로고침해 주세요 — 인증은 이미 되어 있습니다. (timeout)');
     }
-  }, 10000);
+  }, 30000);
   const userRef = ref(db, 'users/' + user.uid);
   // First-time login: create record and bootstrap admins
   // 전화 인증 직후엔 RTDB 실시간연결 auth 가 지연돼 SDK get/set/onValue 가 멈출 수
@@ -1286,10 +1303,11 @@ onAuthStateChanged(auth, async (user) => {
       try {
         if (branch && name) {
           const _tk = __tok || (await user.getIdToken());
-          const sr = await fetch(cfg.databaseURL + '/schedules/' + branch + '.json?auth=' + encodeURIComponent(_tk), { cache:'no-store' });
+          // 🐢 스케줄 통째(schedules/{지점}.json)는 수 MB — 직원 명단만 받는다
+          const sr = await fetch(cfg.databaseURL + '/schedules/' + branch + '/employees.json?auth=' + encodeURIComponent(_tk), { cache:'no-store' });
           if (sr.ok) {
             const sd = await sr.json();
-            const emps = (sd && Array.isArray(sd.employees)) ? sd.employees : [];
+            const emps = Array.isArray(sd) ? sd : Object.values(sd || {});
             const _n = s => String(s||'').toLowerCase().replace(/\s+/g,' ').trim();
             const tgt = _n(name);
             const hit = emps.find(e => e && _n(e.name) === tgt);

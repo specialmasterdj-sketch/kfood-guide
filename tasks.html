@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_28_speed';   // 🌅 업무 0건인 날에도 첫 화면
+    var BUST = 'tasks_2026_10_28_speed2';   // 🌅 업무 0건인 날에도 첫 화면
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -8815,6 +8815,7 @@ function renderEmp(){
   // ⚠️ 2026-10-05 전무님 신고: 오늘 업무가 0건이면 여기서 빠져나가 버려서
   //   어제 만든 첫 화면(매장 사진·본사 알림·칸들)이 통째로 안 보였다.
   //   → 업무가 없어도 첫 화면은 그대로 그리고, 빈 안내는 '오늘 나의 업무' 칸 안으로 옮겼다.
+  window.__empLastMy = my;           // 숫자 칸만 다시 그릴 때 쓴다 (empRerenderSoon)
   list.innerHTML = empHeroHtml() + empTopBanners(my) + empStatCards(my) + empPanel(my);
   try { applyMgrHugePhotos(list); } catch(_){}   // 🚀 base64 사진은 보일 때만 .src 채움
   try { loadNoticeBanner(); } catch(_){}         // 📢 공지는 늦게 와도 그 자리에 채운다
@@ -8860,16 +8861,39 @@ function empViewBranch(){
 //   그 칸을 보고 있을 때만 다시 그려서 '…' 로 멈춰 있었다. 받아 오면 첫 화면을 한 번(묶어서) 다시 그린다.
 //   또 매장을 빨리 바꾸면 늦게 온 옛 매장 숫자가 새 매장 칸에 섞였다 → 매장이 그대로일 때만 넣는다.
 let __empReT = null;
+// 🐢 2026-10-28 (2차) 사장님: "아직도 매장 바꿀 때마다 버벅이는 느낌" — 숫자 하나 때문에
+//   사진 50여 장이 든 화면 전체를 1.4초 뒤에 통째로 다시 그려 한 번 덜컥했다.
+//   → 지금 보고 있는 칸이 그 숫자와 상관없으면(내 업무·핵심 품목·본사) 위의 숫자 칸만 바꾼다.
 function empRerenderSoon(){
   if (__empReT) return;
-  __empReT = setTimeout(() => { __empReT = null; try { renderEmp(); } catch(_){} }, 150);
+  __empReT = setTimeout(() => {
+    __empReT = null;
+    try {
+      const L = document.getElementById('empList');
+      const box = L && L.querySelector('.emp-cards');
+      if (box && window.__empLastMy && /^(my|key|hq)$/.test(EMP_VIEW)) { box.outerHTML = empStatCards(window.__empLastMy); return; }
+    } catch(_){}
+    try { renderEmp(); } catch(_){}
+  }, 150);
 }
-// 매장을 바꾼다 — 불러온 숫자는 버리고 새 매장 것으로 다시 받는다
+// 지점별로 받아 온 숫자를 잠깐(3분) 기억 — 매장을 왔다 갔다 하면 바로 보인다
+const EMP_BR_CACHE = {};
+const EMP_BR_TTL = 3 * 60000;
+function empCachePut(br, k, v){ (EMP_BR_CACHE[br] = EMP_BR_CACHE[br] || {})[k] = { v, at: Date.now() }; }
+function empCacheGet(br, k){ const c = EMP_BR_CACHE[br] && EMP_BR_CACHE[br][k]; return (c && Date.now() - c.at < EMP_BR_TTL) ? c.v : null; }
+// 매장을 바꾼다 — 기억해 둔 숫자가 있으면 바로 보여 주고, 새 숫자는 기다리지 않고 바로 받는다
 window.empGoBranch = function(b){
-  EMP_STAFF = null; EMP_OOS = null; EMP_HQPH = null;
+  const mine = (me && me.branch) || '';
+  const view = (b && b !== mine && empCanBrowseBranches()) ? b : mine;
+  EMP_STAFF = empCacheGet(view, 'staff'); EMP_HQPH = empCacheGet(view, 'hqph'); EMP_OOS = null;
   EMP_VIEW = 'my';
-  window.__empPrefetch = false;      // 새 매장 숫자를 다시 미리 채운다
+  window.__empPrefetch = true;       // 1.2초 기다리는 미리 채우기 대신 아래에서 바로 받는다
   try { dashSetBranch(b); } catch(_){ EMP_REF = b; renderEmp(); }
+  setTimeout(() => {
+    try { if (!EMP_STAFF) empLoadStaff(); } catch(_){}
+    try { if (!EMP_HQPH)  empLoadHqPhotos(); } catch(_){}
+    try { if (!EMP_OOS)   empLoadOos(); } catch(_){}
+  }, 60);   // dashSetBranch 의 renderEmp(30ms) 가 EMP_REF 를 정한 뒤
 };
 const EMP_VIEWS = {
   staff: { ic:'👥', ko:'오늘 근무', en:'Staff today',  es:'Personal hoy', bg:'#dcfce7', fg:'#15803d' },
@@ -9063,7 +9087,7 @@ async function empLoadStaff(){
     out.sort((a, b) => String(a.start).localeCompare(String(b.start)));
   } catch(e){ console.warn('[staff]', e); }
   if (empViewBranch() !== br) return;   // 그사이 매장이 바뀌었다 — 새 매장 것이 따로 온다
-  EMP_STAFF = out;
+  EMP_STAFF = out; empCachePut(br, 'staff', out);
   empRerenderSoon();
 }
 function empStaffPanel(){
@@ -9113,7 +9137,7 @@ async function empLoadHqPhotos(){
     out.sort((a, b) => (b.hq ? 1 : 0) - (a.hq ? 1 : 0));
   } catch(e){ console.warn('[hqph]', e); }
   if (empViewBranch() !== br) return;
-  EMP_HQPH = out;
+  EMP_HQPH = out; empCachePut(br, 'hqph', out);
   empRerenderSoon();
 }
 function empHqPanel(my){

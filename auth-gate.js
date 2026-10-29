@@ -693,7 +693,9 @@ window.__authGate = {
   // 이 탭이 열리기 전에 다른 창에서 로그아웃했다면 들어오면 안 된다
   try {
     var t0 = parseInt(localStorage.getItem('km_logout_at') || '0', 10) || 0;
-    if (t0 && Date.now() - t0 < 10000) leave('recent');
+    // 📱 2026-10-28 — 로그아웃 직후 바로 다시 로그인한 사람은 내보내지 않는다(두 번 인증 방지)
+    var ll = 0; try { ll = (JSON.parse(localStorage.getItem('chat.me') || '{}') || {}).lastLogin || 0; } catch(e){}
+    if (t0 && Date.now() - t0 < 10000 && !(ll > t0)) leave('recent');
   } catch(e){}
 })();
 
