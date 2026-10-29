@@ -1020,7 +1020,7 @@ async function __doFreshSignout(){
   try { localStorage.setItem('km_logout_at', String(Date.now())); } catch(_){}
   try { var _bc = new BroadcastChannel('km-auth'); _bc.postMessage('logout'); _bc.close(); } catch(_){}
   show('signinView');
-  if (__expiredArrival) showError('로그인한 지 1시간이 지나 자동 로그아웃되었습니다. 다시 인증해 주세요. · Signed out after 1 hour — please verify again.');
+  if (__expiredArrival) showError('6시간 동안 사용하지 않아 자동 로그아웃되었습니다. 다시 인증해 주세요. · Signed out after 6 hours without use — please verify again.');
   // 🔁 1.5초 뒤 다시 확인 — 그 사이 다른 탭이 되살렸으면 한 번 더 지우고 알려 준다
   setTimeout(async function(){
     var back = null;
@@ -1099,14 +1099,16 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
   trace('auth:user', user.phoneNumber || user.email || user.uid.slice(0,8));
-  // ⏳ 2026-10-28 사장님: 로그인 1시간이 지나면 반드시 로그아웃 — 지난 세션이면 들여보내지 않고 다시 인증
+  // ⏳ 2026-10-29 사장님: 6시간 동안 아무것도 안 했으면 로그아웃 (그 사이 한 번이라도 쓰면 계속 유지) — auth-gate.js 와 같은 규칙
   try {
     const __at = Date.parse(user.metadata && user.metadata.lastSignInTime);
-    if (isFinite(__at) && Date.now() - __at >= 60 * 60 * 1000) {
-      trace('auth:session-1h-expired');
+    let __la = 0; try { __la = parseInt(localStorage.getItem('km_lastActivity') || '0', 10) || 0; } catch(_){}
+    const __last = Math.max(isFinite(__at) ? __at : 0, __la);
+    if (__last && Date.now() - __last >= 6 * 60 * 60 * 1000) {
+      trace('auth:idle-6h-expired');
       try { await signOut(auth); } catch(_){}
       show('signinView');
-      showError('로그인한 지 1시간이 지나 자동 로그아웃되었습니다. 다시 인증해 주세요.');
+      showError('6시간 동안 사용하지 않아 자동 로그아웃되었습니다. 다시 인증해 주세요.');
       return;
     }
   } catch(_){}

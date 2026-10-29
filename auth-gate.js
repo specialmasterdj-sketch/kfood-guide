@@ -731,33 +731,42 @@ window.__authGate = {
 })();
 
 // ============================================================
-// ⏳ 로그인 1시간 뒤 자동 로그아웃 (2026-10-28 사장님 — 반드시)
+// ⏳ 6시간 동안 아무것도 안 하면 자동 로그아웃 (2026-10-29 사장님)
 // ------------------------------------------------------------
-//   "로그인하고 1시간이 흐르면 자동으로 로그아웃. 그래야 매니저·오너 정보가 실수로라도
-//    남에게 보이지 않는다." → 폰·컴퓨터 모두, 쓰는 중이어도 로그인 1시간이 되면 나간다.
-//   시각은 브라우저 저장값이 아니라 로그인 서버가 적어 둔 '인증한 시각'(user.metadata.lastSignInTime)
-//   으로 잰다 — 새로고침·저장값 조작으로 늘릴 수 없다. 끝나기 2분 전에 알려 준다.
-//   (예전 '공용 컴퓨터 4시간 미사용 로그아웃' 은 이것으로 대신한다.)
-//   ⚠ 직원마다 한 시간에 한 번 문자 인증 → SMS 사용량을 지켜볼 것 (2026-06-18 한도 초과 사고).
+//   "로그인 한 번 하면 6시간 유지. 그 사이에 한 번이라도 앱에 들어와 업무를 보거나 클릭하면
+//    계속 쓰는 것. 아무것도 안 하면 6시간 뒤 자동 로그아웃."
+//   (전날 2026-10-28 의 '로그인 1시간 뒤 무조건 로그아웃' 을 대신한다 — 직원마다 매시간 문자 인증이라 불편·SMS 한도 위험)
+//   · 누르기·입력·스크롤·화면 켜기가 있을 때마다 마지막 사용 시각을 새로 적는다 (같은 기기 모든 탭이 공유).
+//   · 마지막 사용 + 6시간이 지나면 로그아웃 → auth.html?fresh=1&expired=1.
+//   · 기준점이 없으면 로그인 서버의 '인증한 시각' 부터 센다. 폰·컴퓨터 모두.
+//   · 끝나기 2분 전에 알림 — 아무 곳이나 누르면 다시 6시간.
 // ============================================================
 (function(){
   'use strict';
-  var SESSION_MS = 60 * 60 * 1000;   // 1시간
+  var IDLE_MS = 6 * 60 * 60 * 1000;  // 6시간
   var WARN_MS = 2 * 60 * 1000;       // 2분 전 알림
-  var timer = null, warnBox = null, gone = false;
+  var KEY = 'km_lastActivity';
+  var timer = null, warnBox = null, gone = false, lastWrite = 0;
   function lang(){ try { var l = localStorage.getItem('kimchi_lang') || localStorage.getItem('km.lang') || 'ko'; return /^(en|es)$/.test(l) ? l : 'ko'; } catch(e){ return 'ko'; } }
   function t(ko, en, es){ var L = lang(); return L === 'en' ? en : (L === 'es' ? es : ko); }
-  function signedAt(user){
-    var v = Date.parse(user && user.metadata && user.metadata.lastSignInTime);
-    return isFinite(v) ? v : 0;
+  function stored(){ try { return parseInt(localStorage.getItem(KEY) || '0', 10) || 0; } catch(e){ return 0; } }
+  function signedAt(user){ var v = Date.parse(user && user.metadata && user.metadata.lastSignInTime); return isFinite(v) ? v : 0; }
+  function lastUse(user){ return Math.max(stored(), signedAt(user)); }
+  function touch(){
+    var now = Date.now();
+    if (now - lastWrite < 15000) return;            // 15초에 한 번만 적는다 (마우스 움직임마다 쓰지 않게)
+    lastWrite = now;
+    try { localStorage.setItem(KEY, String(now)); } catch(e){}
+    hideWarn();
   }
   function out(){
     if (gone) return; gone = true;
-    try { gateTrace('gate:session-1h-expired'); } catch(e){}
+    try { gateTrace('gate:idle-6h-signout'); } catch(e){}
     Promise.resolve(signOut(auth)).catch(function(){}).then(function(){
       try { location.replace('./auth.html?fresh=1&expired=1'); } catch(e){}
     });
   }
+  function hideWarn(){ if (warnBox){ try { warnBox.remove(); } catch(e){} warnBox = null; } }
   function showWarn(sec){
     if (!warnBox){
       warnBox = document.createElement('div');
@@ -767,25 +776,31 @@ window.__authGate = {
         'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
       document.body.appendChild(warnBox);
     }
-    warnBox.textContent = '⏳ ' + t('로그인 1시간 — ' + sec + '초 뒤 자동 로그아웃됩니다',
-                                    'Signed in 1 hour — signing out in ' + sec + 's',
-                                    'Sesión de 1 hora — se cerrará en ' + sec + ' s');
+    warnBox.textContent = '⏳ ' + t('6시간 동안 사용하지 않아 ' + sec + '초 뒤 로그아웃됩니다 — 화면을 누르면 계속 사용',
+                                    'No activity for 6 hours — signing out in ' + sec + 's. Tap anywhere to stay',
+                                    'Sin actividad por 6 horas — se cerrará en ' + sec + ' s. Toque para seguir');
   }
   function tick(user){
-    var at = signedAt(user);
-    if (!at) return;
-    var left = at + SESSION_MS - Date.now();
+    var last = lastUse(user);
+    if (!last) return;
+    var left = last + IDLE_MS - Date.now();
     if (left <= 0) { out(); return; }
-    if (left <= WARN_MS) showWarn(Math.ceil(left / 1000));
+    if (left <= WARN_MS) showWarn(Math.ceil(left / 1000)); else hideWarn();
   }
+  ['pointerdown','keydown','wheel','touchstart','scroll'].forEach(function(ev){
+    window.addEventListener(ev, function(){ if (!gone) { lastWrite = 0; touch(); } }, { passive: true, capture: true });
+  });
   onAuthStateChanged(auth, function(user){
     if (timer) { clearInterval(timer); timer = null; }
     if (!user || user.isAnonymous || isExemptPath()) return;
-    tick(user);
-    timer = setInterval(function(){ tick(auth.currentUser || user); }, 5000);
+    tick(user);                       // 이미 6시간 넘게 안 쓴 기기면 여기서 바로 로그아웃
+    if (!gone) touch();               // 앱을 연 것 자체도 사용이다
+    timer = setInterval(function(){ tick(auth.currentUser || user); }, 15000);
   });
-  // 폰을 켰을 때(잠들어 있던 사이 1시간이 지났으면) 바로 확인
+  // 폰을 다시 켰을 때 — 잠든 사이 6시간이 지났으면 먼저 확인하고, 아니면 사용으로 센다
   document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible' && auth.currentUser) tick(auth.currentUser);
+    if (document.visibilityState !== 'visible' || !auth.currentUser) return;
+    tick(auth.currentUser);
+    if (!gone) { lastWrite = 0; touch(); }
   });
 })();
