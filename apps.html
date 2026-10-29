@@ -96,7 +96,8 @@
 <script type="module" src="./fb-auth-fetch.js?v=4"></script>
 <script src="./me-persist.js?v=1"></script>
 <script src="./lang-sync.js?v=1"></script>
-<script src="./nav-sidebar.js?v=26-meet" defer></script>
+<script src="./nav-sidebar.js?v=27-meet" defer></script>
+<script src="./km-account-card.js?v=1" defer></script>
 <script src="./back-nav.js?v=1"></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -222,6 +223,14 @@ button,a{font-family:inherit}
   margin-top:18px; display:flex; align-items:center; gap:10px;
   flex-wrap:wrap;
 }
+/* 🏠 2026-10-28 사장님: "여기(앱 모음)서 무엇을 눌러야 첫 페이지로 가는지 모르겠다 — 그게 가장 힘들다" */
+.apps-home-btn{
+  display:inline-flex; align-items:center; gap:7px;
+  background:#fff; color:#991b1b; text-decoration:none;
+  border-radius:999px; padding:9px 18px; font-size:.95em; font-weight:900;
+  box-shadow:0 4px 14px rgba(0,0,0,.18); white-space:nowrap;
+}
+.apps-home-btn:active{transform:scale(.97)}
 .greeting-line{
   font-size:1em; opacity:.95; font-weight:600; letter-spacing:-.005em;
 }
@@ -494,6 +503,7 @@ button,a{font-family:inherit}
       </div>
     </div>
     <div class="hero-greet">
+      <a class="apps-home-btn" href="./tasks.html" data-t="home_btn">🏠 첫 화면 · 내 업무</a>
       <span id="greeting" class="greeting-line" data-t="greeting_default">오늘도 수고하세요 ✨</span>
       <button id="apps-user-pill" class="user-pill" onclick="onUserPillClick()">
         <span id="apps-user-icon">👤</span>
@@ -696,7 +706,7 @@ button,a{font-family:inherit}
     <div class="app-icon">🗂</div>
     <div class="app-info">
       <div class="app-name">직원 기록 카드</div>
-      <div class="app-desc">평가·상점·리뷰·매출 자동 연동 — 사장님·Sun Kim·전무님 전용 (직원은 🔒)</div>
+      <div class="app-desc">평가·상점·리뷰·매출 자동 연동 — 사장님·Sun Kim·전무님 + 각 지점 매니저(본인 지점 보기 전용)</div>
     </div>
     <span class="app-badge" style="background:#fef3c7;color:#92400e">HR</span>
     <span class="app-arrow">›</span>
@@ -1132,6 +1142,7 @@ const T = {
     greeting_evening:'마감 잘 부탁드려요 🌙',
     greeting_night:'안전 마감 부탁해요 🌙',
     greeting_default:'오늘도 수고하세요 ✨',
+    home_btn:'🏠 첫 화면 · 내 업무',
     greeting_named:'{n}님, ',
     ideas_name:'이거 불편해요',
     ideas_desc:'불편한 점을 한 줄로 — "나도!" 많이 눌린 것부터 고칩니다',
@@ -1264,6 +1275,7 @@ const T = {
     greeting_evening:'Thanks for closing 🌙',
     greeting_night:'Safe closing 🌙',
     greeting_default:'Have a great shift ✨',
+    home_btn:'🏠 Main screen · My Tasks',
     greeting_named:'{n}, ',
     ideas_name:'Something not working?',
     ideas_desc:'Tell us in one line — the most "Me too!" gets fixed first',
@@ -1396,6 +1408,7 @@ const T = {
     greeting_evening:'Gracias por cerrar 🌙',
     greeting_night:'Cierre seguro 🌙',
     greeting_default:'¡Buen turno! ✨',
+    home_btn:'🏠 Inicio · Mis tareas',
     greeting_named:'{n}, ',
     ideas_name:'¿Algo incómodo?',
     ideas_desc:'Dinos en una línea — lo más votado se arregla primero',
@@ -1963,6 +1976,11 @@ document.addEventListener('DOMContentLoaded', function(){
     var brVal = br.value;
     var nmVal = nm.value || cx.value;
     if (!nmVal || !brVal) return;
+    // 🔐 2026-10-28 — 오너·임원 이름은 여기서 고를 수 없다 (공용 계정 사칭 차단)
+    var _k = nmVal.replace(/[\s.]/g, '').toUpperCase().replace(/\(.*$/, '');
+    if (['DJ','DAEGIL','BHK','김병호','SUNKIM','선킴','썬킴'].indexOf(_k) >= 0){
+      alert('이 이름은 고를 수 없습니다 — 본인 폰으로 로그인하세요.'); return;
+    }
     var me = { name: nmVal.trim(), branch: brVal };
     try { localStorage.setItem('chat.me', JSON.stringify(me)); } catch(e){}
     try { window.dispatchEvent(new Event('km-identity-changed')); } catch(_){}
@@ -1992,8 +2010,16 @@ document.addEventListener('DOMContentLoaded', function(){
     var m = loadMe();
     var signedIn = !!(m && m.uid) || !!(window.__currentUser && window.__currentUser.uid);
     if (!signedIn){ location.href = './auth.html'; return; }
+    // 🔐 2026-10-28 사장님: "내 폰 로그인인데 김병호로도 바꿀 수 있다 / 라스올라스를 누르면 오너·선킴·병호가 나온다 — 이치에 안 맞다"
+    //   본인 계정으로 로그인했으면 '사람' 은 바꿀 수 없다. 누가 로그인했는지만 보여 주고,
+    //   다른 사람은 로그아웃 → 그 사람 폰으로 로그인. (오너·임원은 '보는 매장' 만 바꿀 수 있다)
+    //   이름 고르기 창은 공용 계정(staff@/manager@) 에만 남긴다.
+    var em = String((m && m.email) || '').toLowerCase();
+    var shared = (em === 'staff@miamikimchi.com' || em === 'manager@miamikimchi.com');
+    if (!shared && window.kmAccountCard){ window.kmAccountCard(m); return; }
     openIdentityPicker();
   }
+
   window.onUserPillClick = onUserPillClick;
 })();
 </script>

@@ -62,6 +62,10 @@
   .backbar .nm{ font-size:1.25em; font-weight:900; color:var(--green); }
   .notice{ background:var(--lgold); border:1.5px solid var(--gold); border-radius:12px; padding:10px 14px; font-size:.86em; font-weight:600; color:#92400e; margin-top:12px; }
   #gateBlock{ display:none; position:fixed; inset:0; background:#f6f8f7; z-index:9999; align-items:center; justify-content:center; text-align:center; padding:30px; }
+  /* 👀 2026-10-28 지점 스토어 매니저 = 본인 지점 보기 전용 — 쓰기 UI 전부 숨김 */
+  body.ro .addrow, body.ro #L_save, body.ro #L_newEval, body.ro .btn.danger, body.ro #chainBtns{ display:none !important; }
+  body.ro .profile-grid input{ pointer-events:none; background:#f8fafc; color:#475569; }
+  body.ro #branchSel{ opacity:.75; }
   @media print{
     .top, .addrow, .btn, .backbar .btn, .notice, #empPick{ display:none !important; }
     .card{ border:1px solid #999; break-inside:avoid; }
@@ -73,7 +77,7 @@
 <div id="gateBlock"><div>
   <div style="font-size:3em">🔒</div>
   <h2 style="margin:10px 0 6px">직원 기록 카드</h2>
-  <p style="color:#64748b">사장님·Sun Kim·김병호 전무님 전용입니다.<br>본인 계정(이메일 또는 등록된 전화번호)으로 로그인한 기기에서만 열립니다.</p>
+  <p style="color:#64748b">사장님·Sun Kim·김병호 전무님 전용입니다.<br>각 지점 스토어 매니저는 <b>본인 지점만 보기 전용</b>으로 열립니다.<br>본인 계정(이메일 또는 등록된 전화번호)으로 로그인한 기기에서만 열립니다.</p>
 </div></div>
 
 <div class="top">
@@ -91,7 +95,7 @@
 <div class="wrap">
   <!-- 직원 선택 -->
   <div id="empPick">
-    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+    <div id="chainBtns" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn" onclick="openDeptSales()">📈 부서 매출 관리 (월 1회 입력 → 담당 전원 카드 자동 반영)</button>
       <button class="btn" id="L_dailyBtn" onclick="openDailySales()">📅 일일 매출</button>
       <button class="btn sec2" onclick="openSalesCompare()">📊 전 지점 매출 비교</button>
@@ -340,6 +344,12 @@ function applyLang(){
   });
   const nt=document.getElementById('nType');
   if(nt){ nt.options[0].text=t('p_warn'); nt.options[1].text=(LANG==='en'?'⭐ Praise':LANG==='es'?'⭐ Elogio':'⭐ 칭찬(수동)'); }
+  if (RO){   // 👀 지점 매니저 — 말까지 보기 전용으로
+    set('L_topNote', LANG==='en'?'👀 View only · your branch':LANG==='es'?'👀 Solo lectura · su tienda':'👀 보기 전용 · 본인 지점');
+    set('L_notice', LANG==='en'?'Pick an employee to open their card. View only — you cannot add or change anything here.'
+      : LANG==='es'?'Elija un empleado para abrir su ficha. Solo lectura — no puede agregar ni modificar nada.'
+      : '직원을 선택하면 기록 카드가 열립니다. 보기 전용이라 내용을 추가하거나 고칠 수는 없습니다.');
+  }
 }
 // ================= 기본 =================
 const BRANCHES = [
@@ -360,6 +370,22 @@ function isAdmin(){
   const ph = String(u.phoneNumber||'').trim();
   return (!!em && HR_OWNER_EMAILS.includes(em)) || (!!ph && HR_OWNER_PHONES.includes(ph));
 }
+// 👀 2026-10-28 전무님 지시: 각 지점 스토어 매니저 1명씩 열람 허용.
+//   권한은 "본인 지점만 · 보기 전용" — 고치고 지우는 건 여전히 위 세 분만.
+//   판정은 phoneRoster 에 등록된 본인 전화번호(Firebase 로그인 계정)로만 한다.
+const HR_MGR_PHONES = {
+  '+17864172970': 'MIAMI',            // HAN
+  '+19549400729': 'PEMBROKE_PINES',   // Steve Hong
+  '+19548425920': 'CORAL_SPRINGS',    // Kwangho Noh
+  '+19546096983': 'LASOLAS',          // Kendell Raymundo
+};
+function mgrBranch(){
+  const u = window.__fb && window.__fb.authUser && window.__fb.authUser();
+  if (!u) return null;
+  const ph = String(u.phoneNumber||'').trim();
+  return (ph && HR_MGR_PHONES[ph]) || null;
+}
+let RO = false;   // 보기 전용 모드 (지점 매니저)
 function slug(n){ return String(n||'').toLowerCase().replace(/[.#$\[\]\/\s]+/g,'_').replace(/[^a-z0-9가-힣_]/g,'').slice(0,50); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtD(ts){ if(!ts) return ''; const d=new Date(+ts||ts); return isNaN(d)?String(ts):(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')); }
@@ -396,11 +422,24 @@ window.__hrBoot = function(){
   // 로그인 확인 전에는 잠금 화면 유지 (booted 안 함 → 로그인 확인되면 다시 판정)
   if (!(window.__fb.authUser && window.__fb.authUser())){ document.getElementById('gateBlock').style.display='flex'; return; }
   booted = true;
-  if (!isAdmin()){ document.getElementById('gateBlock').style.display='flex'; return; }
+  const admin = isAdmin();
+  const mb = admin ? null : mgrBranch();
+  if (!admin && !mb){ document.getElementById('gateBlock').style.display='flex'; return; }
   document.getElementById('gateBlock').style.display='none';
+  if (mb){
+    RO = true;
+    BRANCH = mb;
+    document.body.classList.add('ro');
+    // 화면만 숨기는 게 아니라 쓰기 통로 자체를 막는다
+    ['set','push','update','remove'].forEach(k=>{
+      window.__fb[k] = function(){ toast('👀 보기 전용입니다'); return Promise.reject(new Error('read-only')); };
+    });
+  }
   applyLang();
   const sel = document.getElementById('branchSel');
-  sel.innerHTML = BRANCHES.map(b=>`<option value="${b.id}">🏢 ${b.ko}</option>`).join('');
+  const list = RO ? BRANCHES.filter(b=>b.id===BRANCH) : BRANCHES;
+  sel.innerHTML = list.map(b=>`<option value="${b.id}">🏢 ${b.ko}</option>`).join('');
+  sel.disabled = RO;
   sel.value = BRANCH;
   sel.onchange = () => { BRANCH = sel.value; localStorage.setItem('hr.branch', BRANCH); BONUS=null; DEPT_MAP=null; DEPT_SALES=null; backToList(); loadRoster(); };
   loadRoster();

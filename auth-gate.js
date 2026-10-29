@@ -161,7 +161,7 @@ function syncToChatMe(profile){
   if (!profile) return;
   try {
     const existing = JSON.parse(localStorage.getItem('chat.me') || '{}');
-    const boot = bootstrapFor(profile.email);
+    const boot = bootstrapFor(profile.email) || bootstrapForPhone(profile.phone);
     // 이름 결정 정책:
     //  1) Bootstrap admin (DJ, B.H.K) → canonical name
     //  2) 로컬에 본인이 직접 선택한 개인 이름 있음 → 절대 덮어쓰지 않음
@@ -170,15 +170,32 @@ function syncToChatMe(profile){
     //     공유 계정 사용자가 "manager"/"Staff" 로 메시지 올림.
     const GENERIC = ['staff','manager','employee','admin','user','직원','매니저','스태프','사원','관리자'];
     function _isGeneric(n){ return !n || GENERIC.includes(String(n).toLowerCase().trim()); }
+    // 🔐 2026-10-28 사장님: "내 폰 로그인인데 화면에서 김병호(B.H.K)로도 로그인된다 — 로그인이 부정확하다"
+    //   원인 = 위 2) 규칙. 이 기기에서 '이름 고르기' 칸에 아무 이름이나 치면(B.H.K 등) 그 이름이 계속 남았고,
+    //   여러 화면이 오너·임원 권한을 '이름' 으로 판단해 직원도 임원 권한을 얻을 수 있었다.
+    //   → 오너·임원 이름(DJ·B.H.K·Sun Kim·김병호…)은 로그인 계정이 정말 그 사람(부트스트랩 번호·이메일 또는
+    //     서버 역할 OWNER/EXECUTIVE)일 때만 쓸 수 있다. 오너·임원 본인은 언제나 정식 이름으로 돌아온다.
+    const _looksPhone = n => /^\+?[\d\s().-]{7,}$/.test(String(n || '').trim());
+    const _serverName = (profile.name && !_isGeneric(profile.name) && !_looksPhone(profile.name)) ? String(profile.name) : '';
+    const _leaderKey = n => String(n || '').replace(/[\s.]/g, '').toUpperCase();
+    const _LEADERS = ['DJ','DAEGIL','BHK','비에이치케이','김병호','SUNKIM','선킴','썬킴'];
+    const _isLeaderName = n => _LEADERS.includes(_leaderKey(n));
+    const _leaderOk = !!boot || ['OWNER','EXECUTIVE'].includes(String(profile.role || '').toUpperCase());
     let finalName;
     if (boot) {
       finalName = boot.name;
-    } else if (existing.name && !_isGeneric(existing.name)) {
+    } else if (existing.name && !_isGeneric(existing.name) && (!_isLeaderName(existing.name) || _leaderOk)) {
+      // 이 기기에 남은 이름 — 직원 이름은 그대로 둔다. 서버 계정 이름이 스케줄 이름과 다른 직원이
+      //   47명이라(2026-10-28 실측) 서버 이름으로 바꾸면 업무·점수 연결이 끊긴다.
+      //   단, 오너·임원 이름은 진짜 그 계정일 때만 (사칭 차단).
       finalName = existing.name;
-    } else if (profile.name && !_isGeneric(profile.name)) {
-      finalName = profile.name;
+    } else if (_serverName && (!_isLeaderName(_serverName) || _leaderOk)) {
+      finalName = _serverName;
     } else {
       finalName = '';   // ← me-modal 강제 트리거
+    }
+    if (existing.name && finalName !== existing.name) {
+      try { gateTrace('gate:name-corrected', String(existing.name).slice(0, 20) + ' -> ' + String(finalName).slice(0, 20)); } catch(_){}
     }
     // 🔐 SECURITY (2026-05-14): role 은 RTDB users/{uid}/role 이 권위 — 다만
     // 정상 매니저들 (RTDB users 레코드에 role 미설정인 케이스가 있음) 의
@@ -324,6 +341,9 @@ let __pendingPoll = null;
 
 function applyStatus(user, profile){
   profile.uid = user.uid;
+  // 🔐 이름 판정에 쓰는 전화·이메일은 '지금 로그인한 계정' 것으로 채운다 (기록에 빠져 있어도)
+  if (!profile.phone && user.phoneNumber) profile.phone = user.phoneNumber;
+  if (!profile.email && user.email) profile.email = user.email;
   __gateResolved = true;
   if (profile.status === 'approved') {
     const ov = document.getElementById('__authGateOv');
@@ -711,100 +731,61 @@ window.__authGate = {
 })();
 
 // ============================================================
-// ⏳ 공용 컴퓨터 자동 로그아웃 (2026-10-02 전무님)
+// ⏳ 로그인 1시간 뒤 자동 로그아웃 (2026-10-28 사장님 — 반드시)
 // ------------------------------------------------------------
-//   "회사 다른 컴퓨터에서 로그아웃했는데 계정이 남아 누가 볼까 걱정된다"
-//   → 4시간 동안 아무 것도 안 하면 스스로 로그아웃(auth.html?fresh=1 = 완전 삭제).
-//
-//   ⚠ 폰·태블릿은 일부러 제외한다. 전화번호 로그인은 다시 들어오려면 SMS 인증이
-//     필요한데 SMS 는 하루 한도가 있고, 2026-06-18 에 그 한도가 터져 전 지점이
-//     로그인 불가로 마비된 적이 있다. 마우스가 달린 큰 화면(사무실 PC)만 대상.
-//
-//   여러 탭을 열어 둔 경우를 위해 마지막 활동 시각을 localStorage 로 공유한다.
+//   "로그인하고 1시간이 흐르면 자동으로 로그아웃. 그래야 매니저·오너 정보가 실수로라도
+//    남에게 보이지 않는다." → 폰·컴퓨터 모두, 쓰는 중이어도 로그인 1시간이 되면 나간다.
+//   시각은 브라우저 저장값이 아니라 로그인 서버가 적어 둔 '인증한 시각'(user.metadata.lastSignInTime)
+//   으로 잰다 — 새로고침·저장값 조작으로 늘릴 수 없다. 끝나기 2분 전에 알려 준다.
+//   (예전 '공용 컴퓨터 4시간 미사용 로그아웃' 은 이것으로 대신한다.)
+//   ⚠ 직원마다 한 시간에 한 번 문자 인증 → SMS 사용량을 지켜볼 것 (2026-06-18 한도 초과 사고).
 // ============================================================
 (function(){
   'use strict';
-  // 2026-10-09 전무님: "코럴 매니저가 컴퓨터 안 쓰면 금방 로그아웃돼 불편하대.
-  //   너무 짧다고. 4시간 안 쓰면 로그아웃 되게 해 줘." → 30분에서 4시간으로 늘림.
-  var IDLE_MS = 4 * 60 * 60 * 1000;  // 4시간
-  var WARN_MS = 2 * 60 * 1000;       // 끝나기 2분 전에 알림 (오래 자리 비운 뒤라 1분은 짧다)
-  var KEY = 'km_lastAct';
-
-  function isSharedComputer(){
-    try {
-      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return false;  // 설치한 앱
-      if (navigator.standalone) return false;                                                          // iOS 홈화면 앱
-      if (window.matchMedia && !window.matchMedia('(pointer:fine)').matches) return false;              // 마우스 없음 = 폰·태블릿
-      var sw = screen.width || window.innerWidth || 0, sh = screen.height || window.innerHeight || 0;
-      var mn = Math.min(sw, sh);
-      if (mn && mn < 700) return false;                                                                  // 작은 화면 (못 재면 통과)
-      return true;
-    } catch(e){ return false; }
-  }
-  if (!isSharedComputer()) return;
-
-  var last = Date.now(), warnBox = null, gone = false;
-  function stamp(){
-    last = Date.now();
-    try { localStorage.setItem(KEY, String(last)); } catch(e){}
-    hideWarn();
-  }
-  function lastAll(){
-    var v = 0;
-    try { v = parseInt(localStorage.getItem(KEY) || '0', 10) || 0; } catch(e){}
-    return Math.max(last, v);
-  }
-  function lang(){ try { return localStorage.getItem('km.lang') || 'ko'; } catch(e){ return 'ko'; } }
+  var SESSION_MS = 60 * 60 * 1000;   // 1시간
+  var WARN_MS = 2 * 60 * 1000;       // 2분 전 알림
+  var timer = null, warnBox = null, gone = false;
+  function lang(){ try { var l = localStorage.getItem('kimchi_lang') || localStorage.getItem('km.lang') || 'ko'; return /^(en|es)$/.test(l) ? l : 'ko'; } catch(e){ return 'ko'; } }
   function t(ko, en, es){ var L = lang(); return L === 'en' ? en : (L === 'es' ? es : ko); }
-
-  function hideWarn(){ if (warnBox){ try { warnBox.remove(); } catch(e){} warnBox = null; } }
-  function showWarn(sec){
-    if (warnBox){
-      var c = warnBox.querySelector('#kmIdleSec');
-      if (c) c.textContent = sec;
-      return;
-    }
-    warnBox = document.createElement('div');
-    warnBox.id = 'kmIdleWarn';
-    warnBox.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483000;' +
-      'background:#7c2d12;color:#fff;border-radius:13px;padding:13px 18px;font-size:14.5px;font-weight:800;' +
-      'box-shadow:0 8px 24px rgba(0,0,0,.3);display:flex;gap:12px;align-items:center;max-width:92vw;' +
-      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
-    warnBox.innerHTML =
-      '<div style="line-height:1.4">⏳ ' +
-        t('잠시 후 자동 로그아웃됩니다', 'You will be signed out shortly', 'Se cerrará la sesión en breve') +
-        ' <span id="kmIdleSec" style="font-size:17px">' + sec + '</span>' + t('초', 's', 's') +
-        '<div style="font-size:11.5px;font-weight:600;opacity:.9">' +
-        t('공용 컴퓨터 보호 — 계속 쓰시려면 옆 단추를 누르세요',
-          'Shared-computer protection — press the button to stay signed in',
-          'Protección de computadora compartida — presiona el botón para seguir') + '</div></div>' +
-      '<button id="kmIdleStay" style="background:#fff;color:#7c2d12;border:0;border-radius:9px;padding:10px 15px;' +
-        'font-weight:900;font-size:14px;cursor:pointer;white-space:nowrap">' +
-        t('계속 사용', 'Stay', 'Seguir') + '</button>';
-    document.body.appendChild(warnBox);
-    var b = document.getElementById('kmIdleStay');
-    if (b) b.onclick = function(e){ e.stopPropagation(); stamp(); };
+  function signedAt(user){
+    var v = Date.parse(user && user.metadata && user.metadata.lastSignInTime);
+    return isFinite(v) ? v : 0;
   }
-
-  ['mousedown','mousemove','keydown','wheel','touchstart','scroll','click'].forEach(function(ev){
-    window.addEventListener(ev, function(){
-      // 경고가 떠 있을 때는 '계속 사용' 단추로만 연장한다 (지나가던 마우스로 꺼지지 않게)
-      if (warnBox) return;
-      stamp();
-    }, { passive: true, capture: true });
+  function out(){
+    if (gone) return; gone = true;
+    try { gateTrace('gate:session-1h-expired'); } catch(e){}
+    Promise.resolve(signOut(auth)).catch(function(){}).then(function(){
+      try { location.replace('./auth.html?fresh=1&expired=1'); } catch(e){}
+    });
+  }
+  function showWarn(sec){
+    if (!warnBox){
+      warnBox = document.createElement('div');
+      warnBox.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:2147483000;' +
+        'background:#7c2d12;color:#fff;border-radius:13px;padding:12px 18px;font-size:14px;font-weight:800;' +
+        'box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:92vw;text-align:center;line-height:1.45;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
+      document.body.appendChild(warnBox);
+    }
+    warnBox.textContent = '⏳ ' + t('로그인 1시간 — ' + sec + '초 뒤 자동 로그아웃됩니다',
+                                    'Signed in 1 hour — signing out in ' + sec + 's',
+                                    'Sesión de 1 hora — se cerrará en ' + sec + ' s');
+  }
+  function tick(user){
+    var at = signedAt(user);
+    if (!at) return;
+    var left = at + SESSION_MS - Date.now();
+    if (left <= 0) { out(); return; }
+    if (left <= WARN_MS) showWarn(Math.ceil(left / 1000));
+  }
+  onAuthStateChanged(auth, function(user){
+    if (timer) { clearInterval(timer); timer = null; }
+    if (!user || user.isAnonymous || isExemptPath()) return;
+    tick(user);
+    timer = setInterval(function(){ tick(auth.currentUser || user); }, 5000);
   });
-  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible' && !warnBox) stamp(); });
-
-  stamp();
-  setInterval(function(){
-    if (gone) return;
-    var idle = Date.now() - lastAll();
-    if (idle >= IDLE_MS){
-      gone = true;
-      try { console.warn('[km-idle] 4시간 미사용 — 자동 로그아웃'); } catch(e){}
-      location.href = './auth.html?fresh=1&idle=1';
-    } else if (idle >= IDLE_MS - WARN_MS){
-      showWarn(Math.max(1, Math.ceil((IDLE_MS - idle) / 1000)));
-    } else hideWarn();
-  }, 5000);
+  // 폰을 켰을 때(잠들어 있던 사이 1시간이 지났으면) 바로 확인
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible' && auth.currentUser) tick(auth.currentUser);
+  });
 })();

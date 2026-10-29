@@ -942,6 +942,7 @@ let __unsub = null;
 // 무한 spinner. 새 fresh 모드는 1 회만, signout 끝나면 자동 해제.
 let __freshMode = (function(){ try { return new URLSearchParams(location.search).get('fresh') === '1'; } catch(_){ return false; } })();
 let __freshHandled = false;
+const __expiredArrival = (function(){ try { return new URLSearchParams(location.search).get('expired') === '1'; } catch(_){ return false; } })();
 // 🔴 2026-10-02 전무님: "회사 다른 컴퓨터에서 로그아웃했는데 내 아이디가 계속 남아 있다"
 //   원인 — me-persist.js 가 chat.me 를 쿠키(chat_me) + IndexedDB(kimchi_persist) 에
 //   백업해 두는데, 이 auth.html 은 me-persist.js 를 안 읽는다. 그래서 여기서 부른
@@ -1019,6 +1020,7 @@ async function __doFreshSignout(){
   try { localStorage.setItem('km_logout_at', String(Date.now())); } catch(_){}
   try { var _bc = new BroadcastChannel('km-auth'); _bc.postMessage('logout'); _bc.close(); } catch(_){}
   show('signinView');
+  if (__expiredArrival) showError('로그인한 지 1시간이 지나 자동 로그아웃되었습니다. 다시 인증해 주세요. · Signed out after 1 hour — please verify again.');
   // 🔁 1.5초 뒤 다시 확인 — 그 사이 다른 탭이 되살렸으면 한 번 더 지우고 알려 준다
   setTimeout(async function(){
     var back = null;
@@ -1097,6 +1099,17 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
   trace('auth:user', user.phoneNumber || user.email || user.uid.slice(0,8));
+  // ⏳ 2026-10-28 사장님: 로그인 1시간이 지나면 반드시 로그아웃 — 지난 세션이면 들여보내지 않고 다시 인증
+  try {
+    const __at = Date.parse(user.metadata && user.metadata.lastSignInTime);
+    if (isFinite(__at) && Date.now() - __at >= 60 * 60 * 1000) {
+      trace('auth:session-1h-expired');
+      try { await signOut(auth); } catch(_){}
+      show('signinView');
+      showError('로그인한 지 1시간이 지나 자동 로그아웃되었습니다. 다시 인증해 주세요.');
+      return;
+    }
+  } catch(_){}
   show('loadingView');
   // 🛡️ Safety net — 10초 이상 loadingView 머무르면 자동으로 signinView 복귀 +
   // 진단 메시지 표시. 이전엔 onValue 가 null 던지면 무한 spinner 였음.

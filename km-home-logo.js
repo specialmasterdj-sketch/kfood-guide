@@ -1,4 +1,6 @@
-// km-home-logo.js — 맨 위 김치마트 로고를 누르면 앱 모음(apps.html) 으로 간다.
+// km-home-logo.js — 맨 위 김치마트 로고를 누르면 첫 화면(업무 화면 tasks.html) 으로 간다.
+// ✅ 2026-10-28 사장님: "김치 로고를 누르면 앱 모음으로 오는데 직원들이 어렵고 복잡해한다.
+//   직원들은 처음 메인 페이지(업무 화면)를 가장 많이 본다" → 로고·홈 = 업무 화면. 앱 모음은 왼쪽 메뉴 '모든 앱'.
 //                    로고 밑에 "🏠 홈으로" 라고 글자로 적어 둔다.
 //
 // 2026-10-07 전무님: "모두들 홈 첫 화면으로 가는 방법을 몰라서 앱을 못 쓴다.
@@ -21,7 +23,7 @@
   if (/^(apps|auth)\.html$/.test(page)) return;      // 앱 모음 자신과 로그인 화면은 뺀다
 
   var WORD = { ko:'홈으로',             en:'Home',                  es:'Inicio' };
-  var TIP  = { ko:'앱 모음으로 갑니다',  en:'Go to the app list',    es:'Ir a la lista de apps' };
+  var TIP  = { ko:'첫 화면(내 업무)으로 갑니다', en:'Go to the main screen (My Tasks)', es:'Ir a la pantalla principal (Mis tareas)' };
 
   // 앱마다 언어를 담아 두는 칸 이름이 조금씩 다르다 — 쓰이는 것을 차례로 본다.
   function curLang(){
@@ -73,14 +75,6 @@
   }
   window.kmHomeLogoRefresh = refresh;
 
-  // 앱 모음으로 갈 때 표를 남긴다.
-  //   apps.html 은 '밖에서 처음 열었나' 를 referrer 로 판단해 업무지시로 보내는데,
-  //   데스크톱 창처럼 referrer 가 안 붙는 곳에서는 홈 버튼이 그대로 되튕겨 깜빡였다.
-  //   이 표가 있으면 apps.html 이 "사람이 홈 버튼을 눌러 온 것" 으로 알고 그대로 머문다.
-  function markGoing(){
-    try { sessionStorage.setItem('km_go_apps', '1'); } catch(e){}
-  }
-
   function wire(el){
     if (!el || el.getAttribute('data-km-home') === '1') return;
     if (el.closest && el.closest('.km-home-wrap')) return;      // 이미 감쌌다
@@ -90,8 +84,7 @@
 
     var a = document.createElement('a');
     a.className = 'km-home-wrap';
-    a.href = './apps.html';
-    a.addEventListener('click', markGoing);
+    a.href = './tasks.html';
 
     parent.insertBefore(a, el);        // 로고가 있던 자리에 그대로 둔다
     a.appendChild(el);

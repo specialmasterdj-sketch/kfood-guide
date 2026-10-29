@@ -56,6 +56,8 @@
 
   const LINKS = [
     { sec: { ko:'대시보드', en:'Dashboard', es:'Panel' } },
+    // ✅ 2026-10-28 사장님: "이 화면(업무)이 앱에서 제일 중요한데 돌아가는 버튼이 안 보여" → 맨 위로
+    { ic: '✅', lbl: { ko:'내 업무',      en:'My Tasks',    es:'Mis tareas' },  href: './tasks.html', primary: true },
     { ic: '⊞',  lbl: { ko:'모든 앱',      en:'All Apps',    es:'Todas Apps' },  href: './apps.html', highlight: true },
     { ic: '🏠', lbl: { ko:'HUB',         en:'HUB',         es:'HUB' },         href: './hub.html' },
     { ic: '📅', lbl: { ko:'스케줄',       en:'Schedule',    es:'Horario' },     href: './shifts.html' },
@@ -68,7 +70,6 @@
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true, badge: 'chat' },
     { ic: '📨', lbl: { ko:'HR 건의',      en:'HR Inquiry',     es:'Consulta RH' },        href: './chat.html?room=hr_inquiries' },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html', badge: 'updates' },
-    { ic: '📨', lbl: { ko:'업무 지시',     en:'Tasks',          es:'Tareas' },           href: './tasks.html', highlight: true },
     { ic: '📅', lbl: { ko:'유통기한 관리',  en:'Expiry tracker', es:'Caducidad' },        href: './expiry.html', highlight: true },
     { ic: '🧾', lbl: { ko:'유통기한 크레딧',  en:'Vendor credit',  es:'Crédito proveedor' }, href: './credit.html', highlight: true },
     // 🗑️ 2026-10-25 사장님 '없애줘': 온도 관리(Temp tracker) 메뉴 제거 — temp.html·기록은 보존
@@ -125,6 +126,9 @@
     .km-navside { position: fixed; top: 0; left: 0; bottom: 0; width: ${W}px; background: linear-gradient(180deg,#ffffff 0%,#fafbfc 100%); border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; z-index: 1000; font-family: 'Inter','Pretendard','Segoe UI','Malgun Gothic',-apple-system,BlinkMacSystemFont,Arial,sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -.01em; }
     .km-navside .km-brand { display:flex; align-items:center; justify-content:flex-start; gap:0; padding: 14px 16px; border-bottom: 1px solid #f3f4f6; margin-bottom: 0; text-decoration:none; color:inherit; cursor:pointer; transition: background .15s; border-radius:0; }
     .km-navside .km-brand:hover { background:#f0fdf4; }
+    /* 🏠 2026-10-28 — 로고 밑에 늘 '첫 화면' 글자 (모든 화면 같은 모양). 누르면 업무 첫 화면 */
+    .km-navside .km-brand { flex-direction:column; align-items:flex-start; gap:6px; }
+    .km-navside .km-brand-home { display:inline-block; font-size:12px; line-height:1; font-weight:900; color:#15803d; background:#e8f5ee; border:1px solid #bbf7d0; border-radius:999px; padding:4px 11px; white-space:nowrap; }
     .km-navside .km-brand:hover .km-brand-logo { transform:scale(1.04); transition:transform .25s cubic-bezier(.2,.8,.2,1); }
     .km-navside .km-brand-logo { height:42px; width:auto; max-width:170px; object-fit:contain; display:block; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
     /* legacy fallback if HTML still uses .logo / .nm */
@@ -264,7 +268,7 @@
       ? `<a class="km-backbtn" href="./apps.html" onclick="event.preventDefault();if(history.length>1)history.back();else location.href='./apps.html'">${backLbl}</a>`
       : '';
     const homeTitle = pickLbl({ ko:'첫 화면으로', en:'Go to home', es:'Ir al inicio' });
-    let html = `<a class="km-brand" href="./apps.html" title="${homeTitle}" aria-label="${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}"><img class="km-brand-logo" src="./pwa-assets/kimchi-text-logo.png?v=2" alt="KIMCHI"></a>${backHtml}`;
+    let html = `<a class="km-brand" href="./tasks.html" title="${homeTitle}" aria-label="${pickLbl({ ko:'김치마트', en:'Kimchi Mart', es:'Kimchi Mart' })}"><img class="km-brand-logo" data-km-home="1" src="./pwa-assets/kimchi-text-logo.png?v=2" alt="KIMCHI"><span class="km-brand-home">🏠 ${pickLbl({ ko:'첫 화면', en:'Home', es:'Inicio' })}</span></a>${backHtml}`;
     for (let i = 0; i < visible.length; i++) {
       const it = visible[i];
       if (it.sec) {
