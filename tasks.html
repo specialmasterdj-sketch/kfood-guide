@@ -15,7 +15,7 @@
   // (1) 페이지 첫 진입 시 BUST 값 비교 → 다르면 캐시 비우고 1회 reload.
   // (2) 이미 열린 페이지는 5분/visible 시 서버 BUST 폴링 → 다르면 자동 reload.
   (function(){
-    var BUST = 'tasks_2026_10_25_rules';   // 🌅 업무 0건인 날에도 첫 화면
+    var BUST = 'tasks_2026_10_28_speed';   // 🌅 업무 0건인 날에도 첫 화면
     var KEY = 'kmtools_bust_tasks';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -4704,12 +4704,39 @@ function refreshStaticI18n(){
 }
 
 // In-memory translation cache so we don't refetch the same string
+// 🐢 2026-10-28 사장님: "페이지가 버벅대, 매장 바꾸면 화면 정보가 안 나와"
+//   원인 = 매장 한 번 바꿀 때 구글 번역 요청 765번(전부 503 실패). 실패는 기억을 안 해서
+//   화면을 그릴 때마다 같은 글자를 또 보내고, 하나 돌아올 때마다 화면 전체를 다시 그렸다.
+//   → ① 번역은 기기에 저장(다음에 열 때 요청 0) ② 번역 서버가 실패하면 10분 쉼
+//     ③ 같은 글자는 동시에 한 번만 요청 ④ 바뀐 게 없으면 다시 그리지 않음.
 const TR_CACHE = new Map();
+const TR_LS_KEY = 'tasks.trCache.v1';
+try { const o = JSON.parse(localStorage.getItem(TR_LS_KEY) || '{}'); Object.keys(o).forEach(k => TR_CACHE.set(k, o[k])); } catch(_){}
+let __trSaveT = null;
+function trSaveSoon(){
+  if (__trSaveT) return;
+  __trSaveT = setTimeout(() => {
+    __trSaveT = null;
+    try {
+      const ent = Array.from(TR_CACHE.entries()).slice(-1500);   // 최근 1,500개만 (용량 보호)
+      localStorage.setItem(TR_LS_KEY, JSON.stringify(Object.fromEntries(ent)));
+    } catch(_){}
+  }, 2000);
+}
+let TR_DOWN_UNTIL = 0;            // 번역 서버가 실패하면 이 시각까지 요청하지 않는다
+const TR_INFLIGHT = new Map();    // 같은 글자를 동시에 여러 번 보내지 않는다
 async function translate(text, target) {
   if (!text) return '';
   if (!target || target === 'auto') return text;
   const key = target + '|' + text;
   if (TR_CACHE.has(key)) return TR_CACHE.get(key);
+  if (Date.now() < TR_DOWN_UNTIL) return text;
+  if (TR_INFLIGHT.has(key)) return TR_INFLIGHT.get(key);
+  const p = translateFetch(text, target, key);
+  TR_INFLIGHT.set(key, p);
+  try { return await p; } finally { TR_INFLIGHT.delete(key); }
+}
+async function translateFetch(text, target, key) {
   try {
     const u = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
     // ⏱️ 2026-06-19 타임아웃 — 번역 API가 응답을 멈추면(폰 네트워크·차단·과부하) await 가
@@ -4723,8 +4750,9 @@ async function translate(text, target) {
     const j = await r.json();
     const out = (j && j[0]) ? j[0].map(seg => seg[0]).join('') : text;
     TR_CACHE.set(key, out);
+    trSaveSoon();
     return out;
-  } catch(e) { return text; }
+  } catch(e) { TR_DOWN_UNTIL = Date.now() + 10 * 60000; return text; }
 }
 async function translateMulti(text) {
   if (!text) return null;
@@ -4741,18 +4769,23 @@ function pickLang(tr, fallback){
   return tr[LANG] || tr.ko || tr.en || tr.es || fallback || '';
 }
 // Translate an existing task on the fly if it has no translations bundle yet
+// 🐢 2026-10-28 — 같은 업무 객체는 한 번만, 번역이 실제로 생겼을 때만 다시 그린다
+const __trBusy = new WeakSet();
 async function backfillTranslate(t) {
-  if (t.nameTr || !t.name) return;
+  if (t.nameTr || !t.name || __trBusy.has(t)) return;
+  __trBusy.add(t);
+  const changed = tr => !!tr && (tr.ko !== tr.en || tr.en !== tr.es);
+  let any = false;
   const tr = await translateMulti(t.name);
-  if (tr) t.nameTr = tr;
-  if (t.memo && !t.memoTr) t.memoTr = await translateMulti(t.memo);
-  if (t.note && !t.noteTr) t.noteTr = await translateMulti(t.note);
+  if (tr) { t.nameTr = tr; any = any || changed(tr); }
+  if (t.memo && !t.memoTr) { t.memoTr = await translateMulti(t.memo); any = any || changed(t.memoTr); }
+  if (t.note && !t.noteTr) { t.noteTr = await translateMulti(t.note); any = any || changed(t.noteTr); }
   // Backfill place translation only for free-form custom places. Known
   // places fall through PLACE_I18N synchronously so we don't burn API calls.
   if (t.place && !t.placeTr && !PLACE_I18N[t.place]) {
-    t.placeTr = await translateMulti(t.place);
+    t.placeTr = await translateMulti(t.place); any = any || changed(t.placeTr);
   }
-  renderAll && renderAll();
+  if (any && typeof renderAll === 'function') renderAll();
 }
 const BRANCHES = [
   { id:'MIAMI',           ko:'마이애미',       en:'Miami',           es:'Miami' },
@@ -8823,6 +8856,14 @@ function empViewBranch(){
   const mine = (me && me.branch) || '';
   return (EMP_REF && empCanBrowseBranches()) ? EMP_REF : mine;
 }
+// 🐢 2026-10-28 사장님: "매장을 바꾸면 오늘 근무 등 자료가 안 보여" — 숫자를 받아 와도
+//   그 칸을 보고 있을 때만 다시 그려서 '…' 로 멈춰 있었다. 받아 오면 첫 화면을 한 번(묶어서) 다시 그린다.
+//   또 매장을 빨리 바꾸면 늦게 온 옛 매장 숫자가 새 매장 칸에 섞였다 → 매장이 그대로일 때만 넣는다.
+let __empReT = null;
+function empRerenderSoon(){
+  if (__empReT) return;
+  __empReT = setTimeout(() => { __empReT = null; try { renderEmp(); } catch(_){} }, 150);
+}
 // 매장을 바꾼다 — 불러온 숫자는 버리고 새 매장 것으로 다시 받는다
 window.empGoBranch = function(b){
   EMP_STAFF = null; EMP_OOS = null; EMP_HQPH = null;
@@ -9005,7 +9046,7 @@ function empNoTaskHtml(){
 // ① 오늘 근무 — 스케줄의 오늘 시프트
 async function empLoadStaff(){
   const br = empViewBranch();
-  EMP_STAFF = [];
+  const out = [];
   try {
     const [sh, emp] = await Promise.all([
       fetch(FB_DB_URL + '/schedules/' + br + '/shifts.json', { cache:'no-store' }).then(r => r.json()),
@@ -9017,11 +9058,13 @@ async function empLoadStaff(){
     Object.entries(sh || {}).forEach(([k, v]) => {
       if (!k.endsWith('@' + d) || !v) return;
       const id = k.split('@')[0], e = byId[id];
-      EMP_STAFF.push({ name: (e && e.name) || id, role: v.position || (e && e.role) || '', start: v.start || '', end: v.end || '' });
+      out.push({ name: (e && e.name) || id, role: v.position || (e && e.role) || '', start: v.start || '', end: v.end || '' });
     });
-    EMP_STAFF.sort((a, b) => String(a.start).localeCompare(String(b.start)));
+    out.sort((a, b) => String(a.start).localeCompare(String(b.start)));
   } catch(e){ console.warn('[staff]', e); }
-  if (EMP_VIEW === 'staff') renderEmp();
+  if (empViewBranch() !== br) return;   // 그사이 매장이 바뀌었다 — 새 매장 것이 따로 온다
+  EMP_STAFF = out;
+  empRerenderSoon();
 }
 function empStaffPanel(){
   if (!EMP_STAFF) return empWait();
@@ -9039,7 +9082,7 @@ async function empLoadOos(){
     EMP_OOS = Object.entries(v || {}).map(([k, x]) => ({ key:k, name: (x && (x.name || x.item)) || '', bay: (x && x.bay) || '', at: (x && x.at) || 0 }))
                 .sort((a, b) => (b.at || 0) - (a.at || 0));
   } catch(e){ console.warn('[oos]', e); }
-  if (EMP_VIEW === 'stock') renderEmp();
+  empRerenderSoon();
 }
 function empOosPanel(){
   if (!EMP_OOS) return empWait();
@@ -9056,20 +9099,22 @@ function empOosPanel(){
 }
 // ④ 본사 지시 + 오늘 우리 매장이 올린 사진
 async function empLoadHqPhotos(){
-  EMP_HQPH = [];
+  const br = empViewBranch();
+  const out = [];
   try {
-    const br = empViewBranch();
     const v = await fetch(FB_DB_URL + '/tasks/' + br + '/' + todayStr() + '.json?cache=' + Date.now(), { cache:'no-store' }).then(r => r.json());
     Object.values(v || {}).forEach(t => {
       if (!t) return;
       const who = t.completedBy || t.assignedTo || '';
-      (t.photos || []).forEach(u => { if (String(u).startsWith('http')) EMP_HQPH.push({ url:u, by:who, name:t.name, hq: !!t.hq }); });
+      (t.photos || []).forEach(u => { if (String(u).startsWith('http')) out.push({ url:u, by:who, name:t.name, hq: !!t.hq }); });
       const sub = t.hqSub;
-      if (sub && sub.photos) sub.photos.forEach(u => EMP_HQPH.push({ url:u, by: sub.by || who, name:t.name, hq:true }));
+      if (sub && sub.photos) sub.photos.forEach(u => out.push({ url:u, by: sub.by || who, name:t.name, hq:true }));
     });
-    EMP_HQPH.sort((a, b) => (b.hq ? 1 : 0) - (a.hq ? 1 : 0));
+    out.sort((a, b) => (b.hq ? 1 : 0) - (a.hq ? 1 : 0));
   } catch(e){ console.warn('[hqph]', e); }
-  if (EMP_VIEW === 'hq') renderEmp();
+  if (empViewBranch() !== br) return;
+  EMP_HQPH = out;
+  empRerenderSoon();
 }
 function empHqPanel(my){
   const hq = (my || []).filter(x => x.hq);
