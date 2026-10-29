@@ -37,6 +37,14 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
 #busy{position:fixed;top:0;left:0;right:0;background:#0277BD;color:#fff;text-align:center;padding:6px;font-size:.85em;font-weight:700;z-index:1000;display:none}
 .msg{font-size:.82em;margin-top:8px;min-height:1.1em}
 .msg.ok{color:#16a34a}.msg.err{color:#dc2626}
+.pend{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:8px}
+.pend .ph{font-family:Menlo,Consolas,monospace;font-weight:800;color:#b45309;font-size:1.04em}
+.pend .meta{font-size:.78em;color:#92400e;margin-top:3px}
+.pend .hint{background:#fff;border:1px dashed #fbbf24;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:.82em;color:#78350f;line-height:1.55}
+.pend .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.pend .acts button{border:0;border-radius:8px;padding:9px 12px;font-weight:800;cursor:pointer;font-size:.82em;font-family:inherit}
+.bFix{background:#16a34a;color:#fff}
+.bNew{background:#0277BD;color:#fff}
 </style>
 </head>
 <body>
@@ -73,6 +81,12 @@ body{font-family:'Segoe UI','Malgun Gothic',Arial,sans-serif;background:#f4f6f9;
     <div class="msg" id="addMsg"></div>
   </div>
 
+  <div class="card" id="pendCard" style="display:none;border-color:#fcd34d;background:#fffdf5">
+    <h2 style="color:#b45309">⏳ <span data-i="pendTitle">들어오려다 막힌 번호</span></h2>
+    <div style="font-size:.82em;color:#92400e;line-height:1.6;margin-bottom:10px" data-ih="pendNote"></div>
+    <div id="pendList"></div>
+  </div>
+
   <div class="card">
     <h2>📋 <span data-i="listTitle">등록된 직원</span></h2>
     <div id="list"><div class="empty" data-i="loading">불러오는 중...</div></div>
@@ -105,7 +119,16 @@ const I18N = {
     rStaff:'👤 일반 직원', rVice:'🔰 부 슈퍼바이저', rSup:'🎖️ 슈퍼바이저', rSenior:'🏅 시니어 슈퍼바이저', rAsst:'🥈 부매니저', rMgr:'⭐ 매니저', rCashier:'🛒 캐셔/스타커', rSushi:'🍣 스시/주방', rMeat:'🥩 정육/수산', rProduce:'🥬 청과/야채', rDeli:'🥪 델리', del:'🗑 삭제', changed:'✅ 직책 변경됨', changeFail:'❌ 변경 실패', editBtn:'✏️ 이름', renamePrompt:'새 이름 입력 / New name', renamed:'✅ 이름 변경됨',
     errName:'⚠️ 이름을 입력하세요.', errPhone:'⚠️ 전화번호를 정확히 입력하세요 (예: 954-123-4567).', errBranch:'⚠️ 지점을 선택하세요.',
     okAdd:(n,p)=>'✅ '+n+' 등록됨 ('+p+')', failAdd:(c,t)=>'❌ 등록 실패: '+c+' '+t, readFail:(c,t)=>'읽기 실패: '+c+' — Firebase RTDB 규칙(phoneRoster) 게시 필요',
-    delConfirm:(n)=>(n||'이 직원')+' 등록을 삭제할까요?\n(삭제해도 이미 만든 계정은 남습니다 — 새 로그인만 차단)', readErr:'오류: ' },
+    delConfirm:(n)=>(n||'이 직원')+' 등록을 삭제할까요?\n(삭제해도 이미 만든 계정은 남습니다 — 새 로그인만 차단)', readErr:'오류: ',
+    pendTitle:'들어오려다 막힌 번호',
+    pendNote:'문자 코드까지는 받았는데 <b>명단에 없는 번호</b>라 대기 상태로 멈춘 사람들입니다. 명단 번호와 한 자리만 다르면 아래에 알려드립니다 — <b>번호 고치기</b>를 누르면 명단이 바로 고쳐지고, 그 직원은 앱만 다시 열면 들어옵니다.',
+    pendEmpty:'막힌 번호가 없습니다 ✅',
+    pendJoined:(d)=>'처음 들어온 날 '+d,
+    pendNear1:(n,p)=>'💡 <b>'+n+'</b> 의 등록번호 '+p+' 와 <b>한 자리</b>만 다릅니다. 명단 번호를 잘못 적었을 수 있습니다.',
+    pendNear2:(n,p)=>'💡 <b>'+n+'</b> 의 등록번호 '+p+' 와 <b>숫자 두 개의 자리가 바뀐</b> 번호입니다. 명단 번호를 잘못 적었을 수 있습니다.',
+    pendFix:'✅ 명단 번호를 이 번호로 고치기', pendNew:'➕ 새 직원으로 등록',
+    pendFixConfirm:(n,o,w)=>n+' 의 등록번호를\n\n'+o+'\n  ↓\n'+w+'\n\n로 고칠까요?',
+    pendFixed:'✅ 번호 고침 — 그 직원이 앱을 다시 열면 바로 들어옵니다', pendFixFail:'❌ 고치기 실패: ' },
   en:{ busy:'Processing…', title:'Staff Phone Registration', sub:'Registered staff sign in with phone + SMS code only (no PIN / approval)',
     warn:'💡 Manager+ only. Register a staff member\'s <b>name · phone · branch · role</b>, and they sign in with <b>phone → SMS code → instant entry</b> (no store PIN / manager approval). US numbers can be 10 digits (e.g. 954-123-4567).',
     addTitle:'Add Staff', lName:'Name', lPhone:'Phone', lBranch:'Branch', lRole:'Role', phName:'Staff name', branchDef:'📍 Select branch', btnAdd:'Register',
@@ -113,7 +136,16 @@ const I18N = {
     rStaff:'👤 Staff', rVice:'🔰 Vice Supervisor', rSup:'🎖️ Supervisor', rSenior:'🏅 Senior Supervisor', rAsst:'🥈 Assistant Manager', rMgr:'⭐ Manager', rCashier:'🛒 Cashier/Stocker', rSushi:'🍣 Sushi/Kitchen', rMeat:'🥩 Meat & Seafood', rProduce:'🥬 Produce', rDeli:'🥪 Deli', del:'🗑 Delete', changed:'✅ Role changed', changeFail:'❌ Change failed', editBtn:'✏️ Name', renamePrompt:'Enter new name', renamed:'✅ Name changed',
     errName:'⚠️ Enter a name.', errPhone:'⚠️ Enter a valid phone (e.g. 954-123-4567).', errBranch:'⚠️ Select a branch.',
     okAdd:(n,p)=>'✅ '+n+' registered ('+p+')', failAdd:(c,t)=>'❌ Failed: '+c+' '+t, readFail:(c,t)=>'Read failed: '+c+' — publish Firebase RTDB rules (phoneRoster)',
-    delConfirm:(n)=>'Delete '+(n||'this staff')+'?\n(Existing account stays — only new logins are blocked)', readErr:'Error: ' },
+    delConfirm:(n)=>'Delete '+(n||'this staff')+'?\n(Existing account stays — only new logins are blocked)', readErr:'Error: ',
+    pendTitle:'Stuck at the door',
+    pendNote:'These people passed the SMS code but their number is <b>not on the list</b>, so they are stuck waiting. If a number is one digit off from a registered one, it is flagged below — press <b>Fix the number</b> and they get in as soon as they reopen the app.',
+    pendEmpty:'Nobody is stuck ✅',
+    pendJoined:(d)=>'First seen '+d,
+    pendNear1:(n,p)=>'💡 <b>one digit</b> away from <b>'+n+'</b> (registered as '+p+'). The number on the list may have a typo.',
+    pendNear2:(n,p)=>'💡 same as <b>'+n+'</b> (registered as '+p+') with <b>two digits swapped</b>. The number on the list may have a typo.',
+    pendFix:'✅ Fix the number on the list', pendNew:'➕ Register as new staff',
+    pendFixConfirm:(n,o,w)=>'Change '+n+'\'s number\n\n'+o+'\n  ↓\n'+w+'\n\n?',
+    pendFixed:'✅ Number fixed — they get in as soon as they reopen the app', pendFixFail:'❌ Fix failed: ' },
   es:{ busy:'Procesando…', title:'Registro de Teléfono de Personal', sub:'El personal registrado inicia solo con teléfono + código SMS (sin PIN / aprobación)',
     warn:'💡 Solo Gerente+. Registra <b>nombre · teléfono · sucursal · rol</b> del empleado, y entrará con <b>teléfono → código SMS → entrada directa</b> (sin PIN ni aprobación). Números de EE.UU. pueden ser 10 dígitos (ej. 954-123-4567).',
     addTitle:'Agregar Personal', lName:'Nombre', lPhone:'Teléfono', lBranch:'Sucursal', lRole:'Rol', phName:'Nombre del empleado', branchDef:'📍 Selecciona sucursal', btnAdd:'Registrar',
@@ -121,7 +153,16 @@ const I18N = {
     rStaff:'👤 Personal', rVice:'🔰 Subsupervisor', rSup:'🎖️ Supervisor', rSenior:'🏅 Supervisor Senior', rAsst:'🥈 Subgerente', rMgr:'⭐ Gerente', rCashier:'🛒 Cajero/Reponedor', rSushi:'🍣 Sushi/Cocina', rMeat:'🥩 Carne y Mariscos', rProduce:'🥬 Frutas y Verduras', rDeli:'🥪 Deli', del:'🗑 Eliminar', changed:'✅ Rol cambiado', changeFail:'❌ Error al cambiar', editBtn:'✏️ Nombre', renamePrompt:'Nuevo nombre', renamed:'✅ Nombre cambiado',
     errName:'⚠️ Ingresa un nombre.', errPhone:'⚠️ Ingresa un teléfono válido (ej. 954-123-4567).', errBranch:'⚠️ Selecciona una sucursal.',
     okAdd:(n,p)=>'✅ '+n+' registrado ('+p+')', failAdd:(c,t)=>'❌ Falló: '+c+' '+t, readFail:(c,t)=>'Error de lectura: '+c+' — publica las reglas RTDB (phoneRoster)',
-    delConfirm:(n)=>'¿Eliminar '+(n||'este empleado')+'?\n(La cuenta existente permanece — solo se bloquean nuevos inicios)', readErr:'Error: ' },
+    delConfirm:(n)=>'¿Eliminar '+(n||'este empleado')+'?\n(La cuenta existente permanece — solo se bloquean nuevos inicios)', readErr:'Error: ',
+    pendTitle:'Detenidos en la puerta',
+    pendNote:'Estas personas recibieron el código SMS pero su número <b>no está en la lista</b>, así que quedaron esperando. Si un número difiere en un dígito de uno registrado, se avisa abajo — pulsa <b>Corregir el número</b> y entrarán al volver a abrir la app.',
+    pendEmpty:'Nadie está detenido ✅',
+    pendJoined:(d)=>'Primera vez '+d,
+    pendNear1:(n,p)=>'💡 difiere en <b>un dígito</b> de <b>'+n+'</b> (registrado como '+p+'). El número de la lista puede estar mal escrito.',
+    pendNear2:(n,p)=>'💡 igual que <b>'+n+'</b> (registrado como '+p+') con <b>dos dígitos intercambiados</b>. El número de la lista puede estar mal escrito.',
+    pendFix:'✅ Corregir el número de la lista', pendNew:'➕ Registrar como nuevo',
+    pendFixConfirm:(n,o,w)=>'¿Cambiar el número de '+n+'\n\n'+o+'\n  ↓\n'+w+'\n\n?',
+    pendFixed:'✅ Número corregido — entrará al volver a abrir la app', pendFixFail:'❌ Error al corregir: ' },
 };
 let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(_){ return 'ko'; } })();
 if (!I18N[LANG]) LANG = 'ko';
@@ -252,6 +293,8 @@ window.loadRoster = async function(){
     const r=await fetch(`${FB_DB}/phoneRoster.json${q}`, { cache:'no-store' });
     if(!r.ok){ const t=await r.text().catch(()=>''); list.innerHTML='<div class="empty" style="color:#dc2626">'+esc(T().readFail(r.status, t.slice(0,60)))+'</div>'; return; }
     const data=await r.json()||{}; const entries=Object.entries(data);
+    ROSTER_ALL = data;   // 오타 감지는 전 지점 명단과 견준다
+    if (window.loadPending) window.loadPending();
     if(!entries.length){ list.innerHTML='<div class="empty">'+T().empty+'</div>'; return; }
     const byBranch={}; entries.forEach(([k,v])=>{ const b=v.branch||'(?)'; (byBranch[b]=byBranch[b]||[]).push([k,v]); });
     let html='';
@@ -265,6 +308,92 @@ window.loadRoster = async function(){
     list.innerHTML = html || '<div class="empty">'+T().empty+'</div>';
   } catch(e){ list.innerHTML='<div class="empty" style="color:#dc2626">'+esc(T().readErr+e.message)+'</div>'; }
   finally { busy(false); }
+};
+
+// ⏳ 2026-10-29 — 문자 인증은 통과했는데 명단에 없어 '승인 대기'로 멈춘 번호.
+//   마이애미 Rolando Ag 가 이 경우였다: 명단 번호가 실제 번호와 한 자리 달라(866↔876)
+//   본인은 코드까지 받고도 영영 못 들어오고, 이 화면에는 흔적조차 안 보였다.
+let ROSTER_ALL = {};
+// 길이 같고 한 자리만 다르면 1, 이웃한 두 자리가 바뀐 것이면 2, 그 외 99(남남)
+function _digDiff(a,b){
+  if(a.length!==b.length) return 99;
+  const d=[]; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) d.push(i);
+  if(d.length===1) return 1;
+  if(d.length===2 && d[1]===d[0]+1 && a[d[0]]===b[d[1]] && a[d[1]]===b[d[0]]) return 2;
+  return 99;
+}
+function _nearRoster(key){
+  let best=null;
+  for(const k in ROSTER_ALL){ const d=_digDiff(key,k); if(d<=2 && (!best||d<best.d)) best={ key:k, d, v:ROSTER_ALL[k] }; }
+  return best;
+}
+window.loadPending = async function(){
+  const card=document.getElementById('pendCard'), box=document.getElementById('pendList');
+  if(!card||!box) return;
+  let data=null;
+  try{
+    const q=await authQ();
+    const r=await fetch(`${FB_DB}/users.json${q}`, { cache:'no-store' });
+    if(!r.ok){ card.style.display='none'; return; }     // 규칙상 못 읽으면 조용히 숨김
+    data=await r.json()||{};
+  }catch(_){ card.style.display='none'; return; }
+  const rows=[];
+  for(const uid in data){
+    const u=data[uid]||{};
+    if(u.status!=='pending') continue;                  // 차단(blocked)은 일부러 막은 것이라 제외
+    const key=digitsKey(u.phone||'');
+    if(!key || ROSTER_ALL[key]) continue;               // 전화 로그인만 · 이미 명단에 있으면 제외
+    const near=_nearRoster(key);
+    if(!MY_GLOBAL){                                     // 지점 매니저는 본인 지점 것만
+      const ub=u.branch||'', nb=(near&&near.v.branch)||'';
+      if(ub!==MY_BRANCH && nb!==MY_BRANCH) continue;
+    }
+    rows.push({ uid, key, near, at:u.createdAt||0 });
+  }
+  if(!rows.length){ card.style.display='none'; return; }
+  rows.sort((a,b)=>(b.near?1:0)-(a.near?1:0) || b.at-a.at);
+  card.style.display='';
+  box.innerHTML = rows.map(r=>{
+    const day = r.at ? new Date(r.at).toLocaleDateString() : '—';
+    const hint = r.near
+      ? `<div class="hint">${(r.near.d===1?T().pendNear1:T().pendNear2)(esc(r.near.v.name||''), esc(fmtUS(r.near.key)))}</div>`
+      : '';
+    const fixBtn = r.near
+      ? `<button class="bFix" onclick="fixNumber('${r.uid}','${r.near.key}','${r.key}')">${T().pendFix}</button>`
+      : '';
+    return `<div class="pend"><div class="ph">${esc(fmtUS('+'+r.key))}</div>`
+      + `<div class="meta">${T().pendJoined(day)}</div>${hint}`
+      + `<div class="acts">${fixBtn}<button class="bNew" onclick="newFromPending('${r.key}')">${T().pendNew}</button></div></div>`;
+  }).join('');
+};
+// 명단 번호를 실제로 로그인한 번호로 교체 — 이름·지점·직책은 그대로 옮긴다
+window.fixNumber = async function(uid, oldKey, newKey){
+  const v=ROSTER_ALL[oldKey]; if(!v) return;
+  const e164='+'+newKey;
+  if(!confirm(T().pendFixConfirm(v.name||'', fmtUS(oldKey), fmtUS(e164)))) return;
+  busy(true);
+  const msg=document.getElementById('addMsg'); msg.className='msg';
+  try{
+    const q=await authQ();
+    const put=await fetch(`${FB_DB}/phoneRoster/${newKey}.json${q}`, { method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name:v.name||'', branch:v.branch||'', role:v.role||'', e164, addedAt: Date.now(), fixedFrom: oldKey }) });
+    if(!put.ok){ const t=await put.text().catch(()=>''); throw new Error(put.status+' '+t.slice(0,60)); }
+    await fetch(`${FB_DB}/phoneRoster/${oldKey}.json${q}`, { method:'DELETE' });
+    // 계정도 바로 승인 — 실패해도 다시 로그인하면 auth.html 이 명단 보고 자동 승인한다
+    try{
+      await fetch(`${FB_DB}/users/${uid}.json${q}`, { method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ status:'approved', name:v.name||'', branch:v.branch||'', role:v.role||'', approvedAt: Date.now(), approvedBy:'roster-fix' }) });
+    }catch(_){}
+    msg.textContent=T().pendFixed; msg.className='msg ok';
+    loadRoster();
+  }catch(e){ msg.textContent=T().pendFixFail+e.message; msg.className='msg err'; }
+  finally{ busy(false); }
+};
+// 오타가 아니라 아예 새 직원일 때 — 위 등록칸에 번호만 채워 준다
+window.newFromPending = function(key){
+  const p=document.getElementById('inPhone'); if(p) p.value=fmtUS('+'+key);
+  window.scrollTo({ top:0, behavior:'smooth' });
+  const n=document.getElementById('inName'); if(n) setTimeout(()=>{ try{ n.focus(); }catch(_){ } }, 350);
 };
 
 applyLang();
