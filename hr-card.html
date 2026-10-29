@@ -63,7 +63,7 @@
   .notice{ background:var(--lgold); border:1.5px solid var(--gold); border-radius:12px; padding:10px 14px; font-size:.86em; font-weight:600; color:#92400e; margin-top:12px; }
   #gateBlock{ display:none; position:fixed; inset:0; background:#f6f8f7; z-index:9999; align-items:center; justify-content:center; text-align:center; padding:30px; }
   /* 👀 2026-10-28 지점 스토어 매니저 = 본인 지점 보기 전용 — 쓰기 UI 전부 숨김 */
-  body.ro .addrow, body.ro #L_save, body.ro #L_newEval, body.ro .btn.danger, body.ro #chainBtns{ display:none !important; }
+  body.ro .addrow, body.ro #L_save, body.ro #L_newEval, body.ro .btn.danger, body.ro .rohide{ display:none !important; }
   body.ro .profile-grid input{ pointer-events:none; background:#f8fafc; color:#475569; }
   body.ro #branchSel{ opacity:.75; }
   @media print{
@@ -96,9 +96,9 @@
   <!-- 직원 선택 -->
   <div id="empPick">
     <div id="chainBtns" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-      <button class="btn" onclick="openDeptSales()">📈 부서 매출 관리 (월 1회 입력 → 담당 전원 카드 자동 반영)</button>
+      <button class="btn" id="btnDept" onclick="openDeptSales()">📈 부서 매출 관리 (월 1회 입력 → 담당 전원 카드 자동 반영)</button>
       <button class="btn" id="L_dailyBtn" onclick="openDailySales()">📅 일일 매출</button>
-      <button class="btn sec2" onclick="openSalesCompare()">📊 전 지점 매출 비교</button>
+      <button class="btn sec2" id="btnCompare" onclick="openSalesCompare()">📊 전 지점 매출 비교</button>
     </div>
     <div class="notice" id="L_notice">직원을 선택하면 기록 카드가 열립니다. ⭐ 상점·구글리뷰 기록은 자동으로 쌓여요 — 시급·평가·면담은 여기서 직접 추가하면 클라우드에 저장됩니다 (모든 기기에서 동일하게 보임).</div>
     <div class="emp-grid" id="empGrid"><div class="muted">직원 명단 불러오는 중…</div></div>
@@ -345,10 +345,12 @@ function applyLang(){
   const nt=document.getElementById('nType');
   if(nt){ nt.options[0].text=t('p_warn'); nt.options[1].text=(LANG==='en'?'⭐ Praise':LANG==='es'?'⭐ Elogio':'⭐ 칭찬(수동)'); }
   if (RO){   // 👀 지점 매니저 — 말까지 보기 전용으로
+    set('btnDept', LANG==='en'?'📈 Sales by department · by month':LANG==='es'?'📈 Ventas por departamento · por mes':'📈 부서별 · 월별 매출');
+    set('btnCompare', LANG==='en'?'📊 Monthly sales trend':LANG==='es'?'📊 Tendencia mensual':'📊 월 매출 흐름 · 부서별');
     set('L_topNote', LANG==='en'?'👀 View only · your branch':LANG==='es'?'👀 Solo lectura · su tienda':'👀 보기 전용 · 본인 지점');
-    set('L_notice', LANG==='en'?'Pick an employee to open their card. View only — you cannot add or change anything here.'
-      : LANG==='es'?'Elija un empleado para abrir su ficha. Solo lectura — no puede agregar ni modificar nada.'
-      : '직원을 선택하면 기록 카드가 열립니다. 보기 전용이라 내용을 추가하거나 고칠 수는 없습니다.');
+    set('L_notice', LANG==='en'?'Pick an employee to open their card. The buttons above show your store\'s daily, monthly and department sales. View only — you cannot add or change anything.'
+      : LANG==='es'?'Elija un empleado para abrir su ficha. Los botones de arriba muestran las ventas diarias, mensuales y por departamento de su tienda. Solo lectura — no puede agregar ni modificar nada.'
+      : '직원을 선택하면 기록 카드가 열립니다. 위 버튼으로 우리 지점 일일 매출 · 월 매출 · 부서별 매출을 볼 수 있습니다. 보기 전용이라 내용을 추가하거나 고칠 수는 없습니다.');
   }
 }
 // ================= 기본 =================
@@ -430,6 +432,20 @@ window.__hrBoot = function(){
     RO = true;
     BRANCH = mb;
     document.body.classList.add('ro');
+    // 📊 매출 화면(일일·월·부서)은 그대로 보여 주되 — 지점 목록 자체를 본인 지점 하나로 줄인다.
+    //    표·그래프가 전부 BRANCHES 를 돌기 때문에, 여기 한 줄이면 남의 지점 숫자는 애초에 안 들어온다.
+    const only = BRANCHES.find(x=>x.id===mb);
+    if (only) BRANCHES.splice(0, BRANCHES.length, only);
+    // 우리 지점만 보이는 화면이라 '전 지점' 이라는 말은 걷어낸다
+    try{
+      I18N.dMatrix   = {ko:'일일 매출 — 이 달 모든 날짜', en:'Daily sales — every day this month', es:'Ventas diarias — cada día del mes'};
+      I18N.dChartAll = {ko:'일별 매출 흐름',             en:'Daily sales trend',                  es:'Tendencia diaria de ventas'};
+      I18N.ddChartAll= {ko:'부서별 일별 흐름',           en:'Daily trend by department',          es:'Tendencia diaria por departamento'};
+      I18N.dChartBr  = {ko:'일별 추이 (꼭지점 = 이 달 최고 매출일)', en:'Daily trend (marker = best day)', es:'Tendencia diaria (punto = mejor día)'};
+      I18N.dAutoNote = {ko:'달이 끝나면 그 달 일일 기록이 월 매출로 자동으로 올라갑니다.',
+                        en:'When a month ends, its daily records roll up into monthly sales automatically.',
+                        es:'Al terminar el mes, sus registros diarios pasan automáticamente a las ventas mensuales.'};
+    }catch(_){}
     // 화면만 숨기는 게 아니라 쓰기 통로 자체를 막는다
     ['set','push','update','remove'].forEach(k=>{
       window.__fb[k] = function(){ toast('👀 보기 전용입니다'); return Promise.reject(new Error('read-only')); };
@@ -738,12 +754,13 @@ window.openDeptSales = async function(){
     const isSel = nm => sel.some(s=>nameMatch(s,nm));
     return DS_ROSTER.map(nm=>{
       const on = isSel(nm);
-      return `<span onclick="dsToggleStaff('${esc(dk)}','${esc(nm)}')" style="display:inline-block;margin:2px;padding:5px 10px;border-radius:12px;font-size:.8em;font-weight:800;cursor:pointer;border:1.5px solid ${on?'#1a5c3a':'#e2e8f0'};background:${on?'#1a5c3a':'#fff'};color:${on?'#fff':'#64748b'}">${on?'✓ ':''}${esc(nm)}</span>`;
+      if (RO && !on) return '';   // 보기 전용은 '담당 직원'만 — 안 고른 이름은 안 보여 준다
+    return `<span ${RO?'':`onclick="dsToggleStaff('${esc(dk)}','${esc(nm)}')"`} style="display:inline-block;margin:2px;padding:5px 10px;border-radius:12px;font-size:.8em;font-weight:800;cursor:${RO?'default':'pointer'};border:1.5px solid ${on?'#1a5c3a':'#e2e8f0'};background:${on?'#1a5c3a':'#fff'};color:${on?'#fff':'#64748b'}">${on?'✓ ':''}${esc(nm)}</span>`;
     }).join('');
   };
   const mapRows = Object.entries(DEPT_MAP||{}).map(([dk,dm])=>`
     <tr><td style="vertical-align:top"><b>${esc(dm.name||dk)}</b><br><button class="btn danger" style="margin-top:5px" onclick="dsDelDept('${esc(dk)}')">${t('del')}</button></td>
-    <td>${staffChips(dk, dm.staff)||'<span class="muted">직원 명단 없음</span>'}</td></tr>`).join('');
+    <td>${staffChips(dk, dm.staff)||'<span class="muted">'+(RO?'담당 없음':'직원 명단 없음')+'</span>'}</td></tr>`).join('');
   const salesRows = [];
   Object.entries(DEPT_SALES||{}).forEach(([dk,months])=>{
     const dm=(DEPT_MAP||{})[dk]||{};
@@ -762,17 +779,17 @@ window.openDeptSales = async function(){
     <td><button class="btn danger" onclick="dsDelSale('${esc(r.dk)}','${esc(r.month)}')">${t('del')}</button></td></tr>`).join('');
   m.innerHTML = `<div style="background:#fff;border-radius:16px;max-width:680px;width:100%;padding:16px 18px;margin:auto 0">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-      <h3 style="flex:1;color:#1a5c3a">📈 부서 매출 관리 — ${esc(b?b.ko:BRANCH)}</h3>
+      <h3 style="flex:1;color:#1a5c3a">📈 ${RO?'부서 · 월 매출':'부서 매출 관리'} — ${esc(b?b.ko:BRANCH)}</h3>
       <button class="btn sec2 small" onclick="document.getElementById('dsOv').remove()">✕</button>
     </div>
-    <div style="font-weight:900;color:#1a5c3a;margin:6px 0">① 부서 · 담당 직원 <span style="font-weight:600;color:#94a3b8;font-size:.8em">이름을 눌러 선택/해제 — 바로 저장됨</span></div>
-    <table><tr><th style="width:110px">부서</th><th>담당 직원 (클릭 선택)</th></tr>${mapRows||''}</table>
+    <div style="font-weight:900;color:#1a5c3a;margin:6px 0">① 부서 · 담당 직원 <span style="font-weight:600;color:#94a3b8;font-size:.8em">${RO?'':'이름을 눌러 선택/해제 — 바로 저장됨'}</span></div>
+    <table><tr><th style="width:110px">부서</th><th>담당 직원${RO?'':' (클릭 선택)'}</th></tr>${mapRows||''}</table>
     <div class="addrow">
       <select id="dsNewDept" style="width:170px">${DS_PRESETS.filter(p=>!(DEPT_MAP||{})[dsKey(p)]).map(p=>`<option value="${p}">${p}</option>`).join('')}<option value="__custom__">직접 입력…</option></select>
       <input id="dsNewDeptCustom" placeholder="부서 이름 직접 입력" style="width:160px;display:none">
       <button class="btn" onclick="dsAddDept()">＋ 부서 추가</button>
     </div>
-    <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">② 월별 매출 입력</div>
+    <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">② 월별 매출${RO?'':' 입력'}</div>
     <table><tr><th style="width:90px">월</th><th>부서</th><th>매출</th><th style="width:56px"></th></tr>${sRows||''}</table>
     <div class="addrow">
       <input id="dsMonth" type="month" style="width:150px">
@@ -780,6 +797,7 @@ window.openDeptSales = async function(){
       <input id="dsAmt" placeholder="매출 $" style="width:120px">
       <button class="btn" onclick="dsAddSale()">＋ 추가</button>
     </div>
+    <div class="rohide">
     <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">③ 일괄 붙여넣기 <span style="font-weight:600;color:#94a3b8;font-size:.8em">한 줄에: 부서,YYYY-MM,금액 &nbsp;·&nbsp; 앞에 지점을 붙이면 여러 지점 한꺼번에 → 지점,부서,YYYY-MM,금액</span></div>
     <div style="font-size:.78em;color:#6b7280;margin:-2px 0 6px">지난 달·지난 해 자료도 그냥 넣으면 됩니다 (월을 2026-01 처럼 적으면 그 달로 들어갑니다). 엑셀에서 복사해 붙여넣어도 됩니다.<br>
       <b style="color:#1a5c3a">🧾 POS 월간 리포트(SUMMARY-SALE REPORT)를 통째로 붙여넣어도 됩니다</b> — 매장·월·부서 매출을 알아서 읽고, 저장 전에 한 번 보여 줍니다.</div>
@@ -788,7 +806,8 @@ MEAT,2026-01,14931.83
 마이애미,SUSHI,2026-02,10464
 할리우드,K-FOOD,2026-03,16752"></textarea>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dsBulkAdd()">📥 일괄 추가</button>
-    <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">④ 총매출 · 나머지 확인 <span style="font-weight:600;color:#94a3b8;font-size:.8em">위 ②에 부서 이름을 "TOTAL"로 넣으면 총매출로 잡혀요 · 나머지 = 총매출 − 부서합계 (자동)</span></div>
+    </div>
+    <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">④ 총매출 · 나머지 확인 <span style="font-weight:600;color:#94a3b8;font-size:.8em">${RO?'나머지 = 총매출 − 부서합계 (자동)':'위 ②에 부서 이름을 "TOTAL"로 넣으면 총매출로 잡혀요 · 나머지 = 총매출 − 부서합계 (자동)'}</span></div>
     <table><tr><th style="width:90px">월</th><th>총매출</th><th>나머지 (자동)</th></tr>${tRows||'<tr><td colspan="3" class="muted">아직 TOTAL(총매출) 입력이 없어요 — ②에서 부서를 TOTAL 로 추가하세요</td></tr>'}</table>
   </div>`;
   m.style.display='flex';
@@ -1080,8 +1099,10 @@ window.openSalesCompare = async function(){
   const all={};
   await Promise.all(BRANCHES.map(async b=>{ try{ all[b.id]=await fbGet('hr/'+b.id+'/deptSales')||{}; }catch(_){ all[b.id]={}; } }));
   let _gn = 0, _gs = 0;
-  try { _gn = await grocFill(all); } catch(_){}                 // 🛒 그로서리 매출 채우기
-  try { _gs = await grocStaffFill(); } catch(_){}               // 🧑‍🤝‍🧑 그로서리 담당 명단 채우기
+  if (!RO){   // 보기 전용은 쓰기가 막혀 있어 채우기를 건너뛴다
+    try { _gn = await grocFill(all); } catch(_){}               // 🛒 그로서리 매출 채우기
+    try { _gs = await grocStaffFill(); } catch(_){}             // 🧑‍🤝‍🧑 그로서리 담당 명단 채우기
+  }
   window.__cmpData=all;
   m.innerHTML=renderSalesCompare(all);
   if (_gn) toast(t('grocFilled')(_gn));
@@ -1122,7 +1143,12 @@ function _metricByBranch(all, pick){
   return out;
 }
 function _cmpAllLabel(){ return LANG==='en'?'ALL STORES':LANG==='es'?'TODAS':'전체 합계'; }
-function _chainTitle(){ return LANG==='en'?'ALL STORES COMBINED (5 stores)':LANG==='es'?'TODAS LAS TIENDAS (5 tiendas)':'김치마트 전체 합계 (5개 매장)'; }
+function _chainTitle(){
+  if (RO){   // 보기 전용(지점 매니저) — '5개 매장' 이 아니라 우리 지점 합계
+    const b = BRANCHES[0]; const nm = b ? (LANG==='ko'?b.ko:String(b.id).replace(/_/g,' ')) : '';
+    return LANG==='en' ? (nm+' — ALL DEPARTMENTS') : LANG==='es' ? (nm+' — TODOS LOS DEPARTAMENTOS') : (nm+' 전체 합계');
+  }
+  return LANG==='en'?'ALL STORES COMBINED (5 stores)':LANG==='es'?'TODAS LAS TIENDAS (5 tiendas)':'김치마트 전체 합계 (5개 매장)'; }
 function _cmpTable(dataByBranch, firstCol){
   const ms=new Set();
   BRANCHES.forEach(b=>Object.keys(dataByBranch[b.id]||{}).forEach(mo=>ms.add(mo)));
@@ -1300,7 +1326,7 @@ function compareSections(all){
 function renderSalesCompare(all){
   return `<div style="background:#f6f8f7;border-radius:16px;max-width:1040px;width:100%;padding:16px 18px;margin:auto 0">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-      <h3 style="flex:1;color:#1a5c3a;min-width:150px">📊 ${t('cmpTitle')} <span style="font-weight:600;color:#94a3b8;font-size:.7em">${t('cmpSub')}</span></h3>
+      <h3 style="flex:1;color:#1a5c3a;min-width:150px">📊 ${RO?(LANG==='en'?'Monthly sales by department':LANG==='es'?'Ventas mensuales por departamento':'월 매출 · 부서별'):t('cmpTitle')} <span style="font-weight:600;color:#94a3b8;font-size:.7em">${t('cmpSub')}</span></h3>
       <button class="btn small" onclick="printSalesCompare()">${t('cmpPrint')}</button>
       <button class="btn sec2 small" onclick="scmpClose()">✕</button>
     </div>
@@ -1335,8 +1361,8 @@ window.openDailySales = async function(){
     if (last && last !== DAILY_MONTH){ DAILY_MONTH = last; DLY_BACK_NOTE = last; }
   }
   m.innerHTML=renderDaily();
-  // 📊 이 달 값이 월 매출에 아직 없으면 자동으로 올린다
-  dlyAutoRollup(DAILY_MONTH).then(r=>{ if (r && r.put) toast(t('dAutoRoll')(r.put, r.mo)); }).catch(function(){});
+  // 📊 이 달 값이 월 매출에 아직 없으면 자동으로 올린다 (보기 전용은 쓰기가 막혀 있어 건너뛴다)
+  if (!RO) dlyAutoRollup(DAILY_MONTH).then(r=>{ if (r && r.put) toast(t('dAutoRoll')(r.put, r.mo)); }).catch(function(){});
 };
 window.dlyClose=function(){ const m=document.getElementById('dlyOv'); if(m) m.remove(); };
 async function dlyReload(){
@@ -1846,7 +1872,7 @@ function _renderDailyDepts(mo){
   }).join('');
   return head+
     `<div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">${sum}</div>${ddAllBox}${detail}
-    <div style="margin-top:10px"><button class="btn" style="width:100%" onclick="dlyRollupDepts()">💾 ${t('ddRollup')}</button>
+    <div class="rohide" style="margin-top:10px"><button class="btn" style="width:100%" onclick="dlyRollupDepts()">💾 ${t('ddRollup')}</button>
     <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`;
 }
 // 월로 올리기 — 전 지점 매출 비교(왼쪽 화면)의 부서 표에 그대로 나온다
@@ -2027,10 +2053,11 @@ function renderDaily(){
       BRANCHES.map(x=>{ const v=_dv(x.id,d);
         // 값이 있는 칸은 누르면 지울 수 있다 — 잘못 넣은 날(아직 안 끝난 오늘 등)을 바로 지우려고
         return v==null?'<td class="na">–</td>'
+          : RO ? `<td>$${_cFmt(v)}</td>`
           :`<td onclick="dlyCellDel('${x.id}','${d}')" title="${esc(LANG==='ko'?'누르면 이 값을 지웁니다':'Tap to delete this entry')}" style="cursor:pointer">$${_cFmt(v)}</td>`; }).join('')+
       `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dayTotOf(d))}</b></td></tr>`;
   }) : `<tr><td colspan="${BRANCHES.length+3}" class="muted">${t('dNoAny')}</td></tr>`;
-  const matHint = '<div style="font-size:.72em;color:#94a3b8;margin:2px 0 6px">' +
+  const matHint = RO ? '' : '<div style="font-size:.72em;color:#94a3b8;margin:2px 0 6px">' +
     (LANG==='ko' ? '숫자를 누르면 그 지점·그 날짜 매출을 지울 수 있어요 (부서 매출은 남습니다)'
                  : 'Tap an amount to delete that store\'s entry for that day') + '</div>';
   const matFoot = mDesc.length ? `<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
@@ -2058,7 +2085,7 @@ function renderDaily(){
       <button class="btn sec2 small" onclick="dlyClose()">✕</button>
     </div>
 
-    <div style="background:var(--lgreen);border:1.5px solid #1a5c3a;border-radius:12px;padding:12px 14px;margin-bottom:12px">
+    <div class="rohide" style="background:var(--lgreen);border:1.5px solid #1a5c3a;border-radius:12px;padding:12px 14px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
         <span style="font-weight:900;color:#1a5c3a">${t('dAllEntry')}</span>
         <span style="font-weight:600;color:#64748b;font-size:.78em">${t('dAllEntryHint')}</span>
@@ -2071,7 +2098,7 @@ function renderDaily(){
       <button class="btn" style="width:100%;margin-top:10px" onclick="dlyAddAll()">${t('dAllSave')}</button>
     </div>
 
-    <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+    <div class="rohide" style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 14px;margin-bottom:12px">
       <div style="font-weight:900;color:#1a5c3a;margin-bottom:6px">${t('dQuick')} <span style="font-weight:600;color:#94a3b8;font-size:.78em">— ${esc(b?b.ko:BRANCH)} (${LANG==='ko'?'메모 포함':'with note'})</span></div>
       <div class="addrow">
         <input id="dlyDate" type="date" value="${_localDate()}" style="width:150px">
@@ -2101,16 +2128,18 @@ function renderDaily(){
     ${gvals.length?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartAll')}</div>
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 10px 8px;display:flex;align-items:flex-end;gap:3px;height:150px">${gChart}</div>`:''}
 
-    ${grandTot>0?`<div style="margin-top:12px"><button class="btn" style="width:100%" onclick="dlyRollupAll()">💾 ${t('dRollupAll')}</button>
+    ${grandTot>0?`<div class="rohide" style="margin-top:12px"><button class="btn" style="width:100%" onclick="dlyRollupAll()">💾 ${t('dRollupAll')}</button>
     <div style="font-size:.72em;color:#94a3b8;text-align:center;margin-top:3px">${t('dRollupHint')}</div></div>`:''}
 
     ${_renderDailyDepts(mo)}
 
+    <div class="rohide">
     <div style="font-weight:900;color:#1a5c3a;margin:16px 0 6px">${t('dBulkH')} <span style="font-weight:600;color:#94a3b8;font-size:.8em">${t('dBulkHint')}</span></div>
     <textarea id="dlyBulk" rows="4" oninput="dlyPasteCheck(this)" onpaste="setTimeout(()=>dlyPasteCheck(this,true),30)" style="width:100%;border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace;min-height:96px;max-height:340px;transition:border-color .2s,box-shadow .2s" placeholder="마이애미,2026-09-16,12000&#10;할리우드,2026-09-16,22000&#10;PRODUCE,2026-09-16,1250.50&#10;할리우드,MEAT,2026-09-16,980"></textarea>
     <div id="dlyPasteStatus" style="display:none;margin-top:6px;border-radius:8px;padding:9px 11px;font-size:.86em;line-height:1.5"></div>
     <button class="btn" style="width:100%;margin-top:8px" onclick="dlyBulk()">${t('dBulkBtn')}</button>
     <div id="dlySaveStatus" style="display:none;margin-top:8px;border-radius:8px;padding:10px 12px;font-size:.9em;font-weight:700;line-height:1.5"></div>
+    </div>
   </div>`;
 }
 

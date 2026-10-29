@@ -1356,6 +1356,35 @@ function onBranchChange(){
 let unsub = null;
 let unsubSettings = null;
 let __pollTimer = null;
+// ⚠️ 2026-10-28 사장님: "유통기한이 지나 버린 제품은 오더센터에서 오더할 때 반드시 경고가 있어야 한다"
+//   오더센터가 이 매장의 유통기한 기록(사진 포함 수 MB)을 통째로 받지 않도록, 여기서 바코드별 요약만 만들어 둔다.
+//   expiry/<지점>/expHist = { <바코드 숫자(앞 0 뗌)>: [지난 횟수, 개수 합, 마지막 유통기한 날짜, 이름] }
+//   유통기한 날짜가 오늘 이하인 기록만 센다(아직 안 지난 것은 빼고). '삭제(Del)' 한 잘못 올린 기록은 이미 없다.
+//   바뀐 게 있을 때만, 2분에 한 번까지 저장한다. 오더센터(recommend.js)가 이것을 읽는다.
+const __expHistLast = {}, __expHistAt = {};   // 지점별
+async function expHistSync(){
+  try {
+    if (!BRANCH || !Array.isArray(PRODUCTS) || !PRODUCTS.length) return;
+    if (Date.now() - (__expHistAt[BRANCH] || 0) < 120000) return;
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const h = {};
+    for (const p of PRODUCTS) {
+      const d = String(p.barcode || '').replace(/\D/g, '').replace(/^0+/, '');
+      if (d.length < 8 || !p.expiry || String(p.expiry) > today) continue;
+      const q = Number(p.discardQty || p.qty || 0) || 0;
+      const e = h[d] || (h[d] = [0, 0, '', String(p.name || '').slice(0, 40)]);
+      e[0]++; e[1] += q; if (String(p.expiry) > e[2]) e[2] = String(p.expiry);
+    }
+    const js = JSON.stringify(h);
+    if (js === __expHistLast[BRANCH]) return;
+    const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
+    if (!tok) return;
+    const br = BRANCH; __expHistAt[br] = Date.now();
+    const r = await fetch(`https://kimchi-mart-order-default-rtdb.firebaseio.com/expiry/${br}/expHist.json?auth=` + encodeURIComponent(tok),
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: js });
+    if (r.ok) __expHistLast[br] = js;
+  } catch (e) {}
+}
 async function fetchProductsRest(){
   try {
     const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
@@ -1365,6 +1394,7 @@ async function fetchProductsRest(){
     const v = (await r.json()) || {};
     PRODUCTS = Object.entries(v).map(([id, p]) => Object.assign({ id }, p));
     renderAll();
+    expHistSync();
   } catch (e) {}
 }
 async function fetchSettingsRest(){
@@ -1401,6 +1431,7 @@ function subscribe(){
       const v = snap.val() || {};
       PRODUCTS = Object.entries(v).map(([id, p]) => Object.assign({ id }, p));
       renderAll();
+      expHistSync();
     });
     unsubSettings = window.__fb.onValue(window.__fb.ref(window.__fb.db, 'expiry/' + BRANCH + '/settings'), snap => {
       const v = snap.val();

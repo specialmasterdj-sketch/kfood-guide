@@ -530,9 +530,23 @@ function hasAccess(me){
 //================================================================
 // FIREBASE
 //================================================================
-async function loadAllExpenses(){
+// 🐢 2026-10-28 사장님: "지점별 자료가 열리는 데 1분이 넘게 걸린다"
+//   원인 — 첫 요청이 로그인 토큰 없이 나가 거절(401)되고, 다음 시도가 30초 뒤라 폰에서는 1분+.
+//   (데이터 자체는 전 지점 합쳐 380KB, 0.1초면 온다)
+//   → 로그인 토큰을 먼저 받고 요청, 거절되면 1.5초 간격으로 바로 다시 (최대 8번). 30초 갱신은 그대로.
+let __expLoading = false;
+async function loadAllExpenses(attempt){
+  attempt = attempt || 0;
+  if (__expLoading && !attempt) return;
+  __expLoading = true;
   try {
-    const r = await fetch(`${FB_DB_URL}/expenses.json`, { cache:'no-store' });
+    let tok = null;
+    try { tok = (typeof window.__getAuthToken === 'function') ? await window.__getAuthToken() : null; } catch(_){}
+    const r = await fetch(`${FB_DB_URL}/expenses.json` + (tok ? '?auth=' + encodeURIComponent(tok) : ''), { cache:'no-store' });
+    if (!r.ok) {
+      if (attempt < 8) { setTimeout(() => loadAllExpenses(attempt + 1), 1500); return; }
+      throw new Error('HTTP ' + r.status);
+    }
     const d = await r.json();
     EXPENSES = [];
     if (d) {
@@ -550,8 +564,11 @@ async function loadAllExpenses(){
     if (currentPage === 'report') renderReport();
     refreshVendorDatalist();
     refreshIssuerDatalist();
-  } catch(e){ console.warn('loadAllExpenses failed', e); }
+    __expLoading = false;
+  } catch(e){ __expLoading = false; console.warn('loadAllExpenses failed', e); }
 }
+// 로그인이 복원되는 순간 바로 다시 받는다 (첫 요청이 토큰 없이 나갔을 수 있다)
+window.addEventListener('fb-auth-ready', () => { if (hasAccess(ME)) { loadAllExpenses(); loadCacheCloud(); } });
 
 async function uploadReceiptPhoto(blob, branchId, expenseId){
   const path = `expenses/${branchId}/${expenseId}.jpg`;
