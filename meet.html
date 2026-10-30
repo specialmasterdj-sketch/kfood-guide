@@ -2,7 +2,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>화상 회의 — 김치마트</title>
 <link rel="icon" href="./pwa-assets/icon-192.png" type="image/png">
-<script type="module" src="./fb-auth-fetch.js?v=5"></script>
+<script type="module" src="./fb-auth-fetch.js?v=6"></script>
 <script type="module" src="./auth-gate.js?v=9"></script>
 <script src="./km-back-button.js?v=3"></script>
 <!--
@@ -129,6 +129,27 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 .prow.sel{background:var(--brand-soft)}
 .pfoot{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .pfoot .cnt{flex:1 1 120px;font-size:.85em;font-weight:800}
+.pk .lab{font-size:.74em;font-weight:800;color:var(--muted);margin:2px 0 4px}
+.selbar{display:flex;gap:6px;flex-wrap:wrap;max-height:84px;overflow-y:auto;margin-bottom:8px;flex:0 0 auto}
+.selbar .chip{background:var(--brand-soft);border-color:var(--brand)}
+.chip.grp{border-color:var(--warn)}
+/* 회의 자료·메모·회의록 (2026-10-30) */
+.tip{font-size:.78em;background:var(--sunk);border-radius:10px;padding:8px 10px;margin-top:9px;line-height:1.45}
+.sec{font-size:.78em;font-weight:800;color:var(--muted);margin:11px 0 5px}
+.files{display:flex;flex-direction:column;gap:5px}
+.files a{display:flex;gap:8px;align-items:center;border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;text-decoration:none;color:inherit;font-size:.86em;font-weight:700;background:var(--surface)}
+.files a .fn{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files a .fb{font-size:.82em;color:var(--muted);font-weight:600;flex:0 0 auto}
+.note-ta{width:100%;min-height:96px;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font:inherit;font-size:.9em;background:var(--surface);color:inherit;resize:vertical}
+.saved{font-size:.72em;color:var(--muted);margin-top:3px}
+.mins{background:var(--surface);border:1.5px solid var(--line);border-radius:var(--r);padding:12px 14px;margin-bottom:12px}
+.mins h3{margin:0 0 6px;font-size:1em}
+.min{border-top:1px solid var(--line);padding:9px 0}
+.min:first-of-type{border-top:0}
+.min summary{cursor:pointer;font-weight:800;font-size:.92em;list-style:none}
+.min summary::-webkit-details-marker{display:none}
+.min summary .md{font-weight:600;color:var(--muted);font-size:.85em}
+.min .body{white-space:pre-wrap;font-size:.9em;line-height:1.5;background:var(--sunk);border-radius:10px;padding:9px 10px}
 </style>
 </head>
 <body>
@@ -148,6 +169,8 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
   <div id="stage"><div id="stageIn"></div>
     <div class="acts"><button class="btn" id="leaveBtn"></button></div></div>
   <div id="dial"></div>
+  <div id="mins"></div>
+  <input type="file" id="fileIn" multiple hidden>
   <div id="rooms"></div>
   <h2 id="hLog"></h2>
   <div class="card" id="log"></div>
@@ -166,6 +189,8 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 <!-- 📞 사람 고르기 -->
 <div class="ov pk" id="pk"><div class="box">
   <h3 id="pkT"></h3>
+  <div id="pkGW"><div class="lab" id="pkGH"></div><div class="chips" id="pkG"></div></div>
+  <div id="pkSW"><div class="lab" id="pkSH"></div><div class="selbar" id="pkS"></div></div>
   <input type="search" id="pkQ" autocomplete="off">
   <div class="chips" id="pkB"></div>
   <div class="plist" id="pkL"></div>
@@ -179,11 +204,12 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getDatabase, ref, set, update, remove, onValue, get } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
   const cfg = { apiKey:"AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4", authDomain:"kimchi-mart-order.firebaseapp.com",
                 databaseURL:"https://kimchi-mart-order-default-rtdb.firebaseio.com", projectId:"kimchi-mart-order",
                 storageBucket:"kimchi-mart-order.firebasestorage.app" };
   const app = getApps().length ? getApp() : initializeApp(cfg);
-  window.__fb = { db:getDatabase(app), ref, set, update, remove, onValue, get };
+  window.__fb = { db:getDatabase(app), ref, set, update, remove, onValue, get, st:getStorage(app), sRef, uploadBytes, getDownloadURL };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
 
@@ -258,16 +284,47 @@ const T = {
            '📹 Empezamos una reunión por video — %s\nAbra la app de Tareas ▸ 📹 Reunión y toque [Entrar].'],
   onlyExec:['오너·임원만 할 수 있습니다.','Owners and executives only.','Solo dueños y ejecutivos.'],
   /* 📞 바로 통화 */
-  dialT:  ['📞 바로 화상 통화','📞 Instant video call','📞 Videollamada directa'],
-  dialS:  ['전 지점 누구든 골라 부르면, 상대 화면에 바로 [참가] 창이 뜹니다.','Pick anyone at any branch — a [Join] window pops up on their screen right away.','Elija a cualquiera — le aparece [Entrar] en su pantalla al instante.'],
-  dialGo: ['＋ 사람 골라 통화 걸기','＋ Pick people and call','＋ Elegir personas y llamar'],
+  dialT:  ['📞 바로 화상 회의 · 여러 명 한 방','📞 Instant video meeting · many in one room','📞 Videorreunión · varios en una sala'],
+  dialS:  ['원하는 사람을 몇 명이든(6~7명도) 골라 부르면 모두 같은 회의방 한 화면으로 들어옵니다. 각자 화면에 바로 [참가] 창이 뜹니다.','Pick as many people as you like (6–7 is fine) — everyone joins the same room, on one screen. A [Join] window pops up on each screen.','Elija a varias personas — todos entran en la misma sala. A cada uno le aparece [Entrar].'],
+  dialGo: ['＋ 사람 골라 회의 시작','＋ Pick people and start a meeting','＋ Elegir personas y empezar'],
   dialOnly:['수퍼바이저 이상만 통화를 걸 수 있습니다. 걸려 온 통화는 어느 화면에서든 바로 뜹니다.','Supervisors and above can start calls. Incoming calls pop up on any screen.','Solo supervisores o más pueden llamar. Las llamadas entrantes aparecen en cualquier pantalla.'],
-  pkT:    ['누구를 부를까요?','Who do you want to call?','¿A quién llamar?'],
+  pkT:    ['회의에 부를 사람을 모두 고르세요','Pick everyone for the meeting','Elija a todos para la reunión'],
+  pkSH:   ['선택한 사람 — 모두 한 회의방으로 (✕ 로 빼기)','Selected — all in one room (✕ to remove)','Elegidos — todos en una sala (✕ quitar)'],
+  pkGH:   ['⭐ 저장한 멤버 — 누르면 한 번에 선택','⭐ Saved groups — tap to select all','⭐ Grupos guardados — toque para elegir'],
+  grpSave:['⭐ 지금 고른 사람 저장','⭐ Save this group','⭐ Guardar grupo'],
+  grpAsk: ['이 멤버 묶음의 이름을 적어 주세요.\n예) 매니저 회의, 정육 팀장','Name this group.\ne.g. Managers, Meat leads','Nombre del grupo.\nej. Gerentes'],
+  grpDel: ['저장한 멤버 "%s" 를 지울까요?','Delete saved group "%s"?','¿Borrar el grupo "%s"?'],
+  grpOk:  ['저장했습니다. 다음부터 ⭐ 에서 한 번에 고를 수 있습니다.','Saved. Next time pick it from ⭐.','Guardado.'],
+  grpMiss:['%n명은 지금 명단에 없어 빠졌습니다 (퇴사·계정 변경).','%n people are no longer on the list and were skipped.','%n personas ya no están en la lista.'],
+  tile:   ['👥 모두 한 화면에 보기 — Meet 화면 아래 ⋮ ▸ 레이아웃 변경 ▸ 바둑판식(Tiled) ▸ 타일 수를 최대로. 발표자 한 사람만 크게 보이는 것을 막습니다.','👥 See everyone on one screen — in Meet tap ⋮ ▸ Change layout ▸ Tiled ▸ max tiles.','👥 Ver a todos — en Meet ⋮ ▸ Cambiar diseño ▸ Mosaico ▸ máximo.'],
+  gem:    ['📝 자동 요약 — Meet 위쪽 ✏️(Gemini 메모 작성) 을 켜 두면 끝난 뒤 요약이 메일로 옵니다. 그 요약을 아래 회의록에 붙여 넣으면 모두가 봅니다.','📝 Auto summary — turn on ✏️ Take notes (Gemini) in Meet; paste the emailed summary into the minutes below.','📝 Resumen — active ✏️ Tomar notas (Gemini) en Meet y pegue el resumen en el acta.'],
+  fH:     ['📎 회의 자료 — 참가자 모두에게 보입니다','📎 Meeting files — everyone in the meeting sees them','📎 Archivos — todos los participantes los ven'],
+  fUp:    ['📎 보여줄 파일 올리기','📎 Upload a file to show','📎 Subir archivo'],
+  fBusy:  ['올리는 중… %n','Uploading… %n','Subiendo… %n'],
+  fBig:   ['25MB 가 넘는 파일은 올릴 수 없습니다: %s','Files over 25MB cannot be uploaded: %s','Archivo de más de 25MB: %s'],
+  fFail:  ['파일을 올리지 못했습니다: %s','Could not upload: %s','No se pudo subir: %s'],
+  fNone:  ['아직 올린 파일이 없습니다. 화면에서 직접 보여주려면 Meet 의 [발표(화면 공유)] 를 쓰세요.','No files yet. To show your screen live, use Present in Meet.','Sin archivos. Para mostrar su pantalla use Presentar en Meet.'],
+  nH:     ['📝 회의 메모 — 참가자 모두 같이 적고 같이 봅니다','📝 Meeting notes — shared with everyone','📝 Notas — compartidas con todos'],
+  nPh:    ['결정한 것, 할 일(누가·언제까지)을 적어 두세요. 회의가 끝나면 그대로 회의록이 됩니다.','Write decisions and to-dos (who, by when). They become the minutes when the meeting ends.','Escriba decisiones y tareas. Serán el acta al terminar.'],
+  nSaved: ['저장됨 · %s · %n','Saved · %s · %n','Guardado · %s · %n'],
+  minH:   ['📋 회의록 — 참가자 모두 볼 수 있습니다','📋 Meeting minutes — every participant can see them','📋 Actas — todos los participantes las ven'],
+  minNone:['아직 회의록이 없습니다. 회의를 [⏹ 회의 끝] 으로 마치면 여기에 정리됩니다.','No minutes yet. End a meeting with [⏹ End meeting] and it is filed here.','Aún no hay actas.'],
+  minWho: ['참석','Attended','Asistió'],
+  minAbs: ['불참·무응답','Absent / no answer','Ausente'],
+  minLen: ['%n분','%n min','%n min'],
+  minNotes:['회의 내용','Notes','Notas'],
+  minEmpty:['(메모 없음)','(no notes)','(sin notas)'],
+  minEdit:['💾 회의록 저장','💾 Save minutes','💾 Guardar acta'],
+  minOk:  ['회의록을 저장했습니다.','Minutes saved.','Acta guardada.'],
+  endAsk: ['회의를 끝낼까요?\n지금까지의 참석자·자료·메모가 회의록으로 정리되어 참가자 모두에게 알림이 갑니다.','End the meeting?\nAttendees, files and notes are filed as minutes and everyone is notified.','¿Terminar la reunión?\nSe guardará el acta y se avisará a todos.'],
+  endOk:  ['회의록을 만들고 참가자 %n명에게 알렸습니다.','Minutes filed and %n people notified.','Acta guardada y %n personas avisadas.'],
+  minT:   ['%s 님 회의','Meeting by %s','Reunión de %s'],
   pkQ:    ['이름 검색','Search a name','Buscar nombre'],
   pkAll:  ['전체','All','Todos'],
   pkSelB: ['이 지점 전부 선택','Select this whole branch','Elegir toda la tienda'],
   pkN:    ['%n명 선택','%n selected','%n elegidos'],
-  pkGo:   ['📞 통화 걸기','📞 Call','📞 Llamar'],
+  pkGo:   ['📞 %n명과 회의 시작','📞 Start with %n','📞 Empezar con %n'],
+  pkAddGo:['📞 %n명 더 부르기','📞 Add %n','📞 Añadir %n'],
   pkLoad: ['직원 명단을 불러오는 중…','Loading staff…','Cargando personal…'],
   pkNone: ['맞는 사람이 없습니다.','No one matches.','Nadie coincide.'],
   pkFail: ['명단을 불러오지 못했습니다. 잠시 후 다시 해 주세요.','Could not load the staff list. Try again shortly.','No se pudo cargar la lista. Intente de nuevo.'],
@@ -277,7 +334,7 @@ const T = {
   askLines:['바로 통화에 쓸 Google Meet 링크를 넣어 주세요. 여러 개는 띄어쓰기로 구분합니다.\n(Meet ▸ 나중에 진행할 회의 만들기 로 만든 링크는 계속 쓸 수 있습니다)\n회선이 모자라면 비어 있는 지점 회의방을 빌려 씁니다. 비우고 확인하면 회선을 모두 지웁니다.','Paste Google Meet links for instant calls, separated by spaces.\n(Links from Meet ▸ "Create a meeting for later" stay valid)\nIf lines run out, a free branch room is borrowed. Clear the box to remove all lines.','Pegue enlaces de Google Meet separados por espacios.\nSi faltan, se usa una sala de tienda libre. Borre todo para quitarlas.'],
   linesOk:['통화 회선 %n개를 저장했습니다.','Saved %n call lines.','Se guardaron %n líneas.'],
   myCalls:['진행 중인 통화','Calls in progress','Llamadas en curso'],
-  callBy: ['%s 님이 건 통화','Call by %s','Llamada de %s'],
+  callBy: ['%s 님 회의','Meeting by %s','Reunión de %s'],
   sRing:  ['부르는 중','ringing','sonando'],
   sOk:    ['참가함','joined','entró'],
   sNo:    ['거절','declined','rechazó'],
@@ -285,7 +342,7 @@ const T = {
   reopen: ['📹 회의방 다시 열기','📹 Open the room again','📹 Abrir otra vez'],
   ringAgain:['🔔 다시 부르기','🔔 Ring again','🔔 Llamar otra vez'],
   addPpl: ['＋ 사람 더 부르기','＋ Add people','＋ Añadir'],
-  endCall:['⏹ 통화 끝','⏹ End call','⏹ Terminar'],
+  endCall:['⏹ 회의 끝 · 회의록 만들기','⏹ End meeting · file minutes','⏹ Terminar · acta'],
   rang:   ['%n명을 불렀습니다. 회의방이 새 창으로 열립니다 — 거기서 기다리시면 됩니다.','Called %n people. The room opens in a new window — wait there.','Se llamó a %n personas. La sala se abre en otra ventana.'],
   ringFail:['부르기를 저장하지 못했습니다.','Could not send the call.','No se pudo enviar la llamada.'],
 };
@@ -322,7 +379,7 @@ function rooms(){
 const canSee = r => isExec() || r.all || r.id === myBranch();
 
 let URLS = {}, LIVE = {}, LOG = {}, JOINED = null, beat = null;
-let LINES = {}, CALLS = {};   // 📞 바로 통화 (아래)
+let LINES = {}, CALLS = {}, MINS = {};   // 📞 바로 통화 · 📋 회의록 (아래)
 
 /* 📧 브라우저에 구글 계정이 여러 개면 회의 링크가 '기본 계정' 으로 열린다.
    2026-10-12 전무님: 회사 계정(info@miamikimchi.com)으로 만든 방인데 앱에서 열면
@@ -352,6 +409,7 @@ function watch(){
   F.onValue(F.ref(F.db, BASE+'/live'),  s => { LIVE = s.val() || {}; render(); });
   F.onValue(F.ref(F.db, BASE+'/lines'), s => { LINES = s.val() || {}; render(); });
   F.onValue(F.ref(F.db, BASE+'/calls'), s => { CALLS = s.val() || {}; render(); });
+  F.onValue(F.ref(F.db, BASE+'/minutes'), s => { MINS = s.val() || {}; render(); openHash(); });
   F.onValue(F.ref(F.db, BASE+'/log/'+'all'), ()=>{});   // (전체 로그는 아래에서 날짜별로 읽는다)
   for (const r of rooms()) {
     F.onValue(F.ref(F.db, BASE+'/log/'+r.id+'/'+today()), s => {
@@ -381,6 +439,7 @@ function render(){
   document.querySelectorAll('.hbtn[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l===LANG));
 
   renderDial();
+  renderMins();
   const list = rooms().filter(canSee);
   document.getElementById('rooms').innerHTML = list.map(r => {
     const url = (URLS[r.id] || {}).url || '';
@@ -581,7 +640,7 @@ function pickLine(){
 }
 
 /* 직원 명단 — users(승인된 계정). 같은 사람이 기기·계정을 여러 개 쓰면 한 줄로 묶고 전부 부른다 */
-let ROSTER = null, ROSTER_ERR = false, PK_SEL = new Map(), PK_BR = '', PK_ADD = null;
+let ROSTER = null, ROSTER_ERR = false, PK_SEL = new Map(), PK_BR = '', PK_ADD = null, GROUPS = {};
 const GENERIC = ['staff','manager','employee','admin','user','직원','매니저','스태프','사원','관리자'];
 async function loadRoster(){
   ROSTER_ERR = false;
@@ -616,15 +675,56 @@ function openPicker(addTo){
   document.getElementById('pk').classList.add('on');
   drawPicker();
   if (!ROSTER) loadRoster().then(drawPicker);
+  loadGroups().then(drawPicker);
+}
+/* ⭐ 저장한 멤버 (2026-10-30 사장님: "6명 7명 골라 한 방에서 전체 화상 회의") — 자주 부르는 묶음을 한 번에.
+   저장: meet/groups/{내uid}/{g…} = { name, keys:[이름키], names:[이름], ts } — 나만 쓰는 목록 */
+async function loadGroups(){
+  const uid = myUid(); if (!uid) { GROUPS = {}; return; }
+  try { const r = await fetch(FB+'/'+BASE+'/groups/'+encodeURIComponent(uid)+'.json', { cache:'no-store' });
+        GROUPS = (r.ok && await r.json()) || {}; } catch(e){ GROUPS = {}; }
+}
+async function saveGroup(){
+  const uid = myUid(); if (!uid || !PK_SEL.size) return;
+  const nm = (prompt(t('grpAsk'), '') || '').trim(); if (!nm) return;
+  const ps = [...PK_SEL.values()];
+  const g = { name:nm.slice(0,40), keys:ps.map(p=>p.key), names:ps.map(p=>p.name), ts:Date.now() };
+  const id = 'g' + g.ts;
+  try { const F = window.__fb; await F.set(F.ref(F.db, BASE+'/groups/'+uid+'/'+id), g);
+        GROUPS[id] = g; drawPicker(); alert(t('grpOk')); } catch(e){ alert('저장 실패 · could not save'); }
+}
+async function delGroup(id){
+  const g = GROUPS[id]; if (!g) return;
+  if (!confirm(t('grpDel').split('%s').join(g.name))) return;
+  try { const F = window.__fb; await F.remove(F.ref(F.db, BASE+'/groups/'+myUid()+'/'+id)); delete GROUPS[id]; drawPicker(); } catch(e){}
+}
+function useGroup(id){
+  const g = GROUPS[id]; if (!g || !ROSTER) return;
+  let miss = 0;
+  (g.keys||[]).forEach(k => { const p = ROSTER.find(x => x.key === k); if (p) PK_SEL.set(k, p); else miss++; });
+  drawPicker();
+  if (miss) alert(t('grpMiss', miss));
 }
 function closePicker(){ document.getElementById('pk').classList.remove('on'); PK_ADD = null; }
 function drawPicker(){
   document.getElementById('pkT').textContent = t('pkT');
   document.getElementById('pkQ').placeholder = t('pkQ');
   document.getElementById('pkNo').textContent = t('ovNo');
-  document.getElementById('pkGo').textContent = t('pkGo');
+  document.getElementById('pkGo').textContent = t(PK_ADD ? 'pkAddGo' : 'pkGo', PK_SEL.size);
   document.getElementById('pkGo').disabled = PK_SEL.size === 0;
   document.getElementById('pkN').textContent = t('pkN', PK_SEL.size);
+  // 선택한 사람 — 지점 칩으로 걸러도 누가 골라졌는지 늘 보이게
+  document.getElementById('pkSH').textContent = t('pkSH');
+  document.getElementById('pkSW').style.display = PK_SEL.size ? '' : 'none';
+  document.getElementById('pkS').innerHTML = [...PK_SEL.values()].map(p =>
+    '<button class="chip" data-pkrm="'+esc(p.key)+'">'+esc(p.name)+' ✕</button>').join('')
+    + (PK_ADD ? '' : '<button class="chip grp" data-grpsave="1">'+esc(t('grpSave'))+'</button>');
+  const gids = Object.keys(GROUPS).sort((a,b) => (GROUPS[a].name||'').localeCompare(GROUPS[b].name||''));
+  document.getElementById('pkGH').textContent = t('pkGH');
+  document.getElementById('pkGW').style.display = gids.length ? '' : 'none';
+  document.getElementById('pkG').innerHTML = gids.map(id =>
+    '<button class="chip grp" data-grp="'+esc(id)+'">⭐ '+esc(GROUPS[id].name)+' · '+((GROUPS[id].keys||[]).length)+'</button>'
+    + '<button class="chip" data-grpdel="'+esc(id)+'" aria-label="delete" style="padding:5px 8px">🗑</button>').join('');
   const brs = [''].concat(BRANCHES.map(b=>b.id));
   document.getElementById('pkB').innerHTML = brs.map(id =>
     '<button class="chip'+(PK_BR===id?' on':'')+'" data-pkbr="'+esc(id)+'">'+esc(id ? bname(id) : t('pkAll'))+'</button>').join('');
@@ -698,13 +798,132 @@ async function ringAgain(id){
   });
   try { const F = window.__fb; await F.update(F.ref(F.db, BASE), upd); } catch(e){ alert(t('ringFail')); }
 }
-async function endCall(id){
-  const c = CALLS[id]; if (!c) return;
-  const upd = { ['calls/'+id+'/ended']: Date.now() };
-  Object.keys(c.inv||{}).forEach(uid => { if ((c.inv[uid]||{}).state === 'ringing') upd['ring/'+uid+'/'+id+'/state'] = 'ended'; });
-  try { const F = window.__fb; await F.update(F.ref(F.db, BASE), upd); } catch(e){}
-  if (JOINED === c.room) doLeave();
+/* ⏹ 회의 끝 = 회의록 (2026-10-30 사장님: "회의 끝나면 모든 내용을 정리해서 모두가 공유하고 볼 수 있도록")
+   meet/minutes/{통화id} = { title, by, byUid, byBranch, ts, end, people/{uid}={name,branch,state},
+                            members/{uid}=true, files/{…}, notes, ntBy, ntTs }
+   members = 부른 사람 전부 + 연 사람 → 그 사람들 화면의 📋 회의록 에 보이고, 임원은 전부 본다.
+   알림: ring/{uid}/m_{통화id} state 'minutes' → fb-auth-fetch.js 가 어느 화면에서든 [회의록 보기] 를 띄운다. */
+function buildMinutes(id, c, end){
+  const people = {}, members = {};
+  Object.keys(c.inv||{}).forEach(uid => {
+    const v = c.inv[uid] || {};
+    people[uid] = { name:v.name||'', branch:v.branch||'', state: v.state === 'accepted' ? 'accepted' : (v.state === 'declined' ? 'declined' : 'missed') };
+    members[uid] = true;
+  });
+  if (c.byUid) members[c.byUid] = true;
+  const n = c.notes || {};
+  return { title: t('minT').split('%s').join(c.by||''), by:c.by||'', byUid:c.byUid||'', byBranch:c.byBranch||'',
+           ts:c.ts||end, end, room:c.roomName||'', people, members, files:c.files||null,
+           notes:n.text||'', ntBy:n.by||'', ntTs:n.ts||0 };
 }
+async function endCall(id, auto){
+  const c = CALLS[id]; if (!c || c.ended) return;
+  if (!auto && !confirm(t('endAsk'))) return;
+  const end = auto ? Math.min(Date.now(), (c.ts||0) + CALL_TTL) : Date.now();
+  const upd = { ['calls/'+id+'/ended']: end, ['minutes/'+id]: buildMinutes(id, c, end) };
+  const notify = Object.keys(c.inv||{});
+  Object.keys(c.inv||{}).forEach(uid => { if ((c.inv[uid]||{}).state === 'ringing') upd['ring/'+uid+'/'+id+'/state'] = 'ended'; });
+  notify.forEach(uid => { upd['ring/'+uid+'/m_'+id] = { from:c.by||'', fromBranch:bname(c.byBranch||''), min:id, ts:Date.now(), state:'minutes' }; });
+  try { const F = window.__fb; await F.update(F.ref(F.db, BASE), upd);
+        if (!auto) { alert(t('endOk', new Set(notify.map(u => nkey((c.inv[u]||{}).name))).size)); location.hash = 'min-'+id; } }
+  catch(e){ console.warn('[meet] 회의록 실패', e); if (!auto) alert('저장 실패 · could not save'); }
+  if (!auto && JOINED === c.room) doLeave();
+}
+
+/* 📎 회의 자료 — Storage 'invoices/_MEETING/…' 에 올린다.
+   왜 그 자리인가: Storage 규칙이 PDF·엑셀 같은 이미지 아닌 파일을 invoices/{x}/{파일} 에서만 받는다
+   (로그인한 사람만, 25MB 미만). 규칙을 새로 배포하지 않고 오늘 바로 쓰려고 그 칸 안에 _MEETING 묶음을 둔다.
+   목록: meet/calls/{통화id}/files/{f…} = { name, url, size, type, by, ts } — 회의록에도 그대로 옮겨 간다. */
+const FILE_MAX = 25 * 1024 * 1024;
+let UP_CALL = null, UP_BUSY = {};
+const fsize = n => n > 1048576 ? (n/1048576).toFixed(1)+'MB' : Math.max(1, Math.round(n/1024))+'KB';
+const ficon = f => /^image\//.test(f.type||'') ? '🖼' : /pdf/i.test(f.type||f.name||'') ? '📕' : /sheet|excel|\.xlsx?$|\.csv$/i.test((f.type||'')+(f.name||'')) ? '📗' : /presentation|powerpoint|\.pptx?$/i.test((f.type||'')+(f.name||'')) ? '📙' : /word|\.docx?$/i.test((f.type||'')+(f.name||'')) ? '📘' : '📄';
+function filesHtml(files){
+  const ks = Object.keys(files||{}).sort((a,b) => (files[a].ts||0) - (files[b].ts||0));
+  return ks.map(k => { const f = files[k] || {};
+    return '<a href="'+esc(f.url)+'" target="_blank" rel="noopener"><span>'+ficon(f)+'</span><span class="fn">'+esc(f.name)+'</span>'
+      + '<span class="fb">'+esc(f.by||'')+(f.size ? ' · '+fsize(f.size) : '')+'</span></a>'; }).join('');
+}
+async function uploadFiles(id, list){
+  const F = window.__fb; const m = me();
+  if (!F || !F.st) { alert(t('fFail').split('%s').join('')); return; }
+  for (const file of list) {
+    if (file.size >= FILE_MAX) { alert(t('fBig').split('%s').join(file.name)); continue; }
+    UP_BUSY[id] = (UP_BUSY[id]||0) + 1; renderDial();
+    try {
+      const ts = Date.now();
+      const safe = String(file.name||'file').replace(/[^\w.\-가-힣]+/g, '_').slice(-80);
+      const path = 'invoices/_MEETING/' + id + '_' + ts + '_' + safe;
+      const snap = await F.uploadBytes(F.sRef(F.st, path), file, { contentType: file.type || 'application/octet-stream' });
+      const url = await F.getDownloadURL(snap.ref);
+      await F.set(F.ref(F.db, BASE+'/calls/'+id+'/files/f'+ts+Math.random().toString(36).slice(2,5)),
+                  { name:file.name||safe, url, size:file.size||0, type:file.type||'', by:m.name||'', ts });
+    } catch(e){ console.warn('[meet] 파일 실패', e); alert(t('fFail').split('%s').join(file.name)); }
+    UP_BUSY[id]--; renderDial();
+  }
+}
+
+/* 📝 회의 메모 — 참가자 모두 같은 칸. 적는 동안에는 화면을 다시 그리지 않는다(글자가 날아가지 않게) */
+const NOTE_T = {};
+function saveNote(id, text){
+  clearTimeout(NOTE_T[id]);
+  NOTE_T[id] = setTimeout(() => {
+    try { const F = window.__fb; F.set(F.ref(F.db, BASE+'/calls/'+id+'/notes'), { text:String(text).slice(0,20000), by:me().name||'', ts:Date.now() }); } catch(e){}
+  }, 900);
+}
+const typing = () => { const a = document.activeElement; return !!(a && a.classList && a.classList.contains('note-ta')); };
+
+/* 📋 회의록 목록 */
+const iMember = mn => isExec() || (mn.members && myUid() && mn.members[myUid()]) || (mn.byUid && mn.byUid === myUid()) || nkey(mn.by) === nkey(me().name);
+const canEditMin = mn => isExec() || (mn.byUid && mn.byUid === myUid()) || nkey(mn.by) === nkey(me().name);
+const ymdhm = ts => { const d = new Date(ts||0); return (d.getMonth()+1)+'/'+d.getDate()+' '+hhmm(ts); };
+function renderMins(){
+  const el = document.getElementById('mins'); if (!el) return;
+  if (typing()) return;
+  const ids = Object.keys(MINS).filter(k => MINS[k] && iMember(MINS[k])).sort((a,b) => (MINS[b].end||0) - (MINS[a].end||0)).slice(0, 30);
+  const open = new Set([...el.querySelectorAll('details[open]')].map(d => d.dataset.min));
+  let h = '<h3>'+esc(t('minH'))+'</h3>';
+  if (!ids.length) h += '<div class="sub" style="font-size:.82em;color:var(--muted)">'+esc(t('minNone'))+'</div>';
+  for (const id of ids) {
+    const mn = MINS[id]; const ps = mn.people || {};
+    const per = new Map();
+    Object.keys(ps).forEach(u => { const v = ps[u]||{}; const k = nkey(v.name); const p = per.get(k);
+      if (!p || (v.state === 'accepted' && p.state !== 'accepted')) per.set(k, v); });
+    const yes = [mn.by].concat([...per.values()].filter(v => v.state === 'accepted').map(v => v.name)).filter(Boolean);
+    const no  = [...per.values()].filter(v => v.state !== 'accepted').map(v => v.name);
+    const mins = Math.max(1, Math.round(((mn.end||0) - (mn.ts||0)) / 60000));
+    h += '<details class="min" data-min="'+esc(id)+'" id="min-'+esc(id)+'"'+(open.has(id)?' open':'')+'>'
+      + '<summary>📋 '+esc(mn.title||'')+' <span class="md">· '+esc(ymdhm(mn.ts))+' · '+esc(t('minLen', mins))+' · '+yes.length+'명</span></summary>'
+      + '<div class="sec">'+esc(t('minWho'))+'</div><div class="who">'+yes.map(n => '<span class="st ok">'+esc(n)+'</span>').join('')+'</div>'
+      + (no.length ? '<div class="sec">'+esc(t('minAbs'))+'</div><div class="who">'+no.map(n => '<span class="st">'+esc(n)+'</span>').join('')+'</div>' : '')
+      + (mn.files ? '<div class="sec">'+esc(t('fH'))+'</div><div class="files">'+filesHtml(mn.files)+'</div>' : '')
+      + '<div class="sec">'+esc(t('minNotes'))+'</div>'
+      + (canEditMin(mn)
+          ? '<textarea class="note-ta" data-mnote="'+esc(id)+'" placeholder="'+esc(t('gem'))+'">'+esc(mn.notes||'')+'</textarea>'
+            + '<div class="acts"><button class="btn sm p" data-minsave="'+esc(id)+'">'+esc(t('minEdit'))+'</button></div>'
+          : '<div class="body">'+esc(mn.notes || t('minEmpty'))+'</div>')
+      + (mn.ntBy ? '<div class="saved">'+esc(t('nSaved', ymdhm(mn.ntTs)).split('%s').join(mn.ntBy))+'</div>' : '')
+      + '</details>';
+  }
+  el.className = 'mins';
+  el.innerHTML = h;
+}
+async function saveMin(id){
+  const ta = document.querySelector('textarea[data-mnote="'+id+'"]'); if (!ta) return;
+  try { const F = window.__fb;
+        await F.update(F.ref(F.db, BASE+'/minutes/'+id), { notes:String(ta.value).slice(0,40000), ntBy:me().name||'', ntTs:Date.now() });
+        alert(t('minOk')); } catch(e){ alert('저장 실패 · could not save'); }
+}
+/* 알림 창의 [회의록 보기] 는 meet.html#min-{id} 로 온다 → 그 회의록을 펼쳐서 보여 준다 */
+let HASH_DONE = '';
+function openHash(){
+  const m = /^#(min|call)-(.+)$/.exec(location.hash || ''); if (!m || HASH_DONE === location.hash) return;
+  const el = document.getElementById(m[1]+'-'+m[2]); if (!el) return;
+  HASH_DONE = location.hash;
+  if (el.tagName === 'DETAILS') el.open = true;
+  el.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+window.addEventListener('hashchange', () => { HASH_DONE = ''; openHash(); });
 function reopen(id){
   const c = CALLS[id]; if (!c) return;
   window.open(withAcct(c.url), '_blank', 'noopener');
@@ -726,8 +945,12 @@ async function setLines(){
 }
 function renderDial(){
   const el = document.getElementById('dial'); if (!el) return;
+  if (typing()) return;
   const now = Date.now();
-  const calls = Object.keys(CALLS).filter(k => callActive(CALLS[k]) && (isExec() || iMade(CALLS[k])))
+  // [회의 끝] 을 안 누르고 1시간이 지난 내 회의 → 그때까지 내용으로 회의록을 남긴다
+  Object.keys(CALLS).forEach(k => { const c = CALLS[k]; if (c && !c.ended && !callActive(c) && iMade(c)) endCall(k, true); });
+  const inCall = c => !!(c && c.inv && myUid() && c.inv[myUid()]);
+  const calls = Object.keys(CALLS).filter(k => callActive(CALLS[k]) && (isExec() || iMade(CALLS[k]) || inCall(CALLS[k])))
                  .sort((a,b) => (CALLS[b].ts||0) - (CALLS[a].ts||0));
   let h = '<div class="hd"><b>'+esc(t('dialT'))+'</b>'
     + (isExec() ? '<button class="btn sm" data-lines="1">'+esc(t('lines'))+' · '+Object.keys(LINES).length+'</button>' : '')
@@ -745,7 +968,7 @@ function renderDial(){
       if (!p || rank[st] > rank[p.st]) per.set(k, { name:v.name, branch:v.branch, st });
     });
     const lab = { accepted:['ok',t('sOk')], ringing:['ring',t('sRing')], declined:['no',t('sNo')], missed:['',t('sMiss')] };
-    h += '<div class="call"><div class="ct">'+esc(t('callBy').split('%s').join(c.by||''))+' · '+hhmm(c.ts)+'</div>'
+    h += '<div class="call" id="call-'+esc(id)+'"><div class="ct">'+esc(t('callBy').split('%s').join(c.by||''))+' · '+hhmm(c.ts)+'</div>'
       + '<div class="cs">'+esc(c.roomName||'')+'</div>'
       + '<div class="who">'+[...per.values()].map(p => '<span class="st '+lab[p.st][0]+'">'+esc(p.name)+' · '+esc(lab[p.st][1])+'</span>').join('')+'</div>'
       + '<div class="acts">'
@@ -753,7 +976,16 @@ function renderDial(){
       +   (mine ? '<button class="btn sm" data-cring="'+esc(id)+'">'+esc(t('ringAgain'))+'</button>' : '')
       +   (mine && canDial() ? '<button class="btn sm" data-cadd="'+esc(id)+'">'+esc(t('addPpl'))+'</button>' : '')
       +   (mine || isExec() ? '<button class="btn sm" data-cend="'+esc(id)+'">'+esc(t('endCall'))+'</button>' : '')
-      + '</div></div>';
+      + '</div>'
+      + '<div class="tip">'+esc(t('tile'))+(mine ? '<br>'+esc(t('gem')) : '')+'</div>'
+      + '<div class="sec">'+esc(t('fH'))+'</div>'
+      + '<div class="files">'+(filesHtml(c.files) || '<div class="sub" style="font-size:.78em;color:var(--muted)">'+esc(t('fNone'))+'</div>')+'</div>'
+      + '<div class="acts"><button class="btn sm" data-cfile="'+esc(id)+'"'+(UP_BUSY[id] ? ' disabled' : '')+'>'
+      +   esc(UP_BUSY[id] ? t('fBusy', UP_BUSY[id]) : t('fUp'))+'</button></div>'
+      + '<div class="sec">'+esc(t('nH'))+'</div>'
+      + '<textarea class="note-ta" data-cnote="'+esc(id)+'" placeholder="'+esc(t('nPh'))+'">'+esc((c.notes||{}).text||'')+'</textarea>'
+      + ((c.notes||{}).by ? '<div class="saved">'+esc(t('nSaved', hhmm(c.notes.ts)).split('%s').join(c.notes.by))+'</div>' : '')
+      + '</div>';
   }
   el.className = 'dial';
   el.innerHTML = h;
@@ -779,6 +1011,12 @@ document.addEventListener('click', e => {
   if (b.dataset.pkbr != null) { PK_BR = b.dataset.pkbr; drawPicker(); return; }
   if (b.id === 'pkNo')  { closePicker(); return; }
   if (b.id === 'pkGo')  { startCall(); return; }
+  if (b.dataset.pkrm)   { PK_SEL.delete(b.dataset.pkrm); drawPicker(); return; }
+  if (b.dataset.grpsave){ saveGroup(); return; }
+  if (b.dataset.grp)    { useGroup(b.dataset.grp); return; }
+  if (b.dataset.grpdel) { delGroup(b.dataset.grpdel); return; }
+  if (b.dataset.cfile)  { UP_CALL = b.dataset.cfile; const fi = document.getElementById('fileIn'); fi.value = ''; fi.click(); return; }
+  if (b.dataset.minsave){ saveMin(b.dataset.minsave); return; }
   if (b.dataset.creopen){ reopen(b.dataset.creopen); return; }
   if (b.dataset.cring)  { ringAgain(b.dataset.cring); return; }
   if (b.dataset.cadd)   { openPicker(b.dataset.cadd); return; }
@@ -790,7 +1028,15 @@ document.addEventListener('click', e => {
   if (row.dataset.pkallbr) { pkAllBranch(); return; }
   if (row.dataset.pk) pkToggle(row.dataset.pk);
 });
-document.addEventListener('input', e => { if (e.target && e.target.id === 'pkQ') drawPicker(); });
+document.addEventListener('input', e => {
+  if (e.target && e.target.id === 'pkQ') drawPicker();
+  if (e.target && e.target.dataset && e.target.dataset.cnote) saveNote(e.target.dataset.cnote, e.target.value);
+});
+// 메모 칸을 떠나면 그동안 미뤄 둔 화면 갱신을 한다
+document.addEventListener('focusout', e => { if (e.target && e.target.classList && e.target.classList.contains('note-ta')) setTimeout(render, 50); });
+document.getElementById('fileIn').addEventListener('change', e => {
+  const fs = [...(e.target.files||[])]; if (UP_CALL && fs.length) uploadFiles(UP_CALL, fs);
+});
 window.addEventListener('km-lang-changed', e => {
   const l = e && e.detail; if (L3.includes(l) && l !== LANG) { LANG = l; render(); }
 });

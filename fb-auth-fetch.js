@@ -282,17 +282,23 @@ if ('serviceWorker' in navigator) {
 //   앱이 보일 때 8초마다 + 화면에 다시 올라올 때 즉시 확인. 3분 지난 부름은 띄우지 않는다(부재중).
 (function(){
   if (window.__kmRingWatch) return; window.__kmRingWatch = true;
+  // 회의 화면 주소 — 하위 폴더 페이지(floorplan/)에서도 맞게 이 스크립트 위치 기준으로 잡는다
+  const MEET = (() => { try { return new URL('meet.html', import.meta.url).href; } catch (_) { return './meet.html'; } })();   // 모듈이라 import.meta.url = 이 스크립트 위치 (floorplan/ 에서도 맞음)
+  const onMeet = () => /\/meet\.html$/.test(location.pathname);
   const RING = 'https://kimchi-mart-order-default-rtdb.firebaseio.com/inventory/meet';
   const FRESH = 3 * 60 * 1000;
   const seen = new Set();
   let open = false;
   const L = () => { try { const v = localStorage.getItem('km.lang'); return ['ko','en','es'].includes(v) ? v : 'ko'; } catch (_) { return 'ko'; } };
   const TX = {
-    ko: { t: '📹 화상 통화 초대', b: '%s 님이 지금 화상 통화로 부릅니다.', go: '📹 지금 참가', no: '나중에 / 거절',
+    ko: { t: '📹 화상 회의 초대', b: '%s 님이 지금 화상 회의로 부릅니다.', go: '📹 지금 참가', no: '나중에 / 거절',
+          mt: '📋 회의록이 올라왔습니다', mb: '%s 님 회의의 참석자·자료·메모가 정리되었습니다.', mgo: '📋 회의록 보기', mno: '닫기',
           n: '참가하면 이름과 시각이 기록됩니다. 녹화할 때는 시작하며 알려 드립니다.' },
-    en: { t: '📹 Video call', b: '%s is calling you on video now.', go: '📹 Join now', no: 'Decline',
+    en: { t: '📹 Video meeting', b: '%s is calling you into a video meeting.', go: '📹 Join now', no: 'Decline',
+          mt: '📋 Meeting minutes are ready', mb: 'Attendees, files and notes from %s’s meeting are filed.', mgo: '📋 View minutes', mno: 'Close',
           n: 'Your name and time are recorded. If the call is recorded you will be told.' },
-    es: { t: '📹 Videollamada', b: '%s le está llamando por video.', go: '📹 Entrar', no: 'Rechazar',
+    es: { t: '📹 Videorreunión', b: '%s le llama a una reunión por video.', go: '📹 Entrar', no: 'Rechazar',
+          mt: '📋 Acta de la reunión', mb: 'Se guardó el acta de la reunión de %s.', mgo: '📋 Ver acta', mno: 'Cerrar',
           n: 'Su nombre y hora quedan registrados. Si se graba, se le avisará.' },
   };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -317,12 +323,15 @@ if ('serviceWorker' in navigator) {
   }
   function show(uid, id, v){
     open = true;
-    const T = TX[L()];
+    const T0 = TX[L()];
+    const MIN = v.state === 'minutes';
+    // 📋 회의록 알림은 같은 창 모양에 글만 바꾼다
+    const T = MIN ? { t: T0.mt, b: T0.mb, go: T0.mgo, no: T0.mno, n: '' } : T0;
     const ov = document.createElement('div');
     ov.id = '__kmRing';
     ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:rgba(10,15,22,.62);display:flex;align-items:center;justify-content:center;padding:16px';
     ov.innerHTML = '<div style="background:#fff;color:#18202a;border-radius:18px;max-width:380px;width:100%;padding:20px 18px;box-shadow:0 18px 50px rgba(0,0,0,.35);font:15px/1.5 -apple-system,BlinkMacSystemFont,\'Segoe UI\',\'Malgun Gothic\',sans-serif;text-align:center">'
-      + '<div style="font-size:2.4em;line-height:1;margin-bottom:8px">📹</div>'
+      + '<div style="font-size:2.4em;line-height:1;margin-bottom:8px">' + (MIN ? '📋' : '📹') + '</div>'
       + '<div style="font-weight:800;font-size:1.08em;margin-bottom:6px">' + esc(T.t) + '</div>'
       + '<div style="font-weight:700;margin-bottom:4px">' + esc(T.b.replace('%s', v.from || '')) + '</div>'
       + (v.fromBranch ? '<div style="color:#64748b;font-size:.85em;margin-bottom:10px">' + esc(v.fromBranch) + '</div>' : '')
@@ -331,18 +340,28 @@ if ('serviceWorker' in navigator) {
       + '<button id="__kmRingNo" style="display:block;width:100%;background:#f1f5f9;color:#334155;border:0;border-radius:12px;padding:11px;font:inherit;font-weight:700;cursor:pointer">' + esc(T.no) + '</button>'
       + '</div>';
     (document.body || document.documentElement).appendChild(ov);
-    beep();
+    if (!MIN) beep();
     const close = () => { try { ov.remove(); } catch (_) {} open = false; };
     ov.querySelector('#__kmRingGo').onclick = () => {
+      if (MIN) {
+        patch('/ring/' + uid + '/' + id, { state: 'seen', at: Date.now() });
+        close();
+        const to = MEET + '#min-' + (v.min || '');
+        if (onMeet()) location.hash = 'min-' + (v.min || ''); else location.href = to;
+        return;
+      }
       // 새 창은 반드시 누른 그 순간에 연다 (기다렸다 열면 폰 브라우저가 막는다)
       if (v.url) window.open(withAcct(v.url), '_blank', 'noopener');
       const at = Date.now();
       patch('/ring/' + uid + '/' + id, { state: 'accepted', at });
       patch('/calls/' + id + '/inv/' + uid, { state: 'accepted', at });
       close();
+      // 이 화면은 회의 화면으로 — 거기서 회의 자료·메모를 같이 본다 (영상은 새 창의 Meet)
+      setTimeout(() => { if (onMeet()) location.hash = 'call-' + id; else location.href = MEET + '#call-' + id; }, 600);
     };
     ov.querySelector('#__kmRingNo').onclick = () => {
       const at = Date.now();
+      if (MIN) { patch('/ring/' + uid + '/' + id, { state: 'seen', at }); close(); return; }
       patch('/ring/' + uid + '/' + id, { state: 'declined', at });
       patch('/calls/' + id + '/inv/' + uid, { state: 'declined', at });
       close();
@@ -363,7 +382,8 @@ if ('serviceWorker' in navigator) {
         if (!v) continue;
         // 하루 지난 부름은 내가 정리한다 (거는 사람은 남의 칸을 지우지 않는다)
         if (now - (v.ts || 0) > 86400000) { window.fetch(RING + '/ring/' + uid + '/' + id + '.json', { method: 'DELETE' }).catch(() => {}); continue; }
-        if (v.state !== 'ringing' || now - (v.ts || 0) > FRESH) continue;
+        const isMin = v.state === 'minutes';   // 📋 회의록 알림은 하루 동안 띄운다 (볼 때까지)
+        if (!isMin && (v.state !== 'ringing' || now - (v.ts || 0) > FRESH)) continue;
         const key = id + '@' + v.ts;          // '다시 부르기'(ts 갱신)는 다시 띄운다
         if (seen.has(key)) continue;
         seen.add(key);
