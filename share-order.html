@@ -156,6 +156,7 @@ var L = {
   hubOwnerSet:{ko:'담당자 지정',en:'Set lead',es:'Asignar'},
   hubOwnerAsk:{ko:'헐리우드 경유 담당자 이름 (모아서 주문하고 나눠 보내는 사람)',en:'Name of the Hollywood lead (orders and ships hub items)',es:'Nombre del encargado en Hollywood'},
   hubChip:{ko:'🏬 경유',en:'🏬 Hub',es:'🏬 Hub'},
+  hubTrack:{ko:'🏬 Route to Hollywood — 지점별 요청·진행·✅ Received 보기 →',en:'🏬 Route to Hollywood — requests, tracking, ✅ Received →',es:'🏬 Route to Hollywood — pedidos, seguimiento, ✅ Recibido →'},
   costSet:{ko:'💲 낱개 원가',en:'💲 Unit cost',es:'💲 Costo unitario'},
   costAsk:{ko:'낱개 원가 ($) — 지점별 원가 나누기에 씁니다',en:'Unit cost ($) — used for the per-store cost split',es:'Costo unitario ($)'},
   // 주문 앱에 없는 벤더 (JFC·EASTLAND — 자기 회사 앱으로 주문) — 임원이 여기서 직접 추가
@@ -180,9 +181,13 @@ function bl(id){ var b = BRANCHES.filter(function(x){ return x.id === id; })[0];
 function me(){ try { return window.__currentUser || JSON.parse(localStorage.getItem('chat.me') || '{}'); } catch(e){ return {}; } }
 function meName(){ return (me() && me().name) || ''; }
 function today(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function isExecEarly(){ var r = String((me() && me().role) || '').toUpperCase(); return /OWNER|EXECUTIVE|오너|전무|사장/.test(r); }
 function toast(m){ var el = document.getElementById('toast'); el.textContent = m; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(function(){ el.classList.remove('show'); }, 2600); }
 
 var MYB = (function(){
+  // 🔐 2026-10-29: 직원은 서버가 정한 본인 지점으로만 요청 (다른 지점 이름으로 요청 못 하게) — 오너·임원만 고른다
+  var mb = String((me() && me().branch) || '').toUpperCase();
+  if (!isExecEarly() && BRANCHES.some(function(x){ return x.id === mb; })) return mb;
   try { var s = localStorage.getItem('share.myBranch'); if (s) return s; } catch(e){}
   var b = (me() && me().branch) || ''; try { b = b || localStorage.getItem('km_branch') || ''; } catch(e){}
   return BRANCHES.some(function(x){ return x.id === b; }) ? b : 'HOLLYWOOD';
@@ -232,6 +237,8 @@ function renderHub(){
   var keys = Object.keys(HUB).filter(function(k){ return HUB[k] && HUB[k].active !== false; })
     .sort(function(a, b){ var x = HUB[a], y = HUB[b]; return String(x.vendorName || '').localeCompare(String(y.vendorName || '')) || String(x.name || '').localeCompare(String(y.name || '')); });
   var h = '<div class="meta" style="margin:0 2px 10px;font-size:.84em">' + t('hubIntro') + '</div>';
+  // 🏬 2026-10-29: 지점별 요청 모음·진행 추적·✅ Received 는 Route to Hollywood 페이지에서
+  h += '<a href="./hollywood-route.html" class="btn g" style="display:block;text-align:center;text-decoration:none;margin:0 0 12px">' + t('hubTrack') + '</a>';
   h += '<div class="meta" style="margin:0 2px 12px">👤 ' + t('hubOwner') + ': <b>' + esc(HUB_CFG.hubOwner || '—') + '</b>' +
        (isExec() ? ' <button class="btn" data-hub="owner" style="padding:3px 9px;margin-left:6px">' + t('hubOwnerSet') + '</button>' : '') + '</div>';
   if (isExec()) h += violHtml();
@@ -399,6 +406,9 @@ async function act(a, id, val){
       var hadMine = !!(((o.wants || {})[MYB] || {}).qty);
       if (v) await api('shareOrders/' + id + '/wants/' + MYB, 'PUT', { qty: v, by: meName(), at: today() });
       else   await api('shareOrders/' + id + '/wants/' + MYB, 'DELETE');
+      // 🏬 2026-10-29 Route to Hollywood: 개수가 바뀌면 DJ·B.H.K 확인을 다시 받는다 (hollywood-route.html 과 같은 규칙)
+      var oldQ = +(((o.wants || {})[MYB] || {}).qty || 0);
+      if (v !== oldQ && (o.confirmed || {})[MYB]) await api('shareOrders/' + id + '/confirmed/' + MYB, 'DELETE').catch(function(){});
       o.wants = o.wants || {}; if (v) o.wants[MYB] = { qty: v, by: meName(), at: today() }; else delete o.wants[MYB];
       // 🏬 경유 품목은 박스가 안 차도 헐리우드가 수시로 주문한다 → 새 요청이 들어올 때마다 담당자에게 알린다
       if (o.hub && v && !hadMine && MYB !== o.lead){
@@ -555,7 +565,7 @@ function applyLang(){
 document.querySelectorAll('[data-l]').forEach(function(b){
   b.addEventListener('click', function(){ lang = b.getAttribute('data-l'); try { localStorage.setItem('kimchi_lang', lang); } catch(e){} applyLang(); });
 });
-document.getElementById('myBranch').addEventListener('change', function(){ MYB = this.value; try { localStorage.setItem('share.myBranch', MYB); } catch(e){} render(); });
+document.getElementById('myBranch').addEventListener('change', function(){ if (!isExecEarly()){ this.value = MYB; return; } MYB = this.value; try { localStorage.setItem('share.myBranch', MYB); } catch(e){} render(); });
 document.getElementById('btnNew').onclick = function(){ openForm(); };
 document.getElementById('tabHub').onclick = function(){ TAB = 'hub'; setTabs(); render(); };
 document.getElementById('tabOpen').onclick = function(){ TAB = 'open'; setTabs(); render(); };
@@ -563,7 +573,7 @@ document.getElementById('tabDone').onclick = function(){ TAB = 'done'; setTabs()
 
 // 주문 앱의 [🏬 헐리우드에 요청]에서 오면 (?hub=벤더__품번&from=지점) 그 품목을 연 채로
 var qs = new URLSearchParams(location.search);
-if (qs.get('from') && BRANCHES.some(function(b){ return b.id === qs.get('from'); })){
+if (isExecEarly() && qs.get('from') && BRANCHES.some(function(b){ return b.id === qs.get('from'); })){
   MYB = qs.get('from'); try { localStorage.setItem('share.myBranch', MYB); } catch(e){}
 }
 if (qs.get('hub')){ TAB = 'hub'; FOCUS = qs.get('hub'); }

@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Route to Hollywood</title>
+<!-- fb-auth-fetch 먼저 — fetch 에 로그인 토큰 자동 부착. auth-gate 가 로그인/승인·본인 지점 확인. -->
+<script type="module" src="./fb-auth-fetch.js?v=4"></script>
+<script src="./auth-gate.js?v=8"></script>
+<script src="./nav-sidebar.js?v=27-meet" defer></script>
+<!--
+  🏬 Route to Hollywood — 2026-10-29 사장님
+  "각 지점의 라우트 허리우드 요청은 별도의 정리된 목록이 나와야 … 어디 지점에서 어떤 물품을 필요로 하는지.
+   지점마다 본인들의 요청이 진행되고 있는지도 알 수 있도록, 김병호 전무도 나도 보면서 확인해 줄 수 있게.
+   수급이 완료될 때까지 트래킹 — 배송을 받은 지점은 반드시 Received 완료를 눌러 요청이 사라지게."
+
+  데이터는 공동 오더 앱(share-order.html)과 같은 노드 — 두 화면의 숫자가 늘 같다.
+    shareOrders/_items/{벤더}__{품번}        경유 품목 (오더 앱에서 DJ·B.H.K 가 [Route via Hollywood])
+    shareOrders/{회차id}                       { hub:true, itemKey, status:open|ordered|shipping|done|cancelled, … }
+      wants/{지점}     = { qty, by, at }        지점 요청
+      confirmed/{지점} = { by, at }             DJ·B.H.K 확인 (개수를 바꾸면 지워져 다시 확인)
+      received/{지점}  = { by, at }             그 지점 Received 완료 → 목록에서 사라짐
+  한 지점의 진행:  🟡 요청됨 → 🟢 확인됨 → 🔵 헐리우드 주문함 → 🚚 배송 중 → ✅ Received
+  누가 무엇을:
+    · 지점(헐리우드 외)   — 우리 지점 요청만 본다 · 요청 · Received 완료
+    · DJ · B.H.K          — 전 지점을 본다 · ✓ 확인 · 주문함 · 트럭 출발 · 취소
+    · 헐리우드 매니저급   — 전 지점을 본다 · 주문함 · 트럭 출발 (박스를 사서 나눠 보내는 곳)
+-->
+<style>
+:root{--g:#1a5c3a;--g2:#16a34a;--bg:#f4f6f5;--card:#fff;--ink:#1f2937;--sub:#6b7280;--line:#e5e7eb}
+*{box-sizing:border-box}
+html,body{overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif}
+header{background:linear-gradient(135deg,#14532d,#16a34a);color:#fff;padding:14px 16px 16px}
+header .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+header h1{font-size:1.18em;margin:0;flex:1}
+header .sub{font-size:.8em;opacity:.92;margin-top:5px;line-height:1.5}
+.hbtn{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:18px;padding:6px 12px;font-weight:700;cursor:pointer;font-family:inherit}
+.hbtn.on{background:#fff;color:var(--g)}
+.hsel{background:rgba(255,255,255,.95);border:0;border-radius:10px;padding:7px 9px;font-weight:800;color:var(--g);font-family:inherit;font-size:14px}
+.who{font-size:.8em;font-weight:700;background:rgba(255,255,255,.16);border-radius:10px;padding:5px 10px}
+main{max-width:820px;margin:0 auto;padding:12px}
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px}
+.sum div{background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:9px 10px;text-align:center}
+.sum b{display:block;font-size:1.45em}
+.sum span{font-size:.74em;color:var(--sub);font-weight:700}
+.sum .s-req b{color:#b45309}.sum .s-ok b{color:#15803d}.sum .s-ord b{color:#1d4ed8}.sum .s-ship b{color:#6d28d9}
+.tabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.tabs button{flex:1 1 120px;border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:9px 6px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit;font-size:.86em}
+.tabs button.on{border-color:var(--g);color:var(--g);background:#ecfdf5}
+.br{margin:16px 0 8px;padding:7px 12px;border-radius:10px;background:var(--g);color:#fff;font-weight:900;font-size:.95em;display:flex;justify-content:space-between;gap:8px}
+.vh{margin:16px 0 8px;font-weight:900;color:var(--g);font-size:1em;border-bottom:2px solid #bbf7d0;padding-bottom:4px}
+.card{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:11px 13px;margin-bottom:10px}
+.card.st-requested{border-left:6px solid #f59e0b}.card.st-confirmed{border-left:6px solid #16a34a}
+.card.st-ordered{border-left:6px solid #2563eb}.card.st-shipping{border-left:6px solid #7c3aed}
+.card.st-received{border-left:6px solid #94a3b8;opacity:.85}.card.st-cancelled{border-left:6px solid #dc2626;opacity:.8}
+.top{display:flex;gap:10px;align-items:flex-start}
+.top img{width:58px;height:58px;object-fit:contain;border-radius:10px;background:#f8fafc;border:1px solid var(--line);flex:none}
+.top .nm{min-width:0;flex:1}
+.top .nm b{font-size:1em;display:block;word-break:break-word}
+.qty{flex:none;text-align:center;background:#ecfdf5;border-radius:10px;padding:5px 10px;font-weight:900;color:var(--g);font-size:1.15em;line-height:1.1}
+.qty small{display:block;font-size:.55em;font-weight:700;color:var(--sub)}
+.meta{font-size:.78em;color:var(--sub);margin-top:3px;line-height:1.5}
+.steps{display:flex;gap:3px;margin:10px 0 4px}
+.steps i{flex:1;height:7px;border-radius:4px;background:#e5e7eb}
+.steps i.on{background:linear-gradient(90deg,#22c55e,#15803d)}
+.stt{font-size:.84em;font-weight:900}
+.stt.requested{color:#b45309}.stt.confirmed{color:#15803d}.stt.ordered{color:#1d4ed8}.stt.shipping{color:#6d28d9}.stt.received{color:#475569}.stt.cancelled{color:#b91c1c}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+.chip{font-size:.76em;font-weight:800;background:#f3f4f6;border-radius:8px;padding:3px 8px}
+.chip.requested{background:#fef3c7;color:#92400e}.chip.confirmed{background:#dcfce7;color:#166534}
+.chip.ordered{background:#dbeafe;color:#1e40af}.chip.shipping{background:#ede9fe;color:#5b21b6}.chip.received{background:#e2e8f0;color:#334155;text-decoration:line-through}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.btn{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-weight:800;cursor:pointer;font-family:inherit;font-size:.86em;color:var(--ink)}
+.btn.g{background:var(--g2);border-color:var(--g2);color:#fff}
+.btn.b{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+.btn.p{background:#6d28d9;border-color:#6d28d9;color:#fff}
+.btn.rcv{background:linear-gradient(135deg,#16a34a,#15803d);border:0;color:#fff;font-size:1em;padding:11px 16px;flex:1 1 220px}
+.btn.ghost{color:var(--sub)}
+.btn:disabled{opacity:.5;cursor:wait}
+.myrow{display:flex;gap:6px;align-items:center;margin-top:9px;flex-wrap:wrap}
+.myrow input{width:90px;border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;font-size:15px;font-family:inherit}
+.empty{text-align:center;color:var(--sub);padding:26px 10px;font-size:.92em;line-height:1.6;background:#fff;border-radius:14px;border:1.5px dashed var(--line)}
+.note{font-size:.82em;color:#166534;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:10px;padding:8px 11px;margin-bottom:12px;line-height:1.5}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:12px;font-size:.88em;z-index:99;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1 id="tTitle">🏬 Route to Hollywood</h1>
+    <button class="hbtn" data-l="ko">KO</button><button class="hbtn" data-l="en">EN</button><button class="hbtn" data-l="es">ES</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span class="who" id="tWho">—</span>
+    <select id="brSel" class="hsel" style="display:none"></select>
+  </div>
+  <div class="sub" id="tSub"></div>
+</header>
+<main>
+  <div class="sum" id="sum"></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="list"><div class="empty">⏳</div></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+var DB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
+var ROOM = 'need_overstock';                 // 📦 재고 부족/과다 방 — 트럭 기사·매니저가 보는 곳 (공동 오더 앱과 같은 방)
+var HUB_BRANCH = 'HOLLYWOOD';
+var BRANCHES = [
+  { id:'MIAMI', ko:'마이애미', en:'Miami', es:'Miami' },
+  { id:'PEMBROKE_PINES', ko:'펨브로크 파인즈', en:'Pembroke Pines', es:'Pembroke Pines' },
+  { id:'HOLLYWOOD', ko:'헐리우드', en:'Hollywood', es:'Hollywood' },
+  { id:'CORAL_SPRINGS', ko:'코럴 스프링스', en:'Coral Springs', es:'Coral Springs' },
+  { id:'LASOLAS', ko:'라스올라스', en:'Las Olas', es:'Las Olas' }
+];
+var STORES = BRANCHES.filter(function(b){ return b.id !== HUB_BRANCH; });   // 요청하는 지점들
+var L = {
+  sub:{ko:'헐리우드 경유 품목 — 지점 요청이 받을 때까지 여기서 추적됩니다. 배송을 받으면 반드시 [✅ Received 완료]를 눌러 주세요.',
+       en:'Hollywood hub items — each store request is tracked here until it is received. When it arrives, always tap [✅ Received].',
+       es:'Productos vía Hollywood — cada pedido se sigue aquí hasta recibirlo. Al llegar, toque siempre [✅ Recibido].'},
+  all:{ko:'전 지점',en:'All stores',es:'Todas'},
+  mine:{ko:'우리 지점',en:'My store',es:'Mi tienda'},
+  t_track:{ko:'📍 지점별 요청',en:'📍 Requests by store',es:'📍 Pedidos por tienda'},
+  t_mine:{ko:'📍 우리 지점 요청',en:'📍 Our requests',es:'📍 Nuestros pedidos'},
+  t_buy:{ko:'🛒 헐리우드 주문할 것',en:'🛒 Hollywood to order',es:'🛒 Hollywood debe pedir'},
+  t_req:{ko:'＋ 요청하기',en:'＋ Request',es:'＋ Pedir'},
+  t_done:{ko:'✅ 받은 기록',en:'✅ Received log',es:'✅ Recibidos'},
+  s_requested:{ko:'🟡 요청됨 · 확인 대기',en:'🟡 Requested · waiting for review',es:'🟡 Pedido · esperando revisión'},
+  s_confirmed:{ko:'🟢 확인됨 · 헐리우드 주문 준비',en:'🟢 Confirmed · Hollywood will order',es:'🟢 Confirmado · Hollywood lo pedirá'},
+  s_ordered:{ko:'🔵 헐리우드가 벤더에 주문함',en:'🔵 Hollywood ordered from vendor',es:'🔵 Hollywood lo pidió al proveedor'},
+  s_shipping:{ko:'🚚 트럭 배송 중 — 받으면 Received 완료',en:'🚚 On the truck — tap Received when it arrives',es:'🚚 En camión — toque Recibido al llegar'},
+  s_received:{ko:'✅ Received 완료',en:'✅ Received',es:'✅ Recibido'},
+  s_cancelled:{ko:'⛔ 취소됨',en:'⛔ Cancelled',es:'⛔ Cancelado'},
+  c_requested:{ko:'확인 대기',en:'To review',es:'Por revisar'}, c_confirmed:{ko:'확인됨',en:'Confirmed',es:'Confirmados'},
+  c_ordered:{ko:'주문함',en:'Ordered',es:'Pedidos'}, c_shipping:{ko:'배송 중',en:'On truck',es:'En camión'},
+  pcs:{ko:'개',en:'pcs',es:'uds'},
+  reqBy:{ko:'{n} 요청 · {d}',en:'requested by {n} · {d}',es:'pedido por {n} · {d}'},
+  okBy:{ko:'✓ {n} 확인 {d}',en:'✓ confirmed by {n} {d}',es:'✓ confirmado por {n} {d}'},
+  ordBy:{ko:'📞 {n} 주문 {d}',en:'📞 ordered by {n} {d}',es:'📞 pedido por {n} {d}'},
+  shipBy:{ko:'🚚 {d} 트럭 출발',en:'🚚 truck left {d}',es:'🚚 camión salió {d}'},
+  rcvBy:{ko:'✅ {n} 받음 {d}',en:'✅ received by {n} {d}',es:'✅ recibido por {n} {d}'},
+  caseOf:{ko:'1박스 {n}개',en:'case of {n}',es:'caja de {n}'},
+  boxes:{ko:'→ {b}박스 주문 ({n}개 중 {r}개 남음 → 헐리우드 몫)',en:'→ order {b} case(s) ({r} of {n} left → stays in Hollywood)',es:'→ pedir {b} caja(s) (sobran {r} de {n} → quedan en Hollywood)'},
+  boxesExact:{ko:'→ {b}박스 주문 (딱 맞음)',en:'→ order {b} case(s) (exact)',es:'→ pedir {b} caja(s) (exacto)'},
+  total:{ko:'합계 {n}개',en:'Total {n}',es:'Total {n}'},
+  b_ok:{ko:'✓ 확인',en:'✓ Confirm',es:'✓ Confirmar'},
+  b_order:{ko:'📞 벤더에 주문함',en:'📞 Ordered from vendor',es:'📞 Pedido al proveedor'},
+  b_ship:{ko:'🚚 입고됨 → 트럭 출발',en:'🚚 Arrived → send on truck',es:'🚚 Llegó → enviar en camión'},
+  b_cancel:{ko:'취소',en:'Cancel',es:'Cancelar'},
+  b_rcv:{ko:'✅ Received 완료 — 받았습니다',en:'✅ Received — it arrived',es:'✅ Recibido — ya llegó'},
+  b_req:{ko:'요청',en:'Request',es:'Pedir'},
+  b_change:{ko:'개수 변경',en:'Change qty',es:'Cambiar'},
+  a_ok:{ko:'{b} 요청을 확인할까요?\n{n} — {q}개',en:'Confirm {b} request?\n{n} — {q}',es:'¿Confirmar pedido de {b}?\n{n} — {q}'},
+  a_order:{ko:'벤더에 주문했나요?\n{n}\n\n요청한 지점: {w}\n\n→ 모든 요청 지점에 "🔵 헐리우드 주문함"으로 보입니다.',en:'Did you order this from the vendor?\n{n}\n\nStores: {w}\n\n→ All requesting stores will see "🔵 Ordered".',es:'¿Lo pidió al proveedor?\n{n}\n\nTiendas: {w}\n\n→ Todas verán "🔵 Pedido".'},
+  a_unconf:{ko:'⚠️ 아직 확인 안 된 요청이 있습니다: {w}\n그래도 주문함으로 표시할까요?',en:'⚠️ Some requests are not confirmed yet: {w}\nMark as ordered anyway?',es:'⚠️ Hay pedidos sin confirmar: {w}\n¿Marcar como pedido igual?'},
+  a_ship:{ko:'헐리우드에 입고됐고 트럭으로 보낼까요?\n{n}\n\n{w}\n\n→ 📦 재고 부족/과다 방에 🚚 배송 목록이 올라가고, 받는 지점은 Received 완료를 눌러야 합니다.',en:'Arrived at Hollywood — send on the truck?\n{n}\n\n{w}\n\n→ The 🚚 delivery list is posted to the stock room; each store must tap Received.',es:'¿Llegó a Hollywood — enviar en camión?\n{n}\n\n{w}\n\n→ Se publica la lista 🚚; cada tienda debe tocar Recibido.'},
+  a_cancel:{ko:'이 요청 묶음을 취소할까요?\n{n}\n\n요청한 지점 모두에게 "취소됨"으로 보입니다.',en:'Cancel this request group?\n{n}\n\nAll requesting stores will see "Cancelled".',es:'¿Cancelar este grupo?\n{n}\n\nTodas las tiendas verán "Cancelado".'},
+  a_rcv:{ko:'{b} — 받았나요?\n{n} · {q}개\n\nReceived 완료하면 이 요청은 목록에서 사라집니다.',en:'{b} — did it arrive?\n{n} · {q}\n\nOnce Received, this request leaves the list.',es:'{b} — ¿llegó?\n{n} · {q}\n\nAl marcar Recibido, sale de la lista.'},
+  a_rcvEarly:{ko:'\n\n(헐리우드가 아직 트럭 출발을 누르지 않았지만 받았다면 눌러도 됩니다)',en:'\n\n(Hollywood has not marked it shipped yet, but tap it if it really arrived)',es:'\n\n(Hollywood aún no lo marcó enviado, pero tóquelo si de verdad llegó)'},
+  e_none:{ko:'진행 중인 요청이 없습니다.',en:'No requests in progress.',es:'No hay pedidos en curso.'},
+  e_mine:{ko:'우리 지점의 진행 중인 요청이 없습니다.<br><b>＋ 요청하기</b> 탭에서 필요한 개수를 요청하세요.',en:'No requests in progress for our store.<br>Use the <b>＋ Request</b> tab.',es:'No hay pedidos en curso.<br>Use la pestaña <b>＋ Pedir</b>.'},
+  e_buy:{ko:'헐리우드가 주문할 요청이 없습니다.',en:'Nothing for Hollywood to order.',es:'Nada que pedir.'},
+  e_items:{ko:'아직 경유 품목이 없습니다.<br>오더 센터에서 DJ·김병호 전무가 <b>[🏬 Route via Hollywood]</b>를 누르면 여기에 나옵니다.',en:'No hub items yet.<br>DJ / B.H.K mark them with <b>[🏬 Route via Hollywood]</b> in the Order Center.',es:'Aún no hay productos.<br>DJ / B.H.K los marcan con <b>[🏬 Vía Hollywood]</b>.'},
+  e_done:{ko:'최근 14일 받은 기록이 없습니다.',en:'Nothing received in the last 14 days.',es:'Nada recibido en 14 días.'},
+  pickBr:{ko:'요청하려면 위에서 지점을 고르세요 (전 지점 화면에서는 요청할 수 없습니다).',en:'Pick a store above to request (not possible in All stores).',es:'Elija una tienda arriba para pedir.'},
+  hubOnly:{ko:'헐리우드는 벤더에 직접 주문합니다 — 요청할 필요가 없습니다.',en:'Hollywood orders from the vendor directly — no request needed.',es:'Hollywood pide directo al proveedor.'},
+  reqIntro:{ko:'벤더에 직접 주문하지 않는 품목입니다. 필요한 <b>개수</b>만 넣으면 헐리우드가 박스로 사서 트럭으로 보냅니다.',en:'Do not order these from the vendor. Enter the <b>units</b> you need — Hollywood buys the case and sends them by truck.',es:'No los pida al proveedor. Ponga las <b>unidades</b> — Hollywood compra la caja y envía en camión.'},
+  inFlight:{ko:'이미 진행 중: {s} · {q}개',en:'Already in progress: {s} · {q}',es:'Ya en curso: {s} · {q}'},
+  needQty:{ko:'개수를 넣어주세요',en:'Enter a quantity',es:'Ingrese cantidad'},
+  requested:{ko:'요청됨 — 헐리우드·전무님이 확인합니다',en:'Requested — Hollywood will review it',es:'Pedido — Hollywood lo revisará'},
+  saved:{ko:'저장됨',en:'Saved',es:'Guardado'},
+  fail:{ko:'저장 실패',en:'Save failed',es:'Error al guardar'},
+  noRule:{ko:'권한 없음 — 로그인 상태를 확인해 주세요',en:'No permission — check your login',es:'Sin permiso — revise su sesión'},
+  loadFail:{ko:'불러오지 못했습니다. 새로고침해 주세요.',en:'Could not load. Please refresh.',es:'No se pudo cargar. Recargue.'},
+  noOne:{ko:'보낼 지점이 없습니다',en:'No store to send to',es:'No hay tienda'}
+};
+var lang = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(e){ return 'ko'; } })();
+if (['ko','en','es'].indexOf(lang) < 0) lang = 'ko';
+function t(k, v){ var o = L[k]; var s = o ? (o[lang] || o.ko) : k; if (v) for (var x in v) s = s.split('{' + x + '}').join(v[x]); return s; }
+function esc(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function bl(id){ var b = BRANCHES.filter(function(x){ return x.id === id; })[0]; return b ? (b[lang] || b.ko) : (id === 'ALL' ? t('all') : id); }
+function me(){ try { return window.__currentUser || JSON.parse(localStorage.getItem('chat.me') || '{}') || {}; } catch(e){ return {}; } }
+function meName(){ return me().name || ''; }
+function today(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function md(ts){ if (!ts) return ''; var d = new Date(typeof ts === 'number' ? ts : String(ts) + 'T12:00:00'); return isNaN(d) ? String(ts) : (d.getMonth() + 1) + '/' + d.getDate(); }
+function toast(m){ var el = document.getElementById('toast'); el.textContent = m; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(function(){ el.classList.remove('show'); }, 2600); }
+
+// ── 누가 보나 (오더 앱 hub.js 와 같은 선) ──
+//   DJ · B.H.K(김병호) = 확인·처리 · 오너·임원 = 전 지점 열람 · 헐리우드 매니저급 = 주문·트럭
+var ROUTERS = ['DJ', 'B.H.K', 'BHK', '비에이치케이', '김병호', 'BYUNGHOKIM'];
+function role(){ return String(me().role || '').trim().toUpperCase(); }
+function isExec(){ return /^(OWNER|EXECUTIVE)$/.test(role()); }
+function isRouter(){ return isExec() && ROUTERS.indexOf(String(me().name || '').replace(/\s+/g, '').toUpperCase()) >= 0; }
+function myBranch(){ return String(me().branch || '').toUpperCase(); }
+function isHubMgr(){ return myBranch() === HUB_BRANCH && /MANAGER|SUPERVISOR|ASST|GERENTE|매니저|점장/.test(role()); }
+function canRun(){ return isRouter() || isHubMgr(); }                 // 주문함 · 트럭 출발 · 취소
+// 화면 지점: 오너·임원은 고를 수 있다(기본 전 지점). 그 밖은 서버가 정한 본인 지점으로 고정 — 다른 지점인 척 요청 못 하게.
+var VIEW = '';
+function seesAll(){ return VIEW === 'ALL' || (VIEW === HUB_BRANCH); }
+
+var TAB = '', HUB = {}, ROUNDS = {}, LOADED = false, BUSY = false, FOCUS = '';
+
+async function api(path, method, body){
+  var opt = { cache:'no-store' };
+  if (method){ opt = { method: method }; if (method !== 'DELETE'){ opt.headers = { 'Content-Type':'application/json' }; opt.body = JSON.stringify(body); } }
+  var r = await fetch(DB + '/' + path + '.json', opt);
+  if (!r.ok){ var e = new Error(r.status); e.status = r.status; throw e; }
+  return method ? null : r.json();
+}
+function failToast(e){ toast((e && (e.status === 401 || e.status === 403)) ? t('noRule') : t('fail') + ' (' + ((e && e.message) || e) + ')'); }
+async function load(){
+  try {
+    var all = (await api('shareOrders')) || {};
+    HUB = all._items || {}; ROUNDS = {};
+    Object.keys(all).forEach(function(k){ if (k.charAt(0) !== '_' && all[k] && all[k].hub) ROUNDS[k] = all[k]; });
+    LOADED = true; render();
+  } catch(e){
+    if (!LOADED) document.getElementById('list').innerHTML = '<div class="empty">' + ((e.status === 401 || e.status === 403) ? t('noRule') : t('loadFail')) + '</div>';
+  }
+}
+async function postChat(text, meta){
+  var ts = Date.now(), id = 'm' + ts + Math.floor(Math.random() * 900);
+  var msg = { sender: meName(), senderBranch: myBranch() || VIEW, senderRole: me().role || '', isManager: !!me().isManager,
+              color: '#15803D', text: text, ts: ts, photos: [], meta: meta || {} };
+  await api('chat/messages/' + ROOM + '/' + id, 'PUT', msg);
+  api('chat/rooms/' + ROOM, 'PATCH', { lastMsg: text.split('\n')[0].slice(0, 40), lastTs: ts, lastSender: meName() }).catch(function(){});
+}
+
+// ── 한 지점 요청의 단계 ──
+function wq(o, b){ return +(((o.wants || {})[b] || {}).qty || 0); }
+function stageOf(o, b){
+  if ((o.received || {})[b]) return 'received';
+  if (o.status === 'cancelled') return 'cancelled';
+  if (o.status === 'shipping' || o.status === 'done') return 'shipping';
+  if (o.status === 'ordered') return 'ordered';
+  return (o.confirmed || {})[b] ? 'confirmed' : 'requested';
+}
+var STEP = { requested:1, confirmed:2, ordered:3, shipping:4, received:5, cancelled:0 };
+var DAY = 86400000;
+// 진행 중 = 아직 Received 안 한 요청. 취소는 3일 동안만 보여 준다(지점이 알 수 있게).
+function lines(filterBranch){
+  var out = [];
+  Object.keys(ROUNDS).forEach(function(id){
+    var o = ROUNDS[id];
+    STORES.forEach(function(b){
+      if (filterBranch && b.id !== filterBranch) return;
+      var q = wq(o, b.id); if (!q) return;
+      var st = stageOf(o, b.id);
+      if (st === 'received') return;
+      if (st === 'cancelled' && Date.now() - (+o.cancelledAt || 0) > 3 * DAY) return;
+      out.push({ id: id, o: o, b: b.id, q: q, st: st });
+    });
+  });
+  return out.sort(function(x, y){ return (STEP[x.st] || 9) - (STEP[y.st] || 9) || ((x.o.createdAt || 0) - (y.o.createdAt || 0)); });
+}
+
+function itemImg(o){ var it = HUB[o.itemKey] || {}; return o.image || it.image || ''; }
+function nameHtml(o){
+  var it = HUB[o.itemKey] || {};
+  var kr = o.nameKr || it.nameKr || '';
+  return '<b>' + esc(o.name) + '</b>' + (kr && kr !== o.name ? '<div class="meta">' + esc(kr) + '</div>' : '') +
+    '<div class="meta">🏬 ' + esc(o.vendor || it.vendorName || '') + (o.vendorCode ? ' · #' + esc(o.vendorCode) : '') +
+    (it.size ? ' · ' + esc(it.size) : '') + (+o.caseSize ? ' · ' + t('caseOf', { n: o.caseSize }) : '') + '</div>';
+}
+function stepsHtml(st){
+  var n = STEP[st] || 0, h = '<div class="steps">';
+  for (var i = 1; i <= 5; i++) h += '<i class="' + (i <= n ? 'on' : '') + '"></i>';
+  return h + '</div><div class="stt ' + st + '">' + t('s_' + st) + '</div>';
+}
+function historyHtml(o, b){
+  var w = (o.wants || {})[b] || {}, c = (o.confirmed || {})[b], r = (o.received || {})[b], p = [];
+  p.push(t('reqBy', { n: esc(w.by || '?'), d: md(w.at) }));
+  if (c) p.push(t('okBy', { n: esc(c.by || '?'), d: md(c.at) }));
+  if (o.orderedAt) p.push(t('ordBy', { n: esc(o.orderedBy || '?'), d: md(o.orderedAt) }));
+  if (o.arrivedAt) p.push(t('shipBy', { d: md(o.arrivedAt) }));
+  if (r) p.push(t('rcvBy', { n: esc(r.by || '?'), d: md(r.at) }));
+  return '<div class="meta">' + p.join(' · ') + '</div>';
+}
+// 지점 한 줄 카드 (지점별 · 우리 지점)
+function lineCard(x){
+  var o = x.o, h = '<div class="card st-' + x.st + '">';
+  h += '<div class="top">' + (itemImg(o) ? '<img src="' + esc(itemImg(o)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+       '<div class="nm">' + nameHtml(o) + '</div><div class="qty">' + x.q + '<small>' + t('pcs') + '</small></div></div>';
+  h += stepsHtml(x.st) + historyHtml(o, x.b);
+  var a = '';
+  if (x.st === 'requested' && isRouter()) a += '<button class="btn g" data-a="ok" data-id="' + esc(x.id) + '" data-b="' + x.b + '">' + t('b_ok') + '</button>';
+  // ✅ Received — 받는 지점 본인(오너·임원은 대신 눌러 줄 수 있다). 주문 이후에만.
+  if ((x.st === 'ordered' || x.st === 'shipping') && (myBranch() === x.b || isExec()))
+    a += '<button class="btn rcv" data-a="rcv" data-id="' + esc(x.id) + '" data-b="' + x.b + '">' + t('b_rcv') + '</button>';
+  if (a) h += '<div class="acts">' + a + '</div>';
+  return h + '</div>';
+}
+
+function renderSum(ls){
+  var c = { requested:0, confirmed:0, ordered:0, shipping:0 };
+  ls.forEach(function(x){ if (c[x.st] != null) c[x.st]++; });
+  document.getElementById('sum').innerHTML =
+    '<div class="s-req"><b>' + c.requested + '</b><span>' + t('c_requested') + '</span></div>' +
+    '<div class="s-ok"><b>' + c.confirmed + '</b><span>' + t('c_confirmed') + '</span></div>' +
+    '<div class="s-ord"><b>' + c.ordered + '</b><span>' + t('c_ordered') + '</span></div>' +
+    '<div class="s-ship"><b>' + c.shipping + '</b><span>' + t('c_shipping') + '</span></div>';
+}
+function tabsList(){
+  var ts = [];
+  ts.push(['track', seesAll() ? t('t_track') : t('t_mine')]);
+  if (seesAll()) ts.push(['buy', t('t_buy')]);
+  if (VIEW !== 'ALL' && VIEW !== HUB_BRANCH) ts.push(['req', t('t_req')]);
+  ts.push(['done', t('t_done')]);
+  return ts;
+}
+function render(){
+  var ts = tabsList();
+  if (!ts.some(function(x){ return x[0] === TAB; })) TAB = ts[0][0];
+  document.getElementById('tabs').innerHTML = ts.map(function(x){ return '<button data-tab="' + x[0] + '" class="' + (x[0] === TAB ? 'on' : '') + '">' + esc(x[1]) + '</button>'; }).join('');
+  var ls = lines(seesAll() ? '' : (VIEW || '-'));          // 지점을 모르면 아무것도 안 보여 준다(남의 지점 노출 금지)
+  renderSum(ls);
+  if (!LOADED) return;
+  var list = document.getElementById('list'), h = '';
+  if (TAB === 'track'){
+    if (!ls.length) h = '<div class="empty">' + (seesAll() ? t('e_none') : t('e_mine')) + '</div>';
+    else if (seesAll()){
+      STORES.forEach(function(b){
+        var xs = ls.filter(function(x){ return x.b === b.id; }); if (!xs.length) return;
+        h += '<div class="br"><span>📍 ' + esc(bl(b.id)) + '</span><span>' + xs.length + '</span></div>' + xs.map(lineCard).join('');
+      });
+    } else h = ls.map(lineCard).join('');
+  } else if (TAB === 'buy') h = buyHtml();
+  else if (TAB === 'req') h = reqHtml();
+  else h = doneHtml();
+  list.innerHTML = h;
+  if (FOCUS && TAB === 'req'){
+    var el = document.getElementById('it_' + FOCUS);
+    if (el){ el.scrollIntoView({ block:'center' }); el.style.borderColor = '#16a34a'; var inp = document.getElementById('rq_' + FOCUS); if (inp) setTimeout(function(){ inp.focus(); }, 300); }
+    FOCUS = '';
+  }
+}
+
+// 🛒 헐리우드 주문할 것 — 벤더별로, 상품마다 지점 요청 합계 · 박스 수 · 지점별 단계
+function buyHtml(){
+  var ids = Object.keys(ROUNDS).filter(function(id){ var s = ROUNDS[id].status; return (s === 'open' || s === 'ordered' || s === 'shipping') &&
+    STORES.some(function(b){ return wq(ROUNDS[id], b.id) && !(ROUNDS[id].received || {})[b.id]; }); });
+  if (!ids.length) return '<div class="empty">' + t('e_buy') + '</div>';
+  var byV = {};
+  ids.forEach(function(id){ var v = ROUNDS[id].vendor || '—'; (byV[v] = byV[v] || []).push(id); });
+  var h = '';
+  Object.keys(byV).sort().forEach(function(v){
+    h += '<div class="vh">🏬 ' + esc(v) + ' · ' + byV[v].length + '</div>';
+    byV[v].sort(function(a, b){ return (ROUNDS[a].createdAt || 0) - (ROUNDS[b].createdAt || 0); }).forEach(function(id){
+      var o = ROUNDS[id], cs = +o.caseSize || 0, tot = 0, chips = '';
+      STORES.forEach(function(b){ var q = wq(o, b.id); if (!q) return; tot += q; var st = stageOf(o, b.id);
+        chips += '<span class="chip ' + st + '">' + esc(bl(b.id)) + ' ' + q + '</span>'; });
+      var st = o.status === 'open' ? 'requested' : o.status;
+      h += '<div class="card st-' + (o.status === 'open' ? 'confirmed' : st) + '"><div class="top">' +
+           (itemImg(o) ? '<img src="' + esc(itemImg(o)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+           '<div class="nm">' + nameHtml(o) + '</div><div class="qty">' + tot + '<small>' + t('pcs') + '</small></div></div>';
+      h += '<div class="chips">' + chips + '</div>';
+      if (cs && o.status === 'open'){
+        var bx = Math.ceil(tot / cs), rest = bx * cs - tot;
+        h += '<div class="meta" style="font-weight:800;color:#1d4ed8">' + (rest ? t('boxes', { b: bx, n: bx * cs, r: rest }) : t('boxesExact', { b: bx })) + '</div>';
+      }
+      if (o.orderedAt) h += '<div class="meta">' + t('ordBy', { n: esc(o.orderedBy || '?'), d: md(o.orderedAt) }) + (o.arrivedAt ? ' · ' + t('shipBy', { d: md(o.arrivedAt) }) : '') + '</div>';
+      if (canRun()){
+        var a = '';
+        if (o.status === 'open')    a += '<button class="btn b" data-a="order" data-id="' + esc(id) + '">' + t('b_order') + '</button>';
+        if (o.status === 'ordered') a += '<button class="btn p" data-a="ship" data-id="' + esc(id) + '">' + t('b_ship') + '</button>';
+        if (o.status === 'open' || o.status === 'ordered') a += '<button class="btn ghost" data-a="cancel" data-id="' + esc(id) + '">' + t('b_cancel') + '</button>';
+        if (a) h += '<div class="acts">' + a + '</div>';
+      }
+      h += '</div>';
+    });
+  });
+  return h;
+}
+
+// ＋ 요청하기 — 경유 품목마다 개수. 그 품목의 열린 회차에 합쳐진다(없으면 새로 연다) — 공동 오더 앱과 같은 방식.
+function openRoundFor(k){
+  return Object.keys(ROUNDS).filter(function(id){ return ROUNDS[id].itemKey === k && ROUNDS[id].status === 'open'; })
+    .sort(function(a, b){ return (ROUNDS[b].createdAt || 0) - (ROUNDS[a].createdAt || 0); })[0] || '';
+}
+function reqHtml(){
+  var keys = Object.keys(HUB).filter(function(k){ return HUB[k] && HUB[k].active !== false; })
+    .sort(function(a, b){ var x = HUB[a], y = HUB[b]; return String(x.vendorName || '').localeCompare(String(y.vendorName || '')) || String(x.name || '').localeCompare(String(y.name || '')); });
+  if (!keys.length) return '<div class="empty">' + t('e_items') + '</div>';
+  var h = '<div class="note">' + t('reqIntro') + '</div>';
+  keys.forEach(function(k){
+    var it = HUB[k], rid = openRoundFor(k), mine = rid ? wq(ROUNDS[rid], VIEW) : 0;
+    // 주문 이후 단계에서 아직 안 받은 같은 품목이 있으면 알려 준다 (중복 요청 방지)
+    var fl = lines(VIEW).filter(function(x){ return x.o.itemKey === k && x.st !== 'requested' && x.st !== 'confirmed' && x.st !== 'cancelled'; })[0];
+    h += '<div class="card" id="it_' + esc(k) + '"><div class="top">' +
+      (it.image ? '<img src="' + esc(it.image) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+      '<div class="nm"><b>' + esc(it.name) + '</b>' + (it.nameKr && it.nameKr !== it.name ? '<div class="meta">' + esc(it.nameKr) + '</div>' : '') +
+      '<div class="meta">🏬 ' + esc(it.vendorName || it.vendor) + (it.pid ? ' · #' + esc(it.pid) : '') + (it.size ? ' · ' + esc(it.size) : '') + (+it.caseSize ? ' · ' + t('caseOf', { n: it.caseSize }) : '') + '</div></div></div>' +
+      (fl ? '<div class="meta" style="color:#6d28d9;font-weight:800">' + esc(t('inFlight', { s: t('s_' + fl.st), q: fl.q })) + '</div>' : '') +
+      '<div class="myrow"><span style="font-size:.82em;font-weight:800">' + esc(bl(VIEW)) + '</span>' +
+      '<input type="number" min="0" inputmode="numeric" id="rq_' + esc(k) + '" value="' + (mine || '') + '">' +
+      '<button class="btn g" data-a="req" data-k="' + esc(k) + '">' + (mine ? t('b_change') : t('b_req')) + '</button></div></div>';
+  });
+  return h;
+}
+
+// ✅ 받은 기록 — 최근 14일
+function doneHtml(){
+  var rows = [];
+  Object.keys(ROUNDS).forEach(function(id){
+    var o = ROUNDS[id];
+    Object.keys(o.received || {}).forEach(function(b){
+      if (!seesAll() && b !== VIEW) return;
+      var r = o.received[b]; if (Date.now() - (+r.at || 0) > 14 * DAY) return;
+      rows.push({ id: id, o: o, b: b, q: wq(o, b), at: +r.at || 0 });
+    });
+  });
+  if (!rows.length) return '<div class="empty">' + t('e_done') + '</div>';
+  rows.sort(function(a, b){ return b.at - a.at; });
+  return rows.map(function(x){
+    return '<div class="card st-received"><div class="top"><div class="nm">' + (seesAll() ? '<div class="meta" style="font-weight:900;color:var(--g)">📍 ' + esc(bl(x.b)) + '</div>' : '') +
+      nameHtml(x.o) + '</div><div class="qty">' + x.q + '<small>' + t('pcs') + '</small></div></div>' + historyHtml(x.o, x.b) + '</div>';
+  }).join('');
+}
+
+// ── 버튼 ──
+document.getElementById('tabs').addEventListener('click', function(e){
+  var b = e.target.closest('[data-tab]'); if (!b) return; TAB = b.getAttribute('data-tab'); render();
+});
+document.getElementById('list').addEventListener('click', async function(e){
+  var btn = e.target.closest('[data-a]'); if (!btn || BUSY) return;
+  var a = btn.getAttribute('data-a'), id = btn.getAttribute('data-id'), b = btn.getAttribute('data-b');
+  BUSY = true; btn.disabled = true;
+  try { await act(a, id, b, btn); } catch(err){ failToast(err); }
+  BUSY = false; btn.disabled = false;
+});
+async function fresh(id){ var o = await api('shareOrders/' + id); if (o) ROUNDS[id] = o; return o || ROUNDS[id]; }
+function wantsTxt(o, sep){ return STORES.filter(function(b){ return wq(o, b.id); }).map(function(b){ return bl(b.id) + ' ' + wq(o, b.id); }).join(sep || ' · '); }
+async function act(a, id, b, btn){
+  if (a === 'req') return request(btn.getAttribute('data-k'));
+  var o = await fresh(id); if (!o) return;
+  if (a === 'ok'){
+    if (!isRouter()) return;
+    if (!confirm(t('a_ok', { b: bl(b), n: o.name, q: wq(o, b) }))) return;
+    await api('shareOrders/' + id + '/confirmed/' + b, 'PUT', { by: meName(), at: Date.now() });
+  } else if (a === 'order'){
+    if (!canRun() || o.status !== 'open') return;
+    if (!confirm(t('a_order', { n: o.name, w: wantsTxt(o) }))) return;
+    var unc = STORES.filter(function(x){ return wq(o, x.id) && !(o.confirmed || {})[x.id]; }).map(function(x){ return bl(x.id); });
+    if (unc.length && !confirm(t('a_unconf', { w: unc.join(', ') }))) return;
+    await api('shareOrders/' + id, 'PATCH', { status:'ordered', orderedBy: meName(), orderedAt: Date.now() });
+  } else if (a === 'ship'){
+    if (!canRun() || o.status !== 'ordered') return;
+    var ship = STORES.filter(function(x){ return wq(o, x.id) && !(o.received || {})[x.id]; });
+    if (!confirm(t('a_ship', { n: o.name, w: ship.length ? ship.map(function(x){ return '➡️ ' + bl(x.id) + ' ' + wq(o, x.id); }).join('\n') : t('noOne') }))) return;
+    await api('shareOrders/' + id, 'PATCH', { status: ship.length ? 'shipping' : 'done', arrivedBy: meName(), arrivedAt: Date.now() });
+    if (ship.length){
+      // 기존 🚚 LASOLAS TRUCKING 흐름과 같은 머리말 — 기사가 늘 보던 모양 그대로 (공동 오더 앱과 같음)
+      await postChat('🚚 LASOLAS TRUCKING — 🏬 Route to Hollywood 배송 / delivery\n' +
+                     '📦 ' + o.name + (+o.caseSize ? ' (1박스 ' + o.caseSize + '개)' : '') + ' · ' + bl(HUB_BRANCH) + ' 입고 / from Hollywood\n' +
+                     ship.map(function(x){ return '• ' + bl(x.id) + ' ' + wq(o, x.id) + '개'; }).join('\n') +
+                     '\n받으면 Route to Hollywood 에서 ✅ Received 완료 / Tap ✅ Received when it arrives\n— ' + meName(),
+                     { kind:'share_ship', id: id }).catch(function(e){ console.warn('[hub chat]', e); });
+    }
+  } else if (a === 'cancel'){
+    if (!canRun()) return;
+    if (!confirm(t('a_cancel', { n: o.name }))) return;
+    await api('shareOrders/' + id, 'PATCH', { status:'cancelled', cancelledBy: meName(), cancelledAt: Date.now() });
+  } else if (a === 'rcv'){
+    if (!(myBranch() === b || isExec())) return;
+    if (o.status !== 'ordered' && o.status !== 'shipping' && o.status !== 'done') return;
+    if (!confirm(t('a_rcv', { b: bl(b), n: o.name, q: wq(o, b) }) + (o.status === 'ordered' ? t('a_rcvEarly') : ''))) return;
+    await api('shareOrders/' + id + '/received/' + b, 'PUT', { by: meName(), at: Date.now() });
+    o.received = o.received || {}; o.received[b] = { by: meName(), at: Date.now() };
+    // 요청한 지점이 모두 받았으면 회차 완료
+    if (STORES.filter(function(x){ return wq(o, x.id); }).every(function(x){ return o.received[x.id]; }))
+      await api('shareOrders/' + id, 'PATCH', { status:'done', doneAt: Date.now() });
+    toast(t('s_received'));
+  }
+  await load();
+}
+async function request(k){
+  var it = HUB[k]; if (!it || VIEW === 'ALL' || VIEW === HUB_BRANCH) return;
+  if (!isExec() && VIEW !== myBranch()) return;                       // 본인 지점 것만
+  var v = Math.max(0, parseInt(document.getElementById('rq_' + k).value, 10) || 0);
+  var rid = openRoundFor(k);
+  if (!rid){
+    if (!v){ toast(t('needQty')); return; }
+    rid = 's' + Date.now();
+    var o0 = { name: it.name, nameKr: it.nameKr || '', barcode: it.barcode || '', caseSize: +it.caseSize || 0, lead: HUB_BRANCH,
+               vendor: it.vendorName || it.vendor || '', vendorCode: it.pid || '', image: it.image || '', itemKey: k, hub: true,
+               unitCost: 0, memo: '', status: 'open', createdBy: meName(), createdAt: Date.now(), createdDay: today() };
+    await api('shareOrders/' + rid, 'PUT', o0);
+    ROUNDS[rid] = o0;
+  }
+  var o = await fresh(rid);
+  var had = wq(o, VIEW), cs = +o.caseSize || 0;
+  var before = STORES.reduce(function(s, b){ return s + wq(o, b.id); }, 0);
+  if (v) await api('shareOrders/' + rid + '/wants/' + VIEW, 'PUT', { qty: v, by: meName(), at: today() });
+  else   await api('shareOrders/' + rid + '/wants/' + VIEW, 'DELETE');
+  // 개수가 바뀌면 확인을 다시 받는다
+  if (v !== had && (o.confirmed || {})[VIEW]) await api('shareOrders/' + rid + '/confirmed/' + VIEW, 'DELETE').catch(function(){});
+  var after = before - had + v;
+  if (v && !had){
+    postChat('🏬 Route to Hollywood 요청 / request — ' + bl(VIEW) + ' ' + v + '개\n' +
+             '📦 ' + o.name + (o.vendor ? ' · 🏬 ' + o.vendor : '') + (o.vendorCode ? ' #' + o.vendorCode : '') + '\n' +
+             '지금 합계 / total ' + after + (cs ? ' / ' + cs : '') + ' — ' + meName(),
+             { kind:'hub_request', id: rid }).catch(function(){});
+  }
+  toast(v ? t('requested') : t('saved'));
+  TAB = 'track';
+  await load();
+}
+
+// ── 지점 · 언어 ──
+function setupView(){
+  var sel = document.getElementById('brSel');
+  var mine = myBranch(), p = new URLSearchParams(location.search);
+  if (isExec()){
+    var want = (p.get('branch') || '').toUpperCase();
+    try { want = want || localStorage.getItem('hubRoute.view') || ''; } catch(e){}
+    VIEW = (want === 'ALL' || BRANCHES.some(function(b){ return b.id === want; })) ? want : 'ALL';
+    sel.style.display = '';
+  } else {
+    VIEW = BRANCHES.some(function(b){ return b.id === mine; }) ? mine : '';
+    sel.style.display = 'none';
+  }
+}
+function applyLang(){
+  document.documentElement.lang = lang;
+  document.getElementById('tSub').textContent = t('sub');
+  document.querySelectorAll('[data-l]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-l') === lang); });
+  var sel = document.getElementById('brSel');
+  sel.innerHTML = [{ id:'ALL' }].concat(BRANCHES).map(function(b){ return '<option value="' + b.id + '"' + (b.id === VIEW ? ' selected' : '') + '>' + esc(bl(b.id)) + '</option>'; }).join('');
+  document.getElementById('tWho').textContent = '👤 ' + (meName() || '—') + (isExec() ? '' : ' · 📍 ' + (VIEW ? bl(VIEW) : '?'));
+  render();
+}
+document.querySelectorAll('[data-l]').forEach(function(b){
+  b.addEventListener('click', function(){ lang = b.getAttribute('data-l'); try { localStorage.setItem('kimchi_lang', lang); } catch(e){} applyLang(); });
+});
+document.getElementById('brSel').addEventListener('change', function(){
+  if (!isExec()) return;
+  VIEW = this.value; try { localStorage.setItem('hubRoute.view', VIEW); } catch(e){} render();
+});
+
+// 오더 센터의 [🏬 Request from Hollywood]에서 오면 (?req=벤더__품번&branch=지점) 그 품목을 연 채로
+var qs = new URLSearchParams(location.search);
+setupView();
+if (qs.get('req')){ FOCUS = qs.get('req'); if (VIEW !== 'ALL' && VIEW !== HUB_BRANCH) TAB = 'req'; }
+applyLang();
+load();
+window.addEventListener('fb-auth-ready', load);          // 로그인 토큰이 늦게 복원되면 다시
+window.addEventListener('km-auth-ready', function(){ setupView(); applyLang(); });   // 서버 프로필(지점·역할) 도착
+// 30초마다 다른 지점 입력·진행을 반영 — 숫자 입력 중이거나 버튼 처리 중이면 건너뛴다
+setInterval(function(){
+  var a = document.activeElement;
+  if (document.hidden || BUSY || (a && a.tagName === 'INPUT')) return;
+  load();
+}, 30000);
+document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') load(); });
+})();
+</script>
+</body>
+</html>

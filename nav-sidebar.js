@@ -83,6 +83,8 @@
     { sec: { ko:'매장 운영', en:'Operations', es:'Operaciones' } },
     { ic: '🏆', lbl: { ko:'Top 500 재고',  en:'Top 500 Stock', es:'Top 500 Inventario' }, href: './top500.html', highlight: true },
     { ic: '🏪', lbl: { ko:'주문 센터',     en:'Order Center',  es:'Centro de Pedidos' }, href: './vendor-order-center.html' },
+    // 🏬 2026-10-29 사장님: "오더 센터 밑에 Route to Hollywood" — 지점별 경유 요청 모음·진행 추적·✅ Received
+    { ic: '🏬', lbl: { ko:'Route to Hollywood', en:'Route to Hollywood', es:'Route to Hollywood' }, href: './hollywood-route.html', highlight: true },
     { ic: '🔎', lbl: { ko:'상품 조회',     en:'Product Lookup', es:'Buscar Producto' }, href: './lookup.html' },
     // 🛡 2026-07-15 사장님 사건 — 별도 앱인데 같은 창에서 열려 매니저앱을 통째로 뺏어가고,
     //    그 앱이 뒤로가기를 가로채 복귀 불가였음. 외부 앱은 반드시 새 창(_blank).
