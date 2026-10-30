@@ -3,6 +3,8 @@
 (function(){
   if (window.__navSideInjected) return;
   window.__navSideInjected = true;
+  // 🏠 2026-10-30 — 이 창은 이미 앱 안에 있다(앱 모음·HUB 를 메뉴로 열면 '내 업무'로 되돌리지 않게)
+  try { sessionStorage.setItem('km_session_started', '1'); } catch (_) {}
 
   // Manager-or-above tokens — 일반 매니저 권한 메뉴 (직원 승인, 지점 지출 등).
   // SUPERVISOR / 부매니저 도 포함 — 매장 운영 관리 자체는 가능해야 함.

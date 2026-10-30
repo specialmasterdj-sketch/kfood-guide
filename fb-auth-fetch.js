@@ -179,6 +179,9 @@ try {
   }
 } catch (_) {}
 
+// 🏠 2026-10-30 — 이 창은 이미 앱 안에 있다(앱 모음·HUB 를 메뉴로 열면 '내 업무'로 되돌리지 않게)
+try { sessionStorage.setItem('km_session_started', '1'); } catch (_) {}
+
 // When the service worker activates a new version it posts {type:'sw-updated'}
 // to every open client. Reload the page once so the user sees the new HTML/JS
 // immediately instead of having to close + reopen the PWA. Guarded with a
@@ -219,11 +222,8 @@ if ('serviceWorker' in navigator) {
       go.textContent = T[1];
       go.style.cssText = 'background:#22c55e;color:#06240f;border:0;border-radius:9px;padding:7px 12px;font:inherit;cursor:pointer';
       go.onclick = () => __swApplyReload(true);
-      const no = document.createElement('button');
-      no.textContent = T[2];
-      no.style.cssText = 'background:transparent;color:#cbd5e1;border:0;padding:7px 6px;font:inherit;cursor:pointer';
-      no.onclick = () => { try { b.remove(); } catch (_) {} };
-      b.appendChild(t); b.appendChild(go); b.appendChild(no);
+      // 🔄 2026-10-30 사장님: "모든 사용자가 반드시 업데이트하도록 유도" — '나중에'로 닫지 못하게. 띠는 누를 때까지 남는다.
+      b.appendChild(t); b.appendChild(go);
       (document.body || document.documentElement).appendChild(b);
     } catch (_) {}
   }
@@ -252,8 +252,11 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e && e.data && e.data.type === 'sw-updated') {
       try {
-        if (sessionStorage.getItem('__swReloaded') === '1') return;
-        sessionStorage.setItem('__swReloaded', '1');
+        // 2026-10-30 — 예전엔 한 번 새로고침한 창은 그 뒤 업데이트를 영영 무시했다(하루 종일 켜 둔 폰은 구버전 고착).
+        //   이제는 '방금(60초 안)' 새로고침한 경우만 건너뛴다 — 연속 루프만 막는다.
+        const __last = +(sessionStorage.getItem('__swReloadedAt') || 0);
+        if (Date.now() - __last < 60000) return;
+        sessionStorage.setItem('__swReloadedAt', String(Date.now()));
       } catch (_) {}
       __swReloadPending = true;
       __swApplyReload();
@@ -265,5 +268,112 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.ready.then(reg => {
     try { reg.update(); } catch(_){}
     setInterval(() => { try { reg.update(); } catch(_){} }, 5 * 60 * 1000);
+    // 2026-10-30 — 폰은 앱을 내려 두면 타이머가 멈춘다 → 다시 화면에 올라올 때마다 바로 확인
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') { try { reg.update(); } catch(_){} }
+    });
+    window.addEventListener('focus', () => { try { reg.update(); } catch(_){} });
   }).catch(() => {});
 }
+
+// 📞 2026-10-30 사장님: "직원을 클릭만 하면 상대에게 즉시 비디오 룸 접속 창이 뜨고, 나는 바로 기다렸다 대화."
+//   meet.html 에서 통화를 걸면 inventory/meet/ring/{받는 사람 uid}/{통화id} 에 적힌다.
+//   이 파일은 앱의 거의 모든 화면(58곳)에 들어 있어서, 받는 사람이 어느 화면에 있든 여기서 바로 창을 띄운다.
+//   앱이 보일 때 8초마다 + 화면에 다시 올라올 때 즉시 확인. 3분 지난 부름은 띄우지 않는다(부재중).
+(function(){
+  if (window.__kmRingWatch) return; window.__kmRingWatch = true;
+  const RING = 'https://kimchi-mart-order-default-rtdb.firebaseio.com/inventory/meet';
+  const FRESH = 3 * 60 * 1000;
+  const seen = new Set();
+  let open = false;
+  const L = () => { try { const v = localStorage.getItem('km.lang'); return ['ko','en','es'].includes(v) ? v : 'ko'; } catch (_) { return 'ko'; } };
+  const TX = {
+    ko: { t: '📹 화상 통화 초대', b: '%s 님이 지금 화상 통화로 부릅니다.', go: '📹 지금 참가', no: '나중에 / 거절',
+          n: '참가하면 이름과 시각이 기록됩니다. 녹화할 때는 시작하며 알려 드립니다.' },
+    en: { t: '📹 Video call', b: '%s is calling you on video now.', go: '📹 Join now', no: 'Decline',
+          n: 'Your name and time are recorded. If the call is recorded you will be told.' },
+    es: { t: '📹 Videollamada', b: '%s le está llamando por video.', go: '📹 Entrar', no: 'Rechazar',
+          n: 'Su nombre y hora quedan registrados. Si se graba, se le avisará.' },
+  };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  function withAcct(u){
+    let a = ''; try { a = localStorage.getItem('km.meet.gacct') || ''; } catch (_) {}
+    if (!a || !u || /[?&]authuser=/.test(u)) return u;
+    return u + (u.indexOf('?') < 0 ? '?' : '&') + 'authuser=' + encodeURIComponent(a);
+  }
+  function beep(){
+    try { navigator.vibrate && navigator.vibrate([300, 120, 300, 120, 500]); } catch (_) {}
+    try {
+      const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+      const c = new C(); const o = c.createOscillator(); const g = c.createGain();
+      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.15;
+      o.connect(g); g.connect(c.destination); o.start();
+      setTimeout(() => { o.frequency.value = 660; }, 250);
+      setTimeout(() => { try { o.stop(); c.close(); } catch (_) {} }, 700);
+    } catch (_) {}
+  }
+  async function patch(path, body){
+    try { await window.fetch(RING + path + '.json', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (_) {}
+  }
+  function show(uid, id, v){
+    open = true;
+    const T = TX[L()];
+    const ov = document.createElement('div');
+    ov.id = '__kmRing';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:rgba(10,15,22,.62);display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML = '<div style="background:#fff;color:#18202a;border-radius:18px;max-width:380px;width:100%;padding:20px 18px;box-shadow:0 18px 50px rgba(0,0,0,.35);font:15px/1.5 -apple-system,BlinkMacSystemFont,\'Segoe UI\',\'Malgun Gothic\',sans-serif;text-align:center">'
+      + '<div style="font-size:2.4em;line-height:1;margin-bottom:8px">📹</div>'
+      + '<div style="font-weight:800;font-size:1.08em;margin-bottom:6px">' + esc(T.t) + '</div>'
+      + '<div style="font-weight:700;margin-bottom:4px">' + esc(T.b.replace('%s', v.from || '')) + '</div>'
+      + (v.fromBranch ? '<div style="color:#64748b;font-size:.85em;margin-bottom:10px">' + esc(v.fromBranch) + '</div>' : '')
+      + '<div style="color:#64748b;font-size:.78em;margin-bottom:14px">' + esc(T.n) + '</div>'
+      + '<button id="__kmRingGo" style="display:block;width:100%;background:#16a34a;color:#fff;border:0;border-radius:12px;padding:14px;font:inherit;font-weight:800;font-size:1.05em;cursor:pointer;margin-bottom:8px">' + esc(T.go) + '</button>'
+      + '<button id="__kmRingNo" style="display:block;width:100%;background:#f1f5f9;color:#334155;border:0;border-radius:12px;padding:11px;font:inherit;font-weight:700;cursor:pointer">' + esc(T.no) + '</button>'
+      + '</div>';
+    (document.body || document.documentElement).appendChild(ov);
+    beep();
+    const close = () => { try { ov.remove(); } catch (_) {} open = false; };
+    ov.querySelector('#__kmRingGo').onclick = () => {
+      // 새 창은 반드시 누른 그 순간에 연다 (기다렸다 열면 폰 브라우저가 막는다)
+      if (v.url) window.open(withAcct(v.url), '_blank', 'noopener');
+      const at = Date.now();
+      patch('/ring/' + uid + '/' + id, { state: 'accepted', at });
+      patch('/calls/' + id + '/inv/' + uid, { state: 'accepted', at });
+      close();
+    };
+    ov.querySelector('#__kmRingNo').onclick = () => {
+      const at = Date.now();
+      patch('/ring/' + uid + '/' + id, { state: 'declined', at });
+      patch('/calls/' + id + '/inv/' + uid, { state: 'declined', at });
+      close();
+    };
+  }
+  async function poll(){
+    if (open || document.visibilityState !== 'visible') return;
+    let uid = '';
+    try { uid = (auth.currentUser && auth.currentUser.uid) || ''; } catch (_) {}
+    if (!uid) return;
+    try {
+      const r = await window.fetch(RING + '/ring/' + uid + '.json', { cache: 'no-store' });
+      if (!r.ok) return;
+      const m = (await r.json()) || {};
+      const now = Date.now();
+      for (const id of Object.keys(m)) {
+        const v = m[id];
+        if (!v) continue;
+        // 하루 지난 부름은 내가 정리한다 (거는 사람은 남의 칸을 지우지 않는다)
+        if (now - (v.ts || 0) > 86400000) { window.fetch(RING + '/ring/' + uid + '/' + id + '.json', { method: 'DELETE' }).catch(() => {}); continue; }
+        if (v.state !== 'ringing' || now - (v.ts || 0) > FRESH) continue;
+        const key = id + '@' + v.ts;          // '다시 부르기'(ts 갱신)는 다시 띄운다
+        if (seen.has(key)) continue;
+        seen.add(key);
+        show(uid, id, v);
+        break;
+      }
+    } catch (_) {}
+  }
+  setTimeout(poll, 2500);
+  setInterval(poll, 8000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(poll, 400); });
+  window.__kmRingPoll = poll;
+})();

@@ -59,6 +59,7 @@ function bootstrapFor(email){
 const BOOTSTRAP_PHONES = {
   '+13059264744': { role: 'EXECUTIVE', branch: '*', name: 'B.H.K' },
   '+19544945025': { role: 'OWNER',     branch: '*', name: 'DJ' },
+  '+15613290722': { role: 'OWNER',     branch: '*', name: 'Sun Kim' },   // 2026-10-30 사장님 아내 — DJ 와 동일 OWNER
 };
 function bootstrapForPhone(phone){ return phone ? (BOOTSTRAP_PHONES[String(phone).trim()] || null) : null; }
 function bootstrapForUser(user){ return bootstrapFor(user && user.email) || bootstrapForPhone(user && user.phoneNumber); }
