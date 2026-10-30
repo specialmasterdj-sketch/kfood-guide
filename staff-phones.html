@@ -128,7 +128,8 @@ const I18N = {
     pendNear2:(n,p)=>'💡 <b>'+n+'</b> 의 등록번호 '+p+' 와 <b>숫자 두 개의 자리가 바뀐</b> 번호입니다. 명단 번호를 잘못 적었을 수 있습니다.',
     pendFix:'✅ 명단 번호를 이 번호로 고치기', pendNew:'➕ 새 직원으로 등록',
     pendFixConfirm:(n,o,w)=>n+' 의 등록번호를\n\n'+o+'\n  ↓\n'+w+'\n\n로 고칠까요?',
-    pendFixed:'✅ 번호 고침 — 그 직원이 앱을 다시 열면 바로 들어옵니다', pendFixFail:'❌ 고치기 실패: ' },
+    pendFixed:'✅ 번호 고침 — 그 직원이 앱을 다시 열면 바로 들어옵니다', pendFixFail:'❌ 고치기 실패: ',
+    pendNoBranch:'지점 미정', okAlsoApproved:'기다리던 계정도 바로 승인했습니다 (직원은 그대로 두면 들어갑니다)' },
   en:{ busy:'Processing…', title:'Staff Phone Registration', sub:'Registered staff sign in with phone + SMS code only (no PIN / approval)',
     warn:'💡 Manager+ only. Register a staff member\'s <b>name · phone · branch · role</b>, and they sign in with <b>phone → SMS code → instant entry</b> (no store PIN / manager approval). US numbers can be 10 digits (e.g. 954-123-4567).',
     addTitle:'Add Staff', lName:'Name', lPhone:'Phone', lBranch:'Branch', lRole:'Role', phName:'Staff name', branchDef:'📍 Select branch', btnAdd:'Register',
@@ -145,7 +146,8 @@ const I18N = {
     pendNear2:(n,p)=>'💡 same as <b>'+n+'</b> (registered as '+p+') with <b>two digits swapped</b>. The number on the list may have a typo.',
     pendFix:'✅ Fix the number on the list', pendNew:'➕ Register as new staff',
     pendFixConfirm:(n,o,w)=>'Change '+n+'\'s number\n\n'+o+'\n  ↓\n'+w+'\n\n?',
-    pendFixed:'✅ Number fixed — they get in as soon as they reopen the app', pendFixFail:'❌ Fix failed: ' },
+    pendFixed:'✅ Number fixed — they get in as soon as they reopen the app', pendFixFail:'❌ Fix failed: ',
+    pendNoBranch:'branch not set', okAlsoApproved:'the account that was waiting is approved too (they get in on their own)' },
   es:{ busy:'Procesando…', title:'Registro de Teléfono de Personal', sub:'El personal registrado inicia solo con teléfono + código SMS (sin PIN / aprobación)',
     warn:'💡 Solo Gerente+. Registra <b>nombre · teléfono · sucursal · rol</b> del empleado, y entrará con <b>teléfono → código SMS → entrada directa</b> (sin PIN ni aprobación). Números de EE.UU. pueden ser 10 dígitos (ej. 954-123-4567).',
     addTitle:'Agregar Personal', lName:'Nombre', lPhone:'Teléfono', lBranch:'Sucursal', lRole:'Rol', phName:'Nombre del empleado', branchDef:'📍 Selecciona sucursal', btnAdd:'Registrar',
@@ -162,7 +164,8 @@ const I18N = {
     pendNear2:(n,p)=>'💡 igual que <b>'+n+'</b> (registrado como '+p+') con <b>dos dígitos intercambiados</b>. El número de la lista puede estar mal escrito.',
     pendFix:'✅ Corregir el número de la lista', pendNew:'➕ Registrar como nuevo',
     pendFixConfirm:(n,o,w)=>'¿Cambiar el número de '+n+'\n\n'+o+'\n  ↓\n'+w+'\n\n?',
-    pendFixed:'✅ Número corregido — entrará al volver a abrir la app', pendFixFail:'❌ Error al corregir: ' },
+    pendFixed:'✅ Número corregido — entrará al volver a abrir la app', pendFixFail:'❌ Error al corregir: ',
+    pendNoBranch:'sucursal sin definir', okAlsoApproved:'la cuenta que esperaba también quedó aprobada (entrará sola)' },
 };
 let LANG = (function(){ try { return localStorage.getItem('kimchi_lang') || 'ko'; } catch(_){ return 'ko'; } })();
 if (!I18N[LANG]) LANG = 'ko';
@@ -244,7 +247,18 @@ window.addStaff = async function(){
     const q=await authQ();
     const r=await fetch(`${FB_DB}/phoneRoster/${key}.json${q}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, branch, role, e164, addedAt: Date.now() }) });
     if(!r.ok){ const t=await r.text().catch(()=>''); msg.textContent=T().failAdd(r.status, t.slice(0,80)); msg.className='msg err'; return; }
-    msg.textContent=T().okAdd(name, fmtUS(e164)); msg.className='msg ok';
+    // 🆕 2026-10-30 — 이미 문자인증까지 하고 대기 중이던 번호면 등록과 동시에 승인한다.
+    //   대기화면은 15초마다 상태를 다시 읽으므로, 직원은 아무것도 안 해도 곧 들어간다.
+    let approved=false;
+    const waitUid=PEND_BY_KEY[key];
+    if(waitUid){
+      try{
+        const ar=await fetch(`${FB_DB}/users/${waitUid}.json${q}`, { method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ status:'approved', name, branch, role, approvedAt: Date.now(), approvedBy:'roster-add' }) });
+        approved = ar.ok;
+      }catch(_){}
+    }
+    msg.textContent=T().okAdd(name, fmtUS(e164)) + (approved ? ' · '+T().okAlsoApproved : ''); msg.className='msg ok';
     document.getElementById('inName').value=''; document.getElementById('inPhone').value='';
     loadRoster();
   } catch(e){ msg.textContent='❌ '+e.message; msg.className='msg err'; }
@@ -314,6 +328,7 @@ window.loadRoster = async function(){
 //   마이애미 Rolando Ag 가 이 경우였다: 명단 번호가 실제 번호와 한 자리 달라(866↔876)
 //   본인은 코드까지 받고도 영영 못 들어오고, 이 화면에는 흔적조차 안 보였다.
 let ROSTER_ALL = {};
+let PEND_BY_KEY = {};   // 번호(digits) → 대기 중인 계정 uid
 // 길이 같고 한 자리만 다르면 1, 이웃한 두 자리가 바뀐 것이면 2, 그 외 99(남남)
 function _digDiff(a,b){
   if(a.length!==b.length) return 99;
@@ -338,17 +353,25 @@ window.loadPending = async function(){
     data=await r.json()||{};
   }catch(_){ card.style.display='none'; return; }
   const rows=[];
+  PEND_BY_KEY={};
   for(const uid in data){
     const u=data[uid]||{};
     if(u.status!=='pending') continue;                  // 차단(blocked)은 일부러 막은 것이라 제외
     const key=digitsKey(u.phone||'');
-    if(!key || ROSTER_ALL[key]) continue;               // 전화 로그인만 · 이미 명단에 있으면 제외
+    if(!key) continue;                                  // 전화 로그인만
+    PEND_BY_KEY[key]=uid;                               // 등록하는 순간 바로 승인해 주려고 기억해 둔다
+    if(ROSTER_ALL[key]) continue;                       // 이미 명단에 있으면 카드에는 안 띄운다
     const near=_nearRoster(key);
-    if(!MY_GLOBAL){                                     // 지점 매니저는 본인 지점 것만
-      const ub=u.branch||'', nb=(near&&near.v.branch)||'';
-      if(ub!==MY_BRANCH && nb!==MY_BRANCH) continue;
+    const ub=u.branch||'', nb=(near&&near.v.branch)||'';
+    // 지점 매니저: 본인 지점 것 + 🆕 지점이 안 정해진 번호(처음 들어온 사람은 지점이 비어 있다).
+    //   2026-10-30 — 이것 때문에 아침에 들어오려던 마이애미 직원이 매니저 화면에 안 보였다.
+    if(!MY_GLOBAL){
+      if(ub && ub!==MY_BRANCH) continue;                // 다른 지점 사람
+      if(!ub && nb && nb!==MY_BRANCH) continue;         // 지점은 비었지만 다른 지점 번호와 닮음
+      // 지점 미정 번호는 최근 2주 것만 — 몇 달 묵은 건 누구 것인지 아무도 모른다(전 지점 화면에는 다 보인다)
+      if(!ub && (u.createdAt||0) < Date.now() - 14*864e5) continue;
     }
-    rows.push({ uid, key, near, at:u.createdAt||0 });
+    rows.push({ uid, key, near, at:u.createdAt||0, noBranch:!ub });
   }
   if(!rows.length){ card.style.display='none'; return; }
   rows.sort((a,b)=>(b.near?1:0)-(a.near?1:0) || b.at-a.at);
@@ -361,7 +384,8 @@ window.loadPending = async function(){
     const fixBtn = r.near
       ? `<button class="bFix" onclick="fixNumber('${r.uid}','${r.near.key}','${r.key}')">${T().pendFix}</button>`
       : '';
-    return `<div class="pend"><div class="ph">${esc(fmtUS('+'+r.key))}</div>`
+    const tag = r.noBranch ? ` <span style="font-size:.68em;font-weight:800;color:#92400e;background:#fef3c7;padding:2px 8px;border-radius:9px;vertical-align:middle">${T().pendNoBranch}</span>` : '';
+    return `<div class="pend"><div class="ph">${esc(fmtUS('+'+r.key))}${tag}</div>`
       + `<div class="meta">${T().pendJoined(day)}</div>${hint}`
       + `<div class="acts">${fixBtn}<button class="bNew" onclick="newFromPending('${r.key}')">${T().pendNew}</button></div></div>`;
   }).join('');
