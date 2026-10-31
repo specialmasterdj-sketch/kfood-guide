@@ -150,6 +150,19 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 .min summary::-webkit-details-marker{display:none}
 .min summary .md{font-weight:600;color:var(--muted);font-size:.85em}
 .min .body{white-space:pre-wrap;font-size:.9em;line-height:1.5;background:var(--sunk);border-radius:10px;padding:9px 10px}
+/* 🪟 참가 현황 창 (2026-10-30 사장님: "내가 초대한 사람 명단이 쭉 나오고, 조인했는지 실시간으로")
+   meet.html?panel={통화id} — Meet 옆에 띄우는 작은 창. 그 회의 카드만 크게 보인다 */
+body.panel header,body.panel #legal,body.panel #acct,body.panel #rooms,body.panel #hLog,body.panel #log,body.panel #mins,
+body.panel .dial>.hd,body.panel .dial>.sub,body.panel .dial>.big,body.panel #km-side-nav,body.panel .km-side-btn{display:none!important}
+body.panel main{padding:8px}
+body.panel .dial{border-width:0;padding:6px 4px}
+body.panel .call{border-top:0;margin-top:0;padding-top:0}
+body.panel .who.big{display:grid;grid-template-columns:1fr;gap:6px}
+body.panel .who.big .st{font-size:.95em;padding:9px 12px;border-radius:10px;display:flex;justify-content:space-between}
+.pnlhd{display:none}
+body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8px}
+.cnts{font-size:.8em;font-weight:800;margin:6px 0 4px;color:var(--muted)}
+.lockr{font-size:.8em;font-weight:800;color:var(--warn);background:var(--warn-bg);border-radius:10px;padding:7px 10px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -345,6 +358,11 @@ const T = {
   endCall:['⏹ 회의 끝 · 회의록 만들기','⏹ End meeting · file minutes','⏹ Terminar · acta'],
   rang:   ['%n명을 불렀습니다. 회의방이 새 창으로 열립니다 — 거기서 기다리시면 됩니다.','Called %n people. The room opens in a new window — wait there.','Se llamó a %n personas. La sala se abre en otra ventana.'],
   ringFail:['부르기를 저장하지 못했습니다.','Could not send the call.','No se pudo enviar la llamada.'],
+  pnlOpen:['🪟 참가 현황 창 띄우기 (Meet 옆에)','🪟 Open the attendance panel (next to Meet)','🪟 Abrir panel de asistencia'],
+  pnlHd:  ['📋 초대한 사람 · 실시간','📋 Invited · live','📋 Invitados · en vivo'],
+  cnts:   ['참가 %n · 부르는 중 %a · 거절 %b · 응답 없음 %c','Joined %n · ringing %a · declined %b · no answer %c','Entraron %n · sonando %a · rechazaron %b · sin respuesta %c'],
+  locked: ['🔒 비공개 회의 중 — 초대받은 사람만 들어갈 수 있습니다','🔒 Private meeting in progress — invitees only','🔒 Reunión privada — solo invitados'],
+  privTip:['🔒 비공개: 이 회의방 주소는 부른 사람에게만 보입니다. Meet 쪽도 막으려면 Meet 아래 🛡(호스트 관리) ▸ 빠른 액세스 끄기 — 그러면 모르는 사람은 [참여 요청] 을 해야 하고 사장님이 [수락] 해야 들어옵니다.','🔒 Private: only invitees see this room link. To lock Meet too: 🛡 Host controls ▸ turn off Quick access — then others must ask to join.','🔒 Privada: solo los invitados ven el enlace. En Meet: 🛡 ▸ desactive Acceso rápido.'],
 };
 const t = (k,n)=>{ const a=T[k]; let s=a?(a[L3.indexOf(LANG)]||a[0]):k; if(n!=null) s=s.split('%n').join(n); return s; };
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -448,6 +466,8 @@ function render(){
     // 사람이 있을 때만 이름을 늘어놓는다 — 없을 땐 위 뱃지가 이미 '아무도 없음' 이라 두 번 쓰지 않는다
     // 내가 지금 이 방에 들어가 있나 — 새로고침해도 알 수 있게 live 기록으로 본다
     const iAmIn = who.some(v => nkey(v.name) === nkey(me().name));
+    const lockId = Object.keys(CALLS).find(k => callActive(CALLS[k]) && CALLS[k].room === r.id);
+    const locked = !!lockId && !iMade(CALLS[lockId]) && !inCallOf(CALLS[lockId]);
     const whoHtml = who.length
       ? '<div class="who">' + who.map(v => '<span>'+esc(v.name)+'</span>').join('') + '</div>'
       : '';
@@ -460,11 +480,20 @@ function render(){
       + '<div class="acts">'
       +   (iAmIn
             ? '<button class="btn g" data-leave="'+esc(r.id)+'">'+esc(t('leaveR'))+'</button>'
-            : '<button class="btn p" data-join="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('join'))+'</button>')
+            : '<button class="btn p" data-join="'+esc(r.id)+'"'+(url && !locked ?'':' disabled')+'>'+esc(t('join'))+'</button>')
       +   (isExec() ? '<button class="btn sm" data-call="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('call'))+'</button>' : '')
       +   (isExec() ? '<button class="btn sm" data-url="'+esc(r.id)+'">'+esc(t('setUrl'))+'</button>' : '')
       + '</div></div>';
   }).join('');
+  // 잠긴 방 안내 — 카드 맨 아래
+  rooms().filter(canSee).forEach(r => {
+    const lockId = Object.keys(CALLS).find(k => callActive(CALLS[k]) && CALLS[k].room === r.id);
+    if (lockId && !iMade(CALLS[lockId]) && !inCallOf(CALLS[lockId])) {
+      const b = document.querySelector('#rooms [data-join="'+r.id+'"]');
+      const card = b && b.closest('.room');
+      if (card && !card.querySelector('.lockr')) card.insertAdjacentHTML('beforeend', '<div class="lockr">'+esc(t('locked'))+'</div>');
+    }
+  });
   renderLog();
 }
 
@@ -491,6 +520,8 @@ function renderLog(){
 /* ── 들어가기 / 나가기 ─────────────────────────────────────────────── */
 let PENDING = null;
 function askJoin(roomId){
+  { const lk = Object.keys(CALLS).find(k => callActive(CALLS[k]) && CALLS[k].room === roomId);
+    if (lk && !iMade(CALLS[lk]) && !inCallOf(CALLS[lk])) { alert(t('locked')); return; } }
   PENDING = roomId;
   document.getElementById('ovT').textContent = t('ovT');
   document.getElementById('ovP').textContent = t('ovP');
@@ -577,6 +608,8 @@ async function setUrl(roomId){
   } catch(e){ alert('저장 실패 · could not save'); }
 }
 async function callIn(roomId){
+  { const lk = Object.keys(CALLS).find(k => callActive(CALLS[k]) && CALLS[k].room === roomId);
+    if (lk && !iMade(CALLS[lk])) { alert(t('locked')); return; } }
   if (!isExec()) { alert(t('onlyExec')); return; }
   const r = rooms().find(x=>x.id===roomId);
   const m = me();
@@ -788,6 +821,9 @@ async function startCall(){
   } catch(e){ console.warn('[meet] 부르기 실패', e); alert(t('ringFail')); }
 }
 const iMade = c => c && ((c.byUid && c.byUid === myUid()) || nkey(c.by) === nkey(me().name));
+const inCallOf = c => !!(c && c.inv && myUid() && c.inv[myUid()]);
+const PANEL = (() => { try { return new URLSearchParams(location.search).get('panel') || ''; } catch(e){ return ''; } })();
+if (PANEL) document.body.classList.add('panel');
 async function ringAgain(id){
   const c = CALLS[id]; if (!callActive(c)) return;
   const now = Date.now(), upd = {};
@@ -924,6 +960,14 @@ function openHash(){
   el.scrollIntoView({ behavior:'smooth', block:'start' });
 }
 window.addEventListener('hashchange', () => { HASH_DONE = ''; openHash(); });
+/* 🪟 Meet 옆에 붙여 두는 작은 현황 창 — 화면 오른쪽 끝에 세로로 */
+function openPanel(id){
+  const w = 380, h = Math.min(820, (screen.availHeight || 800) - 40);
+  const left = Math.max(0, (screen.availWidth || 1200) - w - 8);
+  const win = window.open('meet.html?panel=' + encodeURIComponent(id), 'kmPanel_' + id,
+    'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=20');
+  if (!win) location.href = 'meet.html?panel=' + encodeURIComponent(id);
+}
 function reopen(id){
   const c = CALLS[id]; if (!c) return;
   window.open(withAcct(c.url), '_blank', 'noopener');
@@ -949,8 +993,8 @@ function renderDial(){
   const now = Date.now();
   // [회의 끝] 을 안 누르고 1시간이 지난 내 회의 → 그때까지 내용으로 회의록을 남긴다
   Object.keys(CALLS).forEach(k => { const c = CALLS[k]; if (c && !c.ended && !callActive(c) && iMade(c)) endCall(k, true); });
-  const inCall = c => !!(c && c.inv && myUid() && c.inv[myUid()]);
-  const calls = Object.keys(CALLS).filter(k => callActive(CALLS[k]) && (isExec() || iMade(CALLS[k]) || inCall(CALLS[k])))
+  const inCall = inCallOf;
+  const calls = Object.keys(CALLS).filter(k => (!PANEL || k === PANEL) && callActive(CALLS[k]) && (isExec() || iMade(CALLS[k]) || inCall(CALLS[k])))
                  .sort((a,b) => (CALLS[b].ts||0) - (CALLS[a].ts||0));
   let h = '<div class="hd"><b>'+esc(t('dialT'))+'</b>'
     + (isExec() ? '<button class="btn sm" data-lines="1">'+esc(t('lines'))+' · '+Object.keys(LINES).length+'</button>' : '')
@@ -970,14 +1014,20 @@ function renderDial(){
     const lab = { accepted:['ok',t('sOk')], ringing:['ring',t('sRing')], declined:['no',t('sNo')], missed:['',t('sMiss')] };
     h += '<div class="call" id="call-'+esc(id)+'"><div class="ct">'+esc(t('callBy').split('%s').join(c.by||''))+' · '+hhmm(c.ts)+'</div>'
       + '<div class="cs">'+esc(c.roomName||'')+'</div>'
-      + '<div class="who">'+[...per.values()].map(p => '<span class="st '+lab[p.st][0]+'">'+esc(p.name)+' · '+esc(lab[p.st][1])+'</span>').join('')+'</div>'
+      + (PANEL ? '<div class="pnlhd">'+esc(t('pnlHd'))+'</div>' : '')
+      + '<div class="cnts">'+esc(t('cnts', [...per.values()].filter(p => p.st === 'accepted').length)
+            .split('%a').join([...per.values()].filter(p => p.st === 'ringing').length)
+            .split('%b').join([...per.values()].filter(p => p.st === 'declined').length)
+            .split('%c').join([...per.values()].filter(p => p.st === 'missed').length))+'</div>'
+      + '<div class="who'+(PANEL ? ' big' : '')+'">'+[...per.values()].sort((a,b) => rank[b.st] - rank[a.st]).map(p => '<span class="st '+lab[p.st][0]+'"><span>'+esc(p.name)+'</span><span>'+esc(lab[p.st][1])+'</span></span>').join(' ')+'</div>'
       + '<div class="acts">'
-      +   '<button class="btn sm p" data-creopen="'+esc(id)+'">'+esc(t('reopen'))+'</button>'
+      +   (PANEL ? '' : '<button class="btn sm p" data-cpanel="'+esc(id)+'">'+esc(t('pnlOpen'))+'</button>')
+      +   '<button class="btn sm'+(PANEL ? ' p' : '')+'" data-creopen="'+esc(id)+'">'+esc(t('reopen'))+'</button>'
       +   (mine ? '<button class="btn sm" data-cring="'+esc(id)+'">'+esc(t('ringAgain'))+'</button>' : '')
       +   (mine && canDial() ? '<button class="btn sm" data-cadd="'+esc(id)+'">'+esc(t('addPpl'))+'</button>' : '')
       +   (mine || isExec() ? '<button class="btn sm" data-cend="'+esc(id)+'">'+esc(t('endCall'))+'</button>' : '')
       + '</div>'
-      + '<div class="tip">'+esc(t('tile'))+(mine ? '<br>'+esc(t('gem')) : '')+'</div>'
+      + '<div class="tip">'+esc(t('tile'))+(mine ? '<br>'+esc(t('gem'))+'<br>'+esc(t('privTip')) : '')+'</div>'
       + '<div class="sec">'+esc(t('fH'))+'</div>'
       + '<div class="files">'+(filesHtml(c.files) || '<div class="sub" style="font-size:.78em;color:var(--muted)">'+esc(t('fNone'))+'</div>')+'</div>'
       + '<div class="acts"><button class="btn sm" data-cfile="'+esc(id)+'"'+(UP_BUSY[id] ? ' disabled' : '')+'>'
@@ -1018,6 +1068,7 @@ document.addEventListener('click', e => {
   if (b.dataset.cfile)  { UP_CALL = b.dataset.cfile; const fi = document.getElementById('fileIn'); fi.value = ''; fi.click(); return; }
   if (b.dataset.minsave){ saveMin(b.dataset.minsave); return; }
   if (b.dataset.creopen){ reopen(b.dataset.creopen); return; }
+  if (b.dataset.cpanel) { openPanel(b.dataset.cpanel); return; }
   if (b.dataset.cring)  { ringAgain(b.dataset.cring); return; }
   if (b.dataset.cadd)   { openPicker(b.dataset.cadd); return; }
   if (b.dataset.cend)   { endCall(b.dataset.cend); return; }
