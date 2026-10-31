@@ -162,6 +162,14 @@ body.panel .who.big .st{font-size:.95em;padding:9px 12px;border-radius:10px;disp
 .pnlhd{display:none}
 body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8px}
 .cnts{font-size:.8em;font-weight:800;margin:6px 0 4px;color:var(--muted)}
+.kinds{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.kind{border:1.5px solid var(--line);background:var(--surface);border-radius:12px;padding:11px 12px;text-align:left;cursor:pointer;font:inherit;color:inherit}
+.kind b{display:block;font-size:.95em}
+.kind small{display:block;font-size:.72em;color:var(--muted);margin-top:3px;line-height:1.35}
+.kind.urgent{border-color:var(--bad);background:#fde8e8}
+.kind.urgent b{color:var(--bad)}
+.call.urgent{border-left:4px solid var(--bad);padding-left:10px}
+@media (max-width:420px){.kinds{grid-template-columns:1fr}}
 .lockr{font-size:.8em;font-weight:800;color:var(--warn);background:var(--warn-bg);border-radius:10px;padding:7px 10px;margin-top:8px}
 </style>
 </head>
@@ -358,6 +366,25 @@ const T = {
   endCall:['⏹ 회의 끝 · 회의록 만들기','⏹ End meeting · file minutes','⏹ Terminar · acta'],
   rang:   ['%n명을 불렀습니다. 회의방이 새 창으로 열립니다 — 거기서 기다리시면 됩니다.','Called %n people. The room opens in a new window — wait there.','Se llamó a %n personas. La sala se abre en otra ventana.'],
   ringFail:['부르기를 저장하지 못했습니다.','Could not send the call.','No se pudo enviar la llamada.'],
+  kBm:    ['📅 지점장 주간 회의','📅 Branch managers weekly','📅 Semanal de gerentes'],
+  kBmS:   ['지점 매니저 전원을 미리 골라 둡니다','All branch managers pre-selected','Todos los gerentes'],
+  kMgr:   ['👔 관리자 주간 회의','👔 Leads weekly meeting','👔 Semanal de supervisores'],
+  kMgrS:  ['매니저·부매니저·수퍼바이저 전원','Managers, assistants and supervisors','Gerentes, asistentes y supervisores'],
+  kUrg:   ['🚨 긴급 회의','🚨 Emergency meeting','🚨 Reunión urgente'],
+  kUrgS:  ['매니저·부매니저 전원 — 빨간 긴급 벨','All managers — red urgent ring','Gerentes — timbre urgente'],
+  kOne:   ['👤 개별 회의','👤 One-on-one','👤 Individual'],
+  kOneS:  ['한 사람만 골라 1:1 로','Pick one person','Elija a una persona'],
+  kInt:   ['🧑‍💼 신입 직원 인터뷰','🧑‍💼 New-hire interview','🧑‍💼 Entrevista'],
+  kIntS:  ['면접관을 고르고, 지원자에게는 링크를 문자로','Pick interviewers; text the link to the candidate','Elija entrevistadores; envíe el enlace al candidato'],
+  kNew:   ['🎓 신입 직원 교육','🎓 New-hire training','🎓 Capacitación de nuevos'],
+  kNewS:  ['최근 30일 안에 들어온 직원을 미리 골라 둡니다','Staff who joined in the last 30 days','Personal de los últimos 30 días'],
+  kSkill: ['🛠 세부 업무 훈련','🛠 Task training','🛠 Entrenamiento de tareas'],
+  kSkillS:['훈련할 직원을 골라 부서·업무별로','Pick the staff to train on a task','Elija al personal a entrenar'],
+  copyL:  ['🔗 지원자에게 보낼 회의 링크 복사','🔗 Copy the link for the candidate','🔗 Copiar enlace para el candidato'],
+  copied: ['링크를 복사했습니다. 지원자에게 문자로 보내 주세요:\n%s','Link copied — text it to the candidate:\n%s','Enlace copiado — envíelo al candidato:\n%s'],
+  kOnly1: ['한 사람만 고르세요','Pick just one person','Elija solo una persona'],
+  kLast:  ['지난번 %s','Last: %s','Última: %s'],
+  kExec:  ['오너·임원만 열 수 있습니다','Owners and executives only','Solo dueños y ejecutivos'],
   pnlOpen:['🪟 참가 현황 창 띄우기 (Meet 옆에)','🪟 Open the attendance panel (next to Meet)','🪟 Abrir panel de asistencia'],
   pnlHd:  ['📋 초대한 사람 · 실시간','📋 Invited · live','📋 Invitados · en vivo'],
   cnts:   ['참가 %n · 부르는 중 %a · 거절 %b · 응답 없음 %c','Joined %n · ringing %a · declined %b · no answer %c','Entraron %n · sonando %a · rechazaron %b · sin respuesta %c'],
@@ -674,6 +701,35 @@ function pickLine(){
 
 /* 직원 명단 — users(승인된 계정). 같은 사람이 기기·계정을 여러 개 쓰면 한 줄로 묶고 전부 부른다 */
 let ROSTER = null, ROSTER_ERR = false, PK_SEL = new Map(), PK_BR = '', PK_ADD = null, GROUPS = {};
+/* 📅 회의 종류 (2026-10-30 사장님: "지점장 주간 회의, 관리자 주간회의, 긴급 회의, 개별 회의 란을 만들어줘")
+   누르면 사람 고르기 창이 그 종류에 맞는 사람을 미리 골라 둔 채 열린다 → 빼거나 더해서 [회의 시작].
+   종류는 통화·부름·회의록에 같이 적혀, 초대 창과 회의록 제목에 그대로 보인다. */
+const KINDS = {
+  bm:     { lab:'kBm',  sub:'kBmS',  roles:['MANAGER'],                                    exec:true },
+  mgr:    { lab:'kMgr', sub:'kMgrS', roles:['MANAGER','ASSISTANT_MANAGER','SUPERVISOR'],   exec:true },
+  urgent: { lab:'kUrg', sub:'kUrgS', roles:['MANAGER','ASSISTANT_MANAGER'],                exec:true },
+  one:    { lab:'kOne', sub:'kOneS', roles:[],                                             single:true },
+  // 2026-10-30 사장님 추가: "신입 직원 인터뷰, 신입 직원 교육, 세부 업무 훈련"
+  //  · 인터뷰 — 지원자는 앱 계정이 없다 → 면접관만 앱으로 부르고, 지원자에게는 [링크 복사] 로 문자 전송
+  //  · 신입 교육 — 최근 30일 안에 승인된 직원을 미리 골라 둔다 (매니저급은 자기 지점만)
+  //  · 세부 업무 훈련 — 미리 고르지 않음, 훈련할 사람을 직접 고른다
+  interview: { lab:'kInt',   sub:'kIntS',   roles:[], copyLink:true },
+  newbie:    { lab:'kNew',   sub:'kNewS',   roles:[], recentDays:30 },
+  skill:     { lab:'kSkill', sub:'kSkillS', roles:[] },
+};
+let PK_KIND = '';
+const kindLab = k => (KINDS[k] ? t(KINDS[k].lab) : '');
+function pkPreselect(){
+  const K = KINDS[PK_KIND]; if (!K || !ROSTER) return;
+  if (K.recentDays) {
+    const cut = Date.now() - K.recentDays * 86400000;
+    ROSTER.forEach(p => { if ((p.since || 0) >= cut && !/OWNER|EXECUTIVE|MANAGER|SUPERVISOR/.test(String(p.role||'').toUpperCase())
+                              && (isExec() || p.branch === myBranch())) PK_SEL.set(p.key, p); });
+    return;
+  }
+  if (!K.roles.length) return;
+  ROSTER.forEach(p => { if (K.roles.includes(String(p.role||'').toUpperCase())) PK_SEL.set(p.key, p); });
+}
 const GENERIC = ['staff','manager','employee','admin','user','직원','매니저','스태프','사원','관리자'];
 async function loadRoster(){
   ROSTER_ERR = false;
@@ -690,8 +746,9 @@ async function loadRoster(){
       if (!nm || GENERIC.includes(nm.toLowerCase())) continue;
       const k = nkey(nm);
       if (uid === mine || k === meK) continue;
-      const e = by.get(k) || { key:k, name:nm, branch:'', role:'', uids:[] };
+      const e = by.get(k) || { key:k, name:nm, branch:'', role:'', uids:[], since:0 };
       e.uids.push(uid);
+      e.since = Math.max(e.since || 0, v.approvedAt || v.createdAt || 0);   // 🎓 신입 교육 미리 고르기용
       if (!e.branch || e.branch === '*') e.branch = v.branch || e.branch;
       if (!e.role) e.role = v.role || '';
       by.set(k, e);
@@ -701,13 +758,16 @@ async function loadRoster(){
   } catch(e){ console.warn('[meet] 명단 실패', e); ROSTER = null; ROSTER_ERR = true; }
 }
 const brLabel = id => id === '*' ? t('allBr') : bname(id || '');
-function openPicker(addTo){
+function openPicker(addTo, kind){
   if (!canDial()) { alert(t('dialOnly')); return; }
+  PK_KIND = (!addTo && KINDS[kind]) ? kind : '';
+  if (PK_KIND && KINDS[PK_KIND].exec && !isExec()) { alert(t('kExec')); PK_KIND = ''; return; }
   PK_ADD = addTo || null; PK_SEL = new Map(); PK_BR = '';
   document.getElementById('pkQ').value = '';
   document.getElementById('pk').classList.add('on');
+  pkPreselect();
   drawPicker();
-  if (!ROSTER) loadRoster().then(drawPicker);
+  if (!ROSTER) loadRoster().then(() => { pkPreselect(); drawPicker(); });
   loadGroups().then(drawPicker);
 }
 /* ⭐ 저장한 멤버 (2026-10-30 사장님: "6명 7명 골라 한 방에서 전체 화상 회의") — 자주 부르는 묶음을 한 번에.
@@ -738,13 +798,13 @@ function useGroup(id){
   drawPicker();
   if (miss) alert(t('grpMiss', miss));
 }
-function closePicker(){ document.getElementById('pk').classList.remove('on'); PK_ADD = null; }
+function closePicker(){ document.getElementById('pk').classList.remove('on'); PK_ADD = null; PK_KIND = ''; }
 function drawPicker(){
-  document.getElementById('pkT').textContent = t('pkT');
+  document.getElementById('pkT').textContent = PK_KIND ? kindLab(PK_KIND) + (KINDS[PK_KIND].single ? ' — ' + t('kOnly1') : ' — ' + t('pkT')) : t('pkT');
   document.getElementById('pkQ').placeholder = t('pkQ');
   document.getElementById('pkNo').textContent = t('ovNo');
   document.getElementById('pkGo').textContent = t(PK_ADD ? 'pkAddGo' : 'pkGo', PK_SEL.size);
-  document.getElementById('pkGo').disabled = PK_SEL.size === 0;
+  document.getElementById('pkGo').disabled = PK_SEL.size === 0 && !(PK_KIND && KINDS[PK_KIND].copyLink);
   document.getElementById('pkN').textContent = t('pkN', PK_SEL.size);
   // 선택한 사람 — 지점 칩으로 걸러도 누가 골라졌는지 늘 보이게
   document.getElementById('pkSH').textContent = t('pkSH');
@@ -775,7 +835,8 @@ function drawPicker(){
 }
 function pkToggle(k){
   const p = (ROSTER||[]).find(x => x.key === k); if (!p) return;
-  if (PK_SEL.has(k)) PK_SEL.delete(k); else PK_SEL.set(k, p);
+  if (PK_SEL.has(k)) PK_SEL.delete(k);
+  else { if (PK_KIND && KINDS[PK_KIND].single) PK_SEL.clear(); PK_SEL.set(k, p); }
   drawPicker();
 }
 function pkAllBranch(){
@@ -794,7 +855,8 @@ function markMeIn(roomId){
 }
 async function startCall(){
   const people = [...PK_SEL.values()];
-  if (!people.length) return;
+  if (!people.length && !(PK_KIND && KINDS[PK_KIND] && KINDS[PK_KIND].copyLink)) return;
+  const kind = PK_ADD ? ((CALLS[PK_ADD]||{}).kind || '') : PK_KIND;
   const m = me(); const ts = Date.now();
   let id, line;
   const adding = PK_ADD && callActive(CALLS[PK_ADD]);
@@ -810,10 +872,10 @@ async function startCall(){
   const inv = {}, upd = {};
   for (const p of people) for (const uid of p.uids) {
     inv[uid] = { name:p.name, branch:p.branch||'', state:'ringing', at:ts };
-    upd['ring/'+uid+'/'+id] = { from:m.name||'', fromBranch:bname(myBranch()), url:line.url, room:line.id, ts, state:'ringing' };
+    upd['ring/'+uid+'/'+id] = { from:m.name||'', fromBranch:bname(myBranch()), url:line.url, room:line.id, ts, state:'ringing', kind, kindLabel:kindLab(kind) };
   }
   if (adding) Object.keys(inv).forEach(uid => { upd['calls/'+id+'/inv/'+uid] = inv[uid]; });
-  else upd['calls/'+id] = { by:m.name||'', byUid:myUid(), byBranch:myBranch(), room:line.id, roomName:line.name, url:line.url, ts, ended:0, inv };
+  else upd['calls/'+id] = { by:m.name||'', byUid:myUid(), byBranch:myBranch(), room:line.id, roomName:line.name, url:line.url, ts, ended:0, inv, kind };
   try {
     const F = window.__fb;
     await F.update(F.ref(F.db, BASE), upd);
@@ -848,7 +910,7 @@ function buildMinutes(id, c, end){
   });
   if (c.byUid) members[c.byUid] = true;
   const n = c.notes || {};
-  return { title: t('minT').split('%s').join(c.by||''), by:c.by||'', byUid:c.byUid||'', byBranch:c.byBranch||'',
+  return { title: (c.kind ? kindLab(c.kind) + ' · ' + (c.by||'') : t('minT').split('%s').join(c.by||'')), kind:c.kind||'', by:c.by||'', byUid:c.byUid||'', byBranch:c.byBranch||'',
            ts:c.ts||end, end, room:c.roomName||'', people, members, files:c.files||null,
            notes:n.text||'', ntBy:n.by||'', ntTs:n.ts||0 };
 }
@@ -999,7 +1061,15 @@ function renderDial(){
   let h = '<div class="hd"><b>'+esc(t('dialT'))+'</b>'
     + (isExec() ? '<button class="btn sm" data-lines="1">'+esc(t('lines'))+' · '+Object.keys(LINES).length+'</button>' : '')
     + '</div><div class="sub" style="font-size:.8em;color:var(--muted);margin-top:3px">'+esc(canDial() ? t('dialS') : t('dialOnly'))+'</div>';
-  if (canDial()) h += '<button class="btn g big" data-pick="1">'+esc(t('dialGo'))+'</button>';
+  if (canDial()) {
+    // 종류별 지난 회의 날짜 (회의록에서)
+    const last = {};
+    Object.keys(MINS).forEach(k => { const mn = MINS[k]; if (mn && mn.kind && (!last[mn.kind] || mn.end > last[mn.kind])) last[mn.kind] = mn.end; });
+    h += '<div class="kinds">' + Object.keys(KINDS).filter(k => !KINDS[k].exec || isExec()).map(k =>
+      '<button class="kind'+(k === 'urgent' ? ' urgent' : '')+'" data-kind="'+k+'"><b>'+esc(kindLab(k))+'</b><small>'+esc(t(KINDS[k].sub))
+      + (last[k] ? '<br>'+esc(t('kLast').split('%s').join(ymdhm(last[k]))) : '')+'</small></button>').join('') + '</div>';
+    h += '<button class="btn g big" data-pick="1">'+esc(t('dialGo'))+'</button>';
+  }
   for (const id of calls) {
     const c = CALLS[id]; const mine = iMade(c);
     const inv = c.inv || {};
@@ -1012,7 +1082,7 @@ function renderDial(){
       if (!p || rank[st] > rank[p.st]) per.set(k, { name:v.name, branch:v.branch, st });
     });
     const lab = { accepted:['ok',t('sOk')], ringing:['ring',t('sRing')], declined:['no',t('sNo')], missed:['',t('sMiss')] };
-    h += '<div class="call" id="call-'+esc(id)+'"><div class="ct">'+esc(t('callBy').split('%s').join(c.by||''))+' · '+hhmm(c.ts)+'</div>'
+    h += '<div class="call'+(c.kind === 'urgent' ? ' urgent' : '')+'" id="call-'+esc(id)+'"><div class="ct">'+(c.kind ? esc(kindLab(c.kind))+' · '+esc(c.by||'') : esc(t('callBy').split('%s').join(c.by||'')))+' · '+hhmm(c.ts)+'</div>'
       + '<div class="cs">'+esc(c.roomName||'')+'</div>'
       + (PANEL ? '<div class="pnlhd">'+esc(t('pnlHd'))+'</div>' : '')
       + '<div class="cnts">'+esc(t('cnts', [...per.values()].filter(p => p.st === 'accepted').length)
@@ -1025,6 +1095,7 @@ function renderDial(){
       +   '<button class="btn sm'+(PANEL ? ' p' : '')+'" data-creopen="'+esc(id)+'">'+esc(t('reopen'))+'</button>'
       +   (mine ? '<button class="btn sm" data-cring="'+esc(id)+'">'+esc(t('ringAgain'))+'</button>' : '')
       +   (mine && canDial() ? '<button class="btn sm" data-cadd="'+esc(id)+'">'+esc(t('addPpl'))+'</button>' : '')
+      +   ((KINDS[c.kind]||{}).copyLink && (mine || isExec()) ? '<button class="btn sm" data-ccopy="'+esc(id)+'">'+esc(t('copyL'))+'</button>' : '')
       +   (mine || isExec() ? '<button class="btn sm" data-cend="'+esc(id)+'">'+esc(t('endCall'))+'</button>' : '')
       + '</div>'
       + '<div class="tip">'+esc(t('tile'))+(mine ? '<br>'+esc(t('gem'))+'<br>'+esc(t('privTip')) : '')+'</div>'
@@ -1057,6 +1128,12 @@ document.addEventListener('click', e => {
   if (b.id === 'ovNo'){ document.getElementById('ov').classList.remove('on'); PENDING=null; return; }
   if (b.id === 'leaveBtn'){ doLeave(); return; }
   if (b.dataset.pick)   { openPicker(); return; }
+  if (b.dataset.kind)   { openPicker(null, b.dataset.kind); return; }
+  if (b.dataset.ccopy)  { const c = CALLS[b.dataset.ccopy]; if (!c) return;
+                          const u = c.url || '';
+                          (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).catch(() => {})
+                            .finally(() => alert(t('copied').split('%s').join(u)));
+                          return; }
   if (b.dataset.lines)  { setLines(); return; }
   if (b.dataset.pkbr != null) { PK_BR = b.dataset.pkbr; drawPicker(); return; }
   if (b.id === 'pkNo')  { closePicker(); return; }

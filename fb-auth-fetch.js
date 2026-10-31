@@ -358,13 +358,14 @@ if ('serviceWorker' in navigator) {
                     icon: new URL('pwa-assets/icon-192.png', MEET).href, badge: new URL('pwa-assets/icon-192.png', MEET).href,
                     data: { url: MEET + '#ring-' + id } };
       const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
-      if (reg && reg.showNotification) await reg.showNotification(T.t, opt);
-      else new Notification(T.t, opt);
+      const ttl = v.kindLabel || T.t;
+      if (reg && reg.showNotification) await reg.showNotification(ttl, opt);
+      else new Notification(ttl, opt);
     } catch (_) {}
   }
   // 알림 허락을 아직 안 물었으면, 벨 창의 버튼을 누르는 순간(사용자 동작) 한 번 묻는다
   function askNotifyOnce(){
-    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {}); } catch (_) {}
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(p => { if (p === 'granted') pushRegister(); }).catch(() => {}); } catch (_) {}
   }
   let cur = null;   // 지금 떠 있는 벨 창 { uid, id }
   async function patch(path, body){
@@ -375,13 +376,14 @@ if ('serviceWorker' in navigator) {
     const T0 = TX[L()];
     const MIN = v.state === 'minutes';
     // 📋 회의록 알림은 같은 창 모양에 글만 바꾼다
-    const T = MIN ? { t: T0.mt, b: T0.mb, go: T0.mgo, no: T0.mno, n: '' } : T0;
+    const T = MIN ? { t: T0.mt, b: T0.mb, go: T0.mgo, no: T0.mno, n: '' } : (v.kindLabel ? Object.assign({}, T0, { t: v.kindLabel }) : T0);
+    const URG = !MIN && v.kind === 'urgent';   // 🚨 긴급 회의 — 빨간 창
     const ov = document.createElement('div');
     ov.id = '__kmRing';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:rgba(10,15,22,.62);display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:' + (URG ? 'rgba(127,29,29,.78)' : 'rgba(10,15,22,.62)') + ';display:flex;align-items:center;justify-content:center;padding:16px';
     ov.innerHTML = '<div style="background:#fff;color:#18202a;border-radius:18px;max-width:380px;width:100%;padding:20px 18px;box-shadow:0 18px 50px rgba(0,0,0,.35);font:15px/1.5 -apple-system,BlinkMacSystemFont,\'Segoe UI\',\'Malgun Gothic\',sans-serif;text-align:center">'
-      + '<div style="font-size:2.4em;line-height:1;margin-bottom:8px">' + (MIN ? '📋' : '📹') + '</div>'
-      + '<div style="font-weight:800;font-size:1.08em;margin-bottom:6px">' + esc(T.t) + '</div>'
+      + '<div style="font-size:2.4em;line-height:1;margin-bottom:8px">' + (MIN ? '📋' : URG ? '🚨' : '📹') + '</div>'
+      + '<div style="font-weight:800;font-size:1.08em;margin-bottom:6px' + (URG ? ';color:#dc2626' : '') + '">' + esc(T.t) + '</div>'
       + '<div style="font-weight:700;margin-bottom:4px">' + esc(T.b.replace('%s', v.from || '')) + '</div>'
       + (v.fromBranch ? '<div style="color:#64748b;font-size:.85em;margin-bottom:10px">' + esc(v.fromBranch) + '</div>' : '')
       + '<div style="color:#64748b;font-size:.78em;margin-bottom:14px">' + esc(T.n) + '</div>'
@@ -463,6 +465,39 @@ if ('serviceWorker' in navigator) {
       }
     } catch (_) {}
   }
+  /* 📲 2026-10-30 사장님: "핸드폰이 일반 대기 화면에서도 이 요청이 오면 알 수 있도록"
+     = 앱을 완전히 끈 폰도 울려야 한다 → FCM 푸시. **화상 회의 초대에만** 쓴다.
+     (8/30 정책 "앱을 꺼 두면 방해하지 않는다" 는 채팅에는 그대로 — 채팅 푸시는 fcmTokens/<이름> 을 쓰고
+      여기는 users/{uid}/fcm 에만 적어서 채팅 발송 서버(chatPush)는 이 토큰을 보지 않는다.)
+     · 알림 허락이 '허용' 인 기기만, 7일에 한 번 기기 토큰을 users/{내uid}/fcm/{토큰} 에 적는다
+       (본인 기록이라 규칙상 본인이 쓸 수 있다 — status·role·branch 는 안 건드림)
+     · 발송은 functions/index.js 의 meetRingPush 가 ring/{uid}/{통화id} 가 'ringing' 이 될 때 한다
+     · VAPID 키는 Firebase 기본 키를 쓴다(getToken 에 vapidKey 를 안 주면 SDK 기본값) — 콘솔 작업 불필요 */
+  async function pushRegister(){
+    try {
+      if (!('serviceWorker' in navigator) || !('Notification' in window) || Notification.permission !== 'granted') return;
+      const u = auth.currentUser; if (!u) return;
+      const K = 'km.meetPush.' + u.uid;
+      let last = null; try { last = JSON.parse(localStorage.getItem(K) || 'null'); } catch (_) {}
+      if (last && Date.now() - (last.at || 0) < 7 * 86400000) return;
+      const A = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+      const M = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js');
+      if (!(await M.isSupported())) return;
+      // 페이지가 먼저 만든 기본 앱에는 발신자 ID 가 없을 수 있어 푸시 전용 앱을 따로 둔다
+      const pcfg = Object.assign({}, cfg, { messagingSenderId: '640942647201', appId: '1:640942647201:web:1e3421fb55c89155230de0' });
+      const papp = A.getApps().find(a => a.name === 'km-push') || A.initializeApp(pcfg, 'km-push');
+      const reg = await navigator.serviceWorker.ready;   // sw.js 의 push 핸들러가 알림을 띄운다
+      const tok = await M.getToken(M.getMessaging(papp), { serviceWorkerRegistration: reg });
+      if (!tok) return;
+      const idt = await u.getIdToken();
+      const r = await window.fetch('https://kimchi-mart-order-default-rtdb.firebaseio.com/users/' + u.uid + '/fcm/' + encodeURIComponent(tok).replace(/\./g, '%2E') + '.json?auth=' + encodeURIComponent(idt),
+        { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ at: Date.now(), ua: (navigator.userAgent || '').slice(0, 90) }) });
+      if (r.ok) localStorage.setItem(K, JSON.stringify({ at: Date.now() }));
+    } catch (e) { try { console.warn('[meet-push]', (e && e.message) || e); } catch (_) {} }
+  }
+  setTimeout(pushRegister, 6000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(pushRegister, 2000); });
+
   setTimeout(poll, 2500);
   setInterval(poll, 8000);
   // 벨 창이 떠 있을 때는 더 자주 본다 — 거는 쪽이 끝내면 벨이 바로 멈추게

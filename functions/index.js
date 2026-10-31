@@ -1452,3 +1452,42 @@ exports.weeklyBonusRun = onValueCreated(
     });
   }
 );
+
+// =============================================================================
+// 📲 화상 회의 초대 푸시 — 2026-10-30
+// 사장님: "핸드폰이 일반 대기 화면에서도 이 요청이 오면 알 수 있도록 만들어줘"
+//   meet.html 이 inventory/meet/ring/{받는uid}/{통화id} 에 state:'ringing' 을 쓰면
+//   → 그 사람 기기 토큰(users/{uid}/fcm/{토큰}) 전부로 푸시. 앱을 완전히 끈 폰·잠금화면에도 뜬다.
+//   · 회의 초대에만 쓴다. 채팅은 8/30 정책대로 그대로 (chatPush 는 fcmTokens/<이름> 만 봄).
+//   · '다시 부르기'(ts 가 바뀜)면 다시 보낸다. 상태만 바뀐 경우(받음·거절·끝)는 안 보낸다.
+//   · TTL 120초 — 꺼져 있다 늦게 켜진 폰에 지난 부름이 뒤늦게 울리지 않게.
+//   · 데이터 전용 메시지 → sw.js 의 push 핸들러가 알림을 띄운다(ring:'1' = 화면 고정·긴 진동).
+// =============================================================================
+exports.meetRingPush = onValueWritten(
+  { ref: '/inventory/meet/ring/{uid}/{callId}', region: 'us-central1' },
+  async (event) => {
+    const after = event.data.after.val();
+    const before = event.data.before.val();
+    if (!after || after.state !== 'ringing') return;
+    if (before && before.state === 'ringing' && before.ts === after.ts) return;
+    if (Date.now() - (after.ts || 0) > 120000) return;
+    const uid = event.params.uid, callId = event.params.callId;
+    const db = admin.database();
+    const snap = await db.ref('users/' + uid + '/fcm').get().catch(() => null);
+    const toks = snap && snap.val() ? Object.keys(snap.val()) : [];
+    if (!toks.length) return;
+    const title = after.kindLabel || '📹 화상 회의 초대';
+    const body = String(after.from || '') + ' 님이 지금 화상 회의로 부릅니다' + (after.fromBranch ? ' · ' + after.fromBranch : '');
+    const url = 'https://specialmasterdj-sketch.github.io/kfood-guide/meet.html#ring-' + callId;
+    await Promise.all(toks.map((k) => admin.messaging().send({
+      token: decodeURIComponent(k),
+      data: { title, body, url, tag: 'km-ring-' + callId, ring: '1' },
+      webpush: { headers: { Urgency: 'high', TTL: '120' } },
+    }).catch((e) => {
+      if (e && e.code && String(e.code).includes('registration-token')) {
+        return db.ref('users/' + uid + '/fcm/' + k).remove().catch(() => {});
+      }
+      console.warn('[meetRingPush]', e && e.message);
+    })));
+  }
+);

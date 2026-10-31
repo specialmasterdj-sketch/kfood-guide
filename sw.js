@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v1173';   // 🔔 화상 회의 초대 — 전화벨처럼 소리·진동 반복 + 백그라운드 폰 알림 (fb-auth-fetch v7, 2026-10-30)
+const CACHE = 'kmtools-v1174';   // 📅 회의 종류 7개 + 📲 화상 회의 초대 푸시(꺼진 폰도) (2026-10-30)
 // 버전 고정(불변) 크로스오리진 의존성 전용 — 앱 버전 바뀌어도 지우지 않음.
 // firebasejs 10.14.1 / pretendard@v1.3.9 처럼 URL 에 버전이 박힌 파일만 담는다.
 const CDN_CACHE = 'kmtools-cdn-v1';
@@ -105,17 +105,20 @@ self.addEventListener('push', e => {
   // 🔔 2026-08-30 — FCM v1 payload({notification:{title,body},data:{url}}) 형태도 지원
   const n = data.notification || data;
   const d = data.data || data;
-  const title = n.title || '📨 새 업무 지시';
-  const body  = n.body  || d.message || '확인해 주세요.';
+  const title = n.title || d.title || '📨 새 업무 지시';
+  const body  = n.body  || d.body || d.message || '확인해 주세요.';
   const tag   = d.tag   || 'kimchi-push';
   const url   = d.url   || './chat.html';
+  // 📹 화상 회의 초대(meetRingPush) — 전화처럼: 누를 때까지 화면에 남고 길게 진동 (2026-10-30)
+  const ring  = d.ring === '1';
   e.waitUntil(
     self.registration.showNotification(title, {
       body, tag, renotify: true,
+      requireInteraction: ring,
       icon: './pwa-assets/icon-192.png',
       badge: './pwa-assets/icon-192.png',
       data: { url },
-      vibrate: [200, 80, 200, 80, 400],
+      vibrate: ring ? [800, 300, 800, 300, 800, 300, 1500] : [200, 80, 200, 80, 400],
     })
   );
 });
