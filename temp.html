@@ -681,7 +681,8 @@ function t(key, vars){
 let LANG = detectLang();
 let BRANCH = localStorage.getItem('temp.branch') || 'MIAMI';
 let PAGE = 'home';
-let EQUIPMENT = []; // [{ id, qr, name, type, location, min, max, addedAt, addedBy }]
+let EQUIPMENT = []; // 사용 중인 장비만 — 체크 목록·미체크·준수율·자동보고가 모두 이것을 센다
+let EQ_ALL = [];    // 🚫 사용 중지한 것까지 전부 — 지난 기록의 이름을 찾을 때 쓴다 (eqAllById)
 let CHECKS = {};    // { 'YYYY-MM-DD': { 'morning': { eqId: { temp, photo, ts, by, status, note } } } }
 let ASSIGNS = {};   // { 'YYYY-MM-DD': { name, role } }
 let SETTINGS = JSON.parse(localStorage.getItem('temp.settings') || '{"slot1":"08:00","slot2":"14:00","slot3":"21:00","window":180}');
@@ -833,7 +834,8 @@ function subscribe(){
   // Equipment
   unsubs.push(window.__fb.onValue(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment'), snap => {
     const v = snap.val() || {};
-    EQUIPMENT = Object.entries(v).map(([id, eq]) => Object.assign({ id }, eq));
+    EQ_ALL = Object.entries(v).map(([id, eq]) => Object.assign({ id }, eq));
+    EQUIPMENT = EQ_ALL.filter(e => !e.retired);   // 🚫 사용 중지한 장비는 오늘 목록·집계에서 빼되 기록은 남긴다
     renderAll();
     __runOneShotFix();
   }));
@@ -1321,7 +1323,13 @@ function scannerManualEntry(){
   const qr  = _normEqInput(inp ? inp.value : '');
   if (!qr) { if (st) st.textContent = '⚠️ ' + (LANG==='es'?'Número inválido':LANG==='en'?'Invalid number':'번호 형식 오류'); return; }
   const eq = EQUIPMENT.find(e => e.qr === qr);
-  if (!eq) { if (st) st.textContent = '⚠️ ' + (LANG==='es'?'No encontrado: ':LANG==='en'?'Not found: ':'장비 없음: ') + qr; return; }
+  if (!eq) {
+    const ret = (EQ_ALL||[]).find(e => e.qr === qr && e.retired);
+    if (st) st.textContent = ret
+      ? '🚫 ' + (LANG==='es'?'Equipo retirado: ':LANG==='en'?'Retired: ':'사용 중지된 장비: ') + (ret.name||qr)
+      : '⚠️ ' + (LANG==='es'?'No encontrado: ':LANG==='en'?'Not found: ':'장비 없음: ') + qr;
+    return;
+  }
   if (inp) inp.value = '';
   closeScanner();
   __activeEqId = eq.id;
@@ -1332,6 +1340,11 @@ window.scannerManualEntry = scannerManualEntry;
 function handleScannedQr(qr){
   const eq = EQUIPMENT.find(e => e.qr === qr);
   if (eq) { __activeEqId = eq.id; openInputModal(eq); return; }
+  // 🚫 사용 중지한 장비 — 새 장비 등록으로 새지 않게 막는다 (번호 재사용 금지)
+  const ret = (EQ_ALL||[]).find(e => e.qr === qr && e.retired);
+  if (ret) { alert((LANG==='ko' ? '🚫 사용 중지된 장비입니다\n\n' + (ret.name||qr) + '\n\n되살리려면 장비 관리에서 ↩ 다시 쓰기를 누르세요.'
+                 : LANG==='es' ? '🚫 Equipo retirado\n\n' + (ret.name||qr)
+                 : '🚫 This equipment is retired\n\n' + (ret.name||qr))); return; }
   // unknown — open new equipment registration
   __pendingQr = qr;
   $('neQr').value = qr;
@@ -2195,16 +2208,90 @@ function openEquipMgr(){
         </div>
         <div class="actions">
           <button onclick="editEq('${eq.id}')">✏</button>
-          <button class="del" onclick="deleteEq('${eq.id}', ${JSON.stringify(eq.name||'').replace(/"/g,'&quot;')})">🗑</button>
+          <button onclick="retireEq('${eq.id}', ${JSON.stringify(eq.name||'').replace(/"/g,'&quot;')})" title="${LANG==='ko'?'사용 중지 — 오늘 목록에서 빼고 기록은 남김':LANG==='es'?'Retirar':'Retire'}" style="background:#fef3c7;border:1.5px solid #f59e0b;color:#92400e;font-weight:800">🚫</button>
         </div>
       </div>`;
-    }).join('');
+    }).join('') + retiredListHtml();
   }
   $('eqMgrOv').classList.add('show');
 }
 window.openEquipMgr = openEquipMgr;
+// ============================================================
+// 🚫 장비 사용 중지 / ↩ 되살리기 (2026-10-31)
+// ------------------------------------------------------------
+//   할리우드에서 오픈 프리저 10대(#17~#26)를 빼고 도어 프리저를 새로 넣으면서 필요해졌다.
+//   🔴 삭제(🗑)하면 지난 체크 기록이 **이름을 잃는다** — 보고서에 '#-Ot9U...' 같은 아이디만 남고
+//      지난 준수율 숫자도 달라진다. 그래서 치운 장비는 지우지 말고 **사용 중지**로 내린다:
+//     · 오늘 체크할 목록·미체크·준수율·자동 보고에서 빠진다 (EQUIPMENT 에서 제외)
+//     · 지난 기록과 이름은 그대로 남는다 (EQ_ALL 에 남아 있다)
+//     · 장비 관리 맨 아래 '사용 중지된 장비' 에서 언제든 ↩ 되살릴 수 있다
+//   🔴 치운 장비의 QR 번호는 **새 장비에 다시 쓰지 말 것** — 같은 #번호가 시기마다 다른 물건을
+//      가리키면 지난 기록을 종이·보고서에서 가려낼 수 없다. 새 장비는 다음 빈 번호로.
+// ============================================================
+function eqAllById(id){ return (EQ_ALL || []).find(e => e.id === id) || null; }
+window.eqAllById = eqAllById;
+
+async function retireEq(id, name){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만':'Manager only', true); return; }
+  const msg = LANG==='ko' ? '이 장비를 사용 중지할까요?\n\n' + name + '\n\n· 오늘 체크 목록에서 빠집니다\n· 지난 기록은 그대로 남습니다\n· 나중에 되살릴 수 있습니다'
+            : LANG==='es' ? '¿Retirar este equipo?\n\n' + name + '\n\n· Sale de la lista de hoy\n· El historial se conserva\n· Puede restaurarlo luego'
+            : 'Retire this equipment?\n\n' + name + '\n\n· Removed from today\'s list\n· Past records are kept\n· You can restore it later';
+  if (!confirm(msg)) return;
+  let by = '';
+  try { by = (JSON.parse(localStorage.getItem('chat.me') || '{}') || {}).name || ''; } catch(e){}
+  await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment/'+id),
+    { retired: true, retiredAt: Date.now(), retiredBy: by });
+  showToast('🚫 ' + (LANG==='ko'?'사용 중지했습니다':LANG==='es'?'Retirado':'Retired'));
+  setTimeout(openEquipMgr, 300);
+}
+window.retireEq = retireEq;
+
+async function unretireEq(id, name){
+  if (!isManagerOrAbove()) { showToast(LANG==='ko'?'⚠️ 매니저+ 만':'Manager only', true); return; }
+  const msg = LANG==='ko' ? '이 장비를 다시 쓸까요?\n\n' + name + '\n\n오늘부터 체크 목록에 다시 나옵니다.'
+            : LANG==='es' ? '¿Volver a usar este equipo?\n\n' + name
+            : 'Put this equipment back in use?\n\n' + name;
+  if (!confirm(msg)) return;
+  await window.__fb.update(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment/'+id),
+    { retired: null, retiredAt: null, retiredBy: null });
+  showToast('↩ ' + (LANG==='ko'?'다시 사용합니다':LANG==='es'?'Restaurado':'Back in use'));
+  setTimeout(openEquipMgr, 300);
+}
+window.unretireEq = unretireEq;
+
+// 장비 관리 맨 아래 — 사용 중지된 장비 (접힌 채로)
+function retiredListHtml(){
+  const rows = (EQ_ALL || []).filter(e => e.retired);
+  if (!rows.length) return '';
+  rows.sort((a,b) => (parseInt((a.qr||'').replace(/\D/g,''),10)||0) - (parseInt((b.qr||'').replace(/\D/g,''),10)||0));
+  const title = LANG==='ko' ? '🚫 사용 중지된 장비 ' + rows.length + '대'
+              : LANG==='es' ? '🚫 Equipos retirados: ' + rows.length
+              : '🚫 Retired equipment: ' + rows.length;
+  const note = LANG==='ko' ? '지난 기록은 그대로 남아 있습니다. 이 번호는 새 장비에 다시 쓰지 마세요.'
+             : LANG==='es' ? 'El historial se conserva. No reutilice estos números en equipos nuevos.'
+             : 'Past records are kept. Do not reuse these numbers for new equipment.';
+  const back = LANG==='ko' ? '다시 쓰기' : LANG==='es' ? 'Restaurar' : 'Restore';
+  return '<details style="margin-top:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px">'
+    + '<summary style="cursor:pointer;font-size:.88em;font-weight:800;color:#64748b">' + title + '</summary>'
+    + '<div style="font-size:.74em;color:#94a3b8;margin:8px 0 10px;line-height:1.5">' + note + '</div>'
+    + rows.map(function(eq){
+        const n = qrShortNum(eq.qr);
+        const when = eq.retiredAt ? new Date(eq.retiredAt).toLocaleDateString() : '';
+        return '<div class="eq-card" style="border-left-color:#94a3b8;border-left-width:5px;opacity:.75">'
+          + '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;background:#94a3b8;color:#fff;border-radius:8px;font-size:1.05em;font-weight:900;margin-right:6px">#' + n + '</span>'
+          + '<div class="info"><div class="nm" style="text-decoration:line-through;color:#64748b">' + escHtml(eq.name||'?') + '</div>'
+          + '<div class="meta"><span style="font-size:.72em;color:#9ca3af">' + escHtml(eq.location||'') + '</span>'
+          + (when ? '<span style="font-size:.72em;color:#9ca3af">' + when + '</span>' : '') + '</div></div>'
+          + '<div class="actions"><button onclick="unretireEq(\'' + eq.id + '\', ' + JSON.stringify(eq.name||'').replace(/"/g,'&quot;') + ')" style="background:#dcfce7;border:1.5px solid #16a34a;color:#15803d;font-weight:800">↩ ' + back + '</button>'
+          + '<button class="del" onclick="deleteEq(\'' + eq.id + '\', ' + JSON.stringify(eq.name||'').replace(/"/g,'&quot;') + ')">🗑</button></div>'
+          + '</div>';
+      }).join('')
+    + '</details>';
+}
+window.retiredListHtml = retiredListHtml;
+
 async function deleteEq(id, name){
-  const msg = LANG==='ko' ? `이 장비를 삭제할까요?\n${name}\n(체크 기록은 남고 장비만 제거)` : `Delete "${name}"?`;
+  const msg = LANG==='ko' ? `🔴 이 장비를 완전히 지울까요?\n${name}\n\n지난 기록에서 이름이 사라지고 번호만 남습니다.\n치운 장비라면 삭제 대신 🚫 사용 중지를 쓰세요.` : `🔴 Permanently delete "${name}"?\nPast records will lose its name. Use 🚫 Retire instead.`;
   if (!confirm(msg)) return;
   await window.__fb.remove(window.__fb.ref(window.__fb.db, 'temp/'+BRANCH+'/equipment/'+id));
   showToast('🗑 ' + t('saved'));
