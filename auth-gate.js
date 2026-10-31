@@ -789,19 +789,24 @@ window.__authGate = {
 })();
 
 // ============================================================
-// ⏳ 6시간 동안 아무것도 안 하면 자동 로그아웃 (2026-10-29 사장님)
+// ⏳ 3일(72시간) 동안 아무것도 안 하면 자동 로그아웃
+//    (2026-10-29 사장님 6시간 → 2026-10-31 사장님 승인으로 3일)
 // ------------------------------------------------------------
-//   "로그인 한 번 하면 6시간 유지. 그 사이에 한 번이라도 앱에 들어와 업무를 보거나 클릭하면
-//    계속 쓰는 것. 아무것도 안 하면 6시간 뒤 자동 로그아웃."
-//   (전날 2026-10-28 의 '로그인 1시간 뒤 무조건 로그아웃' 을 대신한다 — 직원마다 매시간 문자 인증이라 불편·SMS 한도 위험)
+//   "로그인 한 번 하면 3일 유지. 그 사이에 한 번이라도 앱에 들어와 업무를 보거나 클릭하면
+//    계속 쓰는 것. 아무것도 안 하면 3일 뒤 자동 로그아웃."
+//   🔴 6시간이던 것을 늘린 이유 — 퇴근하면 밤새 6시간이 지나 **아침마다 전 직원이 걸렸다**.
+//      전화 로그인이라 매일 아침 SMS 를 새로 받아야 했고(전 직원 불편), Firebase 문자 하루
+//      1000건 한도까지 위험했다. 3일이면 하루 쉬고 와도 안 걸린다.
+//      (2026-10-31 전무님이 사장님께 직접 여쭤 승인받음)
+//   (2026-10-28 '로그인 1시간 뒤 무조건 로그아웃' → 10-29 무활동 6시간 → 10-31 무활동 3일)
 //   · 누르기·입력·스크롤·화면 켜기가 있을 때마다 마지막 사용 시각을 새로 적는다 (같은 기기 모든 탭이 공유).
-//   · 마지막 사용 + 6시간이 지나면 로그아웃 → auth.html?fresh=1&expired=1.
+//   · 마지막 사용 + 3일이 지나면 로그아웃 → auth.html?fresh=1&expired=1.
 //   · 기준점이 없으면 로그인 서버의 '인증한 시각' 부터 센다. 폰·컴퓨터 모두.
-//   · 끝나기 2분 전에 알림 — 아무 곳이나 누르면 다시 6시간.
+//   · 끝나기 2분 전에 알림 — 아무 곳이나 누르면 다시 3일.
 // ============================================================
 (function(){
   'use strict';
-  var IDLE_MS = 6 * 60 * 60 * 1000;  // 6시간
+  var IDLE_MS = 72 * 60 * 60 * 1000;  // 3일 (2026-10-31 사장님 승인 — 그 전엔 6시간)
   var WARN_MS = 2 * 60 * 1000;       // 2분 전 알림
   var KEY = 'km_lastActivity';
   var timer = null, warnBox = null, gone = false, lastWrite = 0;
@@ -819,7 +824,7 @@ window.__authGate = {
   }
   function out(){
     if (gone) return; gone = true;
-    try { gateTrace('gate:idle-6h-signout'); } catch(e){}
+    try { gateTrace('gate:idle-72h-signout'); } catch(e){}
     Promise.resolve(signOut(auth)).catch(function(){}).then(function(){
       try { location.replace('./auth.html?fresh=1&expired=1'); } catch(e){}
     });
@@ -834,9 +839,9 @@ window.__authGate = {
         'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif';
       document.body.appendChild(warnBox);
     }
-    warnBox.textContent = '⏳ ' + t('6시간 동안 사용하지 않아 ' + sec + '초 뒤 로그아웃됩니다 — 화면을 누르면 계속 사용',
-                                    'No activity for 6 hours — signing out in ' + sec + 's. Tap anywhere to stay',
-                                    'Sin actividad por 6 horas — se cerrará en ' + sec + ' s. Toque para seguir');
+    warnBox.textContent = '⏳ ' + t('3일 동안 사용하지 않아 ' + sec + '초 뒤 로그아웃됩니다 — 화면을 누르면 계속 사용',
+                                    'No activity for 3 days — signing out in ' + sec + 's. Tap anywhere to stay',
+                                    'Sin actividad por 3 días — se cerrará en ' + sec + ' s. Toque para seguir');
   }
   function tick(user){
     var last = lastUse(user);
@@ -851,11 +856,11 @@ window.__authGate = {
   onAuthStateChanged(auth, function(user){
     if (timer) { clearInterval(timer); timer = null; }
     if (!user || user.isAnonymous || isExemptPath()) return;
-    tick(user);                       // 이미 6시간 넘게 안 쓴 기기면 여기서 바로 로그아웃
+    tick(user);                       // 이미 3일 넘게 안 쓴 기기면 여기서 바로 로그아웃
     if (!gone) touch();               // 앱을 연 것 자체도 사용이다
     timer = setInterval(function(){ tick(auth.currentUser || user); }, 15000);
   });
-  // 폰을 다시 켰을 때 — 잠든 사이 6시간이 지났으면 먼저 확인하고, 아니면 사용으로 센다
+  // 폰을 다시 켰을 때 — 잠든 사이 3일이 지났으면 먼저 확인하고, 아니면 사용으로 센다
   document.addEventListener('visibilitychange', function(){
     if (document.visibilityState !== 'visible' || !auth.currentUser) return;
     tick(auth.currentUser);
