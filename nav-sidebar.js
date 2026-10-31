@@ -497,9 +497,12 @@
         unread.push(Object.assign({ __id: id }, u));
       });
       setBadge('updates', unread.length);
-      maybeShowAnnouncePopup(unread);
-      updateAnnounceBanner(unread);
-      maybeNotifyAnnounce(unread);
+      // 📅 2026-10-31 사장님: "뉴 어나운스는 1주일 지나면 메인 화면에서 창을 없애줘"
+      //   → 올린 지 7일 지난 공지는 팝업·빨간 배너·기기 알림에서 뺀다 (사이드바 숫자·공지 페이지에는 그대로 남음)
+      const fresh = unread.filter(u => Date.now() - (u.ts || 0) < 7 * 86400000);
+      maybeShowAnnouncePopup(fresh);
+      updateAnnounceBanner(fresh);
+      maybeNotifyAnnounce(fresh);
     } catch(e){}
   }
   // 📢 메인 페이지 상단 플래시 배너 — 헤더 아래·타일 위 "#ANNOUNCEMENT# 반드시 읽을 것"
