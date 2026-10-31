@@ -280,6 +280,13 @@ if ('serviceWorker' in navigator) {
 //   meet.html 에서 통화를 걸면 inventory/meet/ring/{받는 사람 uid}/{통화id} 에 적힌다.
 //   이 파일은 앱의 거의 모든 화면(58곳)에 들어 있어서, 받는 사람이 어느 화면에 있든 여기서 바로 창을 띄운다.
 //   앱이 보일 때 8초마다 + 화면에 다시 올라올 때 즉시 확인. 3분 지난 부름은 띄우지 않는다(부재중).
+// 🔔 2026-10-30 사장님: "초청된 사람이 전화 알림 받듯이 소리나 진동이 와야 하는데"
+//   · 창이 떠 있는 동안 전화벨처럼 '따르릉' 소리 + 진동을 3초마다 되풀이 (받거나·거절하거나·60초까지)
+//   · 앱을 내려 둔(백그라운드) 상태면 폰 알림(소리·진동)을 띄우고, 울리는 동안 몇 번 더 울린다
+//   · 거는 사람이 [회의 끝] 을 누르거나 다른 기기에서 받으면 벨이 멈추고 창이 닫힌다
+//   ⚠ 앱을 완전히 끈 폰은 울리지 않는다 — 완전 종료 푸시(FCM)는 사장님 정책으로 꺼 둠(PUSH-SETUP.md).
+//   ⚠ 브라우저는 그 화면을 한 번이라도 누른 뒤에만 소리·진동을 허락한다 → 첫 터치 때 미리 열어 둔다.
+//      아이폰은 웹 진동이 없다(소리·알림만).
 (function(){
   if (window.__kmRingWatch) return; window.__kmRingWatch = true;
   // 회의 화면 주소 — 하위 폴더 페이지(floorplan/)에서도 맞게 이 스크립트 위치 기준으로 잡는다
@@ -307,17 +314,59 @@ if ('serviceWorker' in navigator) {
     if (!a || !u || /[?&]authuser=/.test(u)) return u;
     return u + (u.indexOf('?') < 0 ? '?' : '&') + 'authuser=' + encodeURIComponent(a);
   }
-  function beep(){
-    try { navigator.vibrate && navigator.vibrate([300, 120, 300, 120, 500]); } catch (_) {}
+  // ── 벨소리 ── 소리 장치는 하나만 만들어 두고, 화면을 처음 누를 때 깨워 둔다(브라우저 자동재생 규칙)
+  let AC = null;
+  function ac(){
+    try { if (!AC) { const C = window.AudioContext || window.webkitAudioContext; if (C) AC = new C(); }
+          if (AC && AC.state === 'suspended') AC.resume().catch(() => {}); } catch (_) {}
+    return AC;
+  }
+  ['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, ac, { once: true, passive: true, capture: true }));
+  // 전화벨 한 번 = 440+480Hz 두 소리를 0.4초 · 쉼 0.2초 · 0.4초 (북미 전화 벨 모양)
+  function ringOnce(){
+    try { navigator.vibrate && navigator.vibrate([500, 200, 500, 200, 900]); } catch (_) {}
+    const c = ac(); if (!c || c.state !== 'running') return;
     try {
-      const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
-      const c = new C(); const o = c.createOscillator(); const g = c.createGain();
-      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.15;
-      o.connect(g); g.connect(c.destination); o.start();
-      setTimeout(() => { o.frequency.value = 660; }, 250);
-      setTimeout(() => { try { o.stop(); c.close(); } catch (_) {} }, 700);
+      const g = c.createGain(); g.gain.value = 0; g.connect(c.destination);
+      [440, 480].forEach(f => { const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.connect(g); o.start(); o.stop(c.currentTime + 1.05); });
+      const t0 = c.currentTime;
+      g.gain.setValueAtTime(0.22, t0);        g.gain.setValueAtTime(0, t0 + 0.4);
+      g.gain.setValueAtTime(0.22, t0 + 0.6);  g.gain.setValueAtTime(0, t0 + 1.0);
     } catch (_) {}
   }
+  let ringT = null, ringStop = null;
+  function startRing(){
+    stopRing();
+    ringOnce();
+    ringT = setInterval(ringOnce, 3000);
+    ringStop = setTimeout(stopRing, 60000);   // 60초 울리고 멈춤 (창은 그대로 남는다)
+  }
+  function stopRing(){
+    if (ringT) clearInterval(ringT); if (ringStop) clearTimeout(ringStop);
+    ringT = ringStop = null;
+    try { navigator.vibrate && navigator.vibrate(0); } catch (_) {}
+  }
+  // ── 폰 알림 (앱이 백그라운드일 때) ── 서비스워커 알림이 폰 알림창·잠금화면에 뜨고 소리·진동이 난다
+  const notified = {};   // 통화id@ts → 알린 횟수
+  async function sysNotify(id, v){
+    try {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+      const T = TX[L()];
+      const opt = { body: T.b.replace('%s', v.from || '') + (v.fromBranch ? ' · ' + v.fromBranch : ''),
+                    tag: 'km-ring-' + id, renotify: true, requireInteraction: true,
+                    vibrate: [700, 300, 700, 300, 700, 300, 1200],
+                    icon: new URL('pwa-assets/icon-192.png', MEET).href, badge: new URL('pwa-assets/icon-192.png', MEET).href,
+                    data: { url: MEET + '#ring-' + id } };
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      if (reg && reg.showNotification) await reg.showNotification(T.t, opt);
+      else new Notification(T.t, opt);
+    } catch (_) {}
+  }
+  // 알림 허락을 아직 안 물었으면, 벨 창의 버튼을 누르는 순간(사용자 동작) 한 번 묻는다
+  function askNotifyOnce(){
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {}); } catch (_) {}
+  }
+  let cur = null;   // 지금 떠 있는 벨 창 { uid, id }
   async function patch(path, body){
     try { await window.fetch(RING + path + '.json', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (_) {}
   }
@@ -340,9 +389,13 @@ if ('serviceWorker' in navigator) {
       + '<button id="__kmRingNo" style="display:block;width:100%;background:#f1f5f9;color:#334155;border:0;border-radius:12px;padding:11px;font:inherit;font-weight:700;cursor:pointer">' + esc(T.no) + '</button>'
       + '</div>';
     (document.body || document.documentElement).appendChild(ov);
-    if (!MIN) beep();
-    const close = () => { try { ov.remove(); } catch (_) {} open = false; };
+    if (!MIN) { startRing(); cur = { uid, id }; }
+    // 이 화면을 아직 한 번도 안 누른 상태면 브라우저가 소리·진동을 막는다 → 폰 알림으로도 같이 울린다
+    try { if (!MIN && navigator.userActivation && !navigator.userActivation.hasBeenActive) sysNotify(id, v); } catch (_) {}
+    const close = () => { stopRing(); cur = null; try { ov.remove(); } catch (_) {} open = false; };
+    ov.__close = close;
     ov.querySelector('#__kmRingGo').onclick = () => {
+      askNotifyOnce();
       if (MIN) {
         patch('/ring/' + uid + '/' + id, { state: 'seen', at: Date.now() });
         close();
@@ -360,6 +413,7 @@ if ('serviceWorker' in navigator) {
       setTimeout(() => { if (onMeet()) location.hash = 'call-' + id; else location.href = MEET + '#call-' + id; }, 600);
     };
     ov.querySelector('#__kmRingNo').onclick = () => {
+      askNotifyOnce();
       const at = Date.now();
       if (MIN) { patch('/ring/' + uid + '/' + id, { state: 'seen', at }); close(); return; }
       patch('/ring/' + uid + '/' + id, { state: 'declined', at });
@@ -368,7 +422,7 @@ if ('serviceWorker' in navigator) {
     };
   }
   async function poll(){
-    if (open || document.visibilityState !== 'visible') return;
+    const hidden = document.visibilityState !== 'visible';
     let uid = '';
     try { uid = (auth.currentUser && auth.currentUser.uid) || ''; } catch (_) {}
     if (!uid) return;
@@ -377,6 +431,23 @@ if ('serviceWorker' in navigator) {
       if (!r.ok) return;
       const m = (await r.json()) || {};
       const now = Date.now();
+      // 떠 있는 벨 창 — 거는 쪽이 끝냈거나 다른 기기에서 받았으면 벨을 멈추고 닫는다
+      if (open) {
+        if (cur) { const v = m[cur.id]; if (!v || v.state !== 'ringing') { const ov = document.getElementById('__kmRing'); if (ov && ov.__close) ov.__close(); } }
+        return;
+      }
+      // 앱을 내려 둔 동안 — 폰 알림으로 울린다 (창은 화면에 돌아오면 띄운다)
+      if (hidden) {
+        for (const id of Object.keys(m)) {
+          const v = m[id];
+          if (!v || v.state !== 'ringing' || now - (v.ts || 0) > 60000) continue;
+          const k = id + '@' + v.ts;
+          if ((notified[k] || 0) >= 4) continue;           // 한 번 부를 때 최대 4번 울림
+          notified[k] = (notified[k] || 0) + 1;
+          sysNotify(id, v);
+        }
+        return;
+      }
       for (const id of Object.keys(m)) {
         const v = m[id];
         if (!v) continue;
@@ -394,6 +465,8 @@ if ('serviceWorker' in navigator) {
   }
   setTimeout(poll, 2500);
   setInterval(poll, 8000);
+  // 벨 창이 떠 있을 때는 더 자주 본다 — 거는 쪽이 끝내면 벨이 바로 멈추게
+  setInterval(() => { if (open && cur) poll(); }, 3000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(poll, 400); });
   window.__kmRingPoll = poll;
 })();
