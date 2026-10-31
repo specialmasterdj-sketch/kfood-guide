@@ -332,6 +332,62 @@ async function _rescuePendingIfPreapproved(user, profile){
   } catch(_){}
 }
 
+/* ✏️ 2026-10-30 사장님: "이름이 없는 직원들" — 전화번호로만 가입해 서버 이름이 번호인 승인 계정이 56명.
+   본인에게 한 번 묻는다: "앱에서 쓸 이름을 적어 주세요" (이 기기에 쓰던 이름이 있으면 미리 채워 확인만 받는다).
+   자동으로 넣지 않는 이유: 매장 공용 PC 에는 앞사람 이름이 남아 있을 수 있다 — 본인이 눈으로 확인해야 정확하다.
+   본인 기록의 name 만 바꾼다(status·role·branch 그대로 — RTDB 규칙상 본인이 쓸 수 있는 범위).
+   [나중에] 를 누르면 하루 동안 다시 묻지 않는다. 매니저는 직원 승인 ▸ ✏️ 이름 없음 에서 고칠 수 있다. */
+async function _backfillServerName(user, profile){
+  try {
+    const looksPhone = n => /^\+?[\d\s().-]{7,}$/.test(String(n || '').trim());
+    const GEN = ['staff','manager','employee','admin','user','직원','매니저','스태프','사원','관리자'];
+    const srv = String(profile.name || '').trim();
+    if (srv && !looksPhone(srv) && !GEN.includes(srv.toLowerCase())) return;   // 서버 이름이 이미 있음
+    if (bootstrapForUser(user)) return;
+    if (document.getElementById('__kmNameAsk')) return;
+    const k = 'km.nameAsk.' + user.uid;
+    if (Date.now() - (+(localStorage.getItem(k) || 0)) < 86400000) return;
+    let pre = '';
+    try { const me = JSON.parse(localStorage.getItem('chat.me') || '{}'); pre = String(me.name || '').trim(); } catch(_){}
+    if (pre.length < 2 || looksPhone(pre) || GEN.includes(pre.toLowerCase())) pre = '';
+    let L = 'ko'; try { const v = localStorage.getItem('km.lang'); if (['ko','en','es'].includes(v)) L = v; } catch(_){}
+    const TX = { ko:{ t:'✏️ 이름을 알려 주세요', b:'지금 계정에 이름 없이 전화번호만 있습니다. 업무·회의·채팅에 보일 이름을 적어 주세요 (스케줄표와 같은 이름).', go:'저장', no:'나중에', bad:'사람 이름을 적어 주세요 (2글자 이상, 전화번호 말고).', ok:'✅ 저장했습니다.' },
+                 en:{ t:'✏️ What is your name?', b:'Your account has only a phone number. Type the name others should see in tasks, meetings and chat (same as on the schedule).', go:'Save', no:'Later', bad:'Please type your name (not a phone number).', ok:'✅ Saved.' },
+                 es:{ t:'✏️ ¿Cómo se llama?', b:'Su cuenta solo tiene un número de teléfono. Escriba su nombre como aparece en el horario.', go:'Guardar', no:'Después', bad:'Escriba su nombre (no el teléfono).', ok:'✅ Guardado.' } }[L];
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    const ov = document.createElement('div');
+    ov.id = '__kmNameAsk';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483500;background:rgba(10,15,22,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML = '<div style="background:#fff;color:#18202a;border-radius:16px;max-width:380px;width:100%;padding:20px 18px;box-shadow:0 18px 50px rgba(0,0,0,.3);font:15px/1.5 -apple-system,BlinkMacSystemFont,\'Segoe UI\',\'Malgun Gothic\',sans-serif">'
+      + '<div style="font-weight:800;font-size:1.08em;margin-bottom:6px">' + esc(TX.t) + '</div>'
+      + '<div style="color:#475569;font-size:.88em;margin-bottom:12px">' + esc(TX.b) + '</div>'
+      + '<input id="__kmNameIn" autocomplete="name" maxlength="40" value="' + esc(pre) + '" style="width:100%;box-sizing:border-box;border:1.5px solid #cbd5e1;border-radius:10px;padding:12px;font:inherit;font-size:1.05em;font-weight:700;margin-bottom:6px">'
+      + '<div id="__kmNameMsg" style="color:#dc2626;font-size:.8em;min-height:1.2em;margin-bottom:8px"></div>'
+      + '<button id="__kmNameGo" style="display:block;width:100%;background:#16a34a;color:#fff;border:0;border-radius:12px;padding:13px;font:inherit;font-weight:800;cursor:pointer;margin-bottom:8px">' + esc(TX.go) + '</button>'
+      + '<button id="__kmNameNo" style="display:block;width:100%;background:#f1f5f9;color:#334155;border:0;border-radius:12px;padding:10px;font:inherit;font-weight:700;cursor:pointer">' + esc(TX.no) + '</button></div>';
+    (document.body || document.documentElement).appendChild(ov);
+    const inp = ov.querySelector('#__kmNameIn');
+    ov.querySelector('#__kmNameNo').onclick = () => { try { localStorage.setItem(k, String(Date.now())); } catch(_){} ov.remove(); };
+    const go = async () => {
+      const nm = String(inp.value || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (nm.length < 2 || looksPhone(nm) || GEN.includes(nm.toLowerCase())) { ov.querySelector('#__kmNameMsg').textContent = TX.bad; inp.focus(); return; }
+      try {
+        const tok = await user.getIdToken();
+        const r = await _tf(cfg.databaseURL + '/users/' + user.uid + '.json?auth=' + encodeURIComponent(tok),
+          { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ name: nm, nameBy: 'self', nameAt: Date.now() }) });
+        gateTrace('gate:name-self', (r.ok ? 'ok ' : 'fail ' + r.status) + ' ' + nm.slice(0, 20));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        try { const me = JSON.parse(localStorage.getItem('chat.me') || '{}'); if (!me.name || looksPhone(me.name)) { me.name = nm; localStorage.setItem('chat.me', JSON.stringify(me)); } } catch(_){}
+        profile.name = nm;
+        ov.querySelector('#__kmNameMsg').style.color = '#16a34a'; ov.querySelector('#__kmNameMsg').textContent = TX.ok;
+        setTimeout(() => ov.remove(), 700);
+      } catch(e){ ov.querySelector('#__kmNameMsg').textContent = '⚠ ' + (e && e.message || e); }
+    };
+    ov.querySelector('#__kmNameGo').onclick = go;
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  } catch(_){}
+}
+
 // Core gate — v5: 프로필 확인은 REST(재시도)로 즉시 결정, onValue 는 라이브 승인
 // 갱신용 best-effort. 매니저 승인 반영은 pending 상태에서 15초 REST 폴링이 백업.
 let __unsubProfile = null;
@@ -351,6 +407,7 @@ function applyStatus(user, profile){
     if (ov) ov.remove();
     if (__pendingPoll) { clearInterval(__pendingPoll); __pendingPoll = null; }
     syncToChatMe(profile);
+    _backfillServerName(user, profile);
   } else if (profile.status === 'pending') {
     // 🩹 2026-08-04 자가치유: phoneRoster/부트스트랩에 사전등록된(=이미 승인된) 매니저가
     //   어떤 이유로든 pending 으로 잡히면 자동 승인 복구. "매일 잘되다 가끔 승인 대기중"으로
