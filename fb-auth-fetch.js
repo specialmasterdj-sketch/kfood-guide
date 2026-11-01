@@ -506,6 +506,7 @@ if ('serviceWorker' in navigator) {
       if (r.ok) localStorage.setItem(K, JSON.stringify({ at: Date.now(), tok, chk: Date.now() }));
     } catch (e) { try { console.warn('[meet-push]', (e && e.message) || e); } catch (_) {} }
   }
+  window.__kmPushRegister = pushRegister;   // 🔔 meet.html 의 [폰 알림 켜기] 가 허락 직후 바로 부른다 (2026-11-01)
   setTimeout(pushRegister, 6000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(pushRegister, 2000); });
 

@@ -129,6 +129,11 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 .prow.sel{background:var(--brand-soft)}
 .prow .mute{font-size:.72em;font-weight:700;color:var(--warn);background:var(--warn-bg);border-radius:6px;padding:1px 5px;white-space:nowrap}
 .mutewarn{padding:9px 12px;background:var(--warn-bg);color:var(--warn);font-size:.84em;font-weight:700;border-bottom:1px solid var(--line)}
+#pushBar:empty{display:none}
+#pushBar{margin:0 0 10px;padding:11px 13px;background:var(--warn-bg);border:1px solid var(--warn);border-radius:12px}
+#pushBar .pbT{font-weight:800;color:var(--warn);font-size:.92em}
+#pushBar .pbS{font-size:.82em;color:var(--muted);margin:4px 0 8px;line-height:1.45}
+#pushBar .btn{width:100%}
 .pfoot{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .pfoot .cnt{flex:1 1 120px;font-size:.85em;font-weight:800}
 .pk .lab{font-size:.74em;font-weight:800;color:var(--muted);margin:2px 0 4px}
@@ -206,6 +211,7 @@ body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8p
 
 <main>
   <div class="note" id="legal"></div>
+  <div id="pushBar"></div>
   <div class="acct" id="acct"></div>
   <div id="stage"><div id="stageIn"></div>
     <div class="acts"><button class="btn" id="leaveBtn"></button></div></div>
@@ -381,6 +387,13 @@ const T = {
   pkLoad: ['직원 명단을 불러오는 중…','Loading staff…','Cargando personal…'],
   pkNone: ['맞는 사람이 없습니다.','No one matches.','Nadie coincide.'],
   // 🔕 2026-11-01 전무님: 부르기 전에 '이 사람은 폰이 안 울린다' 를 보이게 — 10/31 펨브로크 26명 중 15명이 이 상태였다
+  // 🔔 2026-11-01 전무님: 직원이 스스로 폰 알림을 켤 길이 없었다 (앱이 한 번만 묻고, 다시 켜는 배너는 2026-05-28 사장님 지시로 꺼져 있다)
+  pbT:    ['🔕 이 폰은 회의 때 울리지 않습니다','🔕 This phone will not ring for meetings','🔕 Este teléfono no sonará'],
+  pbS:    ['폰 알림이 꺼져 있어, 앱을 보고 있을 때만 들립니다. 한 번 켜 두시면 앱을 꺼 둬도 울립니다.','Phone alerts are off, so you only hear a call while the app is open. Turn them on once and it rings even when the app is closed.','Las alertas están apagadas: solo suena con la app abierta. Actívelas una vez y sonará aunque la app esté cerrada.'],
+  pbGo:   ['🔔 폰 알림 켜기','🔔 Turn on phone alerts','🔔 Activar alertas'],
+  pbOk:   ['✅ 켜졌습니다. 이제 회의로 부르면 이 폰이 울립니다.','✅ Done. This phone will ring when you are called.','✅ Listo. Este teléfono sonará cuando le llamen.'],
+  pbNo:   ['이 폰이 알림을 막아 두었습니다. 크롬 주소창 왼쪽 자물쇠 🔒 → 권한 → 알림 → 허용 으로 바꿔 주세요.','This phone is blocking alerts. In Chrome tap the lock 🔒 next to the address → Permissions → Notifications → Allow.','El teléfono bloquea las alertas. En Chrome toque el candado 🔒 → Permisos → Notificaciones → Permitir.'],
+  pbIos:  ['아이폰은 홈 화면에 추가한 뒤에만 알림이 됩니다. 사파리 아래 공유 버튼 ⬆️ → 「홈 화면에 추가」 → 그 아이콘으로 앱을 열어 주세요.','On iPhone, alerts work only after you add the app to the Home Screen. Safari ⬆️ Share → Add to Home Screen → open the app from that icon.','En iPhone funciona solo tras añadir a la pantalla de inicio: Compartir ⬆️ → Añadir a inicio → abra desde ese icono.'],
   noRing: ['🔕 폰 안 울림','🔕 no phone alert','🔕 no suena'],
   noRingT:['폰 알림을 켜지 않았습니다. 앱을 열어 보고 있을 때만 울립니다.','Notifications are off. Rings only while the app is open on screen.','Notificaciones apagadas. Solo suena con la app abierta.'],
   noRingN:['🔕 고른 사람 중 %n명은 폰이 안 울립니다 — 앱을 열어 둘 때만 들립니다.','🔕 %n of the people you picked get no phone alert — only while their app is open.','🔕 %n de los elegidos no reciben aviso — solo con la app abierta.'],
@@ -525,6 +538,7 @@ function render(){
   document.getElementById('hTitle').textContent = t('title');
   document.getElementById('hSub').textContent  = t('sub');
   document.getElementById('legal').innerHTML = '<b>⚖️ '+esc(t('legalT'))+'</b>'+esc(t('legalB'));
+  drawPushBar();
   document.getElementById('hLog').textContent = t('logH');
   const ab = document.getElementById('acct');
   if (ab) ab.innerHTML = '<span>' + esc(t('acctL')) + ' · <b>' + esc(getAcct() || t('acctNo'))
@@ -854,6 +868,31 @@ function useGroup(id){
   if (miss) alert(t('grpMiss', miss));
 }
 function closePicker(){ document.getElementById('pk').classList.remove('on'); PK_ADD = null; PK_KIND = ''; }
+/* 🔔 폰 알림 켜기 띠 — 알림이 켜진 폰에는 아예 안 보인다.
+   사장님이 2026-05-28 에 끄라 하신 것은 전 화면에 뜨던 업무지시 알림 배너다. 이건 회의 화면 안에만 둔다. */
+function drawPushBar(){
+  const el = document.getElementById("pushBar"); if (!el) return;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  const sup = ("Notification" in window);
+  if (sup && Notification.permission === "granted") { el.innerHTML = ""; return; }   // 이미 켜져 있다
+  let sub = t("pbS"), btn = true;
+  if (ios && !standalone) { sub = t("pbIos"); btn = false; }        // 아이폰은 홈 화면에 추가부터
+  else if (!sup) { sub = t("pbIos"); btn = false; }
+  else if (Notification.permission === "denied") { sub = t("pbNo"); btn = false; }   // 막아 둔 건 앱이 못 푼다
+  el.innerHTML = '<div class="pbT">' + esc(t("pbT")) + '</div><div class="pbS">' + esc(sub) + '</div>'
+    + (btn ? '<button class="btn p" id="pbBtn">' + esc(t("pbGo")) + '</button>' : "");
+}
+async function askPush(){
+  try {
+    const p = await Notification.requestPermission();
+    if (p === "granted") {
+      try { if (window.__kmPushRegister) await window.__kmPushRegister(); } catch (e) {}
+      alert(t("pbOk"));
+    }
+  } catch (e) {}
+  drawPushBar();
+}
 function drawPicker(){
   document.getElementById('pkT').textContent = PK_KIND ? kindLab(PK_KIND) + (KINDS[PK_KIND].single ? ' — ' + t('kOnly1') : ' — ' + t('pkT')) : t('pkT');
   document.getElementById('pkQ').placeholder = t('pkQ');
@@ -1349,6 +1388,7 @@ document.addEventListener('click', e => {
   if (b.dataset.lines)  { setLines(); return; }
   if (b.dataset.pkbr != null) { PK_BR = b.dataset.pkbr; drawPicker(); return; }
   if (b.id === 'pkNo')  { closePicker(); return; }
+  if (b.id === 'pbBtn') { askPush(); return; }
   if (b.id === 'pkGo')  { startCall(); return; }
   if (b.dataset.pkrm)   { PK_SEL.delete(b.dataset.pkrm); drawPicker(); return; }
   if (b.dataset.grpsave){ saveGroup(); return; }
