@@ -127,6 +127,8 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 .prow .pn{font-weight:700;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .pb{font-size:.74em;color:var(--muted);flex:0 0 auto;text-align:right}
 .prow.sel{background:var(--brand-soft)}
+.prow .mute{font-size:.72em;font-weight:700;color:var(--warn);background:var(--warn-bg);border-radius:6px;padding:1px 5px;white-space:nowrap}
+.mutewarn{padding:9px 12px;background:var(--warn-bg);color:var(--warn);font-size:.84em;font-weight:700;border-bottom:1px solid var(--line)}
 .pfoot{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .pfoot .cnt{flex:1 1 120px;font-size:.85em;font-weight:800}
 .pk .lab{font-size:.74em;font-weight:800;color:var(--muted);margin:2px 0 4px}
@@ -378,6 +380,11 @@ const T = {
   pkAddGo:['📞 %n명 더 부르기','📞 Add %n','📞 Añadir %n'],
   pkLoad: ['직원 명단을 불러오는 중…','Loading staff…','Cargando personal…'],
   pkNone: ['맞는 사람이 없습니다.','No one matches.','Nadie coincide.'],
+  // 🔕 2026-11-01 전무님: 부르기 전에 '이 사람은 폰이 안 울린다' 를 보이게 — 10/31 펨브로크 26명 중 15명이 이 상태였다
+  noRing: ['🔕 폰 안 울림','🔕 no phone alert','🔕 no suena'],
+  noRingT:['폰 알림을 켜지 않았습니다. 앱을 열어 보고 있을 때만 울립니다.','Notifications are off. Rings only while the app is open on screen.','Notificaciones apagadas. Solo suena con la app abierta.'],
+  noRingN:['🔕 고른 사람 중 %n명은 폰이 안 울립니다 — 앱을 열어 둘 때만 들립니다.','🔕 %n of the people you picked get no phone alert — only while their app is open.','🔕 %n de los elegidos no reciben aviso — solo con la app abierta.'],
+  noRingQ:['🔕 이 %n명은 폰이 울리지 않습니다 (앱을 열어 둔 사람만 봅니다):\n\n%s\n\n그래도 회의를 시작할까요? 닿지 않는 분께는 채팅으로 따로 알려 주세요.','🔕 These %n will get no phone alert (only those with the app open will see it):\n\n%s\n\nStart the meeting anyway? Tell the others by chat.','🔕 Estas %n personas no reciben aviso:\n\n%s\n\n¿Empezar igual? Avise a los demás por chat.'],
   pkFail: ['명단을 불러오지 못했습니다. 잠시 후 다시 해 주세요.','Could not load the staff list. Try again shortly.','No se pudo cargar la lista. Intente de nuevo.'],
   allBr:  ['전 지점','All branches','Todas'],
   noLine: ['지금 비어 있는 회의방이 없습니다. (모든 방이 사용 중이거나 링크가 없음)\n임원이 ⚙ 통화 회선을 더 넣어 주세요.','No free meeting room right now (all busy or no link).\nAn executive can add more call lines with ⚙.','No hay sala libre ahora.\nUn ejecutivo puede añadir líneas con ⚙.'],
@@ -795,6 +802,7 @@ async function loadRoster(){
       if (uid === mine || k === meK) continue;
       const e = by.get(k) || { key:k, name:nm, branch:'', role:'', uids:[], since:0 };
       e.uids.push(uid);
+      e.fcm = (e.fcm || 0) + (v.fcm ? Object.keys(v.fcm).length : 0);   // 🔕 폰 알림이 닿는 기기 수 (0 = 안 울림)
       e.since = Math.max(e.since || 0, v.approvedAt || v.createdAt || 0);   // 🎓 신입 교육 미리 고르기용
       if (!e.branch || e.branch === '*') e.branch = v.branch || e.branch;
       if (!e.role) e.role = v.role || '';
@@ -873,11 +881,14 @@ function drawPicker(){
   const q = document.getElementById('pkQ').value.trim().toLowerCase();
   const list = ROSTER.filter(p => (!PK_BR || p.branch === PK_BR) && (!q || p.name.toLowerCase().includes(q)));
   if (!list.length) { L.innerHTML = '<div class="empty" style="padding:14px">'+esc(t('pkNone'))+'</div>'; return; }
-  L.innerHTML = (PK_BR && !q ? '<div class="prow" data-pkallbr="1" style="font-weight:800;color:var(--brand)">☑ '+esc(t('pkSelB'))+'</div>' : '')
+  const mute = [...PK_SEL.values()].filter(p => !p.fcm).length;
+  L.innerHTML = (mute ? '<div class="mutewarn">'+esc(t('noRingN', mute))+'</div>' : '')
+    + (PK_BR && !q ? '<div class="prow" data-pkallbr="1" style="font-weight:800;color:var(--brand)">☑ '+esc(t('pkSelB'))+'</div>' : '')
     + list.map(p => {
       const on = PK_SEL.has(p.key);
       return '<div class="prow'+(on?' sel':'')+'" data-pk="'+esc(p.key)+'"><input type="checkbox" tabindex="-1"'+(on?' checked':'')+'>'
-        + '<span class="pn">'+esc(p.name)+'</span><span class="pb">'+esc(brLabel(p.branch))+(p.role?'<br>'+esc(String(p.role).replace(/_/g,' ')):'')+'</span></div>';
+        + '<span class="pn">'+esc(p.name)+(p.fcm?'':' <span class="mute" title="'+esc(t('noRingT'))+'">'+esc(t('noRing'))+'</span>')+'</span>'
+        + '<span class="pb">'+esc(brLabel(p.branch))+(p.role?'<br>'+esc(String(p.role).replace(/_/g,' ')):'')+'</span></div>';
     }).join('');
 }
 function pkToggle(k){
@@ -903,6 +914,9 @@ function markMeIn(roomId){
 async function startCall(){
   const people = [...PK_SEL.values()];
   if (!people.length && !(PK_KIND && KINDS[PK_KIND] && KINDS[PK_KIND].copyLink)) return;
+  // 🔕 폰이 안 울리는 사람이 섞여 있으면 이름을 보여 주고 한 번 묻는다 (회의 창을 열기 전에 — 열고 나서 물으면 빈 방이 떠 버린다)
+  const noRing = people.filter(p => !p.fcm);
+  if (noRing.length && !confirm(t('noRingQ', noRing.length).replace('%s', noRing.map(p => '· ' + p.name).join('\n')))) return;
   const kind = PK_ADD ? ((CALLS[PK_ADD]||{}).kind || '') : PK_KIND;
   const m = me(); const ts = Date.now();
   let id, line;
