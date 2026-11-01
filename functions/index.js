@@ -57,6 +57,7 @@ exports.chatPush = onValueCreated(
           }).catch((e) => {
             // 만료/무효 토큰 청소
             if (e && e.code && String(e.code).includes('registration-token')) {
+        console.warn('[meetRingPush] 죽은 토큰 삭제 — uid', uid, '·', e.code);   // 조용히 지우면 왜 안 울리는지 알 길이 없다 (2026-11-01)
               return db.ref('fcmTokens/' + t + '/' + tok).remove().catch(() => {});
             }
           })

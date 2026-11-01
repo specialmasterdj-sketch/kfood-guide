@@ -473,13 +473,24 @@ if ('serviceWorker' in navigator) {
        (본인 기록이라 규칙상 본인이 쓸 수 있다 — status·role·branch 는 안 건드림)
      · 발송은 functions/index.js 의 meetRingPush 가 ring/{uid}/{통화id} 가 'ringing' 이 될 때 한다
      · VAPID 키는 Firebase 기본 키를 쓴다(getToken 에 vapidKey 를 안 주면 SDK 기본값) — 콘솔 작업 불필요 */
+  const fcmUrl = (uid, tok) => 'https://kimchi-mart-order-default-rtdb.firebaseio.com/users/' + uid + '/fcm/' + encodeURIComponent(tok).replace(/[.]/g, '%2E') + '.json';
   async function pushRegister(){
     try {
       if (!('serviceWorker' in navigator) || !('Notification' in window) || Notification.permission !== 'granted') return;
       const u = auth.currentUser; if (!u) return;
       const K = 'km.meetPush.' + u.uid;
       let last = null; try { last = JSON.parse(localStorage.getItem(K) || 'null'); } catch (_) {}
-      if (last && Date.now() - (last.at || 0) < 7 * 86400000) return;
+      /* 🔴 2026-11-01: 7일이 안 지났어도 서버에 그 토큰이 아직 있는지 보고 건너뛴다.
+         meetRingPush 는 FCM 이 거절한 토큰을 조용히 지운다 — 그러면 이 기기는 7일 동안 다시 적지 않아
+         그동안 영영 안 울린다(2026-11-01 전무님 폰이 실제로 이 상태였다). 확인은 2시간에 한 번만. */
+      if (last && Date.now() - (last.at || 0) < 7 * 86400000 && last.tok) {
+        if (Date.now() - (last.chk || 0) < 2 * 3600000) return;
+        try {
+          const idt0 = await u.getIdToken();
+          const c = await window.fetch(fcmUrl(u.uid, last.tok) + (idt0 ? "?auth=" + encodeURIComponent(idt0) : ""), { cache: "no-store" });
+          if (c.ok && (await c.text()) !== "null") { last.chk = Date.now(); localStorage.setItem(K, JSON.stringify(last)); return; }
+        } catch (_) { return; }   // 못 물어봤으면 그냥 둔다 (괜히 다시 적지 않는다)
+      }
       const A = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
       const M = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js');
       if (!(await M.isSupported())) return;
@@ -490,9 +501,9 @@ if ('serviceWorker' in navigator) {
       const tok = await M.getToken(M.getMessaging(papp), { serviceWorkerRegistration: reg });
       if (!tok) return;
       const idt = await u.getIdToken();
-      const r = await window.fetch('https://kimchi-mart-order-default-rtdb.firebaseio.com/users/' + u.uid + '/fcm/' + encodeURIComponent(tok).replace(/\./g, '%2E') + '.json?auth=' + encodeURIComponent(idt),
+      const r = await window.fetch(fcmUrl(u.uid, tok) + '?auth=' + encodeURIComponent(idt),
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ at: Date.now(), ua: (navigator.userAgent || '').slice(0, 90) }) });
-      if (r.ok) localStorage.setItem(K, JSON.stringify({ at: Date.now() }));
+      if (r.ok) localStorage.setItem(K, JSON.stringify({ at: Date.now(), tok, chk: Date.now() }));
     } catch (e) { try { console.warn('[meet-push]', (e && e.message) || e); } catch (_) {} }
   }
   setTimeout(pushRegister, 6000);
