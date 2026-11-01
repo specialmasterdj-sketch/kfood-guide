@@ -414,6 +414,12 @@ const T = {
   ringAgain:['🔔 다시 부르기','🔔 Ring again','🔔 Llamar otra vez'],
   addPpl: ['＋ 사람 더 부르기','＋ Add people','＋ Añadir'],
   endCall:['⏹ 회의 끝 · 회의록 만들기','⏹ End meeting · file minutes','⏹ Terminar · acta'],
+  // 🗑 2026-11-01 전무님 "시험하느라 방이 많이 생기는데 지우려면?" — 지우는 길이 아예 없었다
+  delCall:['🗑 이 회의 지우기','🗑 Delete this meeting','🗑 Borrar esta reunión'],
+  delAsk: ['이 회의를 아주 지울까요?\n\n%s\n\n참석 기록·회의 자료·메모·회의록이 모두 사라집니다. 되돌릴 수 없습니다.','Delete this meeting for good?\n\n%s\n\nAttendance, files, notes and minutes all go. This cannot be undone.','¿Borrar esta reunión definitivamente?\n\n%s\n\nAsistencia, archivos, notas y acta se pierden. No se puede deshacer.'],
+  delKeep:['이 회의에 %n명이 참가했습니다. 기록이 사라져도 괜찮으시면 한 번 더 확인해 주세요.','%n people joined this meeting. Confirm again if you are sure the record can go.','%n personas entraron. Confirme otra vez si el registro puede perderse.'],
+  delOk:  ['지웠습니다.','Deleted.','Borrada.'],
+  delFail:['지우지 못했습니다.','Could not delete.','No se pudo borrar.'],
   rang:   ['%n명을 불렀습니다. 회의방이 새 창으로 열립니다 — 거기서 기다리시면 됩니다.','Called %n people. The room opens in a new window — wait there.','Se llamó a %n personas. La sala se abre en otra ventana.'],
   ringFail:['부르기를 저장하지 못했습니다.','Could not send the call.','No se pudo enviar la llamada.'],
   kBm:    ['📅 지점장 주간 회의','📅 Branch managers weekly','📅 Semanal de gerentes'],
@@ -1014,6 +1020,25 @@ function buildMinutes(id, c, end){
            ts:c.ts||end, end, room:c.roomName||'', people, members, files:c.files||null,
            notes:n.text||'', ntBy:n.by||'', ntTs:n.ts||0 };
 }
+/* 🗑 회의를 아주 지운다 (2026-11-01 전무님). 「회의 끝」 은 회의록을 만드는 것이지 지우는 게 아니다.
+   부른 사람과 임원만 누를 수 있다. 참가한 사람이 있으면 한 번 더 묻는다 — 그건 진짜 기록이다. */
+async function delCall(id){
+  const c = CALLS[id] || {};
+  if (!(iMade(c) || isExec())) return;
+  const inv = c.inv || {};
+  const who = (c.roomName || c.room || "") + (c.ts ? " · " + new Date(c.ts).toLocaleString() : "");
+  if (!confirm(t("delAsk").replace("%s", who))) return;
+  const joined = Object.keys(inv).filter(u => (inv[u] || {}).state === "accepted").length;
+  if (joined && !confirm(t("delKeep", joined))) return;
+  try {
+    const F = window.__fb;
+    const upd = { ["calls/" + id]: null, ["minutes/" + id]: null };
+    Object.keys(inv).forEach(u => { upd["ring/" + u + "/" + id] = null; upd["ring/" + u + "/m_" + id] = null; });
+    await F.update(F.ref(F.db, BASE), upd);
+    delete CALLS[id];
+    alert(t("delOk"));
+  } catch(e){ console.warn("[meet] 지우기 실패", e); alert(t("delFail")); }
+}
 async function endCall(id, auto){
   const c = CALLS[id]; if (!c || c.ended) return;
   if (!auto && !confirm(t('endAsk'))) return;
@@ -1348,6 +1373,7 @@ function renderDial(){
       +   (mine && canDial() ? '<button class="btn sm" data-cadd="'+esc(id)+'">'+esc(t('addPpl'))+'</button>' : '')
       +   ((KINDS[c.kind]||{}).copyLink && (mine || isExec()) ? '<button class="btn sm" data-ccopy="'+esc(id)+'">'+esc(t('copyL'))+'</button>' : '')
       +   (mine || isExec() ? '<button class="btn sm" data-cend="'+esc(id)+'">'+esc(t('endCall'))+'</button>' : '')
+      +   (mine || isExec() ? '<button class="btn sm" data-cdel="'+esc(id)+'" style="color:var(--bad,#dc2626)">'+esc(t('delCall'))+'</button>' : '')
       + '</div>'
       + '<div class="tip">'+esc(t('tile'))+(mine ? '<br>'+esc(t('gem'))+'<br>'+esc(t('privTip')) : '')+'</div>'
       + '<div class="sec">'+esc(t('fH'))+'</div>'
@@ -1402,6 +1428,7 @@ document.addEventListener('click', e => {
   if (b.dataset.cring)  { ringAgain(b.dataset.cring); return; }
   if (b.dataset.cadd)   { openPicker(b.dataset.cadd); return; }
   if (b.dataset.cend)   { endCall(b.dataset.cend); return; }
+  if (b.dataset.cdel)   { delCall(b.dataset.cdel); return; }
 });
 // 사람 고르기 — 줄 어디를 눌러도 선택
 document.addEventListener('click', e => {
