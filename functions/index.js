@@ -87,8 +87,9 @@ exports.chatPush = onValueCreated(
 const { defineSecret } = require('firebase-functions/params');
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 // 📞 2026-11-01 — 앱으로 불러도 안 받는 사람에게 진짜 전화를 건다 (Twilio)
-const TWILIO_SID = defineSecret('TWILIO_SID');
-const TWILIO_TOKEN = defineSecret('TWILIO_TOKEN');
+// ⚠ 2026-11-01 — 전무님 계정(Editor)은 금고(Secret Manager)의 읽기 허락을 줄 권한이 없다.
+//    그래서 지금은 함수 설정값(functions/.env.kimchi-mart-order)으로 둔다. 그 파일은 git 에 안 올린다.
+//    사장님께 Secret Manager Admin 을 받으면 defineSecret 으로 되돌릴 것.
 
 const LANG_NAME = { ko: 'Korean', en: 'English', es: 'Spanish' };
 
@@ -1544,7 +1545,7 @@ function callTwiml(who) {
 
 exports.meetRingCall = onValueWritten(
   { ref: '/inventory/meet/ring/{uid}/{callId}', region: 'us-central1',
-    timeoutSeconds: 120, secrets: [TWILIO_SID, TWILIO_TOKEN] },
+    timeoutSeconds: 120 },
   async (event) => {
     const after = event.data.after.val();
     const before = event.data.before.val();
@@ -1585,7 +1586,7 @@ exports.meetRingCall = onValueWritten(
     }
 
     // ⑥ 전화를 건다 (Twilio REST — 라이브러리 없이 fetch 로)
-    const sid = TWILIO_SID.value(), tok = TWILIO_TOKEN.value();
+    const sid = process.env.TWILIO_SID, tok = process.env.TWILIO_TOKEN;
     if (!sid || !tok) { console.warn('[meetRingCall] 열쇠가 없다'); return; }
     const form = new URLSearchParams({
       To: to, From: CALL_FROM,
