@@ -1465,7 +1465,7 @@ exports.weeklyBonusRun = onValueCreated(
 //   · 데이터 전용 메시지 → sw.js 의 push 핸들러가 알림을 띄운다(ring:'1' = 화면 고정·긴 진동).
 // =============================================================================
 exports.meetRingPush = onValueWritten(
-  { ref: '/inventory/meet/ring/{uid}/{callId}', region: 'us-central1' },
+  { ref: '/inventory/meet/ring/{uid}/{callId}', region: 'us-central1', timeoutSeconds: 120 },
   async (event) => {
     const after = event.data.after.val();
     const before = event.data.before.val();
@@ -1474,21 +1474,36 @@ exports.meetRingPush = onValueWritten(
     if (Date.now() - (after.ts || 0) > 120000) return;
     const uid = event.params.uid, callId = event.params.callId;
     const db = admin.database();
-    const snap = await db.ref('users/' + uid + '/fcm').get().catch(() => null);
-    const toks = snap && snap.val() ? Object.keys(snap.val()) : [];
-    if (!toks.length) return;
     const title = after.kindLabel || '📹 화상 회의 초대';
     const body = String(after.from || '') + ' 님이 지금 화상 회의로 부릅니다' + (after.fromBranch ? ' · ' + after.fromBranch : '');
     const url = 'https://specialmasterdj-sketch.github.io/kfood-guide/meet.html#ring-' + callId;
-    await Promise.all(toks.map((k) => admin.messaging().send({
-      token: decodeURIComponent(k),
-      data: { title, body, url, tag: 'km-ring-' + callId, ring: '1' },
-      webpush: { headers: { Urgency: 'high', TTL: '120' } },
-    }).catch((e) => {
-      if (e && e.code && String(e.code).includes('registration-token')) {
-        return db.ref('users/' + uid + '/fcm/' + k).remove().catch(() => {});
+    const stateRef = db.ref('inventory/meet/ring/' + uid + '/' + callId + '/state');
+
+    /* 🔔 2026-11-01 전무님: "앱이 꺼져 있어도 벨소리가 나게."
+       서비스워커가 같은 tag + renotify 로 띄우므로, **보낼 때마다** 폰이 다시 소리·진동을 낸다.
+       한 번만 보내면 '딩' 하고 끝이라 전화처럼 안 들린다 → **받을 때까지 5초마다 되풀이**(최대 60초).
+       보내기 전마다 상태를 다시 읽어, 받거나·거절하거나·회의가 끝나면 즉시 멈춘다. */
+    const TRIES = 12, GAP = 5000;   // 5초 간격 열두 번 = 약 60초 (앱 안에서 울리는 시간과 같게 맞췄다)
+    for (let n = 0; n < TRIES; n++) {
+      if (n) {
+        await new Promise((r) => setTimeout(r, GAP));
+        const st = await stateRef.get().catch(() => null);
+        if (!st || st.val() !== 'ringing') return;   // 받았거나 끊었다 — 그만 울린다
       }
-      console.warn('[meetRingPush]', e && e.message);
-    })));
+      const snap = await db.ref('users/' + uid + '/fcm').get().catch(() => null);
+      const toks = snap && snap.val() ? Object.keys(snap.val()) : [];
+      if (!toks.length) return;
+      await Promise.all(toks.map((k) => admin.messaging().send({
+        token: decodeURIComponent(k),
+        data: { title, body, url, tag: 'km-ring-' + callId, ring: '1' },
+        webpush: { headers: { Urgency: 'high', TTL: '60' } },
+      }).catch((e) => {
+        if (e && e.code && String(e.code).includes('registration-token')) {
+          console.warn('[meetRingPush] 죽은 토큰 삭제 — uid', uid, '·', e.code);   // 조용히 지우면 왜 안 울리는지 알 길이 없다 (2026-11-01)
+          return db.ref('users/' + uid + '/fcm/' + k).remove().catch(() => {});
+        }
+        console.warn('[meetRingPush]', e && e.message);
+      })));
+    }
   }
 );
