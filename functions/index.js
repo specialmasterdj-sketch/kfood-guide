@@ -1495,7 +1495,7 @@ exports.meetRingPush = onValueWritten(
       if (!toks.length) return;
       await Promise.all(toks.map((k) => admin.messaging().send({
         token: decodeURIComponent(k),
-        data: { title, body, url, tag: 'km-ring-' + callId, ring: '1' },
+        data: { title, body, url, tag: 'km-ring-' + callId + '-' + n, ringId: 'km-ring-' + callId, ring: '1' },   // 🔔 이름표를 매번 바꾼다 — 같으면 안드로이드가 '고침'으로 보고 소리를 안 낸다 (2026-11-01)
         webpush: { headers: { Urgency: 'high', TTL: '60' } },
       }).catch((e) => {
         if (e && e.code && String(e.code).includes('registration-token')) {

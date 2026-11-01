@@ -2,7 +2,7 @@
 // Strategy: network-first for HTML/JS/CSS so the user always gets the latest
 // deploy when online; cache-fallback lets the app open when offline. Static
 // assets (icons, manifest) are cache-first since they never change in-place.
-const CACHE = 'kmtools-v1189';   // 🗑 화상 회의 — 회의 지우기 (2026-11-01)
+const CACHE = 'kmtools-v1190';   // 🔔 되풀이 알림이 소리를 내게 — 이름표를 매번 바꾸고 옛 알림은 닫는다 (2026-11-01)
 // 버전 고정(불변) 크로스오리진 의존성 전용 — 앱 버전 바뀌어도 지우지 않음.
 // firebasejs 10.14.1 / pretendard@v1.3.9 처럼 URL 에 버전이 박힌 파일만 담는다.
 const CDN_CACHE = 'kmtools-cdn-v1';
@@ -111,16 +111,26 @@ self.addEventListener('push', e => {
   const url   = d.url   || './chat.html';
   // 📹 화상 회의 초대(meetRingPush) — 전화처럼: 누를 때까지 화면에 남고 길게 진동 (2026-10-30)
   const ring  = d.ring === '1';
-  e.waitUntil(
-    self.registration.showNotification(title, {
+  /* 🔔 2026-11-01 — 전화처럼 되풀이해 울릴 때는 보낼 때마다 tag 가 달라진다(안 그러면 안드로이드가
+     '고침'으로 보고 소리를 안 낸다). 그러면 알림창에 열두 개가 쌓이므로, 새로 띄우기 전에
+     같은 부름(ringId)의 옛 알림을 닫는다. 화면에는 늘 한 개만 남는다. */
+  const ringId = d.ringId || '';
+  e.waitUntil((async () => {
+    if (ring && ringId) {
+      try {
+        const old = await self.registration.getNotifications();
+        old.forEach(x => { if (x.data && x.data.ringId === ringId) x.close(); });
+      } catch (_) {}
+    }
+    return self.registration.showNotification(title, {
       body, tag, renotify: true,
       requireInteraction: ring,
       icon: './pwa-assets/icon-192.png',
       badge: './pwa-assets/icon-192.png',
-      data: { url },
+      data: { url, ringId },
       vibrate: ring ? [800, 300, 800, 300, 800, 300, 1500] : [200, 80, 200, 80, 400],
-    })
-  );
+    });
+  })());
 });
 
 // 푸시 알림 클릭 → 해당 페이지로 이동 (이미 열려있으면 focus)
