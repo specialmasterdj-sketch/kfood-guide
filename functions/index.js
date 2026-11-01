@@ -86,6 +86,9 @@ exports.chatPush = onValueCreated(
 // =============================================================================
 const { defineSecret } = require('firebase-functions/params');
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
+// 📞 2026-11-01 — 앱으로 불러도 안 받는 사람에게 진짜 전화를 건다 (Twilio)
+const TWILIO_SID = defineSecret('TWILIO_SID');
+const TWILIO_TOKEN = defineSecret('TWILIO_TOKEN');
 
 const LANG_NAME = { ko: 'Korean', en: 'English', es: 'Spanish' };
 
@@ -1504,6 +1507,109 @@ exports.meetRingPush = onValueWritten(
         }
         console.warn('[meetRingPush]', e && e.message);
       })));
+    }
+  }
+);
+
+// =============================================================================
+// 📞 meetRingCall — 앱으로 불러도 20초 안에 안 받으면 **진짜 전화를 건다** (2026-11-01)
+//   전무님 "앱이 꺼져 있어도 벨소리가 나게" + 사장님 승인(2026-11-01).
+//   앱이 죽은 폰에서는 이어지는 벨소리를 울릴 수 없다 — 웹 앱의 벽이라 전화로 넘는다.
+//
+//   · 앱에서 바로 받는 사람에게는 전화가 안 간다 → 그만큼 돈이 안 나간다
+//   · 한 회의에 한 사람당 **한 번만** (log 에 표시를 남겨 막는다)
+//   · 하루 상한 DAY_CAP 통 — 사고로 수백 통이 나가지 않게
+//   · phoneCall/on 을 false 로 두면 통째로 멈춘다 (임원 스위치)
+//   · 받는 사람 언어를 서버는 모른다 → 영어·스페인어·한국어를 차례로 말한다
+//   비밀값: TWILIO_SID · TWILIO_TOKEN (firebase functions:secrets:set 으로 넣는다)
+// =============================================================================
+const CALL_FROM = '+17542883379';   // 2026-11-01 구입한 우리 번호 (754 = 브로워드 지역)
+const CALL_WAIT_MS = 20000;         // 앱으로 먼저 20초 불러 보고, 그래도 안 받으면 전화
+const CALL_DAY_CAP = 80;            // 하루 통화 상한 (약 $1.2)
+
+const xmlEsc = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+function callTwiml(who) {
+  const n = xmlEsc(who || '');
+  const en = 'Hello. This is Kimchi Mart. ' + n + ' is starting a video meeting right now. Please open the Kimchi Mart app and press Join.';
+  const es = 'Hola. Kimchi Mart. ' + n + ' está iniciando una reunión por video ahora. Abra la aplicación Kimchi Mart y presione Entrar.';
+  const ko = '김치마트입니다. ' + n + ' 님이 지금 화상 회의를 시작합니다. 앱을 열어 참가를 눌러 주세요.';
+  // 두 번 말한다 — 전화를 막 받은 사람은 첫 문장을 놓치기 쉽다
+  const once = '<Say voice="Polly.Joanna" language="en-US">' + en + '</Say>'
+            + '<Say voice="Polly.Lupe" language="es-US">' + es + '</Say>'
+            + '<Say voice="Polly.Seoyeon" language="ko-KR">' + ko + '</Say>';
+  return '<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="1"/>' + once + '<Pause length="1"/>' + once + '</Response>';
+}
+
+exports.meetRingCall = onValueWritten(
+  { ref: '/inventory/meet/ring/{uid}/{callId}', region: 'us-central1',
+    timeoutSeconds: 120, secrets: [TWILIO_SID, TWILIO_TOKEN] },
+  async (event) => {
+    const after = event.data.after.val();
+    const before = event.data.before.val();
+    if (!after || after.state !== 'ringing') return;
+    if (before && before.state === 'ringing' && before.ts === after.ts) return;
+    if (Date.now() - (after.ts || 0) > 60000) return;   // 묵은 부름은 전화하지 않는다
+    const uid = event.params.uid, callId = event.params.callId;
+    const db = admin.database();
+
+    // ① 스위치 — 꺼 두면 아무 일도 안 한다
+    const sw = await db.ref('inventory/meet/phoneCall/on').get().catch(() => null);
+    if (sw && sw.val() === false) return;
+
+    // ② 앱으로 먼저 불러 본다 — 그 사이 받으면 전화는 안 건다
+    await new Promise((r) => setTimeout(r, CALL_WAIT_MS));
+    const st = await db.ref('inventory/meet/ring/' + uid + '/' + callId + '/state').get().catch(() => null);
+    if (!st || st.val() !== 'ringing') return;   // 받았거나 거절했거나 회의가 끝났다
+
+    // ③ 번호가 있어야 건다
+    const u = await db.ref('users/' + uid).get().catch(() => null);
+    const me = (u && u.val()) || {};
+    const to = String(me.phone || '').replace(/[\s()-]/g, '');
+    if (!/^\+1\d{10}$/.test(to)) return;
+
+    // ④ 한 회의에 한 사람당 한 번만 — 먼저 표시를 찍고(경쟁 방지), 못 찍으면 그만둔다
+    const day = new Date().toISOString().slice(0, 10);
+    const logRef = db.ref('inventory/meet/phoneCall/log/' + day);
+    const mark = logRef.child(callId + '__' + uid);
+    const got = await mark.transaction((cur) => (cur === null ? { at: Date.now(), name: me.name || '', tail: to.slice(-4) } : undefined));
+    if (!got.committed) return;
+
+    // ⑤ 하루 상한
+    const cnt = await logRef.once('value').catch(() => null);
+    if (cnt && cnt.numChildren() > CALL_DAY_CAP) {
+      console.warn('[meetRingCall] 하루 상한', CALL_DAY_CAP, '통을 넘어 멈춤 —', day);
+      await mark.update({ err: 'day_cap' }).catch(() => {});
+      return;
+    }
+
+    // ⑥ 전화를 건다 (Twilio REST — 라이브러리 없이 fetch 로)
+    const sid = TWILIO_SID.value(), tok = TWILIO_TOKEN.value();
+    if (!sid || !tok) { console.warn('[meetRingCall] 열쇠가 없다'); return; }
+    const form = new URLSearchParams({
+      To: to, From: CALL_FROM,
+      Twiml: callTwiml(after.from || ''),
+      Timeout: '25',
+    });
+    try {
+      const r = await fetch('https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Calls.json', {
+        method: 'POST',
+        headers: { Authorization: 'Basic ' + Buffer.from(sid + ':' + tok).toString('base64'),
+                   'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) {
+        await mark.update({ sid: j.sid || '', ok: true }).catch(() => {});
+        console.log('[meetRingCall] 전화 걸었다 —', me.name, '···' + to.slice(-4));
+      } else {
+        await mark.update({ err: String(j.message || r.status).slice(0, 120) }).catch(() => {});
+        console.warn('[meetRingCall] 실패 —', me.name, r.status, j && j.message);
+      }
+    } catch (e) {
+      await mark.update({ err: String((e && e.message) || e).slice(0, 120) }).catch(() => {});
+      console.warn('[meetRingCall]', e && e.message);
     }
   }
 );
