@@ -1308,25 +1308,88 @@ function openPanel(id){
 const TR_V = { ko:'ko-KR', en:'en-US', es:'es-US' };
 let TR = null;   // { id, lang, unsub, seen:Set, rec, micOn, speaking, opened }
 function trLang(){ try { const v = localStorage.getItem('km.trLang'); if (L3.includes(v)) return v; } catch(e){} return LANG; }
+/* ⏱ 2026-11-02 사장님: "통역이 가끔 느리다" — 번역 요청에 시간 제한이 없어서 구글이 한 번
+   멎으면 그 줄이 끝날 때까지 뒤 줄이 전부 기다렸다. 3.5초 넘으면 끊고 바로 예비(MyMemory)로. */
+async function trFetch(url, ms){
+  const c = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const tm = setTimeout(() => { try { c && c.abort(); } catch(e){} }, ms || 3500);
+  try { return await fetch(url, c ? { signal: c.signal } : undefined); }
+  finally { clearTimeout(tm); }
+}
 async function trTranslate(text, from, to){
   if (!text || from === to) return text;
   try {
-    const r = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl='+from+'&tl='+to+'&dt=t&q='+encodeURIComponent(text));
+    const r = await trFetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl='+from+'&tl='+to+'&dt=t&q='+encodeURIComponent(text), 3500);
     if (r.ok) { const d = await r.json(); const out = (d && d[0] || []).map(x => x && x[0] || '').join(''); if (out) return out; }
   } catch(e){}
   try {
-    const r = await fetch('https://api.mymemory.translated.net/get?q='+encodeURIComponent(text)+'&langpair='+from+'|'+to);
+    const r = await trFetch('https://api.mymemory.translated.net/get?q='+encodeURIComponent(text)+'&langpair='+from+'|'+to, 3500);
     const d = await r.json(); const out = d && d.responseData && d.responseData.translatedText;
     if (out && !/MYMEMORY WARNING|LIMIT/i.test(out)) return out;
   } catch(e){}
   return '';
 }
-function trSay(text, lang){
+/* 🔊 2026-11-02 사장님: "목소리가 바뀐다 — 어떤 땐 남자, 어떤 땐 여자라 누가 말하는지 모르겠다"
+   원인 ① getVoices() 는 크롬·엣지에서 처음엔 빈 배열이고 voiceschanged 가 온 뒤에야 채워진다
+        → 첫 몇 줄은 목소리를 못 정해 브라우저 기본값으로 읽고, 목록이 차면 다른 목소리로 바뀐다.
+   원인 ② '목록의 첫 번째 일치'를 썼는데, 엣지의 Online(Natural) 목소리가 늦게 끼어들며 순서가 바뀐다.
+   → 목록을 voiceschanged 로 받아 캐시 + 이름순으로 고정 정렬하고, 말하는 사람 이름으로
+     목소리를 배정한다. 같은 사람은 늘 같은 목소리 → 목소리만 듣고도 누구인지 안다. */
+let TR_VOICES = [];
+function trVoices(){
+  if (!TR_VOICES.length && 'speechSynthesis' in window) {
+    try { TR_VOICES = speechSynthesis.getVoices() || []; } catch(e){}
+  }
+  return TR_VOICES;
+}
+try { speechSynthesis.addEventListener('voiceschanged', () => {
+  try { TR_VOICES = speechSynthesis.getVoices() || []; } catch(e){}
+}); } catch(e){}
+const TR_VOICE_OF = {};   // '언어|사람이름' → 목소리 이름
+function trHash(str){   // FNV-1a — 짧고 비슷한 이름도 골고루 흩어지게 (h*31 은 뭉쳤다)
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function trPickVoice(lang, who){
+  const all = trVoices(); if (!all.length) return null;
+  const want = String(TR_V[lang] || lang || '').toLowerCase().replace('_','-');
+  const two  = String(lang || '').toLowerCase().slice(0, 2);
+  let pool = all.filter(v => (v.lang||'').toLowerCase().replace('_','-') === want);
+  if (!pool.length) pool = all.filter(v => (v.lang||'').toLowerCase().startsWith(two));
+  if (!pool.length) return null;
+  pool = pool.slice().sort((a, b) => String(a.name||'').localeCompare(String(b.name||'')));   // 순서 고정
+  const pre = String(lang||'') + '|';
+  const key = pre + (String(who||'').trim().toLowerCase() || '_');
+  const kept = TR_VOICE_OF[key] && pool.find(v => v.name === TR_VOICE_OF[key]);
+  if (kept) return kept;   // 한 번 정해진 사람은 끝까지 같은 목소리
+  // 이미 다른 사람이 쓰는 목소리는 피한다 — 목소리가 겹치면 누가 말하는지 구분이 안 된다.
+  // 목소리 수보다 사람이 많아지면 그때부터만 겹친다.
+  const used = {};
+  for (const k in TR_VOICE_OF) if (k.indexOf(pre) === 0) used[TR_VOICE_OF[k]] = 1;
+  const start = trHash(key) % pool.length;
+  let pick = pool[start];
+  if (used[pick.name] && Object.keys(used).length < pool.length) {
+    for (let i = 1; i <= pool.length; i++) {
+      const c = pool[(start + i) % pool.length];
+      if (!used[c.name]) { pick = c; break; }
+    }
+  }
+  TR_VOICE_OF[key] = pick.name;
+  return pick;
+}
+function trSay(text, lang, who){
   if (!TR || !document.getElementById('trSpk').checked || !('speechSynthesis' in window) || !text) return;
-  const u = new SpeechSynthesisUtterance(text);
+  // 🏷 말하는 사람이 바뀌면 이름을 먼저 읽어 준다. 기기에 그 언어 목소리가 하나둘뿐이면
+  //    (한국어·스페인어는 보통 2개) 목소리만으로는 구분이 안 되기 때문. 같은 사람이
+  //    이어서 말할 때는 이름을 되풀이하지 않는다.
+  const nm = String(who || '').trim().split(/\s+/)[0] || '';
+  const say = (nm && TR.lastSpk !== nm) ? (nm + ', ' + text) : text;
+  if (nm) TR.lastSpk = nm;
+  const u = new SpeechSynthesisUtterance(say);
   u.lang = TR_V[lang] || lang; u.rate = 1;
-  const v = speechSynthesis.getVoices().find(v => (v.lang||'').toLowerCase().startsWith(lang));
-  if (v) u.voice = v;
+  const v = trPickVoice(lang, who);
+  if (v) { u.voice = v; if (v.lang) u.lang = v.lang; }
   u.onstart = () => { if (TR) { TR.speaking = true; try { TR.rec && TR.rec.abort(); } catch(e){} } };
   u.onend = u.onerror = () => { if (TR) { TR.speaking = speechSynthesis.speaking; if (!TR.speaking && TR.micOn) trRecStart(); } };
   speechSynthesis.speak(u);
@@ -1363,14 +1426,24 @@ function trProcess(){
   Object.keys(all).sort().forEach(k => {
     if (!run || run.seen.has(k)) return; run.seen.add(k);
     const v = all[k]; if (!v || !v.text) return;
+    const lang = run.lang;
+    const mine = !!(v.uid && v.uid === myUid());
+    // 🚀 번역은 '줄이 들어온 즉시' 시작한다. 예전엔 TR_Q 안에서 차례로 기다려서, 한 줄이 느리면
+    //    그 뒤 줄이 전부 그만큼 밀렸다("통역이 가끔 느리다"). 화면에 찍는 순서는 TR_Q 가 그대로 지킨다.
+    const p = mine ? null
+            : (v.lang === lang ? Promise.resolve(v.text)
+                               : trTranslate(v.text, v.lang, lang).catch(() => ''));
     TR_Q = TR_Q.then(async () => {
       if (TR !== run) return;
-      const lang = run.lang;
-      if (v.uid && v.uid === myUid()) { trAdd(k, v, '', true); return; }
-      const out = v.lang === lang ? v.text : await trTranslate(v.text, v.lang, lang);
+      if (mine) { trAdd(k, v, '', true); return; }
+      const out = await p;
       if (TR !== run || run.lang !== lang) return;   // 그 사이 언어를 바꿨으면 버린다 (새 언어로 다시 그림)
       trAdd(k, v, out || v.text, false);
-      if ((v.ts||0) > run.opened - 5000 && !run.spoken.has(k)) { run.spoken.add(k); trSay(out || v.text, out ? lang : v.lang); }   // 열기 전 옛 줄은 읽지 않음
+      // 읽어 주기: 열기 전 옛 줄은 건너뛰고, 밀려서 20초 넘게 묵은 줄도 건너뛴다.
+      // (읽는 동안 내 마이크가 멈추므로, 묵은 줄까지 다 읽으면 대화가 점점 더 밀린다. 글은 위에 그대로 남는다.)
+      if ((v.ts||0) > run.opened - 5000 && Date.now() - (v.ts||0) < 20000 && !run.spoken.has(k)) {
+        run.spoken.add(k); trSay(out || v.text, out ? lang : v.lang, v.by);
+      }
     });
   });
 }
