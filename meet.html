@@ -169,6 +169,10 @@ body.panel .who.big .st{font-size:.95em;padding:9px 12px;border-radius:10px;disp
 .pnlhd{display:none}
 body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8px}
 .cnts{font-size:.8em;font-weight:800;margin:6px 0 4px;color:var(--muted)}
+.inv{margin:9px 0 6px;padding:9px 10px;border:1.5px solid #86efac;background:#f0fdf4;border-radius:11px}
+.invh{font-size:.8em;font-weight:800;color:#166534;margin-bottom:6px}
+.invr{display:flex;gap:6px;flex-wrap:wrap}
+.inv-ph{flex:1 1 160px;min-width:0;border:1.5px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;font-size:.95em;background:#fff;color:#111}
 .kinds{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .kind{border:1.5px solid var(--line);background:var(--surface);border-radius:12px;padding:11px 12px;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .kind b{display:block;font-size:.95em}
@@ -443,6 +447,13 @@ const T = {
   kNewS:  ['신입·평직원만 — 최근 30일 입사자를 미리 골라 둡니다','New hires & regular staff only — last 30 days pre-selected','Solo nuevos y personal — últimos 30 días'],
   kSkill: ['🛠 세부 업무 훈련','🛠 Task training','🛠 Entrenamiento de tareas'],
   kSkillS:['훈련할 직원을 골라 부서·업무별로','Pick the staff to train on a task','Elija al personal a entrenar'],
+  // 📱 2026-11-01 사장님: "전화번호를 넣으면 초대 링크가 생기는 것 — 이 페이지에서 항상 보여야" → 회의 카드마다 늘 보이는 초대 줄
+  invH:   ['📱 전화번호로 초대 — 직원이 아니어도 링크만 누르면 들어옵니다','📱 Invite by phone — anyone with the link can join','📱 Invitar por teléfono — cualquiera con el enlace puede entrar'],
+  invPh:  ['전화번호 (예: 954-555-1234)','Phone (e.g. 954-555-1234)','Teléfono (ej. 954-555-1234)'],
+  invSend:['💬 초대 문자 보내기','💬 Text the invite','💬 Enviar invitación'],
+  invCopy:['📋 링크 복사','📋 Copy link','📋 Copiar enlace'],
+  invBad: ['전화번호를 10자리로 넣어 주세요.','Enter a 10-digit phone number.','Ingrese un número de 10 dígitos.'],
+  invMsg: ['김치마트 화상 회의 초대입니다. 눌러서 들어와 주세요:','Kimchi Mart video meeting invite. Tap to join:','Invitación a reunión por video de Kimchi Mart. Toque para entrar:'],
   copyL:  ['🔗 지원자에게 보낼 회의 링크 복사','🔗 Copy the link for the candidate','🔗 Copiar enlace para el candidato'],
   copied: ['링크를 복사했습니다. 지원자에게 문자로 보내 주세요:\n%s','Link copied — text it to the candidate:\n%s','Enlace copiado — envíelo al candidato:\n%s'],
   kOnly1: ['한 사람만 고르세요','Pick just one person','Elija solo una persona'],
@@ -1135,7 +1146,24 @@ function saveNote(id, text){
     try { const F = window.__fb; F.set(F.ref(F.db, BASE+'/calls/'+id+'/notes'), { text:String(text).slice(0,20000), by:me().name||'', ts:Date.now() }); } catch(e){}
   }, 900);
 }
-const typing = () => { const a = document.activeElement; return !!(a && a.classList && a.classList.contains('note-ta')); };
+const typing = () => { const a = document.activeElement; return !!(a && a.classList && (a.classList.contains('note-ta') || a.classList.contains('inv-ph'))); };
+const INV_PH = {};   // 회의별 적어 둔 전화번호 — 30초 새로 그리기에도 남김
+function sendInvite(id, how){
+  const c = CALLS[id]; if (!c || !c.url) return;
+  const msg = t('invMsg') + ' ' + c.url;
+  if (how === 'copy') {
+    const b = document.querySelector('[data-cinvcp="'+id+'"]');
+    (navigator.clipboard ? navigator.clipboard.writeText(c.url) : Promise.reject())
+      .catch(() => { const ta = document.createElement('textarea'); ta.value = c.url; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch(_){} ta.remove(); })
+      .finally(() => { if (b) b.textContent = t('shOk'); });
+    return;
+  }
+  let d = String(INV_PH[id]||'').replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '1') d = d.slice(1);
+  if (d.length !== 10) { alert(t('invBad')); const i = document.querySelector('[data-cinvph="'+id+'"]'); if (i) i.focus(); return; }
+  // 아이폰은 ?&body=, 안드로이드는 ?body= — 둘 다 읽히는 꼴
+  location.href = 'sms:+1' + d + '?&body=' + encodeURIComponent(msg);
+}
 
 /* 📋 회의록 목록 */
 const iMember = mn => isExec() || (mn.members && myUid() && mn.members[myUid()]) || (mn.byUid && mn.byUid === myUid()) || nkey(mn.by) === nkey(me().name);
@@ -1401,6 +1429,10 @@ function renderDial(){
     h += '<div class="call'+(c.kind === 'urgent' ? ' urgent' : '')+'" id="call-'+esc(id)+'"><div class="ct">'+(c.kind ? esc(kindLab(c.kind))+' · '+esc(c.by||'') : esc(t('callBy').split('%s').join(c.by||'')))+' · '+hhmm(c.ts)+'</div>'
       + '<div class="cs">'+esc(c.roomName||'')+'</div>'
       + (PANEL ? '<div class="pnlhd">'+esc(t('pnlHd'))+'</div>' : '')
+      + ((mine || isExec()) && c.url ? '<div class="inv"><div class="invh">'+esc(t('invH'))+'</div><div class="invr">'
+      +   '<input class="inv-ph" type="tel" inputmode="tel" autocomplete="off" data-cinvph="'+esc(id)+'" placeholder="'+esc(t('invPh'))+'" value="'+esc(INV_PH[id]||'')+'">'
+      +   '<button class="btn sm p" data-cinv="'+esc(id)+'">'+esc(t('invSend'))+'</button>'
+      +   '<button class="btn sm" data-cinvcp="'+esc(id)+'">'+esc(t('invCopy'))+'</button></div></div>' : '')
       + '<div class="cnts">'+esc(t('cnts', [...per.values()].filter(p => p.st === 'accepted').length)
             .split('%a').join([...per.values()].filter(p => p.st === 'ringing').length)
             .split('%b').join([...per.values()].filter(p => p.st === 'declined').length)
@@ -1452,6 +1484,8 @@ document.addEventListener('click', e => {
     startCall().then(r => { if (r) showShare(r.url); });
     return; }
   if (b.dataset.kind)   { openPicker(null, b.dataset.kind); return; }
+  if (b.dataset.cinv)   { sendInvite(b.dataset.cinv); return; }
+  if (b.dataset.cinvcp) { sendInvite(b.dataset.cinvcp, 'copy'); return; }
   if (b.dataset.ccopy)  { const c = CALLS[b.dataset.ccopy]; if (!c) return; showShare(c.url || ''); return; }
   if (b.dataset.lines)  { setLines(); return; }
   if (b.dataset.pkbr != null) { PK_BR = b.dataset.pkbr; drawPicker(); return; }
@@ -1480,10 +1514,13 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   if (e.target && e.target.id === 'pkQ') drawPicker();
+  if (e.target && e.target.dataset && e.target.dataset.cinvph) INV_PH[e.target.dataset.cinvph] = e.target.value;
   if (e.target && e.target.dataset && e.target.dataset.cnote) saveNote(e.target.dataset.cnote, e.target.value);
 });
 // 메모 칸을 떠나면 그동안 미뤄 둔 화면 갱신을 한다
-document.addEventListener('focusout', e => { if (e.target && e.target.classList && e.target.classList.contains('note-ta')) setTimeout(render, 50); });
+document.addEventListener('focusout', e => { if (e.target && e.target.classList && (e.target.classList.contains('note-ta') || e.target.classList.contains('inv-ph'))) setTimeout(render, 50); });
+// 전화번호 칸에서 Enter = 초대 문자
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target && e.target.dataset && e.target.dataset.cinvph) { e.preventDefault(); sendInvite(e.target.dataset.cinvph); } });
 document.getElementById('fileIn').addEventListener('change', e => {
   const fs = [...(e.target.files||[])]; if (UP_CALL && fs.length) uploadFiles(UP_CALL, fs);
 });
