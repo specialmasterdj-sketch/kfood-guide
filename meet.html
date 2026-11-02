@@ -835,7 +835,7 @@ async function updateGroup(){
 }
 function pkPreselect(){
   const K = KINDS[PK_KIND]; if (!K || !ROSTER) return;
-  const src = K.council ? GROUPS[gNewest()] : null;   // 👑 = 내 ⭐ 저장 명단 (없으면 직급)
+  const src = K.council ? councilSrc() : null;   // 👑 = 내 ⭐ 저장 명단 → 없으면 👑 고정 명단 → 없으면 직급
   if (src) {
     PK_CMISS = 0;
     src.keys.forEach(k => { const p = ROSTER.find(x => x.key === k); if (p) PK_SEL.set(k, p); else PK_CMISS++; });
@@ -851,12 +851,34 @@ function pkPreselect(){
   ROSTER.forEach(p => { if (K.roles.includes(String(p.role||'').toUpperCase())) PK_SEL.set(p.key, p); });
 }
 const GENERIC = ['staff','manager','employee','admin','user','직원','매니저','스태프','사원','관리자'];
+/* 🔐 2026-11-02 사장님 신고("지점별로 이름을 클릭해서 선택하는 기능이 없어졌어" =
+   고르기 창에 'Could not load the staff list'): /users 와 inventory/meet 는 규칙이
+   auth != null 을 요구하는데 여기서 생 fetch 로 읽었다. fb-auth-fetch.js 가 토큰을
+   붙여 주긴 하지만 토큰 복원을 최대 1초만 기다리고 없으면 그냥 보낸다 — PWA 를
+   백그라운드에서 깨워 바로 누르면 그 1초를 못 넘겨 401 → ROSTER_ERR 로 굳고
+   창을 닫았다 열기 전엔 다시 시도하지 않았다.
+   → Firebase SDK get() 은 인증이 준비될 때까지 알아서 기다린다. SDK 가 아직 안
+   떴을 때만 생 fetch 로 폴백. (chat.html 이 2026-06-10 에 같은 이유로 한 수정) */
+function fbReady(ms){
+  if (window.__fb && window.__fb.get) return Promise.resolve(window.__fb);
+  return new Promise(res => {
+    let done = false;
+    const fin = () => { if (done) return; done = true; res(window.__fb && window.__fb.get ? window.__fb : null); };
+    window.addEventListener('fb-ready', fin, { once:true });
+    setTimeout(fin, ms || 8000);
+  });
+}
+async function fbGet(path){
+  const F = await fbReady();
+  if (F) return (await F.get(F.ref(F.db, path))).val();
+  const r = await fetch(FB+'/'+path+'.json', { cache:'no-store' });   // SDK 못 뜬 기기용
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  return await r.json();
+}
 async function loadRoster(){
   ROSTER_ERR = false;
   try {
-    const r = await fetch(FB+'/users.json', { cache:'no-store' });
-    if (!r.ok) throw new Error('HTTP '+r.status);
-    const u = (await r.json()) || {};
+    const u = (await fbGet('users')) || {};
     const meK = nkey(me().name), mine = myUid();
     const by = new Map();
     for (const uid of Object.keys(u)) {
@@ -890,7 +912,7 @@ function openPicker(addTo, kind){
   if (K && K.council) {
     // 고정 명단을 먼저 받아 온 뒤에 고른다 — 직급으로 먼저 골랐다가 바뀌어 보이지 않게
     drawPicker();
-    Promise.all([loadGroups(), ROSTER ? null : loadRoster()]).then(() => { if (PK_KIND !== kind) return; PK_SEL = new Map(); pkPreselect(); drawPicker();
+    Promise.all([loadGroups(), loadCouncil(), ROSTER ? null : loadRoster()]).then(() => { if (PK_KIND !== kind) return; PK_SEL = new Map(); pkPreselect(); drawPicker();
       if (PK_CMISS) alert(t('grpMiss', PK_CMISS)); });
   } else {
     pkPreselect();
@@ -903,9 +925,20 @@ function openPicker(addTo, kind){
    저장: meet/groups/{내uid}/{g…} = { name, keys:[이름키], names:[이름], ts } — 나만 쓰는 목록 */
 async function loadGroups(){
   const uid = myUid(); if (!uid) { GROUPS = {}; return; }
-  try { const r = await fetch(FB+'/'+BASE+'/groups/'+encodeURIComponent(uid)+'.json', { cache:'no-store' });
-        GROUPS = (r.ok && await r.json()) || {}; } catch(e){ GROUPS = {}; }
+  try { GROUPS = (await fbGet(BASE+'/groups/'+uid)) || {}; }
+  catch(e){ console.warn('[meet] ⭐ 저장 명단 실패', e); GROUPS = {}; }
 }
+/* 👑 2026-11-02 사장님 신고("어제 저장했던 20명 명단이 안보여"): 2026-11-01 에 저장한
+   고정 명단은 회사 공용 inventory/meet/council 에 들어갔는데, 3분 뒤 커밋(101524d)이
+   👑 를 '내 ⭐ 저장 명단'으로 바꾸면서 council 을 읽는 코드를 통째로 지웠다. 데이터는
+   그대로 있으니 다시 읽어 준다 — 내 ⭐ 명단이 있으면 그게 우선, 없으면 council.
+   ⭐ 로 한 번 저장하면 그다음부터는 내 명단이 쓰인다. */
+let COUNCIL = null;
+async function loadCouncil(){
+  try { COUNCIL = (await fbGet(BASE+'/council')) || null; }
+  catch(e){ console.warn('[meet] 👑 고정 명단 실패', e); COUNCIL = null; }
+}
+const councilSrc = () => GROUPS[gNewest()] || (COUNCIL && (COUNCIL.keys||[]).length ? COUNCIL : null);
 async function saveGroup(){
   const uid = myUid(); if (!uid || !PK_SEL.size) return;
   const nm = (prompt(t('grpAsk'), '') || '').trim(); if (!nm) return;
@@ -962,7 +995,7 @@ function drawPicker(){
   document.getElementById('pkGo').textContent = t(PK_ADD ? 'pkAddGo' : 'pkGo', PK_SEL.size);
   document.getElementById('pkGo').disabled = PK_SEL.size === 0 && !(PK_KIND && KINDS[PK_KIND].copyLink);
   document.getElementById('pkN').textContent = t('pkN', PK_SEL.size);
-  const cK = !PK_ADD && PK_KIND && KINDS[PK_KIND].council && !!gNewest();
+  const cK = !PK_ADD && PK_KIND && KINDS[PK_KIND].council && !!councilSrc();
   const cs = document.getElementById('pkCs');
   cs.style.display = cK && PK_SEL.size ? '' : 'none';
   cs.textContent = t('cSave', PK_SEL.size);
