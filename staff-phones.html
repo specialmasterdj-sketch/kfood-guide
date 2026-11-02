@@ -268,6 +268,12 @@ window.addStaff = async function(){
         approved = ar.ok;
       }catch(_){}
     }
+    // ✏️ 이미 들어와 쓰고 있는데 이름이 전화번호뿐인 계정이면 이름만 채운다 (화상 회의·업무·채팅에 번호 대신 이름)
+    const nnUid=NONAME_BY_KEY[key];
+    if(nnUid){
+      try{ await fetch(`${FB_DB}/users/${nnUid}.json${q}`, { method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ name, nameBy: MY_NAME||'roster-add', nameAt: Date.now() }) }); delete NONAME_BY_KEY[key]; }catch(_){}
+    }
     msg.textContent=T().okAdd(name, fmtUS(e164)) + (approved ? ' · '+T().okAlsoApproved : ''); msg.className='msg ok';
     document.getElementById('inName').value=''; document.getElementById('inPhone').value='';
     loadRoster();
@@ -340,6 +346,7 @@ window.loadRoster = async function(){
 //   본인은 코드까지 받고도 영영 못 들어오고, 이 화면에는 흔적조차 안 보였다.
 let ROSTER_ALL = {};
 let PEND_BY_KEY = {};   // 번호(digits) → 대기 중인 계정 uid
+let NONAME_BY_KEY = {}; // 번호(digits) → 승인됐지만 이름이 전화번호뿐인 계정 uid (등록하면 이름도 채운다, 2026-11-01)
 // 길이 같고 한 자리만 다르면 1, 이웃한 두 자리가 바뀐 것이면 2, 그 외 99(남남)
 function _digDiff(a,b){
   if(a.length!==b.length) return 99;
@@ -364,9 +371,11 @@ window.loadPending = async function(){
     data=await r.json()||{};
   }catch(_){ card.style.display='none'; return; }
   const rows=[];
-  PEND_BY_KEY={};
+  PEND_BY_KEY={}; NONAME_BY_KEY={};
   for(const uid in data){
     const u=data[uid]||{};
+    if(u.status==='approved'){ const nk=digitsKey(u.phone||''); const nm=String(u.name||'').trim();
+      if(nk && (!nm || /^\+?[\d\s().-]{7,}$/.test(nm))) NONAME_BY_KEY[nk]=uid; continue; }
     if(u.status!=='pending') continue;                  // 차단(blocked)은 일부러 막은 것이라 제외
     const key=digitsKey(u.phone||'');
     if(!key) continue;                                  // 전화 로그인만
