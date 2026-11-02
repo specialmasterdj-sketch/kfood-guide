@@ -431,9 +431,16 @@ const T = {
   kOne:   ['👤 개별 회의','👤 One-on-one','👤 Individual'],
   kOneS:  ['한 사람만 골라 1:1 로','Pick one person','Elija a una persona'],
   kInt:   ['🧑‍💼 신입 직원 인터뷰','🧑‍💼 New-hire interview','🧑‍💼 Entrevista'],
-  kIntS:  ['면접관을 고르고, 지원자에게는 링크를 문자로','Pick interviewers; text the link to the candidate','Elija entrevistadores; envíe el enlace al candidato'],
+  kIntS:  ['사람 고를 필요 없이 바로 방 열기 — 링크를 보내면 외부 사람도 들어옴','Opens a room right away — anyone you send the link to can join','Abre una sala al instante — quien reciba el enlace puede entrar'],
+  shT:    ['🔗 회의 링크 보내기','🔗 Send the meeting link','🔗 Enviar el enlace'],
+  shB:    ['이 링크를 받은 사람은 직원이 아니어도 들어올 수 있습니다. 들어오면 Meet 화면에서 [참가 허용] 을 눌러 주세요.','Anyone with this link can join, even non-staff. When they knock, tap [Admit] in Meet.','Cualquiera con este enlace puede entrar. Cuando pidan entrar, toque [Admitir] en Meet.'],
+  shCopy: ['📋 링크 복사','📋 Copy link','📋 Copiar enlace'],
+  shSms:  ['💬 문자로 보내기','💬 Send by text','💬 Enviar por SMS'],
+  shMore: ['📤 다른 앱으로 보내기','📤 Share another way','📤 Compartir'],
+  shOk:   ['✅ 복사했습니다','✅ Copied','✅ Copiado'],
+  shMsg:  ['김치마트 화상 면접 링크입니다. 시간에 맞춰 눌러 들어와 주세요:','Kimchi Mart video interview link. Please tap it at the scheduled time:','Enlace de entrevista por video de Kimchi Mart. Tóquelo a la hora indicada:'],
   kNew:   ['🎓 신입 직원 교육','🎓 New-hire training','🎓 Capacitación de nuevos'],
-  kNewS:  ['최근 30일 안에 들어온 직원을 미리 골라 둡니다','Staff who joined in the last 30 days','Personal de los últimos 30 días'],
+  kNewS:  ['신입·평직원만 — 최근 30일 입사자를 미리 골라 둡니다','New hires & regular staff only — last 30 days pre-selected','Solo nuevos y personal — últimos 30 días'],
   kSkill: ['🛠 세부 업무 훈련','🛠 Task training','🛠 Entrenamiento de tareas'],
   kSkillS:['훈련할 직원을 골라 부서·업무별로','Pick the staff to train on a task','Elija al personal a entrenar'],
   copyL:  ['🔗 지원자에게 보낼 회의 링크 복사','🔗 Copy the link for the candidate','🔗 Copiar enlace para el candidato'],
@@ -787,8 +794,10 @@ const KINDS = {
   //  · 인터뷰 — 지원자는 앱 계정이 없다 → 면접관만 앱으로 부르고, 지원자에게는 [링크 복사] 로 문자 전송
   //  · 신입 교육 — 최근 30일 안에 승인된 직원을 미리 골라 둔다 (매니저급은 자기 지점만)
   //  · 세부 업무 훈련 — 미리 고르지 않음, 훈련할 사람을 직접 고른다
-  interview: { lab:'kInt',   sub:'kIntS',   roles:[], copyLink:true },
-  newbie:    { lab:'kNew',   sub:'kNewS',   roles:[], recentDays:30 },
+  // 🔗 2026-11-01 사장님: "나 혹은 매니저가 링크를 보내면 외부 사람이라도 들어올 수 있는 임시 룸 — 기존 사람은 필요 없어" → 고르는 창 없이 바로 열고 링크 보내기 창
+  interview: { lab:'kInt',   sub:'kIntS',   roles:[], copyLink:true, direct:true },
+  // 🎓 2026-11-01 사장님: "신입 사원에 한해서 관리자들은 필요 없어 — 신입 직원이나 평직원 대상" → 고르는 목록에서 수퍼바이저 이상을 뺀다
+  newbie:    { lab:'kNew',   sub:'kNewS',   roles:[], recentDays:30, staffOnly:true },
   skill:     { lab:'kSkill', sub:'kSkillS', roles:[] },
 };
 let PK_KIND = '';
@@ -924,7 +933,7 @@ function drawPicker(){
   const L = document.getElementById('pkL');
   if (!ROSTER) { L.innerHTML = '<div class="empty" style="padding:14px">'+esc(ROSTER_ERR ? t('pkFail') : t('pkLoad'))+'</div>'; return; }
   const q = document.getElementById('pkQ').value.trim().toLowerCase();
-  const list = ROSTER.filter(p => (!PK_BR || p.branch === PK_BR) && (!q || p.name.toLowerCase().includes(q)));
+  const list = ROSTER.filter(p => (!PK_BR || p.branch === PK_BR) && (!q || p.name.toLowerCase().includes(q)) && pkShow(p));
   if (!list.length) { L.innerHTML = '<div class="empty" style="padding:14px">'+esc(t('pkNone'))+'</div>'; return; }
   const mute = [...PK_SEL.values()].filter(p => !p.fcm).length;
   L.innerHTML = (mute ? '<div class="mutewarn">'+esc(t('noRingN', mute))+'</div>' : '')
@@ -942,8 +951,11 @@ function pkToggle(k){
   else { if (PK_KIND && KINDS[PK_KIND].single) PK_SEL.clear(); PK_SEL.set(k, p); }
   drawPicker();
 }
+const MGR_RE = /OWNER|EXECUTIVE|MANAGER|SUPERVISOR/;
+const pkStaffOnly = () => !PK_ADD && PK_KIND && (KINDS[PK_KIND]||{}).staffOnly;
+const pkShow = p => !(pkStaffOnly() && MGR_RE.test(String(p.role||'').toUpperCase()));
 function pkAllBranch(){
-  const list = (ROSTER||[]).filter(p => p.branch === PK_BR);
+  const list = (ROSTER||[]).filter(p => p.branch === PK_BR && pkShow(p));
   const all = list.every(p => PK_SEL.has(p.key));
   list.forEach(p => { if (all) PK_SEL.delete(p.key); else PK_SEL.set(p.key, p); });
   drawPicker();
@@ -986,7 +998,36 @@ async function startCall(){
     const F = window.__fb;
     await F.update(F.ref(F.db, BASE), upd);
     if (!adding) markMeIn(line.id);
+    return { id, url: line.url };
   } catch(e){ console.warn('[meet] 부르기 실패', e); alert(t('ringFail')); }
+}
+/* 🔗 링크 보내기 창 — 버튼마다 새로 누르는 순간에 복사·문자·공유 (회의 창이 열린 뒤라 자동 복사는 브라우저가 막는다) */
+function showShare(url){
+  if (!url) return;
+  let o = document.getElementById('shOv');
+  if (!o) { o = document.createElement('div'); o.id = 'shOv'; document.body.appendChild(o); }
+  const msg = t('shMsg') + ' ' + url;
+  const bs = 'display:block;width:100%;border:0;border-radius:10px;padding:13px;font-weight:800;font-size:1em;cursor:pointer;margin-top:8px;font-family:inherit';
+  o.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  o.innerHTML = '<div style="background:#fff;border-radius:16px;padding:18px;max-width:420px;width:100%;box-sizing:border-box">'
+    + '<b style="font-size:1.08em">' + esc(t('shT')) + '</b>'
+    + '<div style="font-size:.86em;color:#475569;margin:8px 0 10px;line-height:1.5">' + esc(t('shB')) + '</div>'
+    + '<input id="shUrl" readonly value="' + esc(url) + '" style="width:100%;box-sizing:border-box;border:1.5px solid #cbd5e1;border-radius:9px;padding:10px;font-size:.92em;font-family:Menlo,Consolas,monospace">'
+    + '<button id="shCopy" style="' + bs + ';background:#1d4ed8;color:#fff">' + esc(t('shCopy')) + '</button>'
+    + '<a id="shSms" href="sms:?&body=' + encodeURIComponent(msg) + '" style="' + bs + ';background:#16a34a;color:#fff;text-align:center;text-decoration:none;box-sizing:border-box">' + esc(t('shSms')) + '</a>'
+    + (navigator.share ? '<button id="shMore" style="' + bs + ';background:#e0e7ff;color:#1e3a8a">' + esc(t('shMore')) + '</button>' : '')
+    + '<button id="shClose" style="' + bs + ';background:#f1f5f9;color:#334155">✕</button></div>';
+  o.onclick = e => {
+    const id = e.target.id;
+    if (e.target === o || id === 'shClose') { o.remove(); return; }
+    if (id === 'shCopy') {
+      const inp = document.getElementById('shUrl');
+      (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+        .catch(() => { inp.select(); try { document.execCommand('copy'); } catch(_){} })
+        .finally(() => { e.target.textContent = t('shOk'); });
+    }
+    if (id === 'shMore') navigator.share({ title: kindLab('interview'), text: msg }).catch(() => {});
+  };
 }
 const iMade = c => c && ((c.byUid && c.byUid === myUid()) || nkey(c.by) === nkey(me().name));
 const inCallOf = c => !!(c && c.inv && myUid() && c.inv[myUid()]);
@@ -1405,12 +1446,13 @@ document.addEventListener('click', e => {
   if (b.id === 'ovNo'){ document.getElementById('ov').classList.remove('on'); PENDING=null; return; }
   if (b.id === 'leaveBtn'){ doLeave(); return; }
   if (b.dataset.pick)   { openPicker(); return; }
+  if (b.dataset.kind && (KINDS[b.dataset.kind]||{}).direct) {   // 🔗 면접 = 고르기 없이 바로 열고 링크 보내기
+    if (!canDial()) { alert(t('dialOnly')); return; }
+    PK_ADD = null; PK_SEL = new Map(); PK_KIND = b.dataset.kind;
+    startCall().then(r => { if (r) showShare(r.url); });
+    return; }
   if (b.dataset.kind)   { openPicker(null, b.dataset.kind); return; }
-  if (b.dataset.ccopy)  { const c = CALLS[b.dataset.ccopy]; if (!c) return;
-                          const u = c.url || '';
-                          (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).catch(() => {})
-                            .finally(() => alert(t('copied').split('%s').join(u)));
-                          return; }
+  if (b.dataset.ccopy)  { const c = CALLS[b.dataset.ccopy]; if (!c) return; showShare(c.url || ''); return; }
   if (b.dataset.lines)  { setLines(); return; }
   if (b.dataset.pkbr != null) { PK_BR = b.dataset.pkbr; drawPicker(); return; }
   if (b.id === 'pkNo')  { closePicker(); return; }
