@@ -2316,7 +2316,7 @@ function openRoom(id){
     // 🔐 2026-05-28: 권한자도 추가 PIN 인증 필수 (RTDB /secrets/hrInquiryPin).
     // 세션 30분 캐시 — 한 번 풀면 그 세션 동안 재입력 안 함. 브라우저 닫으면 만료.
     if (!isHrPinVerified()) {
-      promptHrPin().then(ok => { if (ok) openRoom(id); });
+      if (!_hrPinPending) promptHrPin().then(ok => { if (ok) openRoom(id); });   // 이미 떠 있으면 그 창이 연다
       return;
     }
   }
@@ -5891,6 +5891,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const _openRoomTarget = (tries) => {
       try { openRoom(targetRoom); } catch(e){ console.warn('[room-auto]', e); }
       if (tries < 10) setTimeout(() => {
+        if (_hrPinPending) return;   // 🔐 비밀번호 창이 떠 있음 — 맞히면 그쪽에서 방을 연다 (다시 열면 입력이 지워짐)
         if (ACTIVE_ROOM !== targetRoom && __unsubMsgs) return;   // 사용자가 직접 다른 방을 연 것 — 존중
         if (ACTIVE_ROOM !== targetRoom || !__unsubMsgs) _openRoomTarget(tries + 1);
       }, 400);
@@ -6140,18 +6141,22 @@ setTimeout(() => {
 // =====================================================================
 const _FB_HR_PIN_PATH = '/secrets/hrInquiryPin.json';
 const _HR_PIN_SESSION_KEY = 'chat.hrPinVerified';
-const _HR_PIN_TTL_MS = 30 * 60 * 1000;   // 30분
+// 🐛 2026-11-01 사장님: "HR 누르면 계속 멈춰 있어 — 한 번만 물어보게"
+//   30분·창 닫으면 만료(sessionStorage) → 이 기기·이 사람 기준 30일 기억(localStorage). 비번 바꾸면 이 기기에서 다시 물음.
+const _HR_PIN_TTL_MS = 30 * 24 * 60 * 60 * 1000;   // 30일
 
 function isHrPinVerified(){
   try {
-    const raw = sessionStorage.getItem(_HR_PIN_SESSION_KEY);
+    const raw = localStorage.getItem(_HR_PIN_SESSION_KEY);
     if (!raw) return false;
     const o = JSON.parse(raw);
-    return o && o.ts && (Date.now() - o.ts) < _HR_PIN_TTL_MS;
+    const who = String((me && me.name) || '').toUpperCase().replace(/\s+/g,'');
+    return o && o.ts && (Date.now() - o.ts) < _HR_PIN_TTL_MS && (!o.who || o.who === who);
   } catch(_) { return false; }
 }
 function _markHrPinVerified(){
-  try { sessionStorage.setItem(_HR_PIN_SESSION_KEY, JSON.stringify({ ts: Date.now() })); } catch(_) {}
+  const who = String((me && me.name) || '').toUpperCase().replace(/\s+/g,'');
+  try { localStorage.setItem(_HR_PIN_SESSION_KEY, JSON.stringify({ ts: Date.now(), who })); } catch(_) {}
 }
 function _isHrPinAdmin(){
   // PIN 설정/변경 권한 — OWNER role 또는 이름 DJ/SUN KIM
@@ -6162,9 +6167,13 @@ function _isHrPinAdmin(){
 }
 
 let _hrPinResolveFn = null;
+let _hrPinPending = null;
 function promptHrPin(){
-  return new Promise(resolve => {
-    if (isHrPinVerified()) { resolve(true); return; }
+  if (isHrPinVerified()) return Promise.resolve(true);
+  // 🐛 ?room=hr_inquiries 는 방이 열릴 때까지 0.4초마다 다시 openRoom → 그때마다 창을 새로 그려
+  //    입력하던 비밀번호가 지워지고 '멈춘 것처럼' 보였음. 떠 있는 동안은 같은 약속을 돌려준다.
+  if (_hrPinPending) return _hrPinPending;
+  _hrPinPending = new Promise(resolve => {
     let ov = document.getElementById('hrPinOverlay');
     if (!ov) {
       ov = document.createElement('div');
@@ -6190,13 +6199,14 @@ function promptHrPin(){
     const changeBox = document.getElementById('hrPinChangeBox');
     if (changeBox) changeBox.style.display = _isHrPinAdmin() ? '' : 'none';
     const msgEl = document.getElementById('hrPinMsg');
-    if (msgEl) { msgEl.style.color = '#6b7280'; msgEl.textContent = '권한자(OWNER/SUN KIM)도 추가 인증 필수. 비밀번호 입력 (4-8자리):'; }
+    if (msgEl) { msgEl.style.color = '#6b7280'; msgEl.textContent = '권한자(OWNER/SUN KIM)도 추가 인증 필수. 한 번 입력하면 이 기기에서 30일 동안 다시 묻지 않습니다 (4-8자리):'; }
     const input = document.getElementById('hrPinInput');
     if (input) input.value = '';
     ov.style.display = 'flex';
     setTimeout(() => { try { input && input.focus(); } catch(_){} }, 80);
     _hrPinResolveFn = resolve;
-  });
+  }).finally(() => { _hrPinPending = null; });
+  return _hrPinPending;
 }
 
 window.cancelHrPin = function(){
@@ -6284,8 +6294,8 @@ window.changeHrPin = async function(){
       body: JSON.stringify(newPin)
     });
     if (sr.ok) {
-      alert('✅ 비밀번호 변경 완료. 세션 만료 — 다음 입장 시 새 비밀번호 입력 필요.');
-      try { sessionStorage.removeItem(_HR_PIN_SESSION_KEY); } catch(_){}
+      alert('✅ 비밀번호 변경 완료. 다음 입장 시 새 비밀번호를 한 번 입력하면 이 기기에서 30일 기억합니다.');
+      try { localStorage.removeItem(_HR_PIN_SESSION_KEY); sessionStorage.removeItem(_HR_PIN_SESSION_KEY); } catch(_){}
     } else alert('변경 실패: ' + sr.status);
   } catch(e) { alert('Error: ' + e.message); }
 };
