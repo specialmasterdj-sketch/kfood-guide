@@ -135,6 +135,8 @@ th{font-size:.84em;color:var(--muted);font-weight:700}
 #pushBar .pbS{font-size:.82em;color:var(--muted);margin:4px 0 8px;line-height:1.45}
 #pushBar .btn{width:100%}
 .pfoot{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.pfoot .csave{border:2px solid #d4a017;background:#fff8e1;color:#7a4b00;font-weight:800}
+.cinfo{font-size:.8em;font-weight:800;color:#7a4b00;background:#fff8e1;border:1.5px solid #f3d27a;border-radius:9px;padding:6px 9px;margin:0 0 8px}
 .pfoot .cnt{flex:1 1 120px;font-size:.85em;font-weight:800}
 .pk .lab{font-size:.74em;font-weight:800;color:var(--muted);margin:2px 0 4px}
 .selbar{display:flex;gap:6px;flex-wrap:wrap;max-height:84px;overflow-y:auto;margin-bottom:8px;flex:0 0 auto}
@@ -262,6 +264,7 @@ body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8p
   <div class="plist" id="pkL"></div>
   <div class="pfoot">
     <span class="cnt" id="pkN"></span>
+    <button class="btn csave" id="pkCs" style="display:none"></button>
     <button class="btn" id="pkNo"></button>
     <button class="btn g" id="pkGo"></button>
   </div>
@@ -434,6 +437,13 @@ const T = {
   // 👑 2026-11-01 사장님: "이 미팅이 앞으로 우리 회사에 가장 중요한 미팅" → 공지와 같은 이름(핵심 관리자 회의 / Core Leadership Council), 맨 위 넓은 금색 칸
   kMgr:   ['👑 김치마트 핵심 관리자 회의','👑 KIMCHI MART Core Leadership Council','👑 Consejo de Liderazgo de KIMCHI MART'],
   kMgrS:  ['회사 최우선 회의 · 매주 수요일 10:30 · 지점마다 최소 1명 필수','Top-priority meeting · every Wednesday 10:30 AM · at least 1 per store','Reunión de máxima prioridad · miércoles 10:30 AM · mínimo 1 por tienda'],
+  // 👑 2026-11-01 사장님: "20명을 한 명단으로 추려서 편하게 주간 회의" → 회사 공용 고정 명단 inventory/meet/council
+  cSave:  ['👑 이 %n명 = 고정 명단 저장','👑 Save these %n as the fixed list','👑 Guardar estos %n como lista fija'],
+  cAsk:   ['지금 고른 %n명을 핵심 관리자 회의 고정 명단으로 저장할까요?\n다음부터 👑 칸을 누르면 이 사람들만 골라진 채로 열립니다.','Save these %n people as the Core Leadership Council list?\nNext time 👑 opens with exactly these people.','¿Guardar estas %n personas como lista fija del Consejo?\nLa próxima vez 👑 se abrirá con estas personas.'],
+  cOk:    ['저장했습니다 — 고정 명단 %n명','Saved — fixed list of %n','Guardado — lista fija de %n'],
+  cInfo:  ['👑 고정 명단 %n명으로 열었습니다 (✕로 빼고 ☑로 더하면 이번 회의에만 적용)','👑 Opened with the fixed list of %n (changes apply to this meeting only)','👑 Abierto con la lista fija de %n (cambios solo para esta reunión)'],
+  cNone:  ['👑 아직 고정 명단이 없어 직급으로 골라 두었습니다 — 사람을 맞춘 뒤 아래 [👑 고정 명단 저장]을 누르세요','👑 No fixed list yet — picked by role. Adjust, then tap [👑 Save as fixed list] below','👑 Aún no hay lista fija — elegidos por cargo. Ajuste y toque [👑 Guardar] abajo'],
+  cSub:   ['고정 명단 %n명','Fixed list: %n','Lista fija: %n'],
   kUrg:   ['🚨 긴급 회의','🚨 Emergency meeting','🚨 Reunión urgente'],
   kUrgS:  ['매니저·부매니저 전원 — 빨간 긴급 벨','All managers — red urgent ring','Gerentes — timbre urgente'],
   kOne:   ['👤 개별 회의','👤 One-on-one','👤 Individual'],
@@ -801,7 +811,7 @@ let ROSTER = null, ROSTER_ERR = false, PK_SEL = new Map(), PK_BR = '', PK_ADD = 
    누르면 사람 고르기 창이 그 종류에 맞는 사람을 미리 골라 둔 채 열린다 → 빼거나 더해서 [회의 시작].
    종류는 통화·부름·회의록에 같이 적혀, 초대 창과 회의록 제목에 그대로 보인다. */
 const KINDS = {
-  mgr:    { lab:'kMgr', sub:'kMgrS', roles:['MANAGER','ASSISTANT_MANAGER','SUPERVISOR'],   exec:true, top:true },
+  mgr:    { lab:'kMgr', sub:'kMgrS', roles:['MANAGER','ASSISTANT_MANAGER','SUPERVISOR'],   exec:true, top:true, council:true },
   bm:     { lab:'kBm',  sub:'kBmS',  roles:['MANAGER'],                                    exec:true },
   urgent: { lab:'kUrg', sub:'kUrgS', roles:['MANAGER','ASSISTANT_MANAGER'],                exec:true },
   one:    { lab:'kOne', sub:'kOneS', roles:[],                                             single:true },
@@ -817,8 +827,27 @@ const KINDS = {
 };
 let PK_KIND = '';
 const kindLab = k => (KINDS[k] ? t(KINDS[k].lab) : '');
+let COUNCIL = null, PK_CMISS = 0;   // 👑 고정 명단 { keys, names, by, ts }
+async function loadCouncil(){
+  try { const r = await fetch(FB+'/'+BASE+'/council.json', { cache:'no-store' });
+        if (r.ok) COUNCIL = (await r.json()) || null; } catch(e){}
+}
+async function saveCouncil(){
+  if (!isExec() || !PK_SEL.size) return;
+  if (!confirm(t('cAsk', PK_SEL.size))) return;
+  const ps = [...PK_SEL.values()];
+  const c = { keys:ps.map(p=>p.key), names:ps.map(p=>p.name), by:me().name||'', ts:Date.now() };
+  try { const F = window.__fb; await F.set(F.ref(F.db, BASE+'/council'), c);
+        COUNCIL = c; drawPicker(); renderDial(); alert(t('cOk', ps.length)); } catch(e){ alert('저장 실패 · could not save'); }
+}
+loadCouncil();   // 👑 칸에 '고정 명단 N명' 표시용 — 다음 화면 갱신 때 반영
 function pkPreselect(){
   const K = KINDS[PK_KIND]; if (!K || !ROSTER) return;
+  if (K.council && COUNCIL && (COUNCIL.keys||[]).length) {
+    PK_CMISS = 0;
+    COUNCIL.keys.forEach(k => { const p = ROSTER.find(x => x.key === k); if (p) PK_SEL.set(k, p); else PK_CMISS++; });
+    return;
+  }
   if (K.recentDays) {
     const cut = Date.now() - K.recentDays * 86400000;
     ROSTER.forEach(p => { if ((p.since || 0) >= cut && !/OWNER|EXECUTIVE|MANAGER|SUPERVISOR/.test(String(p.role||'').toUpperCase())
@@ -864,9 +893,17 @@ function openPicker(addTo, kind){
   PK_ADD = addTo || null; PK_SEL = new Map(); PK_BR = '';
   document.getElementById('pkQ').value = '';
   document.getElementById('pk').classList.add('on');
-  pkPreselect();
-  drawPicker();
-  if (!ROSTER) loadRoster().then(() => { pkPreselect(); drawPicker(); });
+  const K = PK_KIND ? KINDS[PK_KIND] : null;
+  if (K && K.council) {
+    // 고정 명단을 먼저 받아 온 뒤에 고른다 — 직급으로 먼저 골랐다가 바뀌어 보이지 않게
+    drawPicker();
+    Promise.all([loadCouncil(), ROSTER ? null : loadRoster()]).then(() => { if (PK_KIND !== kind) return; PK_SEL = new Map(); pkPreselect(); drawPicker();
+      if (PK_CMISS) alert(t('grpMiss', PK_CMISS)); });
+  } else {
+    pkPreselect();
+    drawPicker();
+    if (!ROSTER) loadRoster().then(() => { pkPreselect(); drawPicker(); });
+  }
   loadGroups().then(drawPicker);
 }
 /* ⭐ 저장한 멤버 (2026-10-30 사장님: "6명 7명 골라 한 방에서 전체 화상 회의") — 자주 부르는 묶음을 한 번에.
@@ -930,8 +967,12 @@ function drawPicker(){
   document.getElementById('pkGo').textContent = t(PK_ADD ? 'pkAddGo' : 'pkGo', PK_SEL.size);
   document.getElementById('pkGo').disabled = PK_SEL.size === 0 && !(PK_KIND && KINDS[PK_KIND].copyLink);
   document.getElementById('pkN').textContent = t('pkN', PK_SEL.size);
+  const cK = !PK_ADD && PK_KIND && KINDS[PK_KIND].council && isExec();
+  const cs = document.getElementById('pkCs');
+  cs.style.display = cK && PK_SEL.size ? '' : 'none';
+  cs.textContent = t('cSave', PK_SEL.size);
   // 선택한 사람 — 지점 칩으로 걸러도 누가 골라졌는지 늘 보이게
-  document.getElementById('pkSH').textContent = t('pkSH');
+  document.getElementById('pkSH').innerHTML = (cK && ROSTER ? '<div class="cinfo">'+esc(COUNCIL && (COUNCIL.keys||[]).length ? t('cInfo', COUNCIL.keys.length) : t('cNone'))+'</div>' : '') + esc(t('pkSH'));
   document.getElementById('pkSW').style.display = PK_SEL.size ? '' : 'none';
   document.getElementById('pkS').innerHTML = [...PK_SEL.values()].map(p =>
     '<button class="chip" data-pkrm="'+esc(p.key)+'">'+esc(p.name)+' ✕</button>').join('')
@@ -1415,6 +1456,7 @@ function renderDial(){
     Object.keys(MINS).forEach(k => { const mn = MINS[k]; if (mn && mn.kind && (!last[mn.kind] || mn.end > last[mn.kind])) last[mn.kind] = mn.end; });
     h += '<div class="kinds">' + Object.keys(KINDS).filter(k => !KINDS[k].exec || isExec()).map(k =>
       '<button class="kind'+(k === 'urgent' ? ' urgent' : '')+(KINDS[k].top ? ' top' : '')+'" data-kind="'+k+'"><b>'+esc(kindLab(k))+'</b><small>'+esc(t(KINDS[k].sub))
+      + (KINDS[k].council && COUNCIL && (COUNCIL.keys||[]).length ? '<br>'+esc(t('cSub', COUNCIL.keys.length)) : '')
       + (last[k] ? '<br>'+esc(t('kLast').split('%s').join(ymdhm(last[k]))) : '')+'</small></button>').join('') + '</div>';
     h += '<button class="btn g big" data-pick="1">'+esc(t('dialGo'))+'</button>';
   }
@@ -1494,6 +1536,7 @@ document.addEventListener('click', e => {
   if (b.dataset.lines)  { setLines(); return; }
   if (b.dataset.pkbr != null) { PK_BR = b.dataset.pkbr; drawPicker(); return; }
   if (b.id === 'pkNo')  { closePicker(); return; }
+  if (b.id === 'pkCs')  { saveCouncil(); return; }
   if (b.id === 'pbBtn') { askPush(); return; }
   if (b.id === 'pkGo')  { startCall(); return; }
   if (b.dataset.pkrm)   { PK_SEL.delete(b.dataset.pkrm); drawPicker(); return; }
