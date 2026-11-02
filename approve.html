@@ -203,6 +203,16 @@ const GENERIC_NM = ['staff','manager','employee','admin','user','직원','매니
 const needsName = u => !u.name || looksPhone(u.name) || GENERIC_NM.includes(String(u.name).toLowerCase().trim());
 const isAdminTierSelf = () => !!SELF && ['OWNER','EXECUTIVE'].includes(SELF.role);
 const inMyScope = u => isAdminTierSelf() || !SELF || !SELF.branch || SELF.branch === '*' || u.branch === SELF.branch || !u.branch;
+/* ⚡ 2026-11-01 사장님: "각 지점 수퍼바이저 이상은 무조건 신규 직원을 기입·저장해서 즉시 앱을 쓰게"
+   대기 카드에 매장·역할을 미리 채워 둔다 → 이름만 적고 [승인](또는 Enter) 한 번이면 끝.
+   매장 = 가입 때 고른 매장 › 추정 매장 › 내 매장, 역할 = STAFF 기본.
+   수퍼바이저(매니저 아래)는 내 매장 + 일반 역할(CASHIER·STAFF·BOBA)만 줄 수 있다 — staff-phones.html 과 같은 원칙. */
+const SELF_ROLE = () => String(SELF && SELF.role || '').toUpperCase().replace(/\s+/g, '_');
+const isMgrPlusSelf = () => isAdminTierSelf() || ['MANAGER','ASSISTANT_MANAGER'].includes(SELF_ROLE());
+const myBranch = () => (SELF && SELF.branch && SELF.branch !== '*') ? SELF.branch : '';
+const SUP_ROLES = ['CASHIER','STAFF','BOBA'];
+const rolesForSelf = () => isMgrPlusSelf() ? ROLES : SUP_ROLES;
+const branchesForSelf = () => (!isMgrPlusSelf() && myBranch()) ? BRANCHES.filter(b => b.id === myBranch()) : BRANCHES;
 function _normName(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9가-힣]/g, ''); }
 function _emailLocal(em){ return String(em||'').split('@')[0] || ''; }
 function _emailDomain(em){ return String(em||'').split('@')[1] || ''; }
@@ -298,6 +308,9 @@ function render(){
   // 이름 칸에 적던 글자는 30초 새로고침에도 남긴다
   const typed = {};
   document.querySelectorAll('input.nm-in').forEach(i => { if (i.value && i.dataset.uid) typed[i.dataset.uid] = i.value; });
+  // 매장·역할 고른 것도 30초 새로고침에 남긴다
+  const picked = {};
+  document.querySelectorAll('select[id^="br_"],select[id^="rl_"]').forEach(x => { if (x.value) picked[x.id] = x.value; });
   const focusUid = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('nm-in') ? document.activeElement.dataset.uid : '';
   if (rows.length === 0) {
     const k = TAB === 'pending' ? 'emptyPending' : TAB === 'approved' ? 'emptyApproved' : TAB === 'noname' ? 'emptyNoname' : 'emptyBlocked';
@@ -314,13 +327,25 @@ function render(){
         ${u.status === 'approved' ? `<button onclick="saveName('${u.uid}')">💾 ${t('nameSave')}</button>` : ''}</div>`
       + (nn && u.status === 'pending' ? `<div class="nmhint">${escHtml(t('nameHint'))}</div>` : '');
     const av = avatarHtml(u);
+    // 대기 카드는 매장·역할을 미리 채운다 (이름만 적으면 바로 승인)
+    let defBr = u.branch && u.branch !== '*' ? u.branch : '', defRl = u.role || '';
+    if (u.status === 'pending') {
+      const g = defBr ? null : guessBranch(u);
+      if (!defBr) defBr = (g && g.branchId) || myBranch();
+      if (!defRl) defRl = (g && g.role && rolesForSelf().includes(g.role)) ? g.role : 'STAFF';
+    }
+    const brOpts = branchesForSelf().some(b => b.id === u.branch) || !u.branch || u.branch === '*' ? branchesForSelf() : BRANCHES;
+    const rlOpts = rolesForSelf().includes(u.role) || !u.role ? rolesForSelf() : ROLES;
+    if (u.status === 'pending' && !brOpts.some(b => b.id === defBr)) defBr = brOpts.length === 1 ? brOpts[0].id : '';
+    if (picked['br_' + u.uid]) defBr = picked['br_' + u.uid];
+    if (picked['rl_' + u.uid]) defRl = picked['rl_' + u.uid];
     const branchSel = `<select id="br_${u.uid}">
       <option value="">${t('selectBranch')}</option>
-      ${BRANCHES.map(b => `<option value="${b.id}" ${u.branch === b.id ? 'selected' : ''}>${b[LANG] || b.ko}</option>`).join('')}
+      ${brOpts.map(b => `<option value="${b.id}" ${(defBr || u.branch) === b.id ? 'selected' : ''}>${b[LANG] || b.ko}</option>`).join('')}
     </select>`;
     const roleSel = `<select id="rl_${u.uid}">
       <option value="">${t('selectRole')}</option>
-      ${ROLES.map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+      ${rlOpts.map(r => `<option value="${r}" ${(defRl || u.role) === r ? 'selected' : ''}>${r}</option>`).join('')}
     </select>`;
     // 추정 매장 — branch 가 비었을 때만 힌트 표시
     let guessHtml = '';
@@ -452,6 +477,8 @@ window.approveUser = async function(uid){
   const branch = document.getElementById('br_' + uid).value;
   const role = document.getElementById('rl_' + uid).value;
   if (!branch || !role) { showToast(t('needBranchRole'), true); return; }
+  // 수퍼바이저: 내 매장 + 일반 역할만 (화면 목록과 같은 규칙 — 직접 조작 방지)
+  if (!isMgrPlusSelf() && (!SUP_ROLES.includes(role) || (myBranch() && branch !== myBranch()))) { showToast(t('needBranchRole'), true); return; }
   const nm = cleanName(document.getElementById('nm_' + uid)?.value);
   if (!nm) { showToast(t('needName'), true); document.getElementById('nm_' + uid)?.focus(); return; }
   const patch = { status:'approved', branch, role, name: nm, approvedAt: Date.now(), approvedBy: SELF?.uid || 'manager' };
@@ -498,6 +525,7 @@ document.addEventListener('keydown', e => {
   const el = e.target;
   if (e.key === 'Enter' && el && el.classList && el.classList.contains('nm-in')) {
     const u = USERS[el.dataset.uid]; if (u && u.status === 'approved') { e.preventDefault(); window.saveName(el.dataset.uid); }
+    else if (u && u.status === 'pending') { e.preventDefault(); window.approveUser(el.dataset.uid); }
   }
 });
 window.rejectUser = async function(uid){
