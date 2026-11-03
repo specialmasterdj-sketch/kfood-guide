@@ -22,7 +22,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'hub_2026_10_25_rules';   // 🛑 no_kick + 출퇴근 현황 변경 감지(무의미 60초 전체 재렌더 제거)
+    var BUST = 'hub_2026_11_02_hq';  // 🏢 HQ 소속(마이클) 추가 · 이전: hub_2026_10_25_rules   // 🛑 no_kick + 출퇴근 현황 변경 감지(무의미 60초 전체 재렌더 제거)
     var KEY = 'kmtools_bust_hub';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -880,7 +880,9 @@ function _dirIsOwner(){
   return false;
 }
 function _dirGlobalLbl(){ return LANG==='en' ? 'HQ / Executive' : LANG==='es' ? 'Sede / Ejecutivo' : '본사 / Executive'; }
-const DIR_BRANCH_LABELS = {get _GLOBAL(){return _dirGlobalLbl();},LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
+// 🏢 2026-11-02 사장님: 'HQ' 소속을 따로 — 비서실장 마이클 등 HQ 직원 (schedules/_global/hq.json)
+function _dirHqLbl(){ return LANG==='ko' ? '본사 HQ' : 'HQ'; }
+const DIR_BRANCH_LABELS = {get _GLOBAL(){return _dirGlobalLbl();},get _HQ(){return _dirHqLbl();},LASOLAS:'Las Olas',MIAMI:'Miami',HOLLYWOOD:'Hollywood',PEMBROKE_PINES:'Pembroke Pines',CORAL_SPRINGS:'Coral Springs'};
 const DIR_ROLE_SEQ = [['OWNER',0],['ASSISTANT MANAGER',2],['ASSISTANT_MANAGER',2],['SENIOR SUPERVISOR',3],['VICE SUPERVISOR',5],['VICE_SUPERVISOR',5],['MANAGER',1],['SUPERVISOR',4]];
 function _dirRoleSort(r){ const u = String(r||'').toUpperCase(); for (const [k,v] of DIR_ROLE_SEQ) if (u.includes(k)) return v; return 9; }
 // Mai Garcia 영구 SENIOR SUPERVISOR 강제 정정 — UI + Firebase (2026-05-17).
@@ -949,6 +951,14 @@ async function loadDirectory(){
       });
     }
   } catch(e){}
+  try {
+    const hqRes = await fetch(fb+'/schedules/_global/hq.json');
+    const hq = await hqRes.json();
+    (Array.isArray(hq) ? hq : Object.values(hq || {})).forEach(h => {
+      if (h && h.name) _dirData.push({name:h.name, role:h.role||'HQ', dept:h.dept||'', branch:'_HQ'});
+    });
+    sel.innerHTML += `<option value="_HQ">${_dirHqLbl()}</option>`;
+  } catch(e){}
   // users 노드 매칭 — 차단/복구 시 uid 필요. OWNER 만 의미 있음.
   _dirUsersByName = {};
   if (_dirIsOwner()) {
@@ -971,8 +981,8 @@ async function loadDirectory(){
     } catch(e){ console.warn('[dir] users load failed', e); }
   }
   _dirData.sort((a,b) => {
-    const bai = a.branch==='_GLOBAL'?-1:DIR_BRANCHES.indexOf(a.branch);
-    const bbi = b.branch==='_GLOBAL'?-1:DIR_BRANCHES.indexOf(b.branch);
+    const bai = a.branch==='_GLOBAL'?-2:a.branch==='_HQ'?-1:DIR_BRANCHES.indexOf(a.branch);
+    const bbi = b.branch==='_GLOBAL'?-2:b.branch==='_HQ'?-1:DIR_BRANCHES.indexOf(b.branch);
     if (bai !== bbi) return bai - bbi;
     const ra = _dirRoleSort(a.role), rb = _dirRoleSort(b.role);
     if (ra !== rb) return ra - rb;
@@ -1011,7 +1021,7 @@ function filterDirectory(){
     const isSelf = empNorm === meName;
     const isProtected = ['dj','bhk','byhk','byhoki'].includes(empNorm);
     let termBtn = '';
-    if (ownerMode && !isSelf && !isProtected) {
+    if (ownerMode && !isSelf && !isProtected && e.branch !== '_HQ') {
       const userInfo = _dirUsersByName[empNorm];
       const alreadyBlocked = userInfo && userInfo.status === 'blocked';
       if (alreadyBlocked) {
