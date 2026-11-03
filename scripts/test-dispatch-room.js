@@ -15,9 +15,9 @@ function ok(cond, label){
 
 console.log('1) 소스 정적 검증');
 ok(/var REPORT_ROOM_IDS\s*=/.test(src), 'REPORT_ROOM_IDS 정확 매핑 존재');
-ok(src.includes("meat:['meat_evalution_room']"), 'meat → meat_evalution_room');
-ok(src.includes("fish:['seafood_evalution_room']"), 'fish → seafood_evalution_room');
-ok(src.includes("other:['grocery_eval']"), 'other → grocery_eval');
+ok(src.includes("meat:['dispatch_log','meat_evalution_room']"), 'meat → dispatch_log (없으면 meat_evalution_room)');
+ok(src.includes("fish:['dispatch_log','seafood_evalution_room']"), 'fish → dispatch_log (없으면 seafood_evalution_room)');
+ok(src.includes("other:['dispatch_log','grocery_eval']"), 'other → dispatch_log (없으면 grocery_eval)');
 // 광범위 키워드가 REPORT_KW 에 다시 들어오면 버그 재발
 const kwLine = (src.match(/var REPORT_KW=\{[^\n]*\}/) || [''])[0];
 ok(kwLine !== '', 'REPORT_KW 라인 존재');
@@ -65,6 +65,11 @@ ok(route('other', ROOMS) === 'grocery_eval', "기타(other) → grocery_eval (�
 ok(route('meat', ROOMS) === 'meat_evalution_room', '고기(meat) → meat_evalution_room');
 ok(route('fish', ROOMS) === 'seafood_evalution_room', '생선(fish) → seafood_evalution_room');
 ok(route('other', ROOMS) !== 'bakery_eval', '기타 보고가 베이커리 평가방으로 가지 않음');
+// 🚚 2026-11-02: 전용 방(dispatch_log)이 있으면 종류와 상관없이 그 방으로 — 평가방을 가리지 않게
+const WITH_LOG = Object.assign({ dispatch_log: { name: '🚚 경유 발송 기록' } }, ROOMS);
+ok(route('meat', WITH_LOG) === 'dispatch_log', '전용 방 있으면 고기 → dispatch_log');
+ok(route('fish', WITH_LOG) === 'dispatch_log', '전용 방 있으면 생선 → dispatch_log');
+ok(route('other', WITH_LOG) === 'dispatch_log', '전용 방 있으면 기타 → dispatch_log');
 
 // 폴백: 정확 ID 방이 DB 에 없을 때 — 키워드로 찾되 '평가'만으로는 못 찾아야 함
 const NO_ID_ROOMS = { bakery_eval: { name: '베이커리 평가' }, warehouse: { name: '그로서리 창고' } };
