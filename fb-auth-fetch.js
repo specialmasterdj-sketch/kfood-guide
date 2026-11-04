@@ -314,6 +314,14 @@ if ('serviceWorker' in navigator) {
     if (!a || !u || /[?&]authuser=/.test(u)) return u;
     return u + (u.indexOf('?') < 0 ? '?' : '&') + 'authuser=' + encodeURIComponent(a);
   }
+  // 🎥 2026-11-03 로그인 없는 화상 방(meet.html 의 JHOST) — 내 이름을 미리 채워 [참가] 한 번에 바로 들어간다
+  function meetUrl(u){
+    if (!u || u.indexOf('https://meet.ffmuc.net/') !== 0) return withAcct(u);
+    if (u.indexOf('#') >= 0) return u;
+    let n = ''; try { n = String((window.__currentUser || JSON.parse(localStorage.getItem('chat.me') || '{}')).name || '').trim(); } catch (_) {}
+    return u + '#config.prejoinConfig.enabled=false&config.disableDeepLinking=true'
+      + (n ? '&userInfo.displayName=' + encodeURIComponent(JSON.stringify(n)) : '');
+  }
   // ── 벨소리 ── 소리 장치는 하나만 만들어 두고, 화면을 처음 누를 때 깨워 둔다(브라우저 자동재생 규칙)
   let AC = null;
   function ac(){
@@ -406,7 +414,7 @@ if ('serviceWorker' in navigator) {
         return;
       }
       // 새 창은 반드시 누른 그 순간에 연다 (기다렸다 열면 폰 브라우저가 막는다)
-      if (v.url) window.open(withAcct(v.url), '_blank', 'noopener');
+      if (v.url) window.open(meetUrl(v.url), '_blank', 'noopener');
       const at = Date.now();
       patch('/ring/' + uid + '/' + id, { state: 'accepted', at });
       patch('/calls/' + id + '/inv/' + uid, { state: 'accepted', at });
