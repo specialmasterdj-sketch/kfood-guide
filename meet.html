@@ -1525,7 +1525,7 @@ function trRecStart(){
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i], txt = (res[0] && res[0].transcript || '').trim();
-        if (res.isFinal) { if (txt) trSend(txt); }
+        if (res.isFinal) { if (txt) trQueue(txt); }
         else interim += txt + ' ';
       }
       document.getElementById('trInt').textContent = interim ? '… ' + interim : '';
@@ -1545,6 +1545,27 @@ function trRecStart(){
   }
   TR.rec.lang = TR_V[TR.lang];
   try { TR.rec.start(); } catch(e){}
+}
+/* 🔴 2026-11-05 — 안드로이드 크롬은 말을 다듬어 가는 중간 단계를 **전부 isFinal 로** 준다.
+   "안녕하세요" → "안녕하세요 내" → "안녕하세요 내 말을" … 한 문장이 수십 줄로 들어가
+   듣는 사람이 같은 말을 열 번씩 되풀이해 들었다(실측 한 문장에 44줄, 번역도 44번).
+   → 앞 글자가 겹치면 자라는 중으로 보고 **덮어쓰고**, 말이 멎으면(QUIET) 그때 한 번만 보낸다. */
+const TR_QUIET = 900;
+function trQueue(text){
+  if (!TR) return;
+  const t = String(text || "").trim(); if (!t) return;
+  const b = TR.buf || "";
+  if (b && (t.indexOf(b) === 0 || b.indexOf(t) === 0)) TR.buf = (t.length >= b.length) ? t : b;
+  else { trFlush(); TR.buf = t; }                      // 앞이 안 겹치면 새 문장 — 앞 문장을 먼저 보낸다
+  clearTimeout(TR.bufT);
+  TR.bufT = setTimeout(trFlush, TR_QUIET);
+}
+function trFlush(){
+  if (!TR || !TR.buf) return;
+  const t = TR.buf; TR.buf = ""; clearTimeout(TR.bufT);
+  if (t === TR.lastSent) return;                       // 똑같은 말이 또 오면 버린다
+  TR.lastSent = t;
+  trSend(t);
 }
 function trSend(text){
   if (!TR) return;
@@ -1569,7 +1590,7 @@ document.addEventListener('click', e => {
   }
   if (b.id === 'trMic') {
     TR.micOn = !TR.micOn;
-    if (TR.micOn) trRecStart(); else { try { TR.rec && TR.rec.stop(); } catch(e){} document.getElementById('trInt').textContent = ''; }
+    if (TR.micOn) trRecStart(); else { trFlush(); try { TR.rec && TR.rec.stop(); } catch(e){} document.getElementById('trInt').textContent = ''; }
     trDraw(); return;
   }
 });
