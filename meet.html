@@ -308,6 +308,9 @@ const T = {
   roomOne:['지점 회의','Branch meeting','Reunión de tienda'],
   join:   ['📹 참가','📹 Join','📹 Entrar'],
   call:   ['🔔 회의 소집','🔔 Call everyone in','🔔 Convocar'],
+  // 📞 2026-11-05 전무님 "할리우드 방에 직원을 부르려면?" — 「회의 소집」 은 채팅에 글만 올리고 폰은 안 울렸다.
+  //    「사람 골라 회의 시작」 은 방을 알아서 고르느라 그 지점 방을 못 쓴다 → 방마다 '이 방으로 부르기' 를 둔다.
+  rCall:  ['📞 이 방으로 부르기','📞 Ring people into this room','📞 Llamar a esta sala'],
   setUrl: ['⚙ 회의 링크','⚙ Meeting link','⚙ Enlace'],
   noUrl:  ['회의 링크가 아직 없습니다','No meeting link yet','Aún no hay enlace'],
   live:   ['진행 중','live','en curso'],
@@ -641,6 +644,7 @@ function render(){
             ? '<button class="btn g" data-leave="'+esc(r.id)+'">'+esc(t('leaveR'))+'</button>'
             : '<button class="btn p" data-join="'+esc(r.id)+'"'+(url && !locked ?'':' disabled')+'>'+esc(t('join'))+'</button>')
       +   (isExec() && !r.mgr ? '<button class="btn sm" data-call="'+esc(r.id)+'"'+(url?'':' disabled')+'>'+esc(t('call'))+'</button>' : '')
+      +   (url && canDial() ? '<button class="btn sm p" data-rcall="'+esc(r.id)+'">'+esc(t('rCall'))+'</button>' : '')
       +   (url ? '<button class="btn sm p" data-rtr="'+esc(r.id)+'" style="background:#7c3aed;border-color:#7c3aed">'+esc(t('trRoom'))+'</button>' : '')
       + '</div></div>';
   }).join('');
@@ -850,6 +854,7 @@ const KINDS = {
   skill:     { lab:'kSkill', sub:'kSkillS', roles:[] },
 };
 let PK_KIND = '';
+let PK_ROOM = null;   // 📞 '이 방으로 부르기' 로 열었으면 그 방 id — startCall 이 이 방을 쓴다
 const kindLab = k => (KINDS[k] ? t(KINDS[k].lab) : '');
 let PK_CMISS = 0;
 /* 👑 2026-11-01 사장님: "내가 저장한 거 + 밑으로 추가할 인원만 깨끗하게" → 👑 칸은 내가 가장 최근에 저장한 ⭐ 명단으로 열고,
@@ -991,7 +996,7 @@ function useGroup(id){
   drawPicker();
   if (miss) alert(t('grpMiss', miss));
 }
-function closePicker(){ document.getElementById('pk').classList.remove('on'); PK_ADD = null; PK_KIND = ''; }
+function closePicker(){ document.getElementById('pk').classList.remove('on'); PK_ADD = null; PK_KIND = ''; PK_ROOM = null; }
 /* 🔔 폰 알림 켜기 띠 — 알림이 켜진 폰에는 아예 안 보인다.
    사장님이 2026-05-28 에 끄라 하신 것은 전 화면에 뜨던 업무지시 알림 배너다. 이건 회의 화면 안에만 둔다. */
 function drawPushBar(){
@@ -1093,7 +1098,9 @@ async function startCall(){
   const adding = PK_ADD && callActive(CALLS[PK_ADD]);
   if (adding) { id = PK_ADD; const c = CALLS[id]; line = { id:c.room, url:c.url, name:c.roomName }; }
   else {
-    line = pickLine(kind);
+    // 📞 '이 방으로 부르기' 면 방을 고르지 않고 그 방을 그대로 쓴다 (2026-11-05)
+    const rr = PK_ROOM ? rooms().find(x => x.id === PK_ROOM) : null;
+    line = rr ? { id: rr.id, url: roomUrl(rr.id), name: rr.name } : pickLine(kind);
     if (!line) { alert(t('noLine')); return; }
     id = 'c' + ts + '_' + Math.random().toString(36).slice(2,6);
     // 새 창은 반드시 누른 그 순간에 연다 (기다렸다 열면 브라우저가 막는다) → 나는 먼저 들어가 기다린다
@@ -1722,6 +1729,7 @@ document.addEventListener('click', e => {
   if (b.dataset.creopen){ reopen(b.dataset.creopen); return; }
   if (b.dataset.cpanel) { openPanel(b.dataset.cpanel); return; }
   if (b.dataset.ctr)    { trOpen(b.dataset.ctr); return; }
+  if (b.dataset.rcall)  { PK_ROOM = b.dataset.rcall; openPicker(); return; }
   if (b.dataset.rtr)    { trOpen('room_' + b.dataset.rtr); return; }   // 🗣 고정 회의방 — 방 id 로 통역 칸을 함께 쓴다
   if (b.dataset.cring)  { ringAgain(b.dataset.cring); return; }
   if (b.dataset.cadd)   { openPicker(b.dataset.cadd); return; }
