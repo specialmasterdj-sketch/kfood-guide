@@ -1614,3 +1614,63 @@ exports.meetRingCall = onValueWritten(
     }
   }
 );
+
+// =============================================================================
+// 🗣 meetTranslate — 회의 통역을 **서버가 한 번만** 번역한다 (2026-11-05 전무님)
+//   전에는 듣는 사람마다 자기 기기에서 무료 구글 번역 주소를 불렀다.
+//   사람이 늘수록 호출이 곱으로 늘어 구글이 429(너무 많음)로 막았고,
+//   예비(MyMemory)로 넘어가느라 늦어졌다 — 사장님 "통역이 가끔 느리다"(11/2).
+//   → 한 줄이 올라오면 여기서 한 번 번역해 세 언어를 같이 적어 둔다.
+//     듣는 사람은 읽기만 하므로 호출이 사람 수와 무관하다.
+//   못 하면 조용히 포기한다 — 앱이 예전 방식으로 알아서 번역한다(안전망).
+// =============================================================================
+exports.meetTranslate = onValueCreated(
+  { ref: '/inventory/meet/tr/{id}/{key}', region: 'us-central1',
+    secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
+  async (event) => {
+    const rec = event.data.val();
+    if (!rec || !rec.text || rec.tx) return;
+    const text = String(rec.text).trim().slice(0, 400);
+    if (text.length < 2) return;
+    const src = ['ko', 'en', 'es'].includes(rec.lang) ? rec.lang : 'ko';
+    const targets = ['ko', 'en', 'es'].filter((l) => l !== src);
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+      const res = await client.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 400,
+        system:
+          'You are interpreting a live video meeting between Korean grocery store managers ' +
+          'and their staff. Translate what was just said — spoken, casual, short. ' +
+          'Keep store words as they are (aisle numbers, brand names, department names, ' +
+          'product names). Do not explain, soften, or add anything. If a sentence is cut ' +
+          'off mid-thought, translate the fragment as it is. ' +
+          // 🌡 "3번 오픈 냉동고" 를 'aisle 3' 로 옮기는 일이 있었다 — 장비 번호와 통로 번호를 갈라 준다
+          'A number right before a piece of equipment is that number of the unit itself ' +
+          '("3번 오픈 냉동고" = open freezer #3, not aisle 3). "통로 7번" or "Aisle 7" is an aisle. ' +
+          'Reply with ONLY a JSON object, no markdown fence, no commentary.',
+        messages: [{
+          role: 'user',
+          content:
+            'Translate this ' + LANG_NAME[src] + ' line into ' +
+            targets.map((l) => LANG_NAME[l]).join(' and ') + '.' + String.fromCharCode(10) +
+            'Reply as JSON with exactly these keys: ' + targets.map((l) => '"' + l + '"').join(', ') +
+            String.fromCharCode(10) + String.fromCharCode(10) + text,
+        }],
+      }, { timeout: 12000 });
+      const raw = (res.content || [])
+        .filter((b) => b.type === 'text').map((b) => b.text).join('').trim()
+        .replace(/^```(?:json)?s*/i, '').replace(/s*```$/, '');
+      const parsed = JSON.parse(raw);
+      const tx = { [src]: text };
+      for (const l of targets) {
+        if (typeof parsed[l] === 'string' && parsed[l].trim()) tx[l] = parsed[l].trim();
+      }
+      if (Object.keys(tx).length < 2) return;   // 한 개도 못 건졌으면 앱이 알아서 하게 둔다
+      await event.data.ref.update({ tx });
+    } catch (e) {
+      console.warn('[meetTranslate]', event.params.id, (e && e.message) || e);
+    }
+  }
+);

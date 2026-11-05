@@ -1344,6 +1344,20 @@ async function trFetch(url, ms){
   try { return await fetch(url, c ? { signal: c.signal } : undefined); }
   finally { clearTimeout(tm); }
 }
+/* 🗣 2026-11-05 — 서버(meetTranslate)가 한 줄을 한 번만 번역해 세 언어를 같이 적어 둔다.
+   듣는 사람은 그걸 읽기만 하므로, 사람이 늘어도 번역 호출이 늘지 않는다
+   (전에는 사람마다 따로 불러 구글이 429 로 막았다 — 그게 "통역이 가끔 느리다" 의 원인이었다).
+   서버가 늦거나 안 되면 WAIT 만큼만 기다렸다가 예전 방식으로 넘어간다 — 통역이 멈추지는 않는다. */
+async function trServerText(k, lang){
+  const WAIT = 2000, STEP = 150;
+  for (let t = 0; t < WAIT; t += STEP) {
+    const cur = (TR && TR.all && TR.all[k]) || null;
+    const out = cur && cur.tx && cur.tx[lang];
+    if (out) return out;
+    await new Promise(r => setTimeout(r, STEP));
+  }
+  return "";
+}
 async function trTranslate(text, from, to){
   if (!text || from === to) return text;
   try {
@@ -1460,7 +1474,9 @@ function trProcess(){
     //    그 뒤 줄이 전부 그만큼 밀렸다("통역이 가끔 느리다"). 화면에 찍는 순서는 TR_Q 가 그대로 지킨다.
     const p = mine ? null
             : (v.lang === lang ? Promise.resolve(v.text)
-                               : trTranslate(v.text, v.lang, lang).catch(() => ''));
+                               : trServerText(k, lang)
+                                   .then(sv => sv || trTranslate(v.text, v.lang, lang))
+                                   .catch(() => ''));
     TR_Q = TR_Q.then(async () => {
       if (TR !== run) return;
       if (mine) { trAdd(k, v, '', true); return; }
