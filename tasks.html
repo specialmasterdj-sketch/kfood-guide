@@ -8880,6 +8880,7 @@ function renderEmp(){
     setTimeout(function(){
       try { if (!EMP_CHAT  && EMP_CHAT  !== 0) empLoadChat(); } catch(_){}
       try { if (!EMP_MEET  && EMP_MEET  !== 0) empLoadMeet(); } catch(_){}
+      try { if (!EMP_TEMP) empLoadTemp(); } catch(_){}
       try { if (!EMP_STAFF) empLoadStaff(); } catch(_){}
       try { if (!EMP_HQPH)  empLoadHqPhotos(); } catch(_){}
       try { if (!EMP_OOS)   empLoadOos(); } catch(_){}
@@ -8961,6 +8962,9 @@ const EMP_VIEWS = {
   //   숫자는 지금 회의에 들어와 있는 사람 수다. 아무도 없으면 오너·임원·수퍼바이저 이상에게만 보인다
   //   (회의를 여는 사람은 그들이다). 나머지는 회의가 돌아갈 때만 보여 칸을 어지르지 않는다.
   meet:  { ic:'📹', ko:'화상 회의', en:'Video meeting', es:'Reunión', bg:'#e0e7ff', fg:'#1d4ed8', go:'./meet.html' },
+  // 🌡 2026-11-05 전무님: "온도체크 앱도 첫 화면에 넣어 줘".
+  //   숫자는 오늘 측정한 장비 수 / 전체. 🚫 사용 중지한 장비는 빼고 센다(temp.html 과 같은 기준).
+  temp:  { ic:'🌡', ko:'온도 체크', en:'Temperature', es:'Temperatura', bg:'#fee2e2', fg:'#b91c1c', go:'./temp.html' },
   // ⭐ 핵심 품목 점검 — 사장님이 2026-10-07 에 만드신 것(key-fresh / key-grocery).
   //    같은 날 "KEY ITEMS REPORT 라는 긴 이름 때문에 카드 줄이 화면보다 넓어져 깜빡인다" 며 빼셨다(b718832).
   //    2026-10-08 전무님 지시로 되살리되 이름을 짧게 줄여 같은 일이 안 생기게 한다.
@@ -9003,6 +9007,33 @@ function empKeyPanel(){
     (LANG==='en' ? 'Your store is selected automatically. Checks are saved and every store sees them live.'
      : LANG==='es' ? 'Su tienda se elige sola. Las revisiones se guardan y todas las tiendas las ven.'
      : '내 지점이 자동으로 선택됩니다. 점검 내용은 저장되고 모든 지점이 실시간으로 봅니다.') + '</div>' + empKeyProgHtml();
+}
+// 🌡 오늘 온도 측정 현황 — 보고 있는 매장 기준. 🚫 사용 중지한 장비는 빼고 센다
+let EMP_TEMP = null;
+async function empLoadTemp(){
+  EMP_TEMP = { done:0, total:0, bad:0 };
+  try {
+    const br = empViewBranch(); if (!br) return;
+    const today = todayStr();
+    let aq = '';
+    try { const u = window.__fb?.auth?.currentUser; if (u) { const t = await u.getIdToken(); if (t) aq = '?auth=' + encodeURIComponent(t); } } catch(_){}
+    const [eqR, chR] = await Promise.all([
+      fetch(FB_DB_URL + '/temp/' + encodeURIComponent(br) + '/equipment.json' + aq, { cache:'no-store' }),
+      fetch(FB_DB_URL + '/temp/' + encodeURIComponent(br) + '/checks/' + today + '.json' + aq, { cache:'no-store' }),
+    ]);
+    const eqObj = eqR.ok ? ((await eqR.json()) || {}) : {};
+    const chObj = chR.ok ? ((await chR.json()) || {}) : {};
+    const live = Object.entries(eqObj).filter(([, e]) => !(e && e.retired)).map(([id]) => id);
+    EMP_TEMP.total = live.length;
+    const seen = new Set(), bad = new Set();
+    Object.values(chObj).forEach(c => {
+      if (!c || !c.eqId || live.indexOf(c.eqId) < 0) return;
+      seen.add(c.eqId);
+      if (c.status === 'danger' || c.status === 'warn') bad.add(c.eqId);
+    });
+    EMP_TEMP.done = seen.size; EMP_TEMP.bad = bad.size;
+  } catch(e){ console.warn('[temp]', e); }
+  if (document.getElementById('empList')) renderEmp();
 }
 // 📹 지금 회의에 들어와 있는 사람 수 — meet.html 이 2분마다 숨을 쉬어 넣는다
 let EMP_MEET = null;
@@ -9066,6 +9097,10 @@ function empStatCards(my){
   nums.meet  = { v: EMP_MEET == null ? '…' : EMP_MEET,
                  sub: EMP_MEET ? (LANG==='en'?'in the room now':LANG==='es'?'en la sala':'지금 참가 중')
                       : (LANG==='en'?'start a meeting':LANG==='es'?'iniciar reunión':'회의 열기') };
+  nums.temp  = { v: EMP_TEMP == null ? '…' : (EMP_TEMP.done + '<span style="font-size:.6em;color:#94a3b8">/' + EMP_TEMP.total + '</span>'),
+                 sub: !EMP_TEMP ? '' : EMP_TEMP.bad ? (LANG==='en'? EMP_TEMP.bad+' out of range' : LANG==='es'? EMP_TEMP.bad+' fuera de rango' : '위험·주의 '+EMP_TEMP.bad+'대')
+                      : EMP_TEMP.done >= EMP_TEMP.total && EMP_TEMP.total ? (LANG==='en'?'all checked':LANG==='es'?'todo medido':'모두 측정함')
+                      : (LANG==='en'?'check now':LANG==='es'?'medir ahora':'측정하기') };
   nums.chat  = { v: EMP_CHAT == null ? '…' : EMP_CHAT,
                  sub: EMP_CHAT ? (LANG==='en'?'unread rooms':LANG==='es'?'salas sin leer':'안 읽은 방') : (LANG==='en'?'all read':LANG==='es'?'todo leído':'모두 읽음') };
   // 🙈 숫자가 안 나오는 칸은 아예 숨긴다 (전무님: "안 나오면 없애버려")
@@ -9075,11 +9110,13 @@ function empStatCards(my){
   const myBr = empViewBranch();
   const show = { staff: !(EMP_STAFF && EMP_STAFF.length === 0), my: true,
                  stock: myBr === 'HOLLYWOOD', hq: true, photo: true, chat: !EMP_REF, key: true,
+                 // 🌡 장비가 등록된 매장에서만 보인다 (없는 매장에서 0/0 이 뜨면 어지럽다)
+                 temp: !EMP_TEMP || EMP_TEMP.total > 0,
                  // 📹 회의가 돌아가면 모두에게, 안 돌아가면 회의를 여는 사람에게만
                  // 2026-11-01 수정요청(Darleny, Pembroke 부매니저): 수퍼바이저 이상도 회의를 열 수 있는데(meet.html canDial)
                  //   첫 화면 칸은 오너·임원에게만 보여 '내 앱에 화상 회의가 없다'고 함 → canDial 과 같은 직급으로 맞춤
                  meet: !EMP_REF && (EMP_MEET > 0 || isOwner() || /OWNER|EXECUTIVE|MANAGER|SUPERVISOR/.test(String((me && me.role) || '').toUpperCase())) };
-  return '<div class="emp-cards">' + ['staff','my','key','stock','hq','photo','chat','meet'].filter(k => show[k]).map(k => {
+  return '<div class="emp-cards">' + ['staff','my','temp','key','stock','hq','photo','chat','meet'].filter(k => show[k]).map(k => {
     const v = EMP_VIEWS[k], n = nums[k], on = (EMP_VIEW === k);
     const warn = (k === 'hq' && hqWait) || (k === 'my' && (myTot - myDone) > 0) || (k === 'chat' && EMP_CHAT) || (k === 'meet' && EMP_MEET);
     const act = v.go ? ('location.href=\'' + v.go + '\'') : ('empSetView(\'' + k + '\')');
@@ -11527,7 +11564,8 @@ async function __buildTempSummaryLines(branchId){
   if (!eqR.ok) return null;
   const eqObj = (await eqR.json()) || {};
   const chObj = chR.ok ? ((await chR.json()) || {}) : {};
-  const eqEntries = Object.entries(eqObj).map(([id, eq]) => Object.assign({ id }, eq));
+  const eqEntries = Object.entries(eqObj).map(([id, eq]) => Object.assign({ id }, eq))
+    .filter(eq => !eq.retired);   // 🚫 사용 중지한 장비는 빼고 센다 — temp.html 과 같은 기준 (2026-11-05)
   if (!eqEntries.length) return null;
   // 장비별 최신 측정값 (해당 매장 오늘 checks 객체 안에서 eqId 매칭)
   const latestByEq = {};
