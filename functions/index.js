@@ -1649,24 +1649,28 @@ exports.meetTranslate = onValueCreated(
           // 🌡 "3번 오픈 냉동고" 를 'aisle 3' 로 옮기는 일이 있었다 — 장비 번호와 통로 번호를 갈라 준다
           'A number right before a piece of equipment is that number of the unit itself ' +
           '("3번 오픈 냉동고" = open freezer #3, not aisle 3). "통로 7번" or "Aisle 7" is an aisle. ' +
-          'Reply with ONLY a JSON object, no markdown fence, no commentary.',
+          /* 🔴 2026-11-06 — 직원이 「내 언어」를 Español 로 두고 **영어로** 말했다(실제 기록:
+             "Hi my name", "I'm working on" 이 es 로 들어왔다). 라벨을 믿으면 번역이 통째로 틀어진다.
+             → 라벨은 참고만 하고 **실제 말한 언어를 스스로 알아보게** 한다. */
+          'The label is only what the speech recognizer was set to — the speaker may have ' +
+          'spoken a different language. Work out what was actually said, then give all three. ' +
+          'Reply with ONLY a JSON object with exactly the keys "ko", "en", "es" — ' +
+          'no markdown fence, no commentary.',
         messages: [{
           role: 'user',
           content:
-            'Translate this ' + LANG_NAME[src] + ' line into ' +
-            targets.map((l) => LANG_NAME[l]).join(' and ') + '.' + String.fromCharCode(10) +
-            'Reply as JSON with exactly these keys: ' + targets.map((l) => '"' + l + '"').join(', ') +
-            String.fromCharCode(10) + String.fromCharCode(10) + text,
+            'Line (recognizer was set to ' + LANG_NAME[src] + '):' + String.fromCharCode(10) + text,
         }],
       }, { timeout: 12000 });
       const raw = (res.content || [])
         .filter((b) => b.type === 'text').map((b) => b.text).join('').trim()
-        .replace(/^```(?:json)?s*/i, '').replace(/s*```$/, '');
+        .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
       const parsed = JSON.parse(raw);
-      const tx = { [src]: text };
-      for (const l of targets) {
+      const tx = {};
+      for (const l of ['ko', 'en', 'es']) {
         if (typeof parsed[l] === 'string' && parsed[l].trim()) tx[l] = parsed[l].trim();
       }
+      if (!tx[src]) tx[src] = text;   // 못 받았으면 원문을 그대로 둔다
       if (Object.keys(tx).length < 2) return;   // 한 개도 못 건졌으면 앱이 알아서 하게 둔다
       await event.data.ref.update({ tx });
     } catch (e) {
