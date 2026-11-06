@@ -297,7 +297,7 @@ body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8p
 
 <script>
 const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-const KM_VER = '1229';   // 🔎 화면 맨 위에 찍히는 버전 — 새 파일이 갔는지 눈으로 본다
+const KM_VER = '1230';   // 🔎 화면 맨 위에 찍히는 버전 — 새 파일이 갔는지 눈으로 본다
 const BASE = 'inventory/meet';
 const BRANCHES = [
   { id:'HOLLYWOOD',      ko:'할리우드',        en:'Hollywood' },
@@ -1178,11 +1178,15 @@ async function startCall(){
   else {
     // 📞 '이 방으로 부르기' 면 방을 고르지 않고 그 방을 그대로 쓴다 (2026-11-05)
     const rr = PK_ROOM ? rooms().find(x => x.id === PK_ROOM) : null;
-    line = rr ? { id: rr.id, url: roomUrl(rr.id), name: rr.name } : pickLine(kind);
+    // 🔴 부름에 실리는 주소는 **Daily 방이면 Daily 주소**여야 한다. 안 그러면 부른 사람은 Daily,
+    //    불려 온 사람은 Jitsi 로 들어가 서로 다른 방에 앉는다 (2026-11-06).
+    line = rr ? { id: rr.id, url: (dailyUrl(rr.id) || roomUrl(rr.id)), name: rr.name } : pickLine(kind);
     if (!line) { alert(t('noLine')); return; }
     id = 'c' + ts + '_' + Math.random().toString(36).slice(2,6);
-    // 새 창은 반드시 누른 그 순간에 연다 (기다렸다 열면 브라우저가 막는다) → 나는 먼저 들어가 기다린다
-    openMeet(line.url);
+    /* 📹 2026-11-06 전무님 "직원을 부르니 화면만 크게 나오고 번역 버튼이 안 보임".
+       [참가] 만 앱 안 영상으로 바꿔 놨고, 「이 방으로 부르기」 는 옛 길(새 창)로 가고 있었다.
+       Daily 방이면 새 창을 열지 않고, 아래에서 [참가] 와 같은 길로 들어간다. */
+    if (!dailyUrl(line.id)) openMeet(line.url);   // 새 창은 누른 그 순간에 열어야 폰이 안 막는다
   }
   closePicker();
   const inv = {}, upd = {};
@@ -1195,7 +1199,11 @@ async function startCall(){
   try {
     const F = window.__fb;
     await F.update(F.ref(F.db, BASE), upd);
-    if (!adding) markMeIn(line.id);
+    if (!adding) {
+      markMeIn(line.id);
+      // 📹 Daily 방이면 [참가] 와 같은 길로 — 앱 안 영상 + 떠 있는 통역 버튼 + 영상 자리로 올리기
+      if (dailyUrl(line.id)) { PENDING = line.id; doJoin(); }
+    }
     return { id, url: line.url };
   } catch(e){ console.warn('[meet] 부르기 실패', e); alert(t('ringFail')); }
 }
