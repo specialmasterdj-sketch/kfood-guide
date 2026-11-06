@@ -11,6 +11,18 @@
 //   채우는 순간 meet.html 이 iframe 으로 이 화면 안에 영상을 띄운다.
 //   (Google Meet 은 iframe 을 막아 두어 이 방식이 안 된다 — 그래서 Daily 를 쓴다)
 //   값이 비어 있는 동안은 완전 무동작 — 지금 방식 그대로다.
+// 2026-11-06 전무님 가입 완료 — 회의 영상을 앱 화면 안에서 연다(통역을 같은 화면에서 쓰려고).
+// dailyRooms 에 적힌 방만 Daily 로 열고, 없는 방은 예전대로 Jitsi 새 창으로 연다.
+// 방을 새로 만들 때마다 여기에 한 줄 더한다 (대시보드 ▸ Rooms ▸ Create room).
 window.KM_MEET = {
-  dailyDomain: '',
+  dailyDomain: 'kimchimart',
+  dailyRooms: {
+    HOLLYWOOD: 'store-hollywood',
+    // MIAMI: 'store-miami',
+    // PEMBROKE_PINES: 'store-pembroke-pines',
+    // CORAL_SPRINGS: 'store-coral-springs',
+    // LASOLAS: 'store-lasolas',
+    // all: 'allbranch',
+    // k_mgr: 'council', k_bm: 'branchmgrs', k_urgent: 'emergency',
+  },
 };

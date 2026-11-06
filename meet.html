@@ -185,6 +185,11 @@ body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8p
 .kind.top small{color:#8a5a00;font-weight:700}
 .call.urgent{border-left:4px solid var(--bad);padding-left:10px}
 @media (max-width:420px){.kinds{grid-template-columns:1fr}}
+/* 🗣 2026-11-06 — 영상이 앱 안에 있을 때는 통역 창을 **바닥 시트**로 띄운다.
+   화면을 다 덮으면 영상이 안 보여 "한 화면에서 둘 다" 가 안 된다. */
+.ov.sheet{align-items:flex-end;padding:0}
+.ov.sheet .box{max-width:100%;border-radius:16px 16px 0 0;max-height:54vh}
+.ov.sheet .trbox{max-height:54vh}
 .trbox{max-width:560px!important;max-height:92vh;display:flex;flex-direction:column;gap:10px}
 .trhd{display:flex;align-items:center;gap:8px}
 .trhd h3{flex:1;margin:0!important}
@@ -564,6 +569,38 @@ function jName(u){
     + (n ? '&userInfo.displayName=' + encodeURIComponent(JSON.stringify(n)) : '');
 }
 const openMeet = u => window.open(isJ(u) ? jName(u) : withAcct(u), '_blank', 'noopener');
+/* 📹 2026-11-06 — Daily 방은 **이 화면 안에서** 연다(전무님: 폰에서 통역 창이 안 보인다).
+   지금 쓰는 Jitsi 서버(meet.ffmuc.net)는 X-Frame-Options 로 끼워넣기를 막아 두어 새 창밖에 안 됐다.
+   Daily 는 끼워넣기를 허용한다 — 영상과 통역이 한 화면에 선다. 목록에 없는 방은 예전대로 새 창. */
+const DAILY = (window.KM_MEET || {});
+const dailyUrl = id => { const n = (DAILY.dailyRooms || {})[id]; return (DAILY.dailyDomain && n) ? ('https://' + DAILY.dailyDomain + '.daily.co/' + n) : ''; };
+let DCALL = null;
+function dailyLib(){
+  if (window.DailyIframe) return Promise.resolve();
+  if (window.__dailyLib) return window.__dailyLib;
+  window.__dailyLib = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@daily-co/daily-js@0.94.0/dist/daily-iframe.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return window.__dailyLib;
+}
+async function openDaily(url, roomId){
+  await dailyLib();
+  const host = document.getElementById('dailyBox');
+  if (!host) return;
+  if (DCALL) { try { DCALL.destroy(); } catch(e){} DCALL = null; }
+  DCALL = window.DailyIframe.createFrame(host, {
+    showLeaveButton: true, showFullscreenButton: true,
+    iframeStyle: { width:'100%', height:'min(62vh,460px)', border:'0', borderRadius:'12px', background:'#000' },
+  });
+  try { await DCALL.join({ url, userName: (me().name || "Kimchi Mart") }); }
+  catch(e){ console.warn('[daily]', e); }
+  // 통역 창이 먼저 열렸으면(들어갈 때 자동으로 연다) 영상이 생긴 지금 바닥 시트로 내린다
+  try { const el = document.getElementById('tr'); if (el) el.classList.add('sheet'); } catch(e){}
+}
+function closeDaily(){ if (DCALL) { try { DCALL.destroy(); } catch(e){} DCALL = null; } }
 const roomUrl = id => { const r = rooms().find(x => x.id === id); return r ? jRoom(r.key) : ''; };
 function askAcct(){
   const v = prompt(t('acctAsk'), getAcct());
@@ -694,7 +731,8 @@ async function doJoin(){
   // 새 창은 누른 그 순간에 연다 — 기록(await)을 먼저 하면 폰 브라우저가 팝업을 막는다
   const url = roomUrl(roomId);
   if (!url) { alert(t('noLine')); return; }
-  openMeet(url);
+  const dUrl = dailyUrl(roomId);
+  if (!dUrl) openMeet(url);   // 📹 Daily 목록에 없는 방은 예전대로 새 창 (2026-11-06)
   /* 🗣 2026-11-05 전무님 "회의에 들어간 다음 통역 버튼 누르는 게 없나?"
      회의는 새 창으로 열리고 통역 창은 이 앱 화면에 남는다 — 돌아와서 눌러야 했다.
      → 들어갈 때 통역 창을 미리 열어 둔다. 돌아오면 바로 있고, 마이크는 직접 켠다(허락 때문). */
@@ -706,7 +744,10 @@ async function doJoin(){
     + esc(t('jTip')) + '</div>'
     // 🗣 2026-11-05 전무님 "회의에 들어간 다음 통역 버튼 누르는 게 없나?" — 들어간 자리에 바로 둔다
     + '<button class="btn p" data-rtr="'+esc(roomId)+'" style="width:100%;margin-top:10px;background:#7c3aed;border-color:#7c3aed">'
-    +   esc(t('trRoom')) + '</button></div>';
+    +   esc(t('trRoom')) + '</button>'
+    + (dUrl ? '<div id="dailyBox" style="margin-top:10px"></div>' : '')
+    + '</div>';
+  if (dUrl) openDaily(dUrl, roomId);   // 📹 자리를 만든 뒤에 띄운다
   const F = window.__fb; const m = me();
   const k = nkey(m.name);
   const rec = { name: m.name || '', branch: m.branch || myBranch(), role: ROLE(), ts: Date.now() };
@@ -730,6 +771,7 @@ async function doJoin(){
   render();
 }
 async function doLeave(){
+  closeDaily();   // 📹 앱 안 영상도 같이 닫는다 (2026-11-06)
   const F = window.__fb; const k = nkey(me().name);
   if (beat) { clearInterval(beat); beat = null; }
   if (JOINED) {
@@ -1528,7 +1570,9 @@ function trOpen(id){
     TR.spoken = new Set();
     TR.unsub = F.onValue(F.ref(F.db, BASE+'/tr/'+id), snap => { if (TR) { TR.all = snap.val() || {}; trProcess(); } });
   }
-  document.getElementById('tr').classList.add('on');
+  const _tr = document.getElementById('tr');
+  _tr.classList.toggle('sheet', !!DCALL);   // 📹 영상이 앱 안에 있으면 바닥 시트로 띄워 영상을 가리지 않는다
+  _tr.classList.add('on');
   trDraw();
 }
 function trClose(){
