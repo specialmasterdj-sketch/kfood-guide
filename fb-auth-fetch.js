@@ -414,13 +414,20 @@ if ('serviceWorker' in navigator) {
         return;
       }
       // 새 창은 반드시 누른 그 순간에 연다 (기다렸다 열면 폰 브라우저가 막는다)
-      if (v.url) window.open(meetUrl(v.url), '_blank', 'noopener');
+      /* 📹 2026-11-06 — Daily 방이면 새 창을 열지 않고 앱 안에서 연다.
+         전에는 불려 온 사람만 새 창으로 가서, 영상은 저쪽 창에 있고 통역 버튼은 앱에 있어
+         '버튼이 안 뜬다' 가 됐다(전무님). 이제 양쪽 다 앱 화면 하나로 끝난다. */
+      const inApp = String(v.url || '').indexOf('.daily.co/') >= 0;
+      if (v.url && !inApp) window.open(meetUrl(v.url), '_blank', 'noopener');
       const at = Date.now();
       patch('/ring/' + uid + '/' + id, { state: 'accepted', at });
       patch('/calls/' + id + '/inv/' + uid, { state: 'accepted', at });
       close();
       // 이 화면은 회의 화면으로 — 거기서 회의 자료·메모를 같이 본다 (영상은 새 창의 Meet)
-      setTimeout(() => { if (onMeet()) location.hash = 'call-' + id; else location.href = MEET + '#call-' + id; }, 600);
+      setTimeout(() => {
+        const go = inApp ? ('join-' + (v.room || '')) : ('call-' + id);   // 📹 앱 안이면 그 방으로 바로 들어간다
+        if (onMeet()) { location.hash = go; } else { location.href = MEET + '#' + go; }
+      }, 600);
     };
     ov.querySelector('#__kmRingNo').onclick = () => {
       askNotifyOnce();
