@@ -5,6 +5,7 @@
 <script type="module" src="./fb-auth-fetch.js?v=7"></script>
 <script type="module" src="./auth-gate.js?v=10"></script>
 <script src="./km-back-button.js?v=3"></script>
+<script src="km-stt.js?v=1"></script>
 <!--
   📹 화상 회의 (2026-10-11)
   전무님: "각 지점 매니저나 슈퍼바이저들과 화상통화를 해 업무지시나 보고를 받고 싶은데"
@@ -297,7 +298,7 @@ body.panel .pnlhd{display:block;font-weight:800;font-size:1.05em;margin:2px 0 8p
 
 <script>
 const FB = 'https://kimchi-mart-order-default-rtdb.firebaseio.com';
-const KM_VER = '1233';   // 🔎 화면 맨 위에 찍히는 버전 — 새 파일이 갔는지 눈으로 본다
+const KM_VER = '1234';   // 🔎 화면 맨 위에 찍히는 버전 — 새 파일이 갔는지 눈으로 본다
 const BASE = 'inventory/meet';
 const BRANCHES = [
   { id:'HOLLYWOOD',      ko:'할리우드',        en:'Hollywood' },
@@ -1649,6 +1650,35 @@ function trClose(){
   TR = null;
   document.getElementById('tr').classList.remove('on');
 }
+/* 🎙 2026-11-06 — 마이크를 켜면 **서버(구글) 받아 적기**를 먼저 쓴다.
+   폰이 글자로 바꾸는 것보다 시끄러운 데서 훨씬 정확하고, 무슨 언어든 알아서 가린다.
+   소리를 못 잡거나 km-stt.js 가 없으면 **예전 방식(브라우저 받아 적기)** 으로 되돌아간다 —
+   통역이 아예 멈추는 일은 없게. */
+let STT_ON = false;
+async function micOn(){
+  if (window.KM_STT) {
+    const ok = await window.KM_STT.start(sendAudio).catch(() => false);
+    if (ok) { STT_ON = true; trDraw(); return; }
+  }
+  STT_ON = false;
+  trRecStart();                      // 안 되면 예전 방식
+  trDraw();
+}
+function micOff(){
+  if (STT_ON) { try { window.KM_STT.stop(); } catch(e){} STT_ON = false; }
+  try { TR.rec && TR.rec.stop(); } catch(e){}
+  const el = document.getElementById('trInt'); if (el) el.textContent = '';
+}
+function sendAudio(u8){
+  if (!TR) return;
+  const F = window.__fb, m = me(), ts = Date.now();
+  const k = 't' + ts + '_' + Math.random().toString(36).slice(2,5);
+  try {
+    F.set(F.ref(F.db, BASE+'/stt/'+TR.id+'/'+k),
+      { b64: window.KM_STT.b64(u8), by: m.name||'', uid: myUid(), lang: TR.lang, ts })
+      .catch(e => console.warn('[stt]', e && e.message));
+  } catch(e){ console.warn('[stt]', e); }
+}
 function trRecStart(){
   if (!TR || !TR.micOn || TR.speaking) return;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
@@ -1724,7 +1754,7 @@ document.addEventListener('click', e => {
   }
   if (b.id === 'trMic') {
     TR.micOn = !TR.micOn;
-    if (TR.micOn) trRecStart(); else { trFlush(); try { TR.rec && TR.rec.stop(); } catch(e){} document.getElementById('trInt').textContent = ''; }
+    if (TR.micOn) micOn(); else { trFlush(); micOff(); }
     trDraw(); return;
   }
 });

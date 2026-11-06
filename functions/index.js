@@ -1678,3 +1678,58 @@ exports.meetTranslate = onValueCreated(
     }
   }
 );
+
+// =============================================================================
+// 🎙 meetStt — 회의 통역의 **말 → 글** 을 구글이 한다 (2026-11-06 전무님 "무조건 잘되게")
+//   지금까지는 폰·브라우저가 공짜로 받아 적었다. 매장은 시끄럽고 발음도 제각각이라
+//   자주 틀렸고(실측: "나도 다시 다시 백"), 「내 언어」를 잘못 고르면 통째로 어긋났다
+//   (스페인어로 두고 영어를 말한 직원: "Hi my name" 이 es 로 들어왔다).
+//
+//   · 폰이 한 문장을 소리 그대로(16kHz 모노) 보낸다 → inventory/meet/stt/{방}/{줄}
+//   · 여기서 받아 적어 inventory/meet/tr/{방}/{줄} 에 적는다
+//   · 그 다음은 meetTranslate 가 그대로 이어받는다 — 번역 쪽은 손대지 않는다
+//   · 소리는 받아 적은 **즉시 지운다** (쌓아 두지 않는다)
+//   🔑 언어를 미리 정하지 않는다 — 한국어·영어·스페인어 중 무엇이든 알아서 가린다.
+// =============================================================================
+const STT_LANGS = ['ko-KR', 'en-US', 'es-US'];
+exports.meetStt = onValueCreated(
+  { ref: '/inventory/meet/stt/{room}/{key}', region: 'us-central1',
+    timeoutSeconds: 60, memory: '512MiB' },
+  async (event) => {
+    const rec = event.data.val();
+    if (!rec || !rec.b64) return;
+    const room = event.params.room, key = event.params.key;
+    const db = admin.database();
+    const kill = () => db.ref('inventory/meet/stt/' + room + '/' + key).remove().catch(() => {});
+    try {
+      const audio = Buffer.from(String(rec.b64), 'base64');
+      if (audio.length < 4000) { await kill(); return; }   // 0.1초도 안 되는 소리는 버린다
+      const { SpeechClient } = require('@google-cloud/speech');
+      const sc = new SpeechClient();
+      const first = STT_LANGS.includes(rec.lang) ? rec.lang
+                  : (rec.lang === 'ko' ? 'ko-KR' : rec.lang === 'es' ? 'es-US' : 'en-US');
+      const [res] = await sc.recognize({
+        config: {
+          encoding: 'LINEAR16', sampleRateHertz: 16000, languageCode: first,
+          alternativeLanguageCodes: STT_LANGS.filter((l) => l !== first),
+          model: 'latest_long', enableAutomaticPunctuation: true,   // 🔴 latest_short 는 첫 마디만 받아 적었다 (2026-11-06 실측)
+        },
+        audio: { content: audio },
+      });
+      // 🔴 구글은 긴 말을 조각 여러 개로 돌려준다. 첫 조각만 읽어서 9초 중 'Good afternoon.' 만 남았다.
+      const text = (res.results || [])
+        .map((r) => (((r.alternatives || [])[0] || {}).transcript || '').trim())
+        .filter(Boolean).join(' ').trim();
+      if (!text) { await kill(); return; }
+      const code = String(((res.results || [])[0] || {}).languageCode || first).toLowerCase();
+      const lang = code.indexOf('ko') === 0 ? 'ko' : code.indexOf('es') === 0 ? 'es' : 'en';
+      await db.ref('inventory/meet/tr/' + room + '/' + key).set({
+        text, lang, by: rec.by || '', uid: rec.uid || '', ts: rec.ts || Date.now(), stt: 1,
+      });
+      console.log('[meetStt]', room, lang, text.length + '자');
+    } catch (e) {
+      console.warn('[meetStt]', (e && e.message) || e);
+    }
+    await kill();
+  }
+);
