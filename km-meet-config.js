@@ -17,12 +17,17 @@
 window.KM_MEET = {
   dailyDomain: 'kimchimart',
   dailyRooms: {
-    HOLLYWOOD: 'store-hollywood',
-    // MIAMI: 'store-miami',
-    // PEMBROKE_PINES: 'store-pembroke-pines',
-    // CORAL_SPRINGS: 'store-coral-springs',
-    // LASOLAS: 'store-lasolas',
-    // all: 'allbranch',
-    // k_mgr: 'council', k_bm: 'branchmgrs', k_urgent: 'emergency',
+    // 2026-11-06 전무님 카드 등록·요금제 올림 → 아홉 방을 모두 Daily 로 옮겼다.
+    //   만든 도구: _Claude_Tools/daily_rooms_make.js (할리우드 방 설정을 그대로 베낀다)
+    //   🔴 이 목록에서 이름을 지우면 그 방은 Jitsi 새 창으로 되돌아간다 — 통역이 따로 논다.
+    HOLLYWOOD:      'store-hollywood',
+    MIAMI:          'store-miami',
+    PEMBROKE_PINES: 'store-pembroke-pines',
+    CORAL_SPRINGS:  'store-coral-springs',
+    LASOLAS:        'store-lasolas',
+    all:            'allbranch',
+    k_mgr:          'council',
+    k_bm:           'branchmgrs',
+    k_urgent:       'emergency',
   },
 };
