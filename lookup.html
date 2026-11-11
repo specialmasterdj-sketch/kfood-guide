@@ -1199,6 +1199,20 @@ function buildIndexes() {
 // branch's prices never leak into another. The baked-in PRODUCTS_DATA is
 // treated as Hollywood's reference set; other branches that haven't been
 // uploaded show an empty state instead of Hollywood prices.
+// 🔴 2026-11-11 — 토막난 목록을 받지도 저장하지도 않는다.
+// POS 자료는 6,000줄씩 나눠 올라간다. 올리는 중간(수십 초)에 앱이 열리면
+// 딱 6,000줄만 받아 localStorage 에 저장해 버린다 — 그 폰은 나머지 9만 개를 못 찾는다.
+// 실제로 할리우드 폰 하나가 `상품 6000개 등록됨` 을 띄우고 있었다.
+// 머리말의 count 와 실제 줄 수가 크게 다르면 덜 올라온 것이니 쓰지 않는다.
+function kmSnapshotTruncated(obj, rowsArr){
+  const want = Number(obj && obj.count) || 0;
+  if (!want || !rowsArr) return false;
+  if (rowsArr.length >= want) return false;
+  const short = want - rowsArr.length;
+  // 몇 줄쯤 모자란 건 봐준다. 1% 넘게 빈다면 올리다 만 것이다.
+  return short > Math.max(50, want * 0.01);
+}
+
 (function loadOverride() {
   try {
     if (!CURRENT_BRANCH){
@@ -1227,7 +1241,10 @@ function buildIndexes() {
         // RTDB 가 큰 array 를 sparse 때문에 object 로 deserialize 하는 경우 fallback.
         const rowsArr = obj && Array.isArray(obj.rows) ? obj.rows
                       : (obj && obj.rows && typeof obj.rows === 'object' ? Object.values(obj.rows) : null);
-        if (rowsArr && rowsArr.length > 0) PRODUCTS_DATA = rowsArr;
+        if (kmSnapshotTruncated(obj, rowsArr)){
+          console.warn('[truncated] 저장돼 있던 목록이 ' + rowsArr.length + '/' + obj.count + ' 줄뿐이라 버립니다');
+          try { localStorage.removeItem(overrideKey(CURRENT_BRANCH)); } catch(e){}
+        } else if (rowsArr && rowsArr.length > 0) PRODUCTS_DATA = rowsArr;
       }
     } else if (CURRENT_BRANCH !== BAKED_IN_BRANCH){
       // Branch selected but no data yet, and this isn't the baked-in branch.
@@ -1257,8 +1274,22 @@ window.addEventListener('products-override', (ev) => {
                 : (remote.rows && typeof remote.rows === 'object' ? Object.values(remote.rows) : null);
   if (!rowsArr || !rowsArr.length) return;
   if (branchId && typeof CURRENT_BRANCH !== 'undefined' && branchId !== CURRENT_BRANCH) return;
+  // 올리는 도중에 받은 토막은 쓰지 않는다 (위 kmSnapshotTruncated 설명 참고)
+  if (kmSnapshotTruncated(remote, rowsArr)){
+    console.warn('[truncated] 받은 목록이 ' + rowsArr.length + '/' + remote.count + ' 줄뿐이라 버립니다 — 잠시 뒤 다시 받습니다');
+    return;
+  }
   PRODUCTS_DATA = rowsArr;
   buildIndexes();
+  // 아래쪽 안내줄도 같이 고친다 — 안 고치면 열 때 숫자가 그대로 남아
+  // "상품 6000개 등록됨" 처럼 거짓 숫자가 화면에 붙어 있는다.
+  try {
+    const st = document.getElementById('status-bar');
+    const bn = (typeof BRANCH_BY_ID !== 'undefined' && BRANCH_BY_ID[CURRENT_BRANCH])
+      ? (BRANCH_BY_ID[CURRENT_BRANCH][LANG] || BRANCH_BY_ID[CURRENT_BRANCH].ko) : CURRENT_BRANCH;
+    if (st) st.innerHTML = '<b>' + bn + '</b> · 상품 <strong>' + rowsArr.length.toLocaleString()
+      + '</strong>개 등록됨 · 스캔 또는 입력으로 시작하세요';
+  } catch(e){}
   const badge = document.querySelector('.update-badge');
   if (badge){
     const date = remote.date || '';
@@ -1853,6 +1884,13 @@ function subscribeProducts(branchId){
     } catch(e){}
     const isNewer = remote.timestamp > localTs;
 
+    // 🔴 올리는 중간에 받은 토막은 메모리에도 넣지 않고 저장도 하지 않는다.
+    //    (kmSnapshotTruncated — 머리말 count 보다 줄이 크게 모자란 경우)
+    if (typeof kmSnapshotTruncated === 'function' && kmSnapshotTruncated(remote, rowsArr)){
+      console.warn('[truncated] 서버 목록이 ' + rowsArr.length + '/' + remote.count + ' 줄뿐 — 아직 올라가는 중입니다. 건너뜁니다');
+      return;
+    }
+
     // Always push remote into memory — the live page needs it regardless of
     // whether persistence succeeds. The non-module script listens for this
     // event, replaces PRODUCTS_DATA, and rebuilds the search indexes.
@@ -1941,6 +1979,11 @@ async function fetchAllBranchPrices(){
       const rowsArr = rowsAsArray(remoteRaw.rows);
       if (!rowsArr.length) return;
       const remote = Object.assign({}, remoteRaw, { rows: rowsArr });
+      // 올라가는 중인 토막은 다른 지점 것이라도 저장하지 않는다
+      if (typeof kmSnapshotTruncated === 'function' && kmSnapshotTruncated(remote, rowsArr)){
+        console.warn('[truncated] ' + b.id + ' 목록이 ' + rowsArr.length + '/' + remote.count + ' 줄뿐 — 건너뜁니다');
+        return;
+      }
       try { localStorage.setItem('kimchi-products-override-' + b.id, JSON.stringify(remote)); } catch(e){}
       window.dispatchEvent(new CustomEvent('products-override', { detail: { branchId: b.id, remote } }));
     } catch(e){ /* offline / no data — skip */ }
