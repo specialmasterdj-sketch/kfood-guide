@@ -802,7 +802,8 @@ window.openDeptSales = async function(){
     <div class="rohide">
     <div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">③ 일괄 붙여넣기 <span style="font-weight:600;color:#94a3b8;font-size:.8em">한 줄에: 부서,YYYY-MM,금액 &nbsp;·&nbsp; 앞에 지점을 붙이면 여러 지점 한꺼번에 → 지점,부서,YYYY-MM,금액</span></div>
     <div style="font-size:.78em;color:#6b7280;margin:-2px 0 6px">지난 달·지난 해 자료도 그냥 넣으면 됩니다 (월을 2026-01 처럼 적으면 그 달로 들어갑니다). 엑셀에서 복사해 붙여넣어도 됩니다.<br>
-      <b style="color:#1a5c3a">🧾 POS 월간 리포트(SUMMARY-SALE REPORT)를 통째로 붙여넣어도 됩니다</b> — 매장·월·부서 매출을 알아서 읽고, 저장 전에 한 번 보여 줍니다.</div>
+      <b style="color:#1a5c3a">🧾 POS 월간 리포트(SUMMARY-SALE REPORT)를 통째로 붙여넣어도 됩니다</b> — 매장·월·부서 매출을 알아서 읽고, 저장 전에 한 번 보여 줍니다.<br>
+      <b style="color:#1a5c3a">👥 손님수(판매 건수)</b>는 보고서에서 같이 읽습니다. 손으로 넣으려면 금액 뒤에 하나 더 — <code style="background:#eef3f0;padding:1px 4px;border-radius:4px">지점,날짜,금액,손님수</code></div>
     <textarea id="dsBulk" rows="5" style="width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#fffde7;font-family:monospace" placeholder="PRODUCE,2026-01,29659.84
 MEAT,2026-01,14931.83
 마이애미,SUSHI,2026-02,10464
@@ -1131,6 +1132,29 @@ window.printSalesCompare=function(){
 };
 function _cAmt(x){ const a=(x&&x.amt!=null)?x.amt:x; const n=parseFloat(a); return isNaN(n)?null:n; }
 function _cFmt(n){ return Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+
+// ===== 👥 손님수(판매 건수) 2026-11-12 =====
+// 전무님: "여기에 손님수 즉 판매 건수도 추가할수있어"
+// POS 보고서의 거래 건수를 hr/{지점}/dailySales/{날짜}/cnt 에 담는다.
+//   · 지점이 다섯이라 표에 칸을 더 붙이면 못 읽는다 → 같은 표를 💵/👥/🧾 로 바꿔 본다.
+//   · 🧾 객단가는 반드시 **합계끼리 나눈다**(매출합÷손님합). 날짜별 객단가를 평균 내면
+//     손님 적은 날이 과하게 반영돼 거짓 숫자가 된다.
+//   · 손님수가 없는 날은 '–' 로 둔다. 0 으로 세면 객단가가 통째로 무너진다.
+let DLY_METRIC='amt';                                   // amt | cnt | avg
+function dlyMetric(m){ DLY_METRIC=m; const el=document.getElementById('dlyOv'); if(el) el.innerHTML=renderDaily(); }
+window.dlyMetric=dlyMetric;
+function _cCnt(x){ const n=parseInt((x&&x.cnt!=null)?x.cnt:NaN,10); return isNaN(n)?null:n; }
+function _mFmt(v){ if(v==null) return null;
+  return DLY_METRIC==='cnt' ? _cFmt(v) : '$'+(DLY_METRIC==='avg' ? Number(v).toFixed(2) : _cFmt(v)); }
+// 합계 칸 — 매출·손님수는 더하고, 객단가는 매출합÷손님합
+function _mAgg(a, c){
+  if(DLY_METRIC==='amt') return a;
+  if(DLY_METRIC==='cnt') return c;
+  return (c>0) ? a/c : null;
+}
+const _mLbl=()=>DLY_METRIC==='cnt' ? (LANG==='ko'?'손님수':LANG==='es'?'Clientes':'Customers')
+             : DLY_METRIC==='avg' ? (LANG==='ko'?'객단가':LANG==='es'?'Ticket medio':'Avg ticket')
+             : (LANG==='ko'?'매출':LANG==='es'?'Ventas':'Sales');
 function _bLbl(b){ return LANG==='ko'?b.ko:String(b.id).replace(/_/g,' '); }
 function _metricByBranch(all, pick){
   const out={};
@@ -1421,7 +1445,8 @@ window.dlyCellDel = async function(bid, dt){
       (dep ? '\n\n(부서별 매출 ' + Object.keys(dep).length + '개는 그대로 둡니다)' : ''))) return;
   try{
     const r = window.__fb.ref(window.__fb.db, 'hr/' + bid + '/dailySales/' + dt);
-    if (dep) await window.__fb.update(r, { amt:null, memo:null, by:null, ts:null });
+    // 매출을 지우면 손님수도 같이 지운다 — 매출 없는 손님수가 남으면 객단가가 ∞ 가 된다
+    if (dep) await window.__fb.update(r, { amt:null, memo:null, by:null, ts:null, cnt:null, cntSrc:null });
     else await window.__fb.remove(r);
     toast('🗑 ' + (b?b.ko:bid) + ' ' + dt.slice(5) + ' 지웠어요');
     await dlyReload();
@@ -1484,6 +1509,35 @@ function _posFindBranch(chunk){
   return { branch:null, storeText:(sm?sm[1].trim():'') };
 }
 function _posNum(x){ return parseFloat(String(x).replace(/[,\[\]\s$]/g,'')); }
+// 👥 손님수(판매 건수) — 2026-11-12
+// 🔴 POS 보고서에서 이 줄이 무슨 이름인지 아직 실물로 확인하지 못했다. 그래서
+//    ⓐ 흔한 이름을 여럿 걸어 두고 ⓑ **어느 줄에서 읽었는지 저장 전에 보여 준다**.
+//    짐작한 숫자를 말없이 담지 않기 위해서다 — 틀린 줄을 읽으면 객단가가 통째로 거짓이 된다.
+// ⚠ 분류 줄의 괄호 숫자(예 `VEGETABLE (457) 1,235.50`)는 쓰지 않는다. 그건 손님수가 아니라
+//    그 분류에서 팔린 개수다. 다 더해도 손님 수가 되지 않는다.
+const POS_CUST_LABELS = [
+  '# OF TRANSACTIONS','NO OF TRANSACTIONS','NUMBER OF TRANSACTIONS','# TRANSACTIONS','TRANSACTIONS',
+  '# OF INVOICES','NO OF INVOICES','NUMBER OF INVOICES','# INVOICES','INVOICES','INVOICE COUNT',
+  '# OF CUSTOMERS','NO OF CUSTOMERS','CUSTOMERS','CUSTOMER COUNT','GUEST COUNT',
+  '# OF RECEIPTS','RECEIPTS','TICKETS','# OF TICKETS','# OF SALES','SALES COUNT',
+];
+// 이름마다 정규식을 만들면 `# TICKETS` 처럼 앞에 기호가 붙은 꼴을 놓친다.
+// 그래서 "이름 + 구분자 + 정수" 꼴의 줄을 먼저 뽑고, **글자만 남겨** 견준다.
+//   '# OF TRANSACTIONS' · '#OF TRANSACTIONS' · 'NO. OF TRANSACTIONS' 가 한 모양이 된다.
+const _custNorm=s=>String(s).toUpperCase().replace(/[^A-Z]/g,'');
+function _posCust(lines){
+  const want=new Set(POS_CUST_LABELS.map(_custNorm));
+  for(const l of lines){
+    // 값은 소수점이 없는 정수여야 한다 — 그래서 금액 줄($12,127.44)은 애초에 안 걸린다.
+    const m=String(l).match(/^\s*([A-Za-z#0-9.\s]+?)[\s:]*\[?\s*([\d,]+)\s*\]?\s*$/);
+    if(!m) continue;
+    if(!want.has(_custNorm(m[1]))) continue;
+    const n=parseInt(String(m[2]).replace(/,/g,''),10);
+    // 손님수는 정수고, 하루 매장 거래가 5만 건을 넘을 리 없다
+    if(isFinite(n) && n>0 && n<50000) return { n, label:String(m[1]).trim() };
+  }
+  return null;
+}
 // "TOTALS" 칸의 한 줄 값 (SUBTOTAL·TAX·TOTAL …) — 이름이 정확히 같은 첫 줄
 function _posLine(lines, from, name){
   const re=new RegExp('^\\s*'+name.replace(/ /g,'\\s+')+'\\s+\\[?\\s*\\$?\\s*(-?[\\d,]+(?:\\.\\d+)?)\\s*\\]?\\s*$','i');
@@ -1526,6 +1580,8 @@ function _parsePosReports(text){
     r.total=_posLine(lines, ti, 'TOTAL');        // 세금 포함 — 일일 매출
     r.subtotal=_posLine(lines, ti, 'SUBTOTAL');  // 세전 순매출 — 부서 합계와 맞아야 함
     r.tax=_posLine(lines, ti, 'TAX');
+    const cu=_posCust(lines);                    // 👥 손님수 — 못 찾으면 null (0 으로 두지 않는다)
+    if(cu){ r.cust=cu.n; r.custLabel=cu.label; }
     // 부서
     const sales=_posCategories(lines, 'CATEGORIES-SALES');
     const rets=_posCategories(lines, 'CATEGORIES-RETURNS');
@@ -1575,6 +1631,11 @@ async function dlyBulkReports(raw){
     const ex=_cAmt(((DAILY_ALL||{})[r.branch]||{})[r.date]);
     let s='▶ '+lbl(r.branch)+' '+r.date+'  TOTAL '+money(r.total)+
       (ex!=null && Math.abs(ex-r.total)>0.004 ? '  (기존 $'+_cFmt(ex)+' → 바뀜)' : '');
+    // 👥 손님수 — 어느 줄에서 읽었는지 같이 보여 준다. 엉뚱한 줄이면 여기서 걸러 주시라고.
+    s += r.cust!=null
+      ? '\n   👥 손님수 '+_cFmt(r.cust)+'명  ← 보고서의 「'+r.custLabel+'」 줄'
+        +'  · 객단가 '+money(r.total/r.cust)
+      : '\n   👥 손님수: 보고서에서 못 찾음 (담지 않습니다)';
     if(r.depts){
       s+='\n   '+Object.keys(r.depts).map(k=>k.replace(/_/g,'-')+' '+_cFmt(r.depts[k])).join(' · ')+
          '\n   나머지 '+money(r.total-r.deptSum)+' (총매출 − 부서 합계, 세금 포함)';
@@ -1591,6 +1652,9 @@ async function dlyBulkReports(raw){
   let ok=0;
   for(const r of good){
     const rec={ amt:r.total, by, ts:Date.now(), src:'POS' };
+    // 👥 손님수 — 찾았을 때만 담는다. 못 찾은 날을 0 으로 담으면 객단가가 무너진다.
+    //    어느 줄에서 읽었는지(cntSrc)도 같이 남겨, 나중에 엉뚱한 줄이면 가려낼 수 있게 한다.
+    if(r.cust!=null){ rec.cnt=r.cust; rec.cntSrc=r.custLabel; }
     // 보고서가 그날의 정답이므로 부서는 통째로 바꾼다 (지난번 값이 섞여 남지 않게)
     if(r.depts && r.deptOk){ rec.depts=r.depts; rec.pos=r.pos; }
     try{
@@ -1717,8 +1781,16 @@ window.dlyBulk = async function(){
         await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+bId+'/dailySales/'+dt+'/depts'), upd);
         okDept++;
       } else {
-        const memo=p.slice(A.next).join(', ');
+        // 👥 금액 다음 칸이 "깔끔한 정수"면 손님수로 본다 — `지점,날짜,금액,손님수`
+        //    메모와 헷갈리지 않게 조건을 좁게 둔다: 숫자만, 소수점·글자·$ 없음, 1~49,999.
+        let rest=p.slice(A.next), cnt=null;
+        if(rest.length){
+          const c0=String(rest[0]).replace(/,/g,'').trim();
+          if(/^\d{1,5}$/.test(c0)){ const n=parseInt(c0,10); if(n>0 && n<50000){ cnt=n; rest=rest.slice(1); } }
+        }
+        const memo=rest.join(', ');
         const rec={amt, by, ts:Date.now()}; if(memo) rec.memo=memo;
+        if(cnt!=null){ rec.cnt=cnt; rec.cntSrc='손입력'; }
         await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+bId+'/dailySales/'+dt), rec);
         ok++;
       }
@@ -1816,22 +1888,26 @@ function _ddSum(m){ return m ? Object.values(m).reduce((a,v)=>a+v,0) : null; }
 function _ddBLbl(x){ return LANG==='ko'?x.ko:String(x.id).replace(/_/g,' '); }
 // 📅 주간 합계 줄 (2026-09-27) — 한 주(일~토)가 끝나는 자리마다 지점별·전체 합계를 끼워 넣는다.
 //   desc = 최신 날짜부터 내려오는 목록 · v(지점,날짜) = 금액 · dayRow(날짜) = 그 날짜 줄 HTML
-function _rowsWithWeek(desc, v, dayRow){
-  const out=[]; let acc={}, days=[];
+// vc = 손님수 접근자(없으면 매출만 쓰던 옛 동작 그대로). 객단가는 합계끼리 나눠야 해서
+// 주간 줄에서도 매출합·손님합을 따로 쌓는다.
+function _rowsWithWeek(desc, v, dayRow, vc){
+  const out=[]; let acc={}, accC={}, days=[];
   const flush=()=>{
     if(days.length>1){
       const to=days[0], from=days[days.length-1];
       const tot=BRANCHES.reduce((a,x)=>a+(acc[x.id]||0),0);
+      const totC=BRANCHES.reduce((a,x)=>a+(accC[x.id]||0),0);
+      const cell=(a,c)=>{ const val=vc?_mAgg(a,c):a; const s=vc?_mFmt(val):('$'+_cFmt(a||0)); return s==null?'–':s; };
       out.push(`<tr style="background:#f1f7f3"><td class="mo" colspan="2" style="text-align:left;font-size:.8em;line-height:1.3;color:#1a5c3a"><b>${t('dRowWeekTot')}</b><br><span style="color:#64748b;font-weight:600">${from.slice(5)}~${to.slice(5)}</span></td>`+
-        BRANCHES.map(x=>`<td style="color:#1a5c3a"><b>$${_cFmt(acc[x.id]||0)}</b></td>`).join('')+
-        `<td style="background:#cfe9da;color:#14532d"><b>$${_cFmt(tot)}</b></td></tr>`);
+        BRANCHES.map(x=>`<td style="color:#1a5c3a"><b>${cell(acc[x.id]||0, accC[x.id]||0)}</b></td>`).join('')+
+        `<td style="background:#cfe9da;color:#14532d"><b>${cell(tot,totC)}</b></td></tr>`);
     }
-    acc={}; days=[];
+    acc={}; accC={}; days=[];
   };
   desc.forEach(d=>{
     out.push(dayRow(d));
     days.push(d);
-    BRANCHES.forEach(x=>{ acc[x.id]=(acc[x.id]||0)+(v(x.id,d)||0); });
+    BRANCHES.forEach(x=>{ acc[x.id]=(acc[x.id]||0)+(v(x.id,d)||0); if(vc) accC[x.id]=(accC[x.id]||0)+(vc(x.id,d)||0); });
     if(new Date(d+'T12:00:00').getDay()===1) flush();   // 월요일 = 그 주의 첫날 → 월~일 한 주 (2026-09-28 전무님)
   });
   flush();
@@ -2043,40 +2119,55 @@ function renderDaily(){
   const _dad=DAILY_ALLDATE||_localDate();
   // ===== 전 지점 매트릭스 (선택 월의 모든 날짜) =====
   const _dv=(bid,d)=>_cAmt((DAILY_ALL[bid]||{})[d]);
+  const _dc=(bid,d)=>_cCnt((DAILY_ALL[bid]||{})[d]);
+  // 지금 고른 단위로 한 칸의 값 — 객단가는 그 날 그 지점의 매출÷손님수
+  const _dm=(bid,d)=>{ const a=_dv(bid,d), c=_dc(bid,d);
+    if(DLY_METRIC==='amt') return a;
+    if(DLY_METRIC==='cnt') return c;
+    return (a!=null && c) ? a/c : null; };
   const bShort=x=>LANG==='ko'?x.ko:String(x.id).replace(/_/g,' ');
   const daySet=new Set(); BRANCHES.forEach(x=>_dailyDates(DAILY_ALL[x.id]).forEach(d=>{ if(d.slice(0,7)===mo) daySet.add(d); }));
   const mAsc=[...daySet].sort();
   const mDesc=mAsc.slice().reverse();
   const dayTotOf=d=>BRANCHES.reduce((s,x)=>s+(_dv(x.id,d)||0),0);
-  const bMonthTot={}; BRANCHES.forEach(x=>{ bMonthTot[x.id]=mAsc.reduce((s,d)=>s+(_dv(x.id,d)||0),0); });
+  const dayCntOf=d=>BRANCHES.reduce((s,x)=>s+(_dc(x.id,d)||0),0);
+  const dayShowOf=d=>_mAgg(dayTotOf(d), dayCntOf(d));
+  const bMonthTot={}, bMonthCnt={};
+  BRANCHES.forEach(x=>{ bMonthTot[x.id]=mAsc.reduce((s,d)=>s+(_dv(x.id,d)||0),0);
+                        bMonthCnt[x.id]=mAsc.reduce((s,d)=>s+(_dc(x.id,d)||0),0); });
   const grandTot=BRANCHES.reduce((s,x)=>s+bMonthTot[x.id],0);
+  const grandCnt=BRANCHES.reduce((s,x)=>s+bMonthCnt[x.id],0);
+  // 손님수가 한 건도 없으면 👥·🧾 단추를 눌러도 빈 표만 나온다 — 그래서 안내를 띄운다
+  const anyCnt = mAsc.some(d=>BRANCHES.some(x=>_dc(x.id,d)!=null));
   const matRows = mDesc.length ? _rowsWithWeek(mDesc, _dv, d=>{
+    const dShow=dayShowOf(d);
     return `<tr><td class="mo">${d.slice(5)}</td><td style="text-align:center;color:#64748b">${_wkLbl(d)}</td>`+
-      BRANCHES.map(x=>{ const v=_dv(x.id,d);
+      BRANCHES.map(x=>{ const v=_dm(x.id,d); const s=_mFmt(v);
         // 값이 있는 칸은 누르면 지울 수 있다 — 잘못 넣은 날(아직 안 끝난 오늘 등)을 바로 지우려고
-        return v==null?'<td class="na">–</td>'
-          : RO ? `<td>$${_cFmt(v)}</td>`
-          :`<td onclick="dlyCellDel('${x.id}','${d}')" title="${esc(LANG==='ko'?'누르면 이 값을 지웁니다':'Tap to delete this entry')}" style="cursor:pointer">$${_cFmt(v)}</td>`; }).join('')+
-      `<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(dayTotOf(d))}</b></td></tr>`;
-  }) : `<tr><td colspan="${BRANCHES.length+3}" class="muted">${t('dNoAny')}</td></tr>`;
+        return s==null?'<td class="na">–</td>'
+          : RO ? `<td>${s}</td>`
+          :`<td onclick="dlyCellDel('${x.id}','${d}')" title="${esc(LANG==='ko'?'누르면 이 값을 지웁니다':'Tap to delete this entry')}" style="cursor:pointer">${s}</td>`; }).join('')+
+      `<td style="background:#e8f5ee;color:#1a5c3a"><b>${_mFmt(dShow)||'–'}</b></td></tr>`;
+  }, _dc) : `<tr><td colspan="${BRANCHES.length+3}" class="muted">${t('dNoAny')}</td></tr>`;
   const matHint = RO ? '' : '<div style="font-size:.72em;color:#94a3b8;margin:2px 0 6px">' +
     (LANG==='ko' ? '숫자를 누르면 그 지점·그 날짜 매출을 지울 수 있어요 (부서 매출은 남습니다)'
                  : 'Tap an amount to delete that store\'s entry for that day') + '</div>';
+  const _mo1=(a,c)=>_mFmt(_mAgg(a,c))||'–';
   const matFoot = mDesc.length ? `<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
-      BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>$${_cFmt(bMonthTot[x.id])}</b></td>`).join('')+
-      `<td style="background:#1a5c3a;color:#fff"><b>$${_cFmt(grandTot)}</b></td></tr>` : '';
+      BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>${_mo1(bMonthTot[x.id],bMonthCnt[x.id])}</b></td>`).join('')+
+      `<td style="background:#1a5c3a;color:#fff"><b>${_mo1(grandTot,grandCnt)}</b></td></tr>` : '';
   // 전 지점 합계 일별 차트 — 제일 높은 날만 금액을 적는다
-  const gvals=mAsc.map(d=>({d, v:dayTotOf(d)}));
+  const gvals=mAsc.map(d=>({d, v:dayShowOf(d)||0}));
   const gmx=Math.max(1,...gvals.map(r=>r.v));
   const gpk=Math.max(0,...gvals.map(r=>r.v));
   const gChart = gvals.length ? gvals.map(r=>{ const h=Math.round(r.v/gmx*100); const pk=(r.v===gpk&&gpk>0);
-    return `<div title="${r.d}: $${_cFmt(r.v)}" style="flex:1;min-width:7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px">`+
-      (pk?`<div style="font-size:.6em;font-weight:900;color:#1a5c3a;white-space:nowrap">$${_cFmt(r.v)}</div>`:'')+
+    return `<div title="${r.d}: ${_mFmt(r.v)}" style="flex:1;min-width:7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px">`+
+      (pk?`<div style="font-size:.6em;font-weight:900;color:#1a5c3a;white-space:nowrap">${_mFmt(r.v)}</div>`:'')+
       `<div style="width:72%;max-width:22px;height:${h}%;background:linear-gradient(180deg,${pk?'#f59e0b,#b45309':'#2e8b57,#1a5c3a'});border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:.58em;color:${pk?'#b45309':'#94a3b8'};font-weight:${pk?'900':'400'}">${r.d.slice(8)}</div></div>`;
   }).join('') : '';
   // 📈 지점별 일별 꺾은선 — 매출 비교 화면과 같은 그래프를 날짜 축으로 쓴다
   const dlyLine = mAsc.length>1 ? _cmpChartSeries(BRANCHES.map(x=>{
-    const dd={}; mAsc.forEach(d=>{ const v=_dv(x.id,d); if(v!=null) dd[d]=v; });
+    const dd={}; mAsc.forEach(d=>{ const v=_dm(x.id,d); if(v!=null) dd[d]=v; });
     return { name:bShort(x), color:CMP_COLORS[x.id]||'#64748b', data:dd };
   }), { xLab:d=>d.slice(8) }) : '';
 
@@ -2119,15 +2210,31 @@ function renderDaily(){
     ${DLY_BACK_NOTE?`<div style="background:#fff7ed;border:1.5px solid #fdba74;color:#9a3412;border-radius:10px;padding:8px 11px;font-size:.82em;font-weight:700;margin-bottom:8px">${t('dBackMonth')(DLY_BACK_NOTE)}</div>`:''}
     <div style="font-size:.74em;color:#64748b;margin:-2px 0 8px;line-height:1.45">📊 ${t('dAutoNote')}</div>
 
-    <div style="font-weight:900;color:#1a5c3a;margin:2px 0 6px">🏬 ${t('dMatrix')}</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 6px">
+      <div style="font-weight:900;color:#1a5c3a">🏬 ${t('dMatrix')}</div>
+      <span style="flex:1"></span>
+      <div style="display:flex;gap:4px;background:#eef3f0;border-radius:999px;padding:3px">
+        ${[['amt','💵',LANG==='ko'?'매출':LANG==='es'?'Ventas':'Sales'],
+           ['cnt','👥',LANG==='ko'?'손님수':LANG==='es'?'Clientes':'Customers'],
+           ['avg','🧾',LANG==='ko'?'객단가':LANG==='es'?'Ticket medio':'Avg ticket']].map(([k,ic,nm])=>{
+          const on=(DLY_METRIC===k);
+          return `<button onclick="dlyMetric('${k}')" style="border:0;cursor:pointer;border-radius:999px;padding:6px 12px;font-family:inherit;font-size:.8em;font-weight:${on?'900':'700'};background:${on?'#1a5c3a':'transparent'};color:${on?'#fff':'#64748b'}">${ic} ${esc(nm)}</button>`;
+        }).join('')}
+      </div>
+    </div>
+    ${(DLY_METRIC!=='amt' && !anyCnt)?`<div style="background:#fff7ed;border:1.5px solid #fdba74;color:#9a3412;border-radius:10px;padding:9px 12px;font-size:.8em;font-weight:700;margin-bottom:8px;line-height:1.5">
+      ${LANG==='ko'?'👥 이 달에 손님수가 아직 한 건도 없습니다.<br><span style="font-weight:600">POS 보고서를 붙여넣으면 거래 건수를 같이 읽어 담습니다. 아래 ③ 칸에 <b>지점,날짜,금액,손님수</b> 로 직접 넣어도 됩니다.</span>'
+        :LANG==='es'?'👥 Aún no hay conteo de clientes este mes. Pegue el reporte POS, o use <b>sucursal,fecha,monto,clientes</b>.'
+        :'👥 No customer counts yet this month. Paste the POS report, or enter <b>branch,date,amount,customers</b> below.'}
+    </div>`:''}
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:8px 10px;overflow-x:auto">
       ${matHint}
       <table class="cmp"><tr><th style="text-align:left">${t('dCols')[0]}</th><th style="text-align:center">${t('dCols')[1]}</th>${BRANCHES.map(x=>`<th>${esc(bShort(x))}</th>`).join('')}<th>${t('dColTotal')}</th></tr>${matRows}${matFoot}</table>
     </div>
 
-    ${dlyLine?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartBr')}</div>${dlyLine}`:''}
+    ${dlyLine?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartBr')} <span style="font-weight:700;color:#64748b;font-size:.78em">— ${_mLbl()}</span></div>${dlyLine}`:''}
 
-    ${gvals.length?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartAll')}</div>
+    ${gvals.length?`<div style="font-weight:900;color:#1a5c3a;margin:14px 0 6px">📈 ${t('dChartAll')} <span style="font-weight:700;color:#64748b;font-size:.78em">— ${_mLbl()}</span></div>
     <div style="background:#fff;border:1.5px solid var(--bd);border-radius:12px;padding:12px 10px 8px;display:flex;align-items:flex-end;gap:3px;height:150px">${gChart}</div>`:''}
 
     ${grandTot>0?`<div class="rohide" style="margin-top:12px"><button class="btn" style="width:100%" onclick="dlyRollupAll()">💾 ${t('dRollupAll')}</button>
