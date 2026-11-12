@@ -1146,11 +1146,20 @@ window.dlyMetric=dlyMetric;
 function _cCnt(x){ const n=parseInt((x&&x.cnt!=null)?x.cnt:NaN,10); return isNaN(n)?null:n; }
 function _mFmt(v){ if(v==null) return null;
   return DLY_METRIC==='cnt' ? _cFmt(v) : '$'+(DLY_METRIC==='avg' ? Number(v).toFixed(2) : _cFmt(v)); }
-// 합계 칸 — 매출·손님수는 더하고, 객단가는 매출합÷손님합
-function _mAgg(a, c){
-  if(DLY_METRIC==='amt') return a;
-  if(DLY_METRIC==='cnt') return c;
-  return (c>0) ? a/c : null;
+// 합계 칸 — 여러 날·여러 지점을 하나로 묶는다. pairs = [{a:매출, c:손님수}]
+// 🔴 객단가는 **손님수가 있는 날의 매출만** 모아 나눈다.
+//    손님수가 3일치뿐인데 매출을 11일치 다 더해 나누면 $150 짜리 거짓 객단가가 나온다
+//    (2026-11-12 시험에서 실제로 그렇게 나왔다 — 진짜 값은 $32 쯤이다).
+// 🔴 자료가 한 건도 없으면 0 이 아니라 null 을 돌려준다. 0 으로 두면 '손님 0명' 처럼 보인다.
+function _mRoll(pairs){
+  let a=0, c=0, aWithC=0, anyA=false, anyC=false;
+  pairs.forEach(p=>{
+    if(p.a!=null){ a+=p.a; anyA=true; }
+    if(p.c!=null){ c+=p.c; anyC=true; if(p.a!=null) aWithC+=p.a; }
+  });
+  if(DLY_METRIC==='amt') return anyA? a : null;
+  if(DLY_METRIC==='cnt') return anyC? c : null;
+  return (anyC && c>0) ? aWithC/c : null;
 }
 const _mLbl=()=>DLY_METRIC==='cnt' ? (LANG==='ko'?'손님수':LANG==='es'?'Clientes':'Customers')
              : DLY_METRIC==='avg' ? (LANG==='ko'?'객단가':LANG==='es'?'Ticket medio':'Avg ticket')
@@ -1891,23 +1900,23 @@ function _ddBLbl(x){ return LANG==='ko'?x.ko:String(x.id).replace(/_/g,' '); }
 // vc = 손님수 접근자(없으면 매출만 쓰던 옛 동작 그대로). 객단가는 합계끼리 나눠야 해서
 // 주간 줄에서도 매출합·손님합을 따로 쌓는다.
 function _rowsWithWeek(desc, v, dayRow, vc){
-  const out=[]; let acc={}, accC={}, days=[];
+  const out=[]; let acc={}, days=[];
   const flush=()=>{
     if(days.length>1){
       const to=days[0], from=days[days.length-1];
-      const tot=BRANCHES.reduce((a,x)=>a+(acc[x.id]||0),0);
-      const totC=BRANCHES.reduce((a,x)=>a+(accC[x.id]||0),0);
-      const cell=(a,c)=>{ const val=vc?_mAgg(a,c):a; const s=vc?_mFmt(val):('$'+_cFmt(a||0)); return s==null?'–':s; };
+      const all=BRANCHES.reduce((a,x)=>a.concat(acc[x.id]||[]),[]);
+      // vc 가 없으면 옛 동작 그대로 — 매출만 더해 보여준다
+      const cell=ps=>{ if(!vc) return '$'+_cFmt(ps.reduce((s,p)=>s+(p.a||0),0)); return _mFmt(_mRoll(ps))||'–'; };
       out.push(`<tr style="background:#f1f7f3"><td class="mo" colspan="2" style="text-align:left;font-size:.8em;line-height:1.3;color:#1a5c3a"><b>${t('dRowWeekTot')}</b><br><span style="color:#64748b;font-weight:600">${from.slice(5)}~${to.slice(5)}</span></td>`+
-        BRANCHES.map(x=>`<td style="color:#1a5c3a"><b>${cell(acc[x.id]||0, accC[x.id]||0)}</b></td>`).join('')+
-        `<td style="background:#cfe9da;color:#14532d"><b>${cell(tot,totC)}</b></td></tr>`);
+        BRANCHES.map(x=>`<td style="color:#1a5c3a"><b>${cell(acc[x.id]||[])}</b></td>`).join('')+
+        `<td style="background:#cfe9da;color:#14532d"><b>${cell(all)}</b></td></tr>`);
     }
-    acc={}; accC={}; days=[];
+    acc={}; days=[];
   };
   desc.forEach(d=>{
     out.push(dayRow(d));
     days.push(d);
-    BRANCHES.forEach(x=>{ acc[x.id]=(acc[x.id]||0)+(v(x.id,d)||0); if(vc) accC[x.id]=(accC[x.id]||0)+(vc(x.id,d)||0); });
+    BRANCHES.forEach(x=>{ (acc[x.id]=acc[x.id]||[]).push({ a:v(x.id,d), c:vc?vc(x.id,d):null }); });
     if(new Date(d+'T12:00:00').getDay()===1) flush();   // 월요일 = 그 주의 첫날 → 월~일 한 주 (2026-09-28 전무님)
   });
   flush();
@@ -2130,13 +2139,13 @@ function renderDaily(){
   const mAsc=[...daySet].sort();
   const mDesc=mAsc.slice().reverse();
   const dayTotOf=d=>BRANCHES.reduce((s,x)=>s+(_dv(x.id,d)||0),0);
-  const dayCntOf=d=>BRANCHES.reduce((s,x)=>s+(_dc(x.id,d)||0),0);
-  const dayShowOf=d=>_mAgg(dayTotOf(d), dayCntOf(d));
-  const bMonthTot={}, bMonthCnt={};
+  const _pairsOfDay=d=>BRANCHES.map(x=>({a:_dv(x.id,d), c:_dc(x.id,d)}));
+  const dayShowOf=d=>_mRoll(_pairsOfDay(d));
+  const bMonthTot={}, bMonthPairs={};
   BRANCHES.forEach(x=>{ bMonthTot[x.id]=mAsc.reduce((s,d)=>s+(_dv(x.id,d)||0),0);
-                        bMonthCnt[x.id]=mAsc.reduce((s,d)=>s+(_dc(x.id,d)||0),0); });
+                        bMonthPairs[x.id]=mAsc.map(d=>({a:_dv(x.id,d), c:_dc(x.id,d)})); });
   const grandTot=BRANCHES.reduce((s,x)=>s+bMonthTot[x.id],0);
-  const grandCnt=BRANCHES.reduce((s,x)=>s+bMonthCnt[x.id],0);
+  const allPairs=BRANCHES.reduce((a,x)=>a.concat(bMonthPairs[x.id]),[]);
   // 손님수가 한 건도 없으면 👥·🧾 단추를 눌러도 빈 표만 나온다 — 그래서 안내를 띄운다
   const anyCnt = mAsc.some(d=>BRANCHES.some(x=>_dc(x.id,d)!=null));
   const matRows = mDesc.length ? _rowsWithWeek(mDesc, _dv, d=>{
@@ -2152,16 +2161,16 @@ function renderDaily(){
   const matHint = RO ? '' : '<div style="font-size:.72em;color:#94a3b8;margin:2px 0 6px">' +
     (LANG==='ko' ? '숫자를 누르면 그 지점·그 날짜 매출을 지울 수 있어요 (부서 매출은 남습니다)'
                  : 'Tap an amount to delete that store\'s entry for that day') + '</div>';
-  const _mo1=(a,c)=>_mFmt(_mAgg(a,c))||'–';
+  const _mo1=ps=>_mFmt(_mRoll(ps))||'–';
   const matFoot = mDesc.length ? `<tr><td class="mo" colspan="2">${t('dRowMonthTot')}</td>`+
-      BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>${_mo1(bMonthTot[x.id],bMonthCnt[x.id])}</b></td>`).join('')+
-      `<td style="background:#1a5c3a;color:#fff"><b>${_mo1(grandTot,grandCnt)}</b></td></tr>` : '';
+      BRANCHES.map(x=>`<td style="background:#e8f5ee;color:#1a5c3a"><b>${_mo1(bMonthPairs[x.id])}</b></td>`).join('')+
+      `<td style="background:#1a5c3a;color:#fff"><b>${_mo1(allPairs)}</b></td></tr>` : '';
   // 전 지점 합계 일별 차트 — 제일 높은 날만 금액을 적는다
-  const gvals=mAsc.map(d=>({d, v:dayShowOf(d)||0}));
+  const gvals=mAsc.map(d=>({d, raw:dayShowOf(d), v:dayShowOf(d)||0}));
   const gmx=Math.max(1,...gvals.map(r=>r.v));
   const gpk=Math.max(0,...gvals.map(r=>r.v));
   const gChart = gvals.length ? gvals.map(r=>{ const h=Math.round(r.v/gmx*100); const pk=(r.v===gpk&&gpk>0);
-    return `<div title="${r.d}: ${_mFmt(r.v)}" style="flex:1;min-width:7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px">`+
+    return `<div title="${r.d}: ${r.raw==null?(LANG==='ko'?'자료 없음':'no data'):_mFmt(r.raw)}" style="flex:1;min-width:7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px">`+
       (pk?`<div style="font-size:.6em;font-weight:900;color:#1a5c3a;white-space:nowrap">${_mFmt(r.v)}</div>`:'')+
       `<div style="width:72%;max-width:22px;height:${h}%;background:linear-gradient(180deg,${pk?'#f59e0b,#b45309':'#2e8b57,#1a5c3a'});border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:.58em;color:${pk?'#b45309':'#94a3b8'};font-weight:${pk?'900':'400'}">${r.d.slice(8)}</div></div>`;
   }).join('') : '';
