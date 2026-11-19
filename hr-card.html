@@ -1536,6 +1536,19 @@ const POS_CUST_LABELS = [
 const _custNorm=s=>String(s).toUpperCase().replace(/[^A-Z]/g,'');
 function _posCust(lines){
   const want=new Set(POS_CUST_LABELS.map(_custNorm));
+  // Vela 보고서: "TRANSACTIONS" 칸 머리글(숫자 없는 줄) 아래의 "COUNT 442" 줄이 손님수다.
+  // 같은 칸의 "COUNT (S/R) 413" 은 반품 포함 수라 건너뛴다.
+  for(let i=0;i<lines.length;i++){
+    if(_custNorm(lines[i])!=='TRANSACTIONS') continue;
+    for(let j=i+1;j<lines.length;j++){
+      if(/^\s*-{5,}/.test(lines[j])) break;            // 칸 끝
+      const cm=lines[j].match(/^\s*COUNT\s+\[?\s*([\d,]+)\s*\]?\s*$/i);
+      if(cm){
+        const n=parseInt(cm[1].replace(/,/g,''),10);
+        if(isFinite(n)&&n>0&&n<50000) return { n, label:'TRANSACTIONS COUNT' };
+      }
+    }
+  }
   for(const l of lines){
     // 값은 소수점이 없는 정수여야 한다 — 그래서 금액 줄($12,127.44)은 애초에 안 걸린다.
     const m=String(l).match(/^\s*([A-Za-z#0-9.\s]+?)[\s:]*\[?\s*([\d,]+)\s*\]?\s*$/);
