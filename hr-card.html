@@ -1593,6 +1593,9 @@ function _parsePosReports(text){
   if(!chunks.length) chunks=[String(text)];   // 제목 없이 본문만 붙인 경우 — 통째로 한 보고서
   return chunks.map(c=>{
     const r={};
+    // 🗂 원문 보관용 (2026-11-20) — 숫자만 골라 담다 보니 11/1~12 손님수를 되살릴 수 없었다.
+    //    원문을 같이 남겨 두면 나중에 새 항목(결제수단·판매 개수 등)이 필요해져도 다시 뽑지 않아도 된다.
+    r.raw=String(c).replace(/\s+$/,'').slice(0,30000);
     const lines=c.split(/\r?\n/);
     // 날짜 — 제목 바로 아래 "Thu 09/17/2026". 아래 FIRST/LAST 거래 시각에도 날짜가 있으니 맨 처음 것.
     const dm=c.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -1671,7 +1674,7 @@ async function dlyBulkReports(raw){
   });
   if(!confirm('POS 보고서 '+good.length+'개를 저장할까요?\n\n'+blocks.join('\n\n')+(bad.length?'\n\n⚠ 건너뜀:\n'+bad.join('\n'):''))) return;
   const by=(me()&&me().name)||'';
-  let ok=0;
+  let ok=0, rawOk=0; const rawBad=[];
   for(const r of good){
     const rec={ amt:r.total, by, ts:Date.now(), src:'POS' };
     // 👥 손님수 — 찾았을 때만 담는다. 못 찾은 날을 0 으로 담으면 객단가가 무너진다.
@@ -1682,10 +1685,21 @@ async function dlyBulkReports(raw){
     try{
       await window.__fb.update(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/dailySales/'+r.date), rec);
       ok++; DAILY_MONTH=r.date.slice(0,7);
-    }catch(e){ bad.push(lbl(r.branch)+' '+r.date+': 저장 실패'); }
+    }catch(e){ bad.push(lbl(r.branch)+' '+r.date+': 저장 실패'); continue; }
+    // 🗂 보고서 원문 — dailySales 와 **다른 칸**(dailyRaw)에 둔다. dailySales 는 화면을 열 때마다
+    //    전 지점 것을 통째로 읽으므로, 원문(하루 4KB쯤)을 거기 넣으면 1년 뒤 화면이 느려진다.
+    //    원문 저장이 실패해도 매출 저장은 이미 끝났으니 멈추지 않고, 끝에 알려만 준다.
+    if(r.raw){
+      try{
+        await window.__fb.set(window.__fb.ref(window.__fb.db,'hr/'+r.branch+'/dailyRaw/'+r.date), { text:r.raw, by, ts:Date.now() });
+        rawOk++;
+      }catch(e){ rawBad.push(lbl(r.branch)+' '+r.date); }
+    }
   }
   const skipped=good.filter(r=>r.depts && !r.deptOk).map(r=>lbl(r.branch)+' '+r.date);
   alert('✅ '+ok+'개 지점 저장 (총매출'+(good.some(r=>r.depts&&r.deptOk)?' + 부서매출':'')+')'+
+    (rawOk?'\n🗂 보고서 원문 '+rawOk+'개 보관':'')+
+    (rawBad.length?'\n\n⚠ 보고서 원문은 보관 못 함 (매출은 저장됨): '+rawBad.join(', '):'')+
     (skipped.length?'\n\n⚠ 부서매출 안 넣음 (보고서 잘림): '+skipped.join(', '):'')+(bad.length?'\n\n⚠ '+bad.join('\n'):''));
   const ta=document.getElementById('dlyBulk'); if(ta && ok) ta.value='';
   await dlyReload();
