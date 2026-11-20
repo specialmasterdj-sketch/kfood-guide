@@ -1731,9 +1731,32 @@ function canAccessHRRoom(){
   if (nm === 'DJ' || nm === 'SUNKIM' || nm === 'DANIELBANOS') return true;
   return false;
 }
+// 🔐 2026-11-20 사장님 지시: HR Inquiries 방 '열람'은 사장님(DJ) · 다니엘 바노스(HR Manager) · 마이클(서버 REST 로 읽음) 만,
+//   '답장'은 사장님 · 마이클만 (다니엘은 읽기 전용). 그 외 누구든 HR Inquiry 를 누르면 건의 작성 창.
+//   이름(chat.me)은 사칭 가능 → Firebase 로그인 계정(이메일·전화)으로만 판정. 비밀번호(/secrets/hrInquiryPin)는 그대로.
+//   허락할 사람이 생기면 아래 VIEW 명단에 계정을 추가.
+const HR_INQ_VIEW_EMAILS  = ['specialmasterdj@gmail.com', 'jdanielbanos@gmail.com'];
+const HR_INQ_VIEW_PHONES  = ['+19544945025', '+17863197181'];   // DJ · DANIEL BANOS
+const HR_INQ_REPLY_EMAILS = ['specialmasterdj@gmail.com'];
+const HR_INQ_REPLY_PHONES = ['+19544945025'];
+function _hrInqUser(){ return (window.__fb && window.__fb.auth && window.__fb.auth.currentUser) || null; }
+function _hrInqMatch(emails, phones){
+  const u = _hrInqUser(); if (!u) return false;
+  const em = String(u.email || '').toLowerCase().trim();
+  const ph = String(u.phoneNumber || '').trim();
+  return (!!em && emails.includes(em)) || (!!ph && phones.includes(ph));
+}
+function canViewHRInquiries(){ return _hrInqMatch(HR_INQ_VIEW_EMAILS, HR_INQ_VIEW_PHONES); }
+function canReplyHRInquiries(){ return _hrInqMatch(HR_INQ_REPLY_EMAILS, HR_INQ_REPLY_PHONES); }
+function _hrInqReadOnlyNotice(){
+  alert(({ko:'HR Inquiries 답장은 사장님·HQ Supervisor Michael 만 할 수 있습니다.', en:'Only the owner and HQ Supervisor Michael can reply in HR Inquiries.', es:'Solo el dueño y HQ Supervisor Michael pueden responder en Consultas de RH.'})[LANG] || 'Read only');
+}
 // HR 건의 작성 모달 — 본인 등록 안 된 사용자도 지점/이름만 입력하면 보낼 수 있게 자동 안내
 function _hrT(k){ return (CHAT_T[k] && (CHAT_T[k][LANG] || CHAT_T[k].ko)) || ''; }
 function openHRInquiryModal(){
+  // ?room=hr_inquiries 재시도가 창을 다시 열며 쓰던 글을 지우지 않게 — 이미 떠 있으면 그대로 둠
+  const _ov = document.getElementById('hrOverlay');
+  if (_ov && _ov.classList.contains('show')) return;
   if (!me || !me.name){
     if (confirm(_hrT('hr_need_login'))) {
       if (typeof openMeModal === 'function') openMeModal();
@@ -1800,11 +1823,10 @@ async function submitHRInquiry(){
       method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    // 룸 메타 lastMsg 갱신 (목록 표시용 — 열람권한자에게만 보임)
-    const previewText = text ? text.slice(0, 60) : (photos.length ? `📷 ${photos.length}` : '');
+    // 룸 메타는 모든 직원 방 목록에 보이므로 내용은 절대 안 적음 (2026-11-20) — '새 건의' 표시만
     fetch(`${FB_DB_URL}/chat/rooms/hr_inquiries.json`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ lastMsg: '【' + subject + '】 ' + previewText, lastTs: ts })
+      body: JSON.stringify({ lastMsg: '📨 New HR inquiry', lastTs: ts })
     }).catch(()=>{});
     HR_ATTACH = [];
     renderHRPreviews();
@@ -1997,7 +2019,8 @@ function renderRooms(){
       if (ROOM_QUERY) {
         const nm = roomLocalName(id, r);
         const ds = roomLocalDesc(id, r);
-        const hay = (nm + ' ' + ds + ' ' + (r.lastMsg||'')).toLowerCase();
+        const _lm = (id === 'hr_inquiries' && !canViewHRInquiries()) ? '' : (r.lastMsg||'');
+        const hay = (nm + ' ' + ds + ' ' + _lm).toLowerCase();
         if (!hay.includes(ROOM_QUERY)) return false;
       }
       if (ROOM_FILTER === 'unread' && !(r.unread > 0)) return false;
@@ -2059,7 +2082,8 @@ function renderRooms(){
     const lastTime = r.lastTs ? new Date(r.lastTs).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}) : '';
     const unread = r.unread > 0 ? `<span class="un">${r.unread > 99 ? '99+' : r.unread}</span>` : '';
     const nm = roomLocalName(id, r);
-    const ds = r.lastMsg || roomLocalDesc(id, r);
+    // 🔐 HR 방은 열람자 외엔 마지막 글 미리보기 대신 방 설명만 (서버에 남은 옛 미리보기 포함)
+    const ds = (id === 'hr_inquiries' && !canViewHRInquiries()) ? roomLocalDesc(id, r) : (r.lastMsg || roomLocalDesc(id, r));
     return `<div class="room-item${active}" onclick="openRoom('${id}')">
       <div class="icon">${roomIconFor(id, nm)}</div>
       <div class="info">
@@ -2316,7 +2340,15 @@ function openRoom(id){
     // 🆕 2026-05-28 사장님 지시: 모든 직원이 메시지 보낼 수 있게 오픈.
     // 단, 본문 열람은 OWNER / SUN KIM 만.
     // 비권한자가 사이드바에서 클릭하면 방 입장 대신 HR 건의 모달 자동 오픈.
-    if (!canAccessHRRoom()){
+    if (!canViewHRInquiries()){
+      // 로그인 확인 전이면 판정을 미룸 (사장님이 건의 창으로 잘못 빠지지 않게)
+      if (!_hrInqUser()) {
+        if (!window.__hrInqWaitAuth) {
+          window.__hrInqWaitAuth = true;
+          window.addEventListener('km-fb-auth-changed', () => { window.__hrInqWaitAuth = false; openRoom(id); }, { once:true });
+        }
+        return;
+      }
       try { if (typeof openHRInquiryModal === 'function') openHRInquiryModal(); } catch(_){}
       return;
     }
@@ -2408,6 +2440,11 @@ function openRoom(id){
         + ` <button onclick="try{openHRInquiryModal()}catch(_){}" style="background:#b45309;color:#fff;border:0;border-radius:8px;padding:5px 12px;font-weight:800;font-size:.95em;cursor:pointer;font-family:inherit">📮 ${({ko:'HR 문의 열기',en:'Open HR Inquiries',es:'Abrir HR'})[LANG]||'HR'}</button>`;
       const _comp = document.getElementById('composer');
       if (_comp && _comp.parentNode) _comp.parentNode.insertBefore(bn, _comp);
+    } else if (id === 'hr_inquiries' && !canReplyHRInquiries()) {
+      // 🔐 HR Inquiries — 다니엘(HR Manager)은 읽기 전용, 답장은 사장님·마이클만
+      input.disabled = true;
+      if (_sendBtnEl) _sendBtnEl.disabled = true;
+      input.placeholder = ({ko:'👁 읽기 전용 — 답장은 사장님·HQ Supervisor Michael 만', en:'👁 Read only — replies by the owner & HQ Supervisor Michael', es:'👁 Solo lectura — responden el dueño y HQ Supervisor Michael'})[LANG] || 'Read only';
     }
   } catch(_){}
   document.querySelector('.rooms').classList.remove('show');
@@ -4393,6 +4430,7 @@ async function sendMessage(){
   if (!ACTIVE_ROOM) { console.warn('[sendMessage] no ACTIVE_ROOM'); showStatus('❌ 채팅방을 먼저 선택하세요'); setTimeout(hideStatus, 3000); return; }
   // 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 발신 차단 (기존 방 포함), HR 문의로 유도
   if (_dmBlockedRoom(ACTIVE_ROOM)) { _showDmBlockedNotice(); return; }
+  if (ACTIVE_ROOM === 'hr_inquiries' && !canReplyHRInquiries()) { _hrInqReadOnlyNotice(); return; }
   const text = document.getElementById('msgInput').value.trim();
   if (!text && ATTACH.length === 0) return;
   if (_photoPrepWait()) return;   // 사진 준비 중에 누르면 일부만 가던 문제 방지
@@ -4477,7 +4515,8 @@ async function sendMessage(){
     } catch(_) {}
     stage = 'room-patch';
     // Update room lastMsg
-    const lastMsg = msg.text ? msg.text
+    const lastMsg = ACTIVE_ROOM === 'hr_inquiries' ? '📨 HR reply'   // HR 방 내용은 방 목록(전 직원)에 안 적음
+      : msg.text ? msg.text
       : (msg.photos.length ? `📷 사진 ${msg.photos.length}장`
       : (msg.files && msg.files.length ? `📎 파일 ${msg.files.length}개` : ''));
     const r2 = await fetch(`${FB_DB_URL}/chat/rooms/${ACTIVE_ROOM}.json`, {
@@ -4650,6 +4689,7 @@ async function sendReply(parentMsgId){
   if (!ACTIVE_ROOM) return;
   // 🚫 2026-07-14 사장님 지시 — 오너/임원 1:1 은 답글도 발신 차단, HR 문의로 유도
   if (_dmBlockedRoom(ACTIVE_ROOM)) { _showDmBlockedNotice(); return; }
+  if (ACTIVE_ROOM === 'hr_inquiries' && !canReplyHRInquiries()) { _hrInqReadOnlyNotice(); return; }
   const inp = document.getElementById('reply-' + parentMsgId);
   if (!inp) return;
   const text = inp.value.trim();
@@ -6050,6 +6090,7 @@ function checkRoomNotifications(rooms){
     if (!__notifReady) continue;
     if (r.lastTs > prev && r.lastSender && r.lastSender !== me.name){
       const nm = roomLocalName(id, r);
+      if (id === 'hr_inquiries' && !canViewHRInquiries()) continue;   // 🔐 HR 방 알림은 열람자에게만
       showChatNotification(id, nm, r.lastSender, r.lastMsg || '');
     }
   }
