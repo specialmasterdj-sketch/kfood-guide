@@ -942,6 +942,9 @@ function mapRowToProduct(row, keyMap) {
     STOCK:        toNum(get('STOCK')),
     VENDOR:       String(get('VENDOR')).trim(),
   };
+  // 아이템번호·벤더코드는 있는 줄에만 붙인다 (대부분 비어 있어 용량만 늘어난다)
+  const itm = String(get('ITEM_NUMBER')).trim(); if (itm) product.ITEM_NUMBER = itm;
+  const vdc = String(get('VENDOR_CODE')).trim(); if (vdc) product.VENDOR_CODE = vdc;
   // Per-branch prices: e.g. MIAMI_PRICE, CORAL_SPRINGS_PRICE columns.
   // keyMap includes entries like `PRICE_MIAMI: 'Miami Price'` set by autoMapColumns.
   const prices = {};
@@ -966,12 +969,15 @@ function autoMapColumns(headers) {
     PID:          ['pid', 'productid', 'product id', 'id'],
     FULL_BARCODE: ['fullbarcode', 'full barcode', 'barcode', 'upc', 'ean', '풀바코드', '바코드'],
     CODE:         ['code', 'itemcode', 'item code', 'sku', 'plu', '상품코드'],
-    CATEGORY:     ['category', 'dept', 'department', 'cat', '카테고리', '부서'],
+    CATEGORY:     ['category', 'catgry', 'dept', 'department', 'cat', '카테고리', '부서'],
     NAME:         ['name', 'productname', 'product name', 'description', 'desc', '상품명'],
     PRICE:        ['price', 'retailprice', 'retail price', 'selling price', 'sell price', '가격', '판매가'],
     COST:         ['cost', 'costprice', 'cost price', 'buy price', '원가'],
     STOCK:        ['stock', 'qty', 'quantity', 'onhand', 'on hand', 'inv', 'inventory', '재고'],
     VENDOR:       ['vendor', 'supplier', 'brand', '벤더', '공급사'],
+    // VELA "EXPORT DATA" 머리말: ITM# (아이템번호), VDCODE (벤더코드)
+    ITEM_NUMBER:  ['itemnumber', 'item number', 'itm#', 'item#', 'itemno', '아이템번호'],
+    VENDOR_CODE:  ['vendorcode', 'vendor code', 'vdcode', '벤더코드'],
   };
   const norm = (s) => String(s || '').toLowerCase().replace(/[\s_\-]+/g, '');
   const result = {};
@@ -992,6 +998,33 @@ function autoMapColumns(headers) {
     if (found) result['PRICE_' + b.id] = found;
   }
   return result;
+}
+
+// 🔴 2026-11-21 — POS 목록이 9만 줄을 넘으면서(약 15MB) 브라우저 localStorage 한도(약 5MB)를 넘는다.
+// 예전 코드는 여기서 저장이 실패하면 그대로 멈춰 클라우드에도 올리지 않았다
+// ("저장 실패 (용량 초과 가능) … exceeded the quota"). 이 기기 캐시는 있으면 좋은 것일 뿐이니
+// 실패해도 멈추지 않는다. 낡은 캐시가 남아 옛 가격을 보여주지 않도록 지우고 false 를 돌려준다.
+function kmSaveOverrideLocal(key, payload, storage){
+  try {
+    storage.setItem(key, JSON.stringify(payload));
+    return true;
+  } catch (err) {
+    try { storage.removeItem(key); } catch(e){}
+    console.warn('[upload] 이 기기 캐시 저장 건너뜀 (용량 초과):', err && err.message);
+    return false;
+  }
+}
+// 클라우드에는 한 번에 못 올린다(한 번에 쓸 수 있는 크기 제한). size 줄씩 잘라
+// { 줄번호: 상품 } 묶음으로 만든다. 줄번호가 0 부터 이어지므로 받는 쪽은 그대로 배열로 읽는다.
+function kmChunkRows(rows, size){
+  const parts = [];
+  for (let i = 0; i < rows.length; i += size){
+    const part = {};
+    const end = Math.min(i + size, rows.length);
+    for (let j = i; j < end; j++) part[j] = rows[j];
+    parts.push(part);
+  }
+  return parts;
 }
 
 // Handle file selection from the update panel
@@ -1043,30 +1076,46 @@ function onUpdateFile(inp) {
       const today = new Date().toISOString().slice(0, 10);
       const payload = { timestamp: Date.now(), date: today, count: products.length, rows: products, branchId: CURRENT_BRANCH };
 
-      try {
-        localStorage.setItem(overrideKey(CURRENT_BRANCH), JSON.stringify(payload));
-      } catch (err) {
-        st.style.color = '#c62828';
-        st.innerHTML = '❌ 저장 실패 (용량 초과 가능): ' + err.message;
-        return;
-      }
+      // 이 기기 캐시 — 용량이 넘쳐도 멈추지 않는다 (kmSaveOverrideLocal 설명 참고)
+      kmSaveOverrideLocal(overrideKey(CURRENT_BRANCH), payload, localStorage);
 
       // Replace in-memory data and rebuild indexes
       PRODUCTS_DATA = products;
       buildIndexes();
       updateBadge(today, products.length);
 
-      // Cross-device sync: push to Firebase so other phones on this branch
-      // get the new POS data without re-uploading.
-      if (typeof window.cloudPushProducts === 'function'){
-        try { window.cloudPushProducts(CURRENT_BRANCH, payload); } catch(e){ console.warn('cloud push failed', e); }
-      }
       const branchName = BRANCH_BY_ID[CURRENT_BRANCH]?.ko || CURRENT_BRANCH;
       document.getElementById('status-bar').innerHTML =
-        `<b>${branchName}</b> · 상품 <strong>${products.length}</strong>개 등록됨 · 스캔 또는 입력으로 시작하세요`;
+        `<b>${branchName}</b> · 상품 <strong>${products.length.toLocaleString()}</strong>개 등록됨 · 스캔 또는 입력으로 시작하세요`;
 
       st.style.color = 'var(--text)';
-      refreshUpdateStatus({ mapped: Object.keys(keyMap).length });
+      const mapped = Object.keys(keyMap).length;
+      const note = (html, bg, bd, fg) => {
+        refreshUpdateStatus({ mapped });
+        st.insertAdjacentHTML('afterbegin',
+          `<div style="background:${bg};border-left:3px solid ${bd};padding:10px 12px;border-radius:6px;color:${fg};margin-bottom:10px">${html}</div>`);
+      };
+
+      // Cross-device sync: push to Firebase so other phones on this branch
+      // get the new POS data without re-uploading. 나눠 올리므로 1분쯤 걸린다 —
+      // 끝났는지/실패했는지를 화면에 그대로 보여준다 (예전엔 실패해도 조용했다).
+      if (typeof window.cloudPushProducts === 'function'){
+        const total = products.length;
+        const showProgress = (done) => {
+          st.innerHTML = `⏳ <b>${branchName}</b> 클라우드에 올리는 중… <b>${Math.floor(done / total * 100)}%</b> (${done.toLocaleString()} / ${total.toLocaleString()})<br>` +
+                         `<span style="color:#c62828">끝날 때까지 이 화면을 닫지 마세요.</span>`;
+        };
+        showProgress(0);
+        Promise.resolve()
+          .then(() => window.cloudPushProducts(CURRENT_BRANCH, payload, showProgress))
+          .then(() => note(`☁️ <b>${branchName}</b> ${total.toLocaleString()}개 클라우드 업로드 완료 — 이 지점의 다른 기기에도 자동 반영됩니다.`, '#e3f2fd', '#1565c0', '#0d47a1'))
+          .catch((e) => {
+            console.warn('cloud push failed', e);
+            note(`❌ 클라우드 업로드 실패: ${(e && e.message) || e}<br>이 기기에서만 새 가격이 보입니다. 인터넷 연결을 확인하고 파일을 다시 올려주세요.`, '#ffebee', '#c62828', '#b71c1c');
+          });
+      } else {
+        note('⚠️ 클라우드 연결이 아직 준비되지 않아 이 기기에만 적용됐습니다. 잠시 뒤 파일을 다시 올려주세요.', '#fff8e1', '#ef6c00', '#5d4037');
+      }
     } catch (err) {
       st.style.color = '#c62828';
       st.innerHTML = '❌ 파일 처리 오류: ' + err.message;
@@ -1856,7 +1905,7 @@ works for both caches.
 // 🔧 2026-05-15: 공통 km-firebase.js 로 통일.
 // 페이지가 따로 initializeApp 하면 duplicate-app 으로 SDK 망가짐 → 모든 페이지
 // 가 동일한 싱글톤 app 을 import 하도록 정리. safeSave/safeFetch 도 거기서 옴.
-import { db, ref, set, get, onValue } from './km-firebase.js?v=1';
+import { db, ref, set, get, update, onValue } from './km-firebase.js?v=1';
 
 function prodPath(branchId){ return 'products/' + branchId; }
 
@@ -1864,11 +1913,31 @@ let currentSub = null;
 let unsub = null;
 let applyingRemote = false;
 
-window.cloudPushProducts = function(branchId, payload){
-  if (!branchId || !payload || applyingRemote) return;
-  set(ref(db, prodPath(branchId)), payload)
-    .then(() => console.info('[Firebase] products pushed for', branchId, payload.count))
-    .catch(e => console.warn('cloud push failed', e));
+// 🔴 2026-11-21 — 9만 줄(약 15MB)을 set 한 번으로 보내면 한 번에 쓸 수 있는 크기를 넘는다.
+// 머리말(count 등)을 먼저 쓰고 줄을 PUSH_CHUNK 개씩 이어 붙인다. 올라가는 동안 다른 기기는
+// kmSnapshotTruncated 가 "덜 올라온 목록"으로 보고 건너뛰다가, 마지막 묶음이 끝나면 받는다.
+// 끝나면 resolve, 중간에 실패하면 reject — 부른 쪽이 화면에 결과를 보여준다.
+const PUSH_CHUNK = 5000;
+let pushingBranch = null;
+window.cloudPushProducts = async function(branchId, payload, onProgress){
+  if (!branchId || !payload) throw new Error('올릴 자료가 없습니다');
+  if (pushingBranch) throw new Error('이미 올리는 중입니다 — 끝난 뒤 다시 해주세요');
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const meta = Object.assign({}, payload);
+  delete meta.rows;
+  pushingBranch = branchId;
+  try {
+    await set(ref(db, prodPath(branchId)), meta);
+    let done = 0;
+    for (const part of kmChunkRows(rows, PUSH_CHUNK)){
+      await update(ref(db, prodPath(branchId) + '/rows'), part);
+      done += Object.keys(part).length;
+      if (typeof onProgress === 'function'){ try { onProgress(done, rows.length); } catch(e){} }
+    }
+    console.info('[Firebase] products pushed for', branchId, rows.length);
+  } finally {
+    pushingBranch = null;
+  }
 };
 
 function subscribeProducts(branchId){
@@ -1876,6 +1945,8 @@ function subscribeProducts(branchId){
   currentSub = branchId;
   if (!branchId) return;
   unsub = onValue(ref(db, prodPath(branchId)), (snap) => {
+    // 이 기기가 올리는 중이면 묶음마다 울리는 내 쪽 알림은 건너뛴다 (자료는 이미 메모리에 있다)
+    if (pushingBranch === branchId) return;
     const remoteRaw = snap.val();
     if (!remoteRaw) return;
     const rowsArr = rowsAsArray(remoteRaw.rows);
