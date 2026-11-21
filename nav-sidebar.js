@@ -71,6 +71,8 @@
     { ic: '📹', lbl: { ko:'화상 회의',     en:'Video meeting',  es:'Reunión por video' }, href: './meet.html', highlight: true },
     { ic: '💬', lbl: { ko:'채팅',         en:'Chat',           es:'Chat' },              href: './chat.html', primary: true, badge: 'chat' },
     { ic: '📨', lbl: { ko:'HR 건의',      en:'HR Inquiry',     es:'Consulta RH' },        href: './chat.html?room=hr_inquiries' },
+    // 📱 2026-11-20 사장님: 모든 직원이 HQ 매니저 마이클(사장님 비서실장)에게 문자 — 누르면 폰 문자앱이 열림
+    { ic: '📱', lbl: { ko:'마이클에게 문자 (HQ)', en:'Text Michael (HQ Manager)', es:'Texto a Michael (HQ)' }, href: 'sms:+19549559653', highlight: true },
     { ic: '📢', lbl: { ko:'공지 / Updates', en:'Announcements', es:'Anuncios' },         href: './updates.html', badge: 'updates' },
     { ic: '📅', lbl: { ko:'유통기한 관리',  en:'Expiry tracker', es:'Caducidad' },        href: './expiry.html', highlight: true },
     { ic: '🧾', lbl: { ko:'유통기한 크레딧',  en:'Vendor credit',  es:'Crédito proveedor' }, href: './credit.html', highlight: true },
