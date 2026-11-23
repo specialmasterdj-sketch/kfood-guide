@@ -9,7 +9,7 @@
 <script>
   // 🔄 BUST 마커 + 실시간 폴링 — 매장 직원 폰까지 자동 업데이트.
   (function(){
-    var BUST = 'shifts_2026_09_27_branch_guard';   // 🛠 임시(draft) 클라우드 유출 차단 + 삭제·[취소] 가 되살아나지 않게
+    var BUST = 'shifts_2026_11_23_merge_save';   // 🛠 임시(draft) 클라우드 유출 차단 + 삭제·[취소] 가 되살아나지 않게
     var KEY = 'kmtools_bust_shifts';
     try {
       if (localStorage.getItem(KEY) !== BUST) {
@@ -94,7 +94,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script type="module">
   import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-  import { getDatabase, ref, onValue, set } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+  import { getDatabase, ref, onValue, set, update } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
   import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
   const firebaseConfig = {
     apiKey: "AIzaSyBwL0Wa1Q8aFhZp5hsn9gTw5aZwXUdAVy4",
@@ -119,7 +119,7 @@
     } catch (e) {}
     return null;
   };
-  window.__fb = { db: getDatabase(app), ref, onValue, set, auth };
+  window.__fb = { db: getDatabase(app), ref, onValue, set, update, auth };
   // Re-fire fb-ready once we know the auth state — REST fetches that need
   // a token can wait for this rather than the bare SDK-loaded event.
   onAuthStateChanged(auth, () => {
@@ -966,6 +966,52 @@ function cleanRemoteDrafts(remote){
 
 let DATA = loadBranchData();
 
+// ===== 🔴 2026-11-23 여러 매니저가 같이 고쳐도 서로 덮어쓰지 않게 — "바뀐 칸만" 저장 =====
+// 사건: 전무님이 일요일에 넣은 SUYOUNG CHOI 스케줄이 월요일에 다르게 나옴.
+// 원인: 저장할 때마다 이 기기가 들고 있는 지점 스케줄 "전체"를 클라우드에 통째로 덮어썼다
+//       (last-write-wins). 옛 화면을 띄워 둔 다른 매니저 기기가 시프트 하나만 고쳐도
+//       그 기기의 옛 사본 전체가 올라가 남이 넣은 시프트가 사라졌다.
+// 대책: 이 기기가 마지막으로 확인한 클라우드 상태(__syncBase)와 지금 DATA 를 비교해
+//       "이 기기에서 실제로 바뀐 칸"만 보낸다. 남이 고친 칸은 건드리지 않는다.
+let __syncBase = null;   // { branch, data } — data 는 임시(draft) 뺀 사본
+function _setSyncBase(d){
+  try { __syncBase = { branch: BRANCH, data: JSON.parse(JSON.stringify(d || {})) }; } catch(_){ __syncBase = null; }
+}
+// 비교용 표기 — 키 순서와 무관하게, 빈 값(null/undefined/{}/[])은 모두 같은 것으로 본다
+// (클라우드는 빈 객체·배열을 저장하지 않고, 키를 가나다순으로 돌려준다).
+function _canonSync(x){
+  if (x === null || x === undefined) return 'null';
+  if (Array.isArray(x)) return x.length ? '[' + x.map(_canonSync).join(',') + ']' : 'null';
+  if (typeof x === 'object') {
+    const ks = Object.keys(x).filter(k => _canonSync(x[k]) !== 'null').sort();
+    return ks.length ? '{' + ks.map(k => JSON.stringify(k) + ':' + _canonSync(x[k])).join(',') + '}' : 'null';
+  }
+  return JSON.stringify(x);
+}
+// base(마지막으로 확인한 클라우드) → cur(지금 이 기기) 사이에 바뀐 것만 담은 묶음.
+//   시프트는 칸(직원@날짜) 단위, 그 밖(직원 목록·역할·발표 시각 등)은 항목 단위. 지운 것은 null.
+//   base 가 없으면(allowDelete=false) 지우는 것은 보내지 않는다 — 모르는 상태에서 남의 것을 지우지 않게.
+function buildSyncPatch(base, cur, allowDelete){
+  const b = base || {}, c = cur || {}, patch = {};
+  const diff = (bv, cv) => _canonSync(bv) !== _canonSync(cv);
+  const put = (path, cv) => {
+    const gone = _canonSync(cv) === 'null';
+    if (gone && !allowDelete) return;
+    patch[path] = gone ? null : cv;
+  };
+  new Set(Object.keys(b).concat(Object.keys(c))).forEach(k => {
+    if (k === 'shifts') return;
+    if (diff(b[k], c[k])) put(k, c[k]);
+  });
+  const bs = b.shifts || {}, cs = c.shifts || {};
+  new Set(Object.keys(bs).concat(Object.keys(cs))).forEach(k => {
+    if (/[.#$\[\]\/]/.test(k)) return;   // 클라우드 경로에 쓸 수 없는 키는 건너뜀
+    if (diff(bs[k], cs[k])) put('shifts/' + k, cs[k]);
+  });
+  return patch;
+}
+_setSyncBase(stripDrafts(DATA));
+
 // ========= ACCESS CONTROL =========
 // 편집 가능 역할: BOSS/OWNER, 전무 (Executive Director), MANAGER, ASSISTANT MANAGER (다국어 변형 포함)
 const EDITOR_ROLE_TOKENS = ['OWNER','BOSS','오너','사장','대표','DUEÑO','DUENO','PROPIETARIO',
@@ -1269,6 +1315,7 @@ function isOwnerRole(r){ return ['OWNER','오너','사장','대표','BOSS','DUE�
 function setBranch(id){
   BRANCH = id; localStorage.setItem('hub.branch', id);
   DATA = loadBranchData();
+  _setSyncBase(stripDrafts(DATA));
   syncSubscribeBranch();
   render();
 }
@@ -2858,6 +2905,8 @@ let __lastFbSnapshot = '';
 let __draftLeakCleaned = false;
 function applyRemote(remote){
   if (!remote) return false;
+  let _rawRemote = null;
+  try { _rawRemote = JSON.parse(JSON.stringify(remote)); } catch(_){}   // 정리 전 원본 = 클라우드 실제 상태(저장 기준점)
   migrateRoles(remote);
   const _leaked = cleanRemoteDrafts(remote);   // 클라우드에 새어나간 임시 시프트 제거
   const _localTombs = JSON.parse(JSON.stringify((DATA && DATA.deletedEmp) || {}));   // 이 기기가 아는 삭제 기록
@@ -2868,7 +2917,8 @@ function applyRemote(remote){
   if (sig === __lastFbSnapshot) return false;
   const localEmpty = !DATA.employees || DATA.employees.length === 0;
   const remoteHasData = (remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length);
-  const remoteNewer = (remote.lastChangedAt || 0) > (DATA.lastChangedAt || 0);
+  // >= : 내가 방금 저장한 것의 메아리에도 다른 매니저가 고친 칸이 합쳐져 돌아온다 — 그것도 받아야 한다.
+  const remoteNewer = (remote.lastChangedAt || 0) >= (DATA.lastChangedAt || 0);
   if ((localEmpty && remoteHasData) || remoteNewer) {
     // 🛡️ 2026-06-23 동시수정 보호 — 다른 기기가 더 최신본을 보냈는데 그 최신본이 로컬에 있던
     //   시프트를 누락시키면(=동시 편집 충돌로 방금 입력이 사라지는 상황), 덮어쓰기 전에 로컬을
@@ -2895,6 +2945,7 @@ function applyRemote(remote){
     }
     __suppressFbWrite = true;
     DATA = Object.assign(emptyData(), remote);
+    if (_rawRemote) _setSyncBase(_rawRemote);
     // 작성 중이던 임시 시프트 복원 — 원격이 같은 칸을 이미 채웠으면 원격 우선(덮어쓰지 않음)
     try {
       if (!DATA.shifts) DATA.shifts = {};
@@ -3033,6 +3084,7 @@ async function syncFetchRest(){
       const localEmpty = !DATA.employees || DATA.employees.length === 0;
       const remoteHasData = remote && ((remote.employees && remote.employees.length) || (remote.shifts && Object.keys(remote.shifts).length));
       if (localEmpty && remoteHasData) {
+        _setSyncBase(remote);             // 정리 전 원본 = 클라우드 실제 상태(저장 기준점)
         cleanRemoteDrafts(remote);        // 클라우드에 섞인 임시 시프트는 받아오지 않음
         __suppressFbWrite = true;
         DATA = Object.assign(emptyData(), remote);
@@ -3050,18 +3102,33 @@ async function syncFetchRest(){
     })
     .catch(() => updateSyncDot('offline'));
 }
-async function syncPushRest(){
+// 이번에 보낼 묶음(바뀐 칸만)을 만든다. 보낸 뒤 성공하면 done() 으로 기준점을 옮긴다.
+function _makeSyncPush(){
   const branch = BRANCH;
   const payload = stripDrafts(DATA);   // 임시 시프트는 클라우드로 보내지 않음
+  const hasBase = !!(__syncBase && __syncBase.branch === branch);
+  const patch = buildSyncPatch(hasBase ? __syncBase.data : null, payload, hasBase);
   __lastFbSnapshot = JSON.stringify(payload);
+  const baseAtPush = __syncBase;
+  // 저장이 끝나기 전에 클라우드에서 더 새 상태(남이 고친 칸 포함)를 이미 받았으면 그 기준점을 그대로 둔다.
+  return { branch, patch, empty: !Object.keys(patch).length,
+           done(){ if (BRANCH === branch && __syncBase === baseAtPush) _setSyncBase(payload); } };
+}
+async function syncPushRest(push){
+  push = push || _makeSyncPush();
+  if (push.empty) { updateSyncDot('synced'); return; }
   const tok = (typeof window.__getAuthToken === 'function') ? (await window.__getAuthToken()) : null;
   const authQ = tok ? '?auth=' + encodeURIComponent(tok) : '';
-  fetch(FB_DB_URL + '/schedules/' + branch + '.json' + authQ, {
-    method: 'PUT',
+  fetch(FB_DB_URL + '/schedules/' + push.branch + '.json' + authQ, {
+    method: 'PATCH',                    // 바뀐 칸만 — 통째 덮어쓰기(PUT) 금지
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(push.patch)
   })
-    .then(r => updateSyncDot(r.ok ? 'synced' : 'offline'))
+    .then(r => {
+      updateSyncDot(r.ok ? 'synced' : 'offline');
+      // 실시간 연결이 없는 기기는 메아리를 못 받는다 — 다른 매니저가 고친 칸을 바로 받아온다.
+      if (r.ok) { push.done(); if (BRANCH === push.branch) syncFetchRest(); }
+    })
     .catch(() => updateSyncDot('offline'));
 }
 
@@ -3093,17 +3160,21 @@ function syncSubscribeBranch(){
 
 function syncPushBranch(){
   // Use SDK when present (faster, batched). Otherwise REST fallback.
-  if (!window.__fb) { syncPushRest(); return; }
-  const { db, ref, set } = window.__fb;
-  const payload = stripDrafts(DATA);   // 임시 시프트는 클라우드로 보내지 않음
-  __lastFbSnapshot = JSON.stringify(payload);
-  set(ref(db, 'schedules/' + BRANCH), payload)
-    .then(() => updateSyncDot('synced'))
-    .catch(() => syncPushRest());
+  if (!window.__fb || !window.__fb.update) { syncPushRest(); return; }
+  const { db, ref, update } = window.__fb;
+  const push = _makeSyncPush();        // 바뀐 칸만 — 통째 덮어쓰기(set) 금지
+  if (push.empty) { updateSyncDot('synced'); return; }
+  update(ref(db, 'schedules/' + push.branch), push.patch)
+    .then(() => { push.done(); updateSyncDot('synced'); })
+    .catch(() => syncPushRest(push));
 }
 
 window.addEventListener('fb-ready', () => {
   syncSubscribeBranch();
+});
+// 띄워 둔 채 오래 둔 화면으로 돌아오면 먼저 최신 스케줄을 받아온다 (옛 화면에서 고치는 일 방지)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !location.hash.match(/^#emp=/)) syncFetchRest();
 });
 
 // Auth tokens take a moment to resolve from IndexedDB on cold start.
