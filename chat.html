@@ -328,6 +328,12 @@ a{color:inherit;text-decoration:none}
 .msg.rpt-group .body{background:#f8fafc;border:1px dashed #cbd5e1}
 .rpt-line{font-size:.8em;color:#374151;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rpt-toggle{color:#15803d;font-weight:700;font-size:.8em;cursor:pointer;margin-top:5px}
+/* 👍💬 2026-11-23 사장님: 보고 묶음 [Expand details] 옆에서 바로 평가·답장 (일일이 펼치지 않게) */
+.rpt-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.rpt-acts .rpt-toggle{margin:0 4px 0 0}
+.rpt-rx{border:1px solid #e5e7eb;background:#fff;border-radius:999px;padding:2px 9px;font-size:.85em;cursor:pointer;line-height:1.5}
+.rpt-rx.on{background:#dcfce7;border-color:#16a34a}
+.rpt-group .reply-toggle{margin-top:6px}
 .composer .field{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
 .composer textarea{border:1px solid #e5e7eb;border-radius:14px;padding:8px 12px;font-size:16px;resize:none;width:100%;min-width:0;max-width:100%;outline:none;font-family:inherit;line-height:1.4;box-sizing:border-box}
 .composer textarea:focus{border-color:#1a5c3a}
@@ -3400,6 +3406,46 @@ function _computeReportGroups(list){
   return map;
 }
 function toggleRptGroup(key){ __rptOpen[key] = !__rptOpen[key]; renderMessages(); }
+// 👍 2026-11-23 사장님: "보고 룸 등에서 익스팬드 디테일 옆에 바로 엄지척 등 평가와 리플라이" — 펼치지 않고 묶음 전체에 한 번에.
+//   누르면 묶음 안 보고 전부에 내 리액션을 단다. 이미 전부 달려 있으면 전부 뗀다(토글).
+const __rptGroupIds = {};
+const _rptQuickRx = ['👍', '✅', '❤️'];
+function _rptAllMine(items, em){
+  const k = reactionUserKey();
+  return !!k && items.length > 0 && items.every(x => x.reactions && x.reactions[em] && x.reactions[em][k]);
+}
+async function rptBundleReact(groupKey, emoji){
+  if (!ensureMe()) return;
+  const ids = __rptGroupIds[groupKey] || [];
+  const ms = ids.map(id => MSGS.find(x => x.id === id)).filter(Boolean);
+  if (!ms.length) return;
+  const key = reactionUserKey();
+  const _hrR = hrSender();
+  const myName = _hrR ? _hrR.name : me.name;
+  const removeAll = _rptAllMine(ms, emoji);
+  const jobs = [];
+  ms.forEach(m => {
+    const has = !!(m.reactions && m.reactions[emoji] && m.reactions[emoji][key]);
+    const url = FB_DB_URL + '/chat/messages/' + ACTIVE_ROOM + '/' + m.id + '/reactions/' + encodeURIComponent(emoji) + '/' + key + '.json';
+    if (removeAll && has) {
+      delete m.reactions[emoji][key];
+      if (!Object.keys(m.reactions[emoji]).length) delete m.reactions[emoji];
+      jobs.push(fetch(url, { method:'DELETE' }));
+    } else if (!removeAll && !has) {
+      m.reactions = m.reactions || {};
+      m.reactions[emoji] = m.reactions[emoji] || {};
+      m.reactions[emoji][key] = myName;
+      jobs.push(fetch(url, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(myName) }));
+    }
+  });
+  renderMessages();   // 바로 반영 (낙관적)
+  const res = await Promise.allSettled(jobs);
+  if (res.some(r => r.status === 'rejected' || (r.value && !r.value.ok))) {
+    console.warn('[rptBundleReact] some writes failed');
+    try { showStatus(({ko:'일부 리액션 저장 실패 — 다시 눌러 주세요',en:'Some reactions failed — tap again',es:'Algunas reacciones fallaron — toque de nuevo'}[LANG]||'retry')); setTimeout(hideStatus, 4000); } catch(_){}
+  }
+}
+window.rptBundleReact = rptBundleReact;
 window.toggleRptGroup = toggleRptGroup;
 function renderMessages(){
   const cont = document.getElementById('msgs');
@@ -3525,6 +3571,9 @@ function renderMessages(){
         return '<span class="rxn' + (a.mine ? ' mine' : '') + '" title="' + escapeHtml(tip) + '" onclick="toggleRptGroup(\'' + _g.key + '\')">' + escapeHtml(em) + ' ' + a.cnt + '/' + _g.count + '</span>';
       }).join('');
       const rxRow = rxChips ? '<div class="reactions" style="justify-content:flex-end;margin-top:4px">' + rxChips + '</div>' : '';
+      // 💬 답장은 묶음의 가장 최근 보고에 달린다 (보고한 사람에게 답글 알림이 간다)
+      const _rptLast = items.reduce((a, b) => ((b.ts || 0) > (a.ts || 0) ? b : a), items[0]);
+      __rptGroupIds[_g.key] = _g.ids.slice();
       html += `<div class="msg rpt-group" data-msg-id="${m.id}">
         <div class="av" style="background:${m.color || colorFor(m.sender||'?')}">${initialsOf(m.sender)}</div>
         <div class="body">
@@ -3532,7 +3581,11 @@ function renderMessages(){
           ${shown}
           ${moreN ? `<div class="rpt-line" style="color:#9ca3af">… +${moreN}</div>` : ''}
           ${rxRow}
-          <div class="rpt-toggle" onclick="toggleRptGroup('${_g.key}')">▾ ${({ko:'펼쳐서 자세히 보기',en:'Expand details',es:'Ver detalles'}[LANG]||'펼치기')}</div>
+          <div class="rpt-acts">
+            <div class="rpt-toggle" onclick="toggleRptGroup('${_g.key}')">▾ ${({ko:'펼쳐서 자세히 보기',en:'Expand details',es:'Ver detalles'}[LANG]||'펼치기')}</div>
+            ${me ? _rptQuickRx.map(em => '<button type="button" class="rpt-rx' + (_rptAllMine(items, em) ? ' on' : '') + '" title="' + escapeHtml(({ko:'이 묶음 보고 ' + _g.count + '건 전체에',en:'On all ' + _g.count + ' reports',es:'En los ' + _g.count + ' informes'}[LANG]||'')) + '" onclick="rptBundleReact(\'' + _g.key + '\',\'' + em + '\')">' + em + '</button>').join('') : ''}
+          </div>
+          ${_rptLast ? renderReplies(_rptLast) : ''}
           <div class="time">${time}</div>
         </div>
       </div>`;
