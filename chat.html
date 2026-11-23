@@ -3568,9 +3568,11 @@ function renderMessages(){
       const rxChips = Object.keys(rxAgg).map(em => {
         const a = rxAgg[em];
         const tip = ({ko:'이 이모지가 달린 보고 ' + a.cnt + '건 / 전체 ' + _g.count + '건', en:a.cnt + ' of ' + _g.count + ' reports', es:a.cnt + ' de ' + _g.count}[LANG] || (a.cnt + '/' + _g.count));
-        return '<span class="rxn' + (a.mine ? ' mine' : '') + '" title="' + escapeHtml(tip) + '" onclick="toggleRptGroup(\'' + _g.key + '\')">' + escapeHtml(em) + ' ' + a.cnt + '/' + _g.count + '</span>';
+        return '<span class="rxn' + (a.mine ? ' mine' : '') + '" title="' + escapeHtml(tip) + '" onclick="rptBundleReact(\'' + _g.key + '\',\'' + em + '\')">' + escapeHtml(em) + ' ' + a.cnt + '/' + _g.count + '</span>';
       }).join('');
-      const rxRow = rxChips ? '<div class="reactions" style="justify-content:flex-end;margin-top:4px">' + rxChips + '</div>' : '';
+      // 일반 메시지와 같은 모양: [칩들][+ 😀] — 고른 이모지는 묶음 보고 전체에 달린다
+      const rxAdd = me ? '<button class="rxn-add" type="button" onclick="openReactionPicker(event,\'rptgrp:' + _g.key + '\')">+ 😀</button>' : '';
+      const rxRow = (rxChips || rxAdd) ? '<div class="reactions" style="justify-content:flex-end;margin-top:4px">' + rxChips + rxAdd + '</div>' : '';
       // 💬 답장은 묶음의 가장 최근 보고에 달린다 (보고한 사람에게 답글 알림이 간다)
       const _rptLast = items.reduce((a, b) => ((b.ts || 0) > (a.ts || 0) ? b : a), items[0]);
       __rptGroupIds[_g.key] = _g.ids.slice();
@@ -3583,7 +3585,6 @@ function renderMessages(){
           ${rxRow}
           <div class="rpt-acts">
             <div class="rpt-toggle" onclick="toggleRptGroup('${_g.key}')">▾ ${({ko:'펼쳐서 자세히 보기',en:'Expand details',es:'Ver detalles'}[LANG]||'펼치기')}</div>
-            ${me ? _rptQuickRx.map(em => '<button type="button" class="rpt-rx' + (_rptAllMine(items, em) ? ' on' : '') + '" title="' + escapeHtml(({ko:'이 묶음 보고 ' + _g.count + '건 전체에',en:'On all ' + _g.count + ' reports',es:'En los ' + _g.count + ' informes'}[LANG]||'')) + '" onclick="rptBundleReact(\'' + _g.key + '\',\'' + em + '\')">' + em + '</button>').join('') : ''}
           </div>
           ${_rptLast ? renderReplies(_rptLast) : ''}
           <div class="time">${time}</div>
@@ -5204,6 +5205,7 @@ function closeReactionPicker(){
 function pickReaction(emoji){
   var id = _rxnTargetMsg;
   closeReactionPicker();
+  if (id && String(id).indexOf('rptgrp:') === 0) { rptBundleReact(String(id).slice(7), emoji); return; }   // 📦 보고 묶음 전체
   if (id) toggleReaction(id, emoji);
 }
 async function toggleReaction(msgId, emoji){
