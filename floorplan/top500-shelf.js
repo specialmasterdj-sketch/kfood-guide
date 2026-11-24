@@ -198,12 +198,16 @@
         ? photoHtml + (list.length ? `${pcs.length ? '<div class="t5-sec">📦 Top 500 상품</div>' : ''}<div class="t5-grid">${shown.map(x => card(x)).join('')}</div>` : '')
         : `<div class="t5-empty">${canEdit() ? '오른쪽 위 <b>✂️ 사진 넣기</b>를 누르세요.<br>위 칸 = 플래노그램 사진에서 필요한 부분만 오려 넣기 · 아래 칸 = 우리 제품 사진 넣기' : '사장님이 아직 이 자리를 정하지 않았습니다.'}</div>`;
       if (pcs.length) layoutMosaic(pcs, d);
-      if (canEdit() && pcs.length > 1) {
+      if (pcs.length) {
+        const canSwap = canEdit() && pcs.length > 1;
+        if (!canSwap) cur.swap = false;
+        const enh = `<button class="t5-btn${enhanceOn() ? ' gold' : ''}" id="t5-enh">✨ 자동 보정 ${enhanceOn() ? '켜짐' : '꺼짐'}</button>`;
         foot.style.display = 'flex';
         foot.innerHTML = cur.swap
           ? `<span style="flex:1"><b>자리 바꾸기:</b> 바꿀 사진 두 장을 차례로 누르세요</span><button class="t5-btn green" id="t5-swap">✓ 끝</button>`
-          : `<span style="flex:1;color:#666">사진은 칸에 맞춰 자동으로 정렬됩니다</span><button class="t5-btn" id="t5-swap">🔀 자리 바꾸기</button>`;
-        $('t5-swap').onclick = () => { cur.swap = !cur.swap; cur.swapSel = null; render(); };
+          : `<span style="flex:1;color:#666">칸에 맞춰 자동 정렬 · 선명하게 자동 보정</span>${enh}${canSwap ? '<button class="t5-btn" id="t5-swap">🔀 자리 바꾸기</button>' : ''}`;
+        const sw = $('t5-swap'); if (sw) sw.onclick = () => { cur.swap = !cur.swap; cur.swapSel = null; render(); };
+        const eb = $('t5-enh'); if (eb) eb.onclick = () => { try { localStorage.setItem('t5-enhance', enhanceOn() ? '0' : '1'); } catch (_) {} render(); };
       } else { foot.style.display = 'none'; cur.swap = false; }
       const qi = $('t5-q'); if (qi) { qi.oninput = () => { cur.q = qi.value; const p = qi.selectionStart; render(); const n = $('t5-q'); n.focus(); n.setSelectionRange(p, p); }; }
       return;
@@ -289,12 +293,54 @@
     c.width = sw; c.height = sh; const g = c.getContext('2d');
     g.translate(sw / 2, sh / 2); g.rotate(r * Math.PI / 180); g.drawImage(im, -im.width / 2, -im.height / 2); return c;
   }
+  /* ✨ 자동 화질 보정: 어두운·뿌연 사진 밝기/대비 자동 맞춤 + 색 살짝 진하게 + 선명하게(언샤프 마스크) */
+  function enhanceOn() { try { return localStorage.getItem('t5-enhance') !== '0'; } catch (_) { return true; } }
+  function enhance(cv, g, scale) {
+    const W = cv.width, H = cv.height; if (W * H > 4e6) return;
+    const im = g.getImageData(0, 0, W, H), d = im.data, n = W * H;
+    // 1) 자동 레벨: 밝기 하위 1%·상위 1% 를 0·255 로 늘림 (너무 과하게는 안 함)
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) hist[(d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8]++;
+    let lo = 0, hi = 255, acc = 0; const cut = n * 0.01;
+    while (lo < 255 && (acc += hist[lo]) < cut) lo++;
+    acc = 0; while (hi > 0 && (acc += hist[hi]) < cut) hi--;
+    if (hi - lo < 40) { lo = Math.max(0, lo - 20); hi = Math.min(255, hi + 20); }
+    const gain = Math.min(1.8, 255 / Math.max(1, hi - lo));
+    const lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) lut[v] = (v - lo) * gain;
+    // 2) 색 진하게 15%
+    const sat = 1.15;
+    for (let i = 0; i < d.length; i += 4) {
+      let r = lut[d[i]], gg = lut[d[i + 1]], b = lut[d[i + 2]];
+      const y = 0.299 * r + 0.587 * gg + 0.114 * b;
+      d[i] = y + (r - y) * sat; d[i + 1] = y + (gg - y) * sat; d[i + 2] = y + (b - y) * sat;
+    }
+    // 3) 선명하게: 3x3 흐림과의 차이를 더함 (크게 키운 조각일수록 조금 더)
+    const amt = Math.min(1.1, 0.5 + Math.max(0, scale - 1) * 0.25);
+    const src = new Uint8ClampedArray(d);
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const o = (y * W + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const i = o + c, r4 = W * 4;
+          const blur = (src[i - r4 - 4] + src[i - r4] + src[i - r4 + 4] + src[i - 4] + src[i] + src[i + 4] + src[i + r4 - 4] + src[i + r4] + src[i + r4 + 4]) / 9;
+          d[i] = src[i] + (src[i] - blur) * amt;
+        }
+      }
+    }
+    g.putImageData(im, 0, 0);
+  }
   async function drawPiece(cv, p) {
     try {
       const rc = rotated(await img(p.f), p.r || 0), c = p.c || [0, 0, 1, 1];
       const sx = c[0] * rc.width, sy = c[1] * rc.height, sw = Math.max(1, c[2] * rc.width), sh = Math.max(1, c[3] * rc.height);
-      const k = Math.min(1, 900 / sw); cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
-      cv.getContext('2d').drawImage(rc, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+      // 화면에 보이는 크기 × 화면 배율로 그림 (작게 오린 조각도 선명하게 키움), 최대 1600px
+      const dpr = Math.min(2, window.devicePixelRatio || 1), tw = (cv.clientWidth || 0) * dpr;
+      const k = Math.min(1600 / sw, Math.max(tw / sw, Math.min(1, 900 / sw)));
+      cv.width = Math.max(1, Math.round(sw * k)); cv.height = Math.max(1, Math.round(sh * k));
+      const g = cv.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(rc, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+      if (enhanceOn()) enhance(cv, g, k);
     } catch (_) { cv.replaceWith(Object.assign(document.createElement('div'), { className: 't5-noph', textContent: '사진을 불러오지 못했습니다' })); }
   }
   async function patchEntry(patch, stay) {
