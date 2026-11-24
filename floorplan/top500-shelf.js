@@ -100,13 +100,13 @@
       if (z.type === 'aisle') {
         z.el.querySelectorAll('[class^="aisle-num-"]').forEach(sp => {
           const n = sp.textContent.trim(); const e = map['A:' + n];
-          const cnt = itemsOf(d, e).length;
+          const cnt = itemsOf(d, e).length + ((e && e.photos) || []).length;
           if (cnt) sp.setAttribute('data-t5n', cnt);
         });
         return;
       }
       const e = map[zoneKey(z)];
-      const cnt = itemsOf(d, e).length;
+      const cnt = itemsOf(d, e).length + ((e && e.photos) || []).length;
       const show = isSZ(z) || cnt > 0 || (edit && ( (PICKABLE.test(z.ftype || z.type) && !SKIP_LABEL.test(z.label || ''))));
       if (!show) return;
       const b = document.createElement('button');
@@ -136,7 +136,8 @@
     m.id = 't5-modal';
     m.innerHTML = `<div class="t5-box">
       <div class="t5-head"><div style="flex:1;min-width:0"><div id="t5-title" class="t5-title"></div><div id="t5-sub" class="t5-sub"></div></div>
-        <button id="t5-edit" class="t5-btn gold" style="display:none">✏️ 편집</button>
+        <button id="t5-cut" class="t5-btn gold" style="display:none">✂️ 사진 넣기</button>
+        <button id="t5-edit" class="t5-btn" style="display:none">✏️ 편집</button>
         <button id="t5-ref" class="t5-btn">🖼 진열 레퍼런스</button>
         <button id="t5-close" class="t5-btn red">✕</button></div>
       <div id="t5-tools" class="t5-tools"></div>
@@ -154,7 +155,7 @@
     const st = store(); const d = await loadData(st);
     if (!d) { alert('이 지점은 아직 Top 500 매대 자료가 없습니다.'); return; }
     await loadMap(st);
-    cur = { key, title, editing: false, refCb, q: '', chip: '' };
+    cur = { key, title, editing: false, mode: '', refCb, q: '', chip: '', topic: '', pq: '' };
     modal().style.display = 'flex';
     render();
   }
@@ -168,16 +169,21 @@
   }
   function render() {
     if (!cur) return;
+    if (cur.mode === 'pick') return renderPick();
+    if (cur.mode === 'crop') return renderCrop();
+    document.getElementById('t5-cut').style.display = canEdit() && !cur.editing ? '' : 'none';
+    document.getElementById('t5-cut').onclick = () => { cur.mode = 'pick'; cur.topic = cur.topic || (cur.title.startsWith('세일존') ? 'sale_zone' : ''); render(); };
     const st = store(), d = DATA[BRANCH_OF[st]], map = MAP[st] || {};
     const e = cur.editing ? cur.draft : (map[cur.key] || null);
     const list = itemsOf(d, e);
     const $ = id => document.getElementById(id);
     $('t5-title').textContent = '⭐ ' + cur.title;
     const shelfTxt = (e && e.shelves && e.shelves.length) ? e.shelves.map(k => d.shelfName[k] || k).join(' · ') : '';
+    const npc = ((e && e.photos) || []).length;
     $('t5-sub').textContent = cur.editing
       ? '편집 중 — 매대 묶음을 누르거나, 아래에서 상품을 하나씩 눌러 넣고 빼세요. 선택 ' + list.length + '개'
-      : (list.length ? 'Top 500 ' + list.length + '개' + (shelfTxt ? ' · ' + shelfTxt : '') + (e && e.by ? ' · 정한 사람 ' + e.by : '') : '아직 정해지지 않음');
-    $('t5-edit').style.display = canEdit() && !cur.editing ? '' : 'none';
+      : ((npc || list.length) ? [npc ? '사진 ' + npc + '장' : '', list.length ? 'Top 500 ' + list.length + '개' : '', shelfTxt].filter(Boolean).join(' · ') + (e && e.by ? ' · ' + e.by : '') : '아직 정해지지 않음');
+    $('t5-edit').style.display = canEdit() && !cur.editing && e && ((e.shelves || []).length || (e.codes || []).length) ? '' : 'none';
     $('t5-edit').onclick = () => { cur.editing = true; cur.draft = { shelves: [...((map[cur.key] || {}).shelves || [])], codes: [...((map[cur.key] || {}).codes || [])], name: (map[cur.key] || {}).name || SZNAME[cur.key] || '' }; render(); };
     $('t5-ref').style.display = cur.refCb && !cur.editing ? '' : 'none';
     $('t5-ref').onclick = () => { const cb = cur.refCb; close(); cb && cb(); };
@@ -186,9 +192,21 @@
       tools.innerHTML = list.length > 12 ? `<input id="t5-q" class="t5-q" placeholder="🔍 이름·바코드 검색" value="${esc(cur.q)}">` : '';
       const q = cur.q.trim().toUpperCase();
       const shown = q ? list.filter(x => x.name.toUpperCase().includes(q) || x.code.includes(q)) : list;
-      body.innerHTML = list.length
-        ? `<div class="t5-grid">${shown.map(x => card(x)).join('')}</div>`
-        : `<div class="t5-empty">${canEdit() ? '오른쪽 위 <b>✏️ 편집</b>을 눌러 이 자리에 올 Top 500 상품을 정해 주세요.' : '사장님이 아직 이 자리의 Top 500 상품을 정하지 않았습니다.'}</div>`;
+      const pcs = (e && e.photos) || [];
+      const pieceHtml = (pc, i) => {
+        const del = canEdit() ? `<button class="t5-del" data-i="${i}" title="빼기">✕</button>` : '';
+        if (pc.code) { const x = d.byCode[pc.code]; return x ? `<div class="t5-piece prod">${del}${card(x)}</div>` : ''; }
+        return `<div class="t5-piece"><canvas data-i="${i}"></canvas>${del}</div>`;
+      };
+      const photoHtml = pcs.length ? `<div class="t5-pieces">${pcs.map(pieceHtml).join('')}</div>` : '';
+      body.innerHTML = (pcs.length || list.length)
+        ? photoHtml + (list.length ? `${pcs.length ? '<div class="t5-sec">📦 Top 500 상품</div>' : ''}<div class="t5-grid">${shown.map(x => card(x)).join('')}</div>` : '')
+        : `<div class="t5-empty">${canEdit() ? '오른쪽 위 <b>✂️ 사진 넣기</b>를 누르세요.<br>위 칸 = 플래노그램 사진에서 필요한 부분만 오려 넣기 · 아래 칸 = 우리 제품 사진 넣기' : '사장님이 아직 이 자리를 정하지 않았습니다.'}</div>`;
+      body.querySelectorAll('.t5-piece canvas').forEach(cv => drawPiece(cv, pcs[+cv.dataset.i]));
+      body.querySelectorAll('.t5-del').forEach(b => b.onclick = async () => {
+        if (!confirm('이 사진을 뺄까요?')) return;
+        await patchEntry({ photos: pcs.filter((_, i) => i !== +b.dataset.i) });
+      });
       foot.style.display = 'none';
       const qi = $('t5-q'); if (qi) { qi.oninput = () => { cur.q = qi.value; const p = qi.selectionStart; render(); const n = $('t5-q'); n.focus(); n.setSelectionRange(p, p); }; }
       return;
@@ -236,8 +254,9 @@
       const clash = Object.keys(SZNAME).find(k => k !== cur.key && SZNAME[k] === dr.name);
       if (clash) { alert(dr.name + ' 이름은 이미 다른 세일존에 있습니다.'); return; }
     }
-    const val = (dr.shelves.length || dr.codes.length || (isSzKey && dr.name))
-      ? { shelves: dr.shelves, codes: dr.codes, name: isSzKey ? (dr.name || SZNAME[cur.key] || '') : '', label: isSzKey ? '세일존 ' + (dr.name || SZNAME[cur.key]) : cur.title, by: (m && m.name) || '', ts: Date.now() }
+    const oldPhotos = ((MAP[st] || {})[cur.key] || {}).photos || [];
+    const val = (dr.shelves.length || dr.codes.length || oldPhotos.length || (isSzKey && dr.name))
+      ? { photos: oldPhotos, shelves: dr.shelves, codes: dr.codes, name: isSzKey ? (dr.name || SZNAME[cur.key] || '') : '', label: isSzKey ? '세일존 ' + (dr.name || SZNAME[cur.key]) : cur.title, by: (m && m.name) || '', ts: Date.now() }
       : null;
     const btn = document.getElementById('t5-save'); if (btn) { btn.disabled = true; btn.textContent = '저장 중…'; }
     let ok = false;
@@ -246,6 +265,131 @@
     MAP[st] = MAP[st] || {}; if (val) MAP[st][cur.key] = val; else delete MAP[st][cur.key];
     if (isSzKey && dr.name) { SZNAME[cur.key] = dr.name; cur.title = '세일존 ' + dr.name; }
     cur.editing = false; render(); decorate();
+  }
+
+  /* ---------- ✂️ 사진 넣기: 위 칸 = 플래노그램 사진 오려 넣기, 아래 칸 = 우리 제품 사진 ---------- */
+  // 플래노그램 = ../hmart-photos/{file} (사장님 쉘브 사진판 manifest.js). 오린 부분은 좌표만 저장(이미지 복사·base64 없음).
+  // photos[] 한 칸 = {f: 파일, r: 회전°, c: [x,y,w,h] 0~1(회전 후 기준)}  또는  {code: Top 500 바코드}
+  let PLANO = null;
+  function loadPlano() {
+    if (PLANO) return PLANO;
+    const add = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+    PLANO = Promise.all([add('../hmart-photos/manifest.js?v=1'), add('../hmart-photos/rotations.js?v=1')]).then(() => ({
+      photos: (typeof HMART_PHOTOS !== 'undefined') ? HMART_PHOTOS : {},
+      rot: (typeof HMART_ROTATIONS !== 'undefined') ? HMART_ROTATIONS : {}
+    }));
+    return PLANO;
+  }
+  const TOPICS = [['sale_zone', '🏷️ 세일존'], ['ramen_noodles', '🍜 라면'], ['snack', '🍪 과자'], ['drinks', '🥤 음료'], ['sauce', '🫙 소스'], ['seasoning', '🥄 조미료'],
+    ['dry_noodles', '🍝 건면'], ['instant_dry', '⚡ 즉석'], ['grain', '🌾 곡물'], ['can', '🥫 통조림'], ['tea', '🍵 차'], ['seaweed', '🌿 해조류'], ['dried_food', '🍂 건조'],
+    ['flour_powder', '🥣 가루'], ['sugar_salt', '🧂 설탕소금'], ['mealkit', '📦 밀키트'], ['beer_sake_soju', '🍶 주류'], ['refrigerated', '🥶 냉장'], ['frozen', '🧊 냉동'],
+    ['produce', '🥬 청과'], ['meat', '🥩 정육'], ['poultry', '🍗 가금'], ['seafood', '🦐 해산물'], ['sushi', '🍣 스시'], ['sidedish', '🥢 반찬'], ['hotfood', '🔥 핫푸드'],
+    ['houseware', '🍳 주방'], ['wholesale_bulk', '🛒 벌크'], ['usa_items', '🇺🇸 미국'], ['india', '🇮🇳 인도'], ['supply', '🧰 비품'], ['signage', '🪧 사인'], ['facility', '🏬 시설'], ['manual', '📖 매뉴얼']];
+  const IMG = {};
+  function img(f) { if (!IMG[f]) IMG[f] = new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => { delete IMG[f]; rej(); }; i.src = '../hmart-photos/' + f; }); return IMG[f]; }
+  function rotated(im, r) {
+    const c = document.createElement('canvas'), sw = (r % 180) ? im.height : im.width, sh = (r % 180) ? im.width : im.height;
+    c.width = sw; c.height = sh; const g = c.getContext('2d');
+    g.translate(sw / 2, sh / 2); g.rotate(r * Math.PI / 180); g.drawImage(im, -im.width / 2, -im.height / 2); return c;
+  }
+  async function drawPiece(cv, p) {
+    try {
+      const rc = rotated(await img(p.f), p.r || 0), c = p.c || [0, 0, 1, 1];
+      const sx = c[0] * rc.width, sy = c[1] * rc.height, sw = Math.max(1, c[2] * rc.width), sh = Math.max(1, c[3] * rc.height);
+      const k = Math.min(1, 900 / sw); cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
+      cv.getContext('2d').drawImage(rc, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+    } catch (_) { cv.replaceWith(Object.assign(document.createElement('div'), { className: 't5-noph', textContent: '사진을 불러오지 못했습니다' })); }
+  }
+  async function patchEntry(patch, stay) {
+    const st = store(), m = me(), old = (MAP[st] || {})[cur.key] || {};
+    const val = Object.assign({ shelves: [], codes: [], photos: [] }, old, patch, { by: (m && m.name) || '', ts: Date.now() });
+    val.label = cur.title; if (!cur.title.startsWith('세일존')) val.name = '';
+    const empty = !(val.photos.length || val.shelves.length || val.codes.length || val.name);
+    let ok = false;
+    try { const r = await window.KM.safeSave('floorplan/top500Map/' + st + '/' + cur.key, empty ? null : val, { silent: true }); ok = !!(r && r.ok); } catch (_) {}
+    if (!ok) { alert('저장 실패 — 인터넷·로그인 확인 후 다시 해 주세요.'); return false; }
+    MAP[st] = MAP[st] || {}; if (empty) delete MAP[st][cur.key]; else MAP[st][cur.key] = val;
+    if (!stay) cur.mode = '';
+    render(); decorate(); return true;
+  }
+  function pinned() { return ((MAP[store()] || {})[cur.key] || {}).photos || []; }
+  async function renderPick() {
+    const $ = id => document.getElementById(id);
+    $('t5-cut').style.display = 'none'; $('t5-edit').style.display = 'none'; $('t5-ref').style.display = 'none';
+    $('t5-title').textContent = '✂️ ' + cur.title + ' — 사진 넣기';
+    const pins = pinned();
+    $('t5-sub').textContent = '위 칸: 플래노그램 사진을 눌러 필요한 부분만 오려 넣기 · 아래 칸: 우리 제품 사진을 눌러 넣기(다시 누르면 빼기) · 지금 ' + pins.length + '장';
+    const P = await loadPlano();
+    if (!cur || cur.mode !== 'pick') return;
+    const d = DATA[BRANCH_OF[store()]];
+    const tops = TOPICS.filter(([k]) => (P.photos[k] || []).length);
+    if (!cur.topic || !(P.photos[cur.topic] || []).length) cur.topic = tops[0] ? tops[0][0] : '';
+    const files = P.photos[cur.topic] || [];
+    const have = new Set(pins.filter(x => x.code).map(x => x.code));
+    const q = (cur.pq || '').trim().toUpperCase();
+    const prods = d.items.filter(x => !q || x.name.toUpperCase().includes(q) || x.code.includes(q));
+    $('t5-tools').innerHTML = '';
+    $('t5-body').innerHTML = `<div class="t5-split">
+      <section class="t5-pane"><div class="t5-ph2">🖼 플래노그램 사진 — 눌러서 오려 넣기</div>
+        <div class="t5-chips">${tops.map(([k, nm]) => `<button class="t5-chip${k === cur.topic ? ' on' : ''}" data-k="${k}">${nm} <small>${P.photos[k].length}</small></button>`).join('')}</div>
+        <div class="t5-scroll" id="t5-pl"><div class="t5-pgrid">${files.map(f => `<button class="t5-pth" data-f="${esc(f)}"><img loading="lazy" src="../hmart-photos/${esc(f)}" style="transform:rotate(${P.rot[f] || 0}deg)"></button>`).join('')}</div></div></section>
+      <section class="t5-pane"><div class="t5-ph2">📦 우리 제품 사진 (Top 500) — 눌러서 넣기</div>
+        <input id="t5-pq" class="t5-q" placeholder="🔍 이름·바코드로 찾기" value="${esc(cur.pq || '')}">
+        <div class="t5-scroll" id="t5-pr"><div class="t5-grid">${prods.map(x => card(x, have.has(x.code))).join('')}</div></div></section></div>`;
+    $('t5-foot').style.display = 'flex';
+    $('t5-foot').innerHTML = `<span style="flex:1">넣은 사진 <b>${pins.length}</b>장</span><button class="t5-btn green" id="t5-back">✓ 다 넣었어요</button>`;
+    $('t5-back').onclick = () => { cur.mode = ''; render(); };
+    $('t5-body').querySelectorAll('.t5-chip').forEach(b => b.onclick = () => { cur.topic = b.dataset.k; renderPick(); });
+    $('t5-body').querySelectorAll('.t5-pth').forEach(b => b.onclick = () => { cur.cropFile = b.dataset.f; cur.cropRot = P.rot[b.dataset.f] || 0; cur.sel = null; cur.mode = 'crop'; render(); });
+    $('t5-body').querySelectorAll('#t5-pr .t5-card').forEach(c => c.onclick = async () => {
+      const code = c.dataset.code, list = pinned();
+      const next = have.has(code) ? list.filter(x => x.code !== code) : list.concat([{ code }]);
+      const keep = $('t5-pr').scrollTop;
+      if (await patchEntry({ photos: next }, true)) { const r = document.getElementById('t5-pr'); if (r) r.scrollTop = keep; }
+    });
+    const pq = $('t5-pq'); pq.oninput = () => { cur.pq = pq.value; const pos = pq.selectionStart; renderPick().then(() => { const n = document.getElementById('t5-pq'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }); };
+  }
+  async function renderCrop() {
+    const $ = id => document.getElementById(id);
+    $('t5-title').textContent = '✂️ ' + cur.title + ' — 오리기';
+    $('t5-sub').textContent = '필요한 제품 부분을 손가락(마우스)으로 끌어서 네모를 그리세요. 다시 그리면 새 네모로 바뀝니다.';
+    $('t5-tools').innerHTML = `<div class="t5-row" style="margin:0"><button class="t5-btn dark" id="t5-rot">↻ 돌리기</button></div>`;
+    $('t5-body').innerHTML = `<div class="t5-cropwrap"><canvas id="t5-cv"></canvas></div>`;
+    $('t5-foot').style.display = 'flex';
+    $('t5-foot').innerHTML = `<button class="t5-btn" id="t5-back">← 다른 사진</button><span style="flex:1"></span>
+      <button class="t5-btn" id="t5-whole">사진 통째로 넣기</button><button class="t5-btn green" id="t5-take" disabled>✂️ 이 부분 넣기</button>`;
+    $('t5-back').onclick = () => { cur.mode = 'pick'; render(); };
+    const cv = $('t5-cv'), wrap = cv.parentElement;
+    let rc;
+    try { rc = rotated(await img(cur.cropFile), cur.cropRot); } catch (_) { $('t5-body').innerHTML = '<div class="t5-empty">사진을 불러오지 못했습니다</div>'; return; }
+    if (!cur || cur.mode !== 'crop') return;
+    const paint = () => {
+      const g = cv.getContext('2d'); g.drawImage(rc, 0, 0, cv.width, cv.height);
+      const s = cur.sel; if (!s) return;
+      const x = s[0] * cv.width, y = s[1] * cv.height, w = s[2] * cv.width, h = s[3] * cv.height;
+      g.fillStyle = 'rgba(0,0,0,.55)';
+      g.fillRect(0, 0, cv.width, y); g.fillRect(0, y + h, cv.width, cv.height - y - h); g.fillRect(0, y, x, h); g.fillRect(x + w, y, cv.width - x - w, h);
+      g.strokeStyle = '#F5B700'; g.lineWidth = 3; g.strokeRect(x, y, w, h);
+    };
+    const fit = () => {
+      const k = Math.min((wrap.clientWidth - 4) / rc.width, (wrap.clientHeight - 4) / rc.height);
+      cv.width = Math.max(10, Math.round(rc.width * k)); cv.height = Math.max(10, Math.round(rc.height * k)); paint();
+    };
+    let start = null;
+    const pt = ev => { const b = cv.getBoundingClientRect(); return [Math.min(1, Math.max(0, (ev.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (ev.clientY - b.top) / b.height))]; };
+    cv.onpointerdown = ev => { ev.preventDefault(); cv.setPointerCapture(ev.pointerId); start = pt(ev); cur.sel = null; paint(); };
+    cv.onpointermove = ev => { if (!start) return; const q = pt(ev); cur.sel = [Math.min(start[0], q[0]), Math.min(start[1], q[1]), Math.abs(q[0] - start[0]), Math.abs(q[1] - start[1])]; paint(); };
+    cv.onpointerup = () => { start = null; if (cur.sel && (cur.sel[2] < 0.02 || cur.sel[3] < 0.02)) cur.sel = null; paint(); $('t5-take').disabled = !cur.sel; };
+    fit();
+    $('t5-rot').onclick = async () => { cur.cropRot = ((cur.cropRot || 0) + 90) % 360; cur.sel = null; rc = rotated(await img(cur.cropFile), cur.cropRot); fit(); $('t5-take').disabled = true; };
+    const add = async c => {
+      const piece = { f: cur.cropFile, r: cur.cropRot || 0, c: c.map(v => Math.round(v * 10000) / 10000) };
+      $('t5-take').disabled = true; $('t5-whole').disabled = true;
+      cur.mode = 'pick';
+      if (!await patchEntry({ photos: pinned().concat([piece]) }, true)) { cur.mode = 'crop'; $('t5-take').disabled = !cur.sel; $('t5-whole').disabled = false; }
+    };
+    $('t5-take').onclick = () => cur.sel && add(cur.sel);
+    $('t5-whole').onclick = () => add([0, 0, 1, 1]);
   }
 
   /* ---------- 기존 도면 코드에 연결 ---------- */
@@ -303,6 +447,23 @@
   .t5-chk{position:absolute;right:4px;top:4px;width:22px;height:22px;border-radius:50%;background:#16a34a;color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center}
   .t5-card.off .t5-chk{background:#9ca3af}
   .t5-nm{font-size:12px;font-weight:800;margin-top:5px;line-height:1.25}.t5-meta{font-size:10.5px;color:#777;margin-top:2px}.t5-note{font-size:10.5px;color:#D35400;margin-top:2px}
+  .t5-pieces{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:12px;align-items:start}
+  .t5-piece{position:relative;background:#111;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .t5-piece.prod{background:none;display:block}
+  .t5-piece canvas{max-width:100%;max-height:60vh;display:block}
+  .t5-del{position:absolute;right:6px;top:6px;z-index:3;width:30px;height:30px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-weight:900;cursor:pointer}
+  .t5-sec{font-weight:800;margin:6px 0 8px;color:#C8102E}
+  .t5-split{display:flex;flex-direction:column;gap:10px;height:100%}
+  .t5-pane{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px;border:1px solid #e5e7eb;border-radius:10px;padding:8px}
+  .t5-ph2{font-weight:900;color:#C8102E;font-size:14px}
+  .t5-scroll{flex:1;min-height:120px;overflow:auto}
+  .t5-pane .t5-chips{max-height:62px;overflow:auto}
+  .t5-pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px}
+  .t5-pth{border:0;padding:0;background:#eee;border-radius:8px;overflow:hidden;aspect-ratio:3/4;cursor:pointer}
+  .t5-pth img{width:100%;height:100%;object-fit:cover}
+  .t5-cropwrap{height:100%;min-height:300px;display:flex;align-items:center;justify-content:center;background:#222;border-radius:8px}
+  .t5-cropwrap canvas{touch-action:none;cursor:crosshair;display:block}
+  .t5-btn.dark{background:#374151}.t5-btn:disabled{opacity:.45;cursor:default}
   .t5-empty{padding:40px 10px;text-align:center;color:#555;font-size:15px}
   .t5-foot{padding:10px 12px;border-top:1px solid #eee;gap:8px;align-items:center}`;
   document.head.appendChild(css);
