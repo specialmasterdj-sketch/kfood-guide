@@ -412,17 +412,21 @@
     const box = document.getElementById('t5-mosaic');
     if (!box || job !== mosaicJob) return;
     const W = box.clientWidth, gap = 6, H0 = W < 700 ? 160 : 220;
-    const rows = []; let row = [], sum = 0;
+    // 줄 수를 먼저 정하고(기본 높이 기준), 비율 합이 줄마다 비슷하게 나눈 뒤 각 줄을 폭에 꽉 채움 → 혼자 남는 사진 없음
+    const total = asp.reduce((x, y) => x + y, 0);
+    const k = Math.max(1, Math.min(pcs.length, Math.round(total * H0 / W) || 1));
+    const target = total / k, rows = []; let row = [], sum = 0, done = 0;
     pcs.forEach((_, i) => {
+      const left = pcs.length - i, rowsLeft = k - rows.length;
+      if (row.length && rows.length < k - 1 && (Math.abs(sum + asp[i] - target) > Math.abs(sum - target) || left < rowsLeft)) {
+        rows.push(row); done += sum; row = []; sum = 0;
+      }
       row.push(i); sum += asp[i];
-      if (sum * H0 + gap * (row.length - 1) >= W) { rows.push([row, (W - gap * (row.length - 1)) / sum]); row = []; sum = 0; }
     });
-    if (row.length) { // 마지막 줄: 60% 이상 찼으면 폭에 맞춰 꽉 채우고, 아니면 기본 높이
-      const full = (W - gap * (row.length - 1)) / sum, filled = (sum * H0 + gap * (row.length - 1)) / W;
-      rows.push([row, filled >= 0.6 ? Math.min(full, H0 * 1.6) : Math.min(H0, full)]);
-    }
+    if (row.length) rows.push(row);
+    const rowsH = rows.map(r => { const sm = r.reduce((x, i) => x + asp[i], 0); return [r, Math.min((W - gap * (r.length - 1)) / sm, H0 * 2.2)]; });
     const edit = canEdit();
-    box.innerHTML = rows.map(([r, h]) => `<div class="t5-mrow" style="height:${h}px">${r.map(i => {
+    box.innerHTML = rowsH.map(([r, h]) => `<div class="t5-mrow" style="height:${h}px">${r.map(i => {
       const pc = pcs[i], w = Math.floor(asp[i] * h);
       const del = edit && !cur.swap ? `<button class="t5-del" data-i="${i}" title="빼기">✕</button>` : '';
       const selc = cur.swap ? (cur.swapSel === i ? ' sel' : ' swap') : '';
