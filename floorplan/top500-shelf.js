@@ -51,16 +51,37 @@
     return out.sort((a, b) => a.rank - b.rank);
   }
 
-  /* SZ 영문 순서: 도면 위→아래(40px 줄), 왼→오. 사장님이 이름을 정해 저장하면 그 이름 우선. */
-  const SZNAME = {}; // zoneKey -> 'SZ-A'
+  /* 세일존(주황) 순서 A, B, C …: 정문(M-E)에서 출발해 위로 올라가 매장을 한 바퀴(시계방향) 도는 순서.
+     매장 중심에서 본 각도를 정문 각도부터 재서 정렬. 사장님이 글자를 바꿔 저장하면 그 글자 우선. */
+  const SZNAME = {}; // zoneKey -> 'A'
   function letter(i) { let s = ''; i++; while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); } return s; }
   function nameSZ(map) {
     Object.keys(SZNAME).forEach(k => delete SZNAME[k]);
-    const list = (window.zones || zones).filter(isSZ).sort((a, b) => (Math.round(a.y / 40) - Math.round(b.y / 40)) || (a.x - b.x));
+    const all = (window.zones || zones);
+    if (!all.length) return;
+    const minX = Math.min(...all.map(z => z.x)), maxX = Math.max(...all.map(z => z.x + z.w));
+    const minY = Math.min(...all.map(z => z.y)), maxY = Math.max(...all.map(z => z.y + z.h));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const door = all.find(z => z.ftype === 'front-door' || z.type === 'front-door' || z.num === 'M-E');
+    const dx0 = door ? door.x + door.w / 2 : minX, dy0 = door ? door.y + door.h / 2 : maxY;
+    // 매장 테두리(사각형)를 시계방향으로 도는 길이 위치: 위(왼→오) → 오른쪽(위→아래) → 아래(오→왼) → 왼쪽(아래→위).
+    // 각 세일존은 가장 가까운 벽에 비춰 위치를 정하고, 정문 위치부터 잰다. 같은 위치면 안쪽(벽에서 먼 것)이 먼저.
+    const W = maxX - minX, H = maxY - minY, P = 2 * (W + H);
+    const along = (px, py) => {
+      const dl = px - minX, dt = py - minY, dr = maxX - px, db = maxY - py, m = Math.min(dl, dt, dr, db);
+      if (m === dt) return [px - minX, dt];
+      if (m === dr) return [W + (py - minY), dr];
+      if (m === db) return [W + H + (maxX - px), db];
+      return [2 * W + H + (maxY - py), dl];
+    };
+    const t0 = along(dx0, dy0)[0];
+    const pos = z => { const [t, d] = along(z.x + z.w / 2, z.y + z.h / 2); let u = t - t0; while (u < 0) u += P; return [u, d]; };
+    const list = all.filter(isSZ).map(z => ({ z, p: pos(z) }))
+      .sort((A, B) => (Math.abs(A.p[0] - B.p[0]) < 25 ? B.p[1] - A.p[1] : A.p[0] - B.p[0])).map(o => o.z);
     const used = new Set();
     list.forEach(z => { const e = map[zoneKey(z)]; if (e && e.name) { SZNAME[zoneKey(z)] = e.name; used.add(e.name); } });
     let i = 0;
-    list.forEach(z => { const k = zoneKey(z); if (SZNAME[k]) return; let n; do { n = 'SZ-' + letter(i++); } while (used.has(n)); SZNAME[k] = n; used.add(n); });
+    list.forEach(z => { const k = zoneKey(z); if (SZNAME[k]) return; let n; do { n = letter(i++); } while (used.has(n)); SZNAME[k] = n; used.add(n); });
   }
 
   /* ---------- 도면 위 표시 ---------- */
@@ -90,9 +111,8 @@
       if (!show) return;
       const b = document.createElement('button');
       b.className = 't5-badge' + (cnt ? '' : ' empty') + (isSZ(z) ? ' sz' : '');
-      const nm = SZNAME[zoneKey(z)] || '';
-      const shortNm = z.w < 45 ? nm.replace(/^SZ-/, '') : nm;
-      b.textContent = isSZ(z) ? (shortNm + (cnt ? '·' + cnt : '')) : (cnt ? '⭐' + cnt : '＋⭐');
+      b.textContent = isSZ(z) ? (SZNAME[zoneKey(z)] || '') : (cnt ? '⭐' + cnt : '＋⭐');
+      if (isSZ(z) && cnt) b.classList.add('has');
       b.title = cnt ? 'Top 500 상품 ' + cnt + '개 보기' : '여기에 올 Top 500 정하기 (사장님)';
       b.addEventListener('mousedown', ev => ev.stopPropagation());
       b.addEventListener('dblclick', ev => ev.stopPropagation());
@@ -176,7 +196,7 @@
     // 편집 화면: 매대 묶음 칩 + 전체 Top 500 (선택/해제)
     const dr = cur.draft, onShelf = new Set(dr.shelves), sel = new Set(list.map(x => x.code));
     const isSzKey = cur.title.startsWith('세일존');
-    tools.innerHTML = (isSzKey ? `<div class="t5-row" style="margin:0 0 6px"><b style="align-self:center;white-space:nowrap">이름</b><input id="t5-name" class="t5-q" style="max-width:160px" value="${esc(dr.name || '')}" placeholder="SZ-A"></div>` : '') + `<div class="t5-chips">${d.shelves.map(s => `<button class="t5-chip${onShelf.has(s.key) ? ' on' : ''}" data-shelf="${s.key}">${esc(s.ko)} <small>${s.count}</small></button>`).join('')}</div>
+    tools.innerHTML = (isSzKey ? `<div class="t5-row" style="margin:0 0 6px"><b style="align-self:center;white-space:nowrap">이름</b><input id="t5-name" class="t5-q" style="max-width:160px" value="${esc(dr.name || '')}" placeholder="A"></div>` : '') + `<div class="t5-chips">${d.shelves.map(s => `<button class="t5-chip${onShelf.has(s.key) ? ' on' : ''}" data-shelf="${s.key}">${esc(s.ko)} <small>${s.count}</small></button>`).join('')}</div>
       <div class="t5-row"><input id="t5-q" class="t5-q" placeholder="🔍 Top 500 에서 찾기 (이름·바코드)" value="${esc(cur.q)}">
       <select id="t5-f" class="t5-q" style="max-width:190px"><option value="">전체 매대</option>${d.shelves.map(s => `<option value="${s.key}"${cur.chip === s.key ? ' selected' : ''}>${esc(s.ko)}</option>`).join('')}</select></div>`;
     const q = cur.q.trim().toUpperCase();
@@ -259,8 +279,9 @@
   .t5-badge{position:absolute;right:1px;top:1px;z-index:6;border:0;border-radius:7px;padding:0 4px;font:800 9px/1.5 system-ui,sans-serif;background:rgba(200,16,46,.85);color:#fff;cursor:pointer;white-space:nowrap}
   .t5-badge.empty{display:none;background:#fff;color:#C8102E;border:1px dashed #C8102E}
   .zone.selected .t5-badge.empty{display:block}
-  .t5-badge.sz,.t5-badge.sz.empty{display:block;background:none;border:0;color:#fff;font-size:11px;left:50%;right:auto;top:50%;transform:translate(-50%,-50%);z-index:8;padding:2px 4px;text-shadow:0 0 2px rgba(0,0,0,.35)}
+  .t5-badge.sz,.t5-badge.sz.empty{display:block;background:none;border:0;color:#fff;font-size:13px;font-weight:900;left:50%;right:auto;top:50%;transform:translate(-50%,-50%);z-index:8;padding:2px 4px;text-shadow:0 0 2px rgba(0,0,0,.35)}
   .t5-szone>.zone-num,.t5-szone>.zone-label,.t5-szone>.zone-sub{visibility:hidden}
+  .t5-badge.sz.has{text-decoration:underline;text-underline-offset:2px}
   [data-t5n]::after{content:"⭐" attr(data-t5n);margin-left:2px;font-size:8px;color:#C8102E}
   #t5-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100000;display:none;align-items:center;justify-content:center;padding:14px;backdrop-filter:blur(3px)}
   .t5-box{background:#fff;border-radius:12px;width:100%;max-width:1050px;height:100%;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;font-family:system-ui,'Malgun Gothic',sans-serif}
