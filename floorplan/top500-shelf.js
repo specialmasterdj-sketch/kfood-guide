@@ -193,21 +193,18 @@
       const q = cur.q.trim().toUpperCase();
       const shown = q ? list.filter(x => x.name.toUpperCase().includes(q) || x.code.includes(q)) : list;
       const pcs = (e && e.photos) || [];
-      const pieceHtml = (pc, i) => {
-        const del = canEdit() ? `<button class="t5-del" data-i="${i}" title="빼기">✕</button>` : '';
-        if (pc.code) { const x = d.byCode[pc.code]; return x ? `<div class="t5-piece prod">${del}${card(x)}</div>` : ''; }
-        return `<div class="t5-piece"><canvas data-i="${i}"></canvas>${del}</div>`;
-      };
-      const photoHtml = pcs.length ? `<div class="t5-pieces">${pcs.map(pieceHtml).join('')}</div>` : '';
+      const photoHtml = pcs.length ? `<div class="t5-mosaic" id="t5-mosaic"></div>` : '';
       body.innerHTML = (pcs.length || list.length)
         ? photoHtml + (list.length ? `${pcs.length ? '<div class="t5-sec">📦 Top 500 상품</div>' : ''}<div class="t5-grid">${shown.map(x => card(x)).join('')}</div>` : '')
         : `<div class="t5-empty">${canEdit() ? '오른쪽 위 <b>✂️ 사진 넣기</b>를 누르세요.<br>위 칸 = 플래노그램 사진에서 필요한 부분만 오려 넣기 · 아래 칸 = 우리 제품 사진 넣기' : '사장님이 아직 이 자리를 정하지 않았습니다.'}</div>`;
-      body.querySelectorAll('.t5-piece canvas').forEach(cv => drawPiece(cv, pcs[+cv.dataset.i]));
-      body.querySelectorAll('.t5-del').forEach(b => b.onclick = async () => {
-        if (!confirm('이 사진을 뺄까요?')) return;
-        await patchEntry({ photos: pcs.filter((_, i) => i !== +b.dataset.i) });
-      });
-      foot.style.display = 'none';
+      if (pcs.length) layoutMosaic(pcs, d);
+      if (canEdit() && pcs.length > 1) {
+        foot.style.display = 'flex';
+        foot.innerHTML = cur.swap
+          ? `<span style="flex:1"><b>자리 바꾸기:</b> 바꿀 사진 두 장을 차례로 누르세요</span><button class="t5-btn green" id="t5-swap">✓ 끝</button>`
+          : `<span style="flex:1;color:#666">사진은 칸에 맞춰 자동으로 정렬됩니다</span><button class="t5-btn" id="t5-swap">🔀 자리 바꾸기</button>`;
+        $('t5-swap').onclick = () => { cur.swap = !cur.swap; cur.swapSel = null; render(); };
+      } else { foot.style.display = 'none'; cur.swap = false; }
       const qi = $('t5-q'); if (qi) { qi.oninput = () => { cur.q = qi.value; const p = qi.selectionStart; render(); const n = $('t5-q'); n.focus(); n.setSelectionRange(p, p); }; }
       return;
     }
@@ -392,6 +389,67 @@
     $('t5-whole').onclick = () => add([0, 0, 1, 1]);
   }
 
+  /* ---------- 사진 자동 정렬 (줄마다 높이를 맞춰 빈틈 없이 꽉 채움) + 자리 바꾸기 ---------- */
+  async function aspectOf(p, d) {
+    let a = 1;
+    try {
+      if (p.code) {
+        const x = d.byCode[p.code];
+        a = (x && x.photo) ? await new Promise(res => { const i = new Image(); i.onload = () => res(i.naturalWidth / i.naturalHeight || 0.8); i.onerror = () => res(0.8); i.src = '../top500/' + x.photo; }) : 0.8;
+      } else {
+        const im = await img(p.f), r = p.r || 0, c = p.c || [0, 0, 1, 1];
+        const rw = (r % 180) ? im.height : im.width, rh = (r % 180) ? im.width : im.height;
+        a = (c[2] * rw) / (c[3] * rh);
+      }
+    } catch (_) {}
+    return Math.min(4, Math.max(0.25, a || 1));
+  }
+  let mosaicJob = 0;
+  async function layoutMosaic(pcs, d) {
+    const job = ++mosaicJob;
+    const box0 = document.getElementById('t5-mosaic'); if (!box0) return;
+    const asp = await Promise.all(pcs.map(pc => aspectOf(pc, d)));
+    const box = document.getElementById('t5-mosaic');
+    if (!box || job !== mosaicJob) return;
+    const W = box.clientWidth, gap = 6, H0 = W < 700 ? 160 : 220;
+    const rows = []; let row = [], sum = 0;
+    pcs.forEach((_, i) => {
+      row.push(i); sum += asp[i];
+      if (sum * H0 + gap * (row.length - 1) >= W) { rows.push([row, (W - gap * (row.length - 1)) / sum]); row = []; sum = 0; }
+    });
+    if (row.length) { // 마지막 줄: 60% 이상 찼으면 폭에 맞춰 꽉 채우고, 아니면 기본 높이
+      const full = (W - gap * (row.length - 1)) / sum, filled = (sum * H0 + gap * (row.length - 1)) / W;
+      rows.push([row, filled >= 0.6 ? Math.min(full, H0 * 1.6) : Math.min(H0, full)]);
+    }
+    const edit = canEdit();
+    box.innerHTML = rows.map(([r, h]) => `<div class="t5-mrow" style="height:${h}px">${r.map(i => {
+      const pc = pcs[i], w = Math.floor(asp[i] * h);
+      const del = edit && !cur.swap ? `<button class="t5-del" data-i="${i}" title="빼기">✕</button>` : '';
+      const selc = cur.swap ? (cur.swapSel === i ? ' sel' : ' swap') : '';
+      if (pc.code) {
+        const x = d.byCode[pc.code];
+        return `<div class="t5-tile prod${selc}" data-i="${i}" style="width:${w}px">${x && x.photo ? `<img src="../top500/${esc(x.photo)}" alt="">` : '<div class="t5-noph">사진 없음</div>'}<span class="t5-cap">${esc(x ? x.name : pc.code)}</span>${del}</div>`;
+      }
+      return `<div class="t5-tile${selc}" data-i="${i}" style="width:${w}px"><canvas data-i="${i}"></canvas>${del}</div>`;
+    }).join('')}</div>`).join('');
+    box.querySelectorAll('canvas').forEach(cv => drawPiece(cv, pcs[+cv.dataset.i]));
+    box.querySelectorAll('.t5-del').forEach(b => b.onclick = async ev => {
+      ev.stopPropagation();
+      if (!confirm('이 사진을 뺄까요?')) return;
+      await patchEntry({ photos: pcs.filter((_, i) => i !== +b.dataset.i) }, true);
+    });
+    if (cur.swap) box.querySelectorAll('.t5-tile').forEach(t => t.onclick = async () => {
+      const i = +t.dataset.i;
+      if (cur.swapSel == null) { cur.swapSel = i; layoutMosaic(pcs, d); return; }
+      if (cur.swapSel === i) { cur.swapSel = null; layoutMosaic(pcs, d); return; }
+      const next = pcs.slice(), j = cur.swapSel; [next[i], next[j]] = [next[j], next[i]];
+      cur.swapSel = null;
+      await patchEntry({ photos: next }, true);
+    });
+  }
+  let relayT = null;
+  window.addEventListener('resize', () => { clearTimeout(relayT); relayT = setTimeout(() => { if (document.getElementById('t5-mosaic') && cur && !cur.mode) render(); }, 200); });
+
   /* ---------- 기존 도면 코드에 연결 ---------- */
   function hook() {
     // 통로 번호 클릭: Top 500 자료가 있는 지점이면 Top 500 팝업 (H마트 진열 레퍼런스는 팝업 안 버튼으로)
@@ -447,6 +505,15 @@
   .t5-chk{position:absolute;right:4px;top:4px;width:22px;height:22px;border-radius:50%;background:#16a34a;color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center}
   .t5-card.off .t5-chk{background:#9ca3af}
   .t5-nm{font-size:12px;font-weight:800;margin-top:5px;line-height:1.25}.t5-meta{font-size:10.5px;color:#777;margin-top:2px}.t5-note{font-size:10.5px;color:#D35400;margin-top:2px}
+  .t5-mosaic{margin-bottom:12px}
+  .t5-mrow{display:flex;gap:6px;margin-bottom:6px}
+  .t5-tile{position:relative;flex:none;height:100%;border-radius:6px;overflow:hidden;background:#111}
+  .t5-tile canvas{width:100%;height:100%;display:block}
+  .t5-tile.prod{background:#fff;border:1px solid #e5e7eb}
+  .t5-tile.prod img{width:100%;height:100%;object-fit:contain;display:block}
+  .t5-cap{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:700;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .t5-tile.swap{cursor:pointer;outline:2px dashed #F5B700;outline-offset:-2px}
+  .t5-tile.sel{outline:4px solid #16a34a;outline-offset:-4px}
   .t5-pieces{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:12px;align-items:start}
   .t5-piece{position:relative;background:#111;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
   .t5-piece.prod{background:none;display:block}
